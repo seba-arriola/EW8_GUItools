@@ -1,0 +1,80 @@
+
+# =============================================================================
+#  tankplayer.d.tmpl  -  PLANTILLA de configuracion de tankplayer (modo replay)
+# =============================================================================
+#
+#  NO la usa tankplayer directamente. La renderiza:
+#
+#      tank_tools/tank_replay.sh play ...
+#
+#  que sustituye los marcadores y escribe el archivo real en
+#  run_working_v8/params/tankplayer_replay.d (ese si lo lee tankplayer).
+#
+#  Marcadores disponibles (se escriben con arrobas: arroba-NOMBRE-arroba):
+#     WAVEFILES       se reemplaza por la lista de lineas "WaveFile <ruta>"
+#     PAUSE           Pause (segundos entre ficheros)
+#     STARTUPDELAY    StartUpDelay (segundos antes del primer fichero)
+#     SENDLATE        SendLate (segundos; vacio = NO re-estampar)
+#     DELAYMS         InterMessageDelayMillisecs (0 = tiempo real simulado)
+#     SEQUENCE        Sequence (1 = continuidad entre ficheros; 0 = re-anclar)
+#
+#  Si un marcador se deja vacio, la linea completa se ELIMINA del archivo
+#  generado (asi se omite opcionalmente SendLate o Sequence).
+#
+# -----------------------------------------------------------------------------
+#  QUE HACE ESTE ARCHIVO
+#
+#  tankplayer lee ficheros "tank" (secuencias de mensajes TYPE_TRACEBUF2, tal
+#  como los produce ms2tank) y los inyecta en un ring de memoria compartida de
+#  EarthWorm, respetando los intervalos de tiempo entre paquetes.
+#
+#  El ring elegido es SLINK_RING porque la cadena de picks es:
+#
+#     tankplayer -> SLINK_RING -> pick_FP -> PICK_RING -> csnloc -> HYPO_RING
+#
+#  NO se usa WAVE_RING: pick_FP lee SLINK_RING.
+#
+#  tankplayer NO es un demonio: al terminar la lista de ficheros imprime
+#  "No more wavefiles to play; exiting!" y sale. Por eso no aparece como
+#  "Process" en startstop_replay.d; lo lanza tank_replay.sh.
+# -----------------------------------------------------------------------------
+
+RingName      SLINK_RING
+MyModuleId    MOD_TANKPLAYER
+PlayMsgType   TYPE_TRACEBUF2
+
+LogFile       1
+HeartBeatInt  30
+
+# Pausa (segundos) entre ficheros y espera antes de emitir el primero.
+Pause         @PAUSE@
+StartUpDelay  @STARTUPDELAY@
+
+# SendLate S: re-estampa cada paquete a (ahora - S) segundos, conservando los
+# intervalos entre paquetes. ES OBLIGATORIO para que csnloc localice algo:
+# csnloc filtra los picks contra el reloj de pared (PickTTLSec y
+# AssocWindowSec en csnloc.d), asi que un pick con fecha historica se
+# descarta en el primer ciclo y nunca se localiza nada.
+# Si esta linea se omite (marcador vacio), los paquetes conservan su fecha
+# original: sirve para inspeccionar con sniffring/tanksniff, pero csnloc NO
+# localizara.
+SendLate      @SENDLATE@
+
+# InterMessageDelayMillisecs N:
+#   N = 0  -> ritmo marcado por los timestamps (TIEMPO REAL SIMULADO).
+#   N > 0  -> duerme N ms fijos entre tracebufs, ignorando los timestamps
+#             (modo ACELERADO / "bulk loader"). Minimo util 1.
+# Con N > 0 los timestamps siguen avanzando segun el dato original, asi que
+# ventanas de mas de ~900 s generan paquetes con fecha futura que wave_serverV
+# rechaza (FUTURE_LIMIT_SECONDS). Para eso existen los chunks.
+InterMessageDelayMillisecs @DELAYMS@
+
+# Sequence 1 = NO recalcula el anclaje temporal entre ficheros (continuidad).
+# Sequence 0 = re-ancla cada fichero a "ahora" (recomendado con chunks).
+Sequence      @SEQUENCE@
+
+Debug         0
+ScreenMsg     1
+
+# --- Ficheros a reproducir, en orden (maximo 1000) --------------------------
+@WAVEFILES@

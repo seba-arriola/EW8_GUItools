@@ -1,0 +1,15 @@
+# Grilla equivalente a la configuracion ANTERIOR de csnloc (bbox Chile,
+# 25 km, profundidad 0/300/25). Se usa para verificar que el refactor no
+# cambia el comportamiento sobre los mismos picks.
+Name                LegacyChile
+LatMin              -56.0
+LatMax              -16.0
+LonMin              -76.0
+LonMax              -66.0
+NodeKm              25.0
+DepthMin            0.0
+DepthMax            300.0
+DepthStep           25.0
+StaMaxDistKm        0
+NumStationsPerNode  0
+MaxNodes            200000

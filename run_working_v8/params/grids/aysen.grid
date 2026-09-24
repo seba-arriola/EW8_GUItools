@@ -1,0 +1,11 @@
+# Replica de la grilla Glass3 (60x45 nodos, 10 km) en formato csnloc .grid.
+Name                aysen
+LatMin              -49.153
+LatMax              -43.847
+LonMin              -76.874
+LonMax              -71.126
+NodeKm              10.0
+DepthLayers         5,10,20,30,40,50,60,70,80,90,100,110,120,130,140,150,160,170,180,190,200,225,250,275,300
+StaMaxDistKm        1000
+NumStationsPerNode  25
+MaxNodes            200000

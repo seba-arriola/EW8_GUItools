@@ -1,0 +1,11 @@
+# Replica de la grilla global de Glass3 (global_grid.d): 100 km, 10 capas.
+Name                Global
+LatMin              -90.0
+LatMax              90.0
+LonMin              -180.0
+LonMax              180.0
+NodeKm              100.0
+DepthLayers         10,30,50,100,200,300,400,500,600,750
+StaMaxDistKm        1500
+NumStationsPerNode  20
+MaxNodes            1000000

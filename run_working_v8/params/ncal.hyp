@@ -1,0 +1,38 @@
+* ncal.hyp - Configuracion para Hypoinverse 2000 v1.45 (Chile)
+* -----------------------------------------------------------
+
+* 1. FORMATOS Y CODIGOS
+* Habilitar formatos del anio 2000 (OBLIGATORIO)
+200 T 1900 0
+
+* Formato SCNL: (Site, Net, Comp, Loc, Phase) - Ignoramos Loc y Phase para no errar
+LET 5 2 3 2 2
+*H71 2 1 3
+
+* Formato de entrada y salida (Archive format)
+COP 5
+CAR 3
+
+* 2. LECTURA DE ESTACIONES
+STA 'estaciones.hinv'
+
+* 3. MODELO DE VELOCIDAD
+CRH 1 'ak135.crh'
+
+* Relacion Vp/Vs
+POS 1.75
+
+* 4. PARAMETROS DE CONTROL
+RMS 4 .10 2 3
+ZTR 15.0 F
+DIS 4 15 3.5 7
+MIN 4
+JUN T
+REP F F
+LST 2 1 1
+
+* 5. ARCHIVOS DE SALIDA (OUTPUT)
+PRT 'hyp2000_output/chile_hypo.prt'
+SUM 'hyp2000_output/chile_hypo.sum'
+ARC 'hyp2000_output/chile_hypo.arc'
+APP F F F

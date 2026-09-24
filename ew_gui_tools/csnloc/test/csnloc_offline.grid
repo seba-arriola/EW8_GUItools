@@ -1,0 +1,14 @@
+# Grilla del test offline (test/test_offline.sh). Cubre las estaciones de
+# test/test_stations.txt con 2 grados de margen.
+Name                OfflineTest
+LatMin              -35.34
+LatMax              -16.32
+LonMin              -73.33
+LonMax              -66.10
+NodeKm              15.0
+DepthMin            0.0
+DepthMax            120.0
+DepthStep           10.0
+StaMaxDistKm        0
+NumStationsPerNode  0
+MaxNodes            500000

@@ -1,0 +1,1194 @@
+#include <gtk/gtk.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <math.h>
+#include <time.h>
+#include <locale.h>
+#include <signal.h> 
+
+#include <earthworm.h>
+#include <transport.h>
+#include <trace_buf.h>
+#include <kom.h>
+#include <ws_clientII.h>
+#include <rw_mag.h> 
+
+#define MAX_STR 256
+#define MAX_ESTA 300
+#define MAX_MINUTES 120
+#define SAMPRATE_DEF 20  
+
+#define CIRC_IDX(abs_val, size) (int)(((abs_val) % (size) + (size)) % (size))
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+/* --- CONFIGURACION DEL MODULO --- */
+char MyModName[MAX_STR];
+char InRingName[MAX_STR];
+char OutRingName[MAX_STR];
+char StaFile[MAX_STR];
+char HistoryFile[MAX_STR]; 
+char WsIP[MAX_STR];
+char WsPort[MAX_STR];
+int  WsTimeout;
+int  HeartBeatInt;
+int  LogFile;
+pid_t MyPid;
+time_t timeLastBeat = 0;
+
+unsigned char MyInstId;
+unsigned char MyModId;
+unsigned char TypeHeartBeat;
+unsigned char TypeError;
+unsigned char TypeHyp2000Arc;
+unsigned char TypePickSCNL;
+unsigned char TypeMagnitude; 
+
+SHM_INFO InRegion;       
+SHM_INFO PRegion;        
+MSG_LOGO GetLogo[2]; 
+
+/* --- ESTRUCTURA PURA SCNL PARA ESTACIONES --- */
+typedef struct {
+    double x1, x2, y1, y2;
+    double b0, b1, b2, a1, a2;
+} BIQUAD;
+
+typedef struct {
+    BIQUAD bq[2];        
+    gboolean initialized;
+    double last_time;    
+} IIR_FILTER;
+
+typedef struct {
+    double dTime;       
+    char szPhase[8];    
+} PICK;
+
+#define MAX_PICKS_PER_STA 50
+
+typedef struct {
+    char szStation[16];
+    char szChannel[16];
+    char szNetID[16];
+    char szLocation[16]; 
+    double dLat;
+    double dLon;
+    
+    int32_t *plRawCircBuff;
+    int32_t *plFiltCircBuff;
+    long lRawCircSize;
+    long lRawCircCtr;
+    
+    double dSampRate;     
+    double dOldestTime;   
+    double dScreenScale;  
+    
+    int64_t lLastAbsIdx; 
+    
+    double dManualPickTime; 
+    
+    PICK picks[MAX_PICKS_PER_STA];
+    int iNumPicks;
+
+    IIR_FILTER filter;
+} DEV_STATION;
+
+/* --- SISTEMA DE CACHE DE PICKS PARA EVENTOS HISTORICOS --- */
+#define MAX_CACHED_EVENTS 50
+#define MAX_PICKS_PER_EVENT 200
+
+typedef struct {
+    char sta[8];
+    char chan[8];
+    char phase[8];
+    double pTime;
+} CACHED_PICK;
+
+typedef struct {
+    int qid;
+    int num_picks;
+    CACHED_PICK picks[MAX_PICKS_PER_EVENT];
+} EVENT_PICK_CACHE;
+
+EVENT_PICK_CACHE PickCache[MAX_CACHED_EVENTS];
+int pick_cache_idx = 0;
+
+/* --- Variables Globales de Estado --- */
+DEV_STATION *StaArray = NULL; 
+int     bHasData[MAX_ESTA]; 
+double  g_StaDist[MAX_ESTA]; 
+int     NumEstaciones = 0;
+int     selected_qid = 0;
+double  selected_otime = 0;
+char    selected_id[32] = "None";
+WS_MENU_QUEUE_REC ws_menu; 
+
+GtkWidget *canvas_global = NULL;
+GtkWidget *tree_global = NULL;
+GtkWidget *btn_repick = NULL;
+GtkWidget *window_global = NULL; 
+
+/* --- HERRAMIENTAS DINAMICAS DE REPICK --- */
+GtkWidget *box_fetch = NULL;
+GtkWidget *entry_dist = NULL;
+GtkWidget *entry_time = NULL; 
+double g_max_dist_km = 500.0; 
+
+gboolean edit_mode = FALSE;
+double   g_zoom_factor = 1.0; 
+double   g_dWindowStart = 0;
+double   g_dScreenTime = 120.0; 
+int      g_margin_left = 160; 
+int      g_spacing = 100;
+
+typedef struct { 
+    int idx; 
+    double dist; 
+    int y_top;    
+    int y_bottom; 
+} StaNode;
+StaNode g_SortedNodes[MAX_ESTA];
+int     g_NumSortedNodes = 0;
+
+/* --- CONCURRENCIA PARA EL HISTORIAL --- */
+gboolean g_history_needs_saving = FALSE; 
+
+/* --------------------------------------------------------------------
+ * FUNCIONES EARTHWORM 
+ * -------------------------------------------------------------------- */
+int ReadConfig(char *configfile) {
+    int ncommand = 9, nmiss = 0, i;
+    char init[10] = {0};
+    char *com, *str;
+
+    if (!k_open(configfile)) {
+        fprintf(stderr, "csnhypodbp: Error abriendo archivo config <%s>\n", configfile);
+        return -1;
+    }
+
+    while (k_rd()) {
+        com = k_str();
+        if (!com || com[0] == '#') continue;
+
+        if (k_its("MyModuleId")) { str = k_str(); if (str) strcpy(MyModName, str); init[0] = 1; } 
+        else if (k_its("InRing")) { str = k_str(); if (str) strcpy(InRingName, str); init[1] = 1; } 
+        else if (k_its("OutRing")) { str = k_str(); if (str) strcpy(OutRingName, str); init[2] = 1; } 
+        else if (k_its("HeartBeatInt")) { HeartBeatInt = k_int(); init[3] = 1; } 
+        else if (k_its("LogFile")) { LogFile = k_int(); init[4] = 1; } 
+        else if (k_its("StaFile")) { str = k_str(); if (str) strcpy(StaFile, str); init[5] = 1; } 
+        else if (k_its("WsIP")) { str = k_str(); if (str) strcpy(WsIP, str); init[6] = 1; } 
+        else if (k_its("WsPort")) { str = k_str(); if (str) strcpy(WsPort, str); init[7] = 1; } 
+        else if (k_its("HistoryFile")) { str = k_str(); if (str) strcpy(HistoryFile, str); init[8] = 1; }
+        else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
+        else { continue; }
+        
+        if (k_err()) {
+            fprintf(stderr, "csnhypodbp: Error parseando <%s> en <%s>\n", com, configfile);
+            return -1;
+        }
+    }
+    for (i = 0; i < ncommand; i++) if (!init[i]) nmiss++;
+    k_close();
+    if (nmiss > 0) return -1;
+    return 0;
+}
+
+void Status(unsigned char type, short ierr, char *note) {
+    MSG_LOGO logo; char msg[256]; time_t t;
+    logo.instid = MyInstId; logo.mod = MyModId; logo.type = type;
+    time(&t);
+    if (type == TypeHeartBeat) sprintf(msg, "%ld %d\n", (long) t, MyPid);
+    else if (type == TypeError) {
+        sprintf(msg, "%ld %hd %s\n", (long) t, ierr, note);
+        logit("et", "csnhypodbp: Error: %s\n", note);
+    }
+    tport_putmsg(&InRegion, &logo, strlen(msg), msg);
+}
+
+void ConnectToEarthworm() {
+    long InRingKey = GetKey(InRingName);
+    long OutRingKey = GetKey(OutRingName);
+    
+    if (InRingKey == -1) { logit("e", "Error: Anillo entrada invalido.\n"); exit(-1); }
+    if (OutRingKey == -1) { logit("e", "Error: Anillo salida invalido.\n"); exit(-1); }
+
+    if (GetLocalInst(&MyInstId) != 0) exit(-1);
+    if (GetModId(MyModName, &MyModId) != 0) exit(-1);
+    if (GetType("TYPE_HYP2000ARC", &TypeHyp2000Arc) != 0) exit(-1);
+    if (GetType("TYPE_PICK_SCNL", &TypePickSCNL) != 0) exit(-1);
+    if (GetType("TYPE_HEARTBEAT", &TypeHeartBeat) != 0) exit(-1);
+    if (GetType("TYPE_ERROR", &TypeError) != 0) exit(-1);
+    if (GetType("TYPE_MAGNITUDE", &TypeMagnitude) != 0) exit(-1); 
+
+    unsigned char InstWild, ModWild;
+    GetInst("INST_WILDCARD", &InstWild); GetModId("MOD_WILDCARD", &ModWild);
+
+    GetLogo[0].instid = InstWild; 
+    GetLogo[0].mod = ModWild; 
+    GetLogo[0].type = TypeHyp2000Arc;
+
+    GetLogo[1].instid = InstWild; 
+    GetLogo[1].mod = ModWild; 
+    GetLogo[1].type = TypeMagnitude; 
+
+    tport_attach( &InRegion, InRingKey );
+    tport_attach( &PRegion, OutRingKey );
+    logit("t", "=== csnhypodbp: Conectado a %s y %s ===\n", InRingName, OutRingName);
+    
+    ws_menu.head = NULL;
+    ws_menu.tail = NULL;
+}
+
+void LoadStationsFromFile() {
+    FILE *fp = fopen(StaFile, "r");
+    if (!fp) { logit("e", "csnhypodbp: Error abriendo %s\n", StaFile); exit(-1); }
+    
+    StaArray = (DEV_STATION *) calloc(MAX_ESTA, sizeof(DEV_STATION));
+    NumEstaciones = 0; 
+    char line[256];
+    
+    long lMaxBufSamps = MAX_MINUTES * 60 * 100; 
+    
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '#' || line[0] == '\n' || line[0] == '\r') continue;
+        
+        char s1[20]="", s2[20]="", s3[20]="", s4[20]="";
+        double d1=0, d2=0, d3=0, d4=0;
+        
+        int parsed = sscanf(line, "%19s %19s %19s %19s %lf %lf %lf %lf", s1, s2, s3, s4, &d1, &d2, &d3, &d4);
+        
+        if (parsed >= 4 && NumEstaciones < MAX_ESTA) {
+            if (parsed >= 8) {
+                snprintf(StaArray[NumEstaciones].szStation, 15, "%s", s1);
+                snprintf(StaArray[NumEstaciones].szNetID, 15, "%s", s2);
+                snprintf(StaArray[NumEstaciones].szChannel, 15, "%s", s3);
+                snprintf(StaArray[NumEstaciones].szLocation, 15, "%s", s4);
+                StaArray[NumEstaciones].dLat = d1;
+                StaArray[NumEstaciones].dLon = d2;
+                StaArray[NumEstaciones].dScreenScale = 0.005; 
+            } else {
+                snprintf(StaArray[NumEstaciones].szStation, 15, "%s", s1);
+                snprintf(StaArray[NumEstaciones].szChannel, 15, "%s", s2);
+                snprintf(StaArray[NumEstaciones].szNetID, 15, "%s", s3);
+                if (parsed == 4) { 
+                    StaArray[NumEstaciones].dScreenScale = atof(s4); 
+                    strcpy(StaArray[NumEstaciones].szLocation, "--"); 
+                } else { 
+                    snprintf(StaArray[NumEstaciones].szLocation, 15, "%s", s4); 
+                    StaArray[NumEstaciones].dScreenScale = d1; 
+                }
+                StaArray[NumEstaciones].dLat = 0.0;
+                StaArray[NumEstaciones].dLon = 0.0;
+            }
+            
+            StaArray[NumEstaciones].lRawCircSize = lMaxBufSamps;
+            StaArray[NumEstaciones].plRawCircBuff = (int32_t *) calloc(lMaxBufSamps, sizeof(int32_t));
+            StaArray[NumEstaciones].plFiltCircBuff = (int32_t *) calloc(lMaxBufSamps, sizeof(int32_t));
+            
+            if (StaArray[NumEstaciones].plRawCircBuff == NULL || StaArray[NumEstaciones].plFiltCircBuff == NULL) {
+                logit("e", "csnhypodbp: FATAL: Sin memoria RAM para asignar buffer de estacion %s\n", s1);
+                exit(-1);
+            }
+            
+            NumEstaciones++;
+        }
+    }
+    fclose(fp); 
+    logit("t", "csnhypodbp: %d estaciones preparadas desde %s.\n", NumEstaciones, StaFile);
+}
+
+int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type) {
+    char str[20];
+    if (strlen(msg) < 162) return -1; 
+
+    /* === 1. TARJETA RESUMEN === */
+    strncpy(str, msg, 14); str[14] = '\0';
+    struct tm t; memset(&t, 0, sizeof(struct tm));
+    char tmp[5];
+    strncpy(tmp, str, 4); tmp[4]=0; t.tm_year = atoi(tmp) - 1900;
+    strncpy(tmp, str+4, 2); tmp[2]=0; t.tm_mon = atoi(tmp) - 1;
+    strncpy(tmp, str+6, 2); tmp[2]=0; t.tm_mday = atoi(tmp);
+    strncpy(tmp, str+8, 2); tmp[2]=0; t.tm_hour = atoi(tmp);
+    strncpy(tmp, str+10, 2); tmp[2]=0; t.tm_min = atoi(tmp);
+    strncpy(tmp, str+12, 2); tmp[2]=0; t.tm_sec = atoi(tmp);
+    
+    char *tz = getenv("TZ"); setenv("TZ", "GMT", 1); tzset();
+    *otime = (double)mktime(&t);
+    if (tz) setenv("TZ", tz, 1); else unsetenv("TZ"); tzset();
+    
+    strncpy(str, msg+14, 2); str[2] = '\0';
+    *otime += (double)atoi(str) / 100.0;
+
+    strncpy(str, msg+16, 2); str[2] = '\0'; double dLat = atof(str);
+    char lat_dir = msg[18];
+    strncpy(str, msg+19, 4); str[4] = '\0'; dLat += (atof(str) / 100.0) / 60.0;
+    *lat = (lat_dir == 'S') ? -dLat : dLat;
+
+    strncpy(str, msg+23, 3); str[3] = '\0'; double dLon = atof(str);
+    char lon_dir = msg[26];
+    strncpy(str, msg+27, 4); str[4] = '\0'; dLon += (atof(str) / 100.0) / 60.0;
+    *lon = (lon_dir == 'W') ? -dLon : dLon;
+
+    strncpy(str, msg+31, 5); str[5] = '\0';
+    *depth = atof(str) / 100.0;
+
+    strncpy(str, msg+39, 3); str[3] = '\0';
+    *nps = atoi(str);
+
+    strncpy(str, msg+42, 3); str[3] = '\0';
+    *azm = atoi(str);
+
+    strncpy(str, msg+48, 4); str[4] = '\0';
+    *res = atof(str) / 100.0;
+
+    strncpy(str, msg+136, 10); str[10] = '\0';
+    *qid = atoi(str);
+
+    strncpy(str, msg+160, 2); str[2] = '\0';
+    *qver = atoi(str);
+
+    strncpy(str, msg+147, 3); str[3] = '\0';
+    *pref_mag = atof(str) / 100.0;
+    strncpy(mag_type, msg+150, 3); mag_type[3] = '\0';
+
+    /* === 2. GESTION DEL CACHE DE PICKS === */
+    int cache_slot = -1;
+    for(int c=0; c<MAX_CACHED_EVENTS; c++) {
+        if(PickCache[c].qid == *qid) { cache_slot = c; break; }
+    }
+    if (cache_slot == -1) {
+        cache_slot = pick_cache_idx;
+        pick_cache_idx = (pick_cache_idx + 1) % MAX_CACHED_EVENTS;
+    }
+    PickCache[cache_slot].qid = *qid;
+    PickCache[cache_slot].num_picks = 0;
+
+    /* === 3. EXTRAER TARJETAS DE FASES === */
+    char *line = strchr(msg, '\n');
+    while (line != NULL && *line != '\0') {
+        line++; 
+        char *next_line = strchr(line, '\n');
+        int len = next_line ? (next_line - line) : strlen(line);
+
+        if (len >= 114 && line[0] != '$') {
+            char sta[6]={0}, net[3]={0}, comp[4]={0}, p_time_str[18]={0}, p_remark[5]={0};
+
+            strncpy(sta, line + 0, 5); 
+            strncpy(net, line + 5, 2); 
+            strncpy(comp, line + 9, 3);
+            strncpy(p_remark, line + 13, 4); 
+            strncpy(p_time_str, line + 17, 17); 
+
+            char *p;
+            for(p=sta+4; p>=sta && *p==' '; p--) *p='\0'; 
+            for(p=comp+2; p>=comp && *p==' '; p--) *p='\0'; 
+
+            if (p_remark[1] == 'P') {
+                struct tm pt; char tmp_p[6]; memset(&pt, 0, sizeof(struct tm));
+                strncpy(tmp_p, p_time_str, 4); tmp_p[4]=0; pt.tm_year = atoi(tmp_p) - 1900;
+                strncpy(tmp_p, p_time_str+4, 2); tmp_p[2]=0; pt.tm_mon = atoi(tmp_p) - 1;
+                strncpy(tmp_p, p_time_str+6, 2); tmp_p[2]=0; pt.tm_mday = atoi(tmp_p);
+                strncpy(tmp_p, p_time_str+8, 2); tmp_p[2]=0; pt.tm_hour = atoi(tmp_p);
+                strncpy(tmp_p, p_time_str+10, 2); tmp_p[2]=0; pt.tm_min = atoi(tmp_p);
+                strncpy(tmp_p, p_time_str+12, 5); tmp_p[5]=0; double p_sec = atof(tmp_p); pt.tm_sec = (int)p_sec;
+                
+                setenv("TZ", "GMT", 1); tzset();
+                time_t p_epoch = mktime(&pt);
+                if (tz) setenv("TZ", tz, 1); else unsetenv("TZ"); tzset();
+                
+                double exact_ptime = (double)p_epoch + (p_sec - (int)p_sec);
+
+                if (PickCache[cache_slot].num_picks < MAX_PICKS_PER_EVENT) {
+                    int pIdx = PickCache[cache_slot].num_picks;
+                    strncpy(PickCache[cache_slot].picks[pIdx].sta, sta, 7);
+                    strncpy(PickCache[cache_slot].picks[pIdx].chan, comp, 7);
+                    PickCache[cache_slot].picks[pIdx].pTime = exact_ptime;
+                    
+                    if (p_remark[3] == 'U' || p_remark[3] == 'D' || p_remark[3] == '?') {
+                        snprintf(PickCache[cache_slot].picks[pIdx].phase, 7, "P(%c)", p_remark[3]);
+                    } else {
+                        strcpy(PickCache[cache_slot].picks[pIdx].phase, "P");
+                    }
+                    PickCache[cache_slot].num_picks++;
+                }
+            }
+        }
+        line = next_line;
+    }
+
+    return 1;
+}
+
+void SaveHistoryFile(GtkWidget *tree) {
+    char TempFile[512];
+    snprintf(TempFile, sizeof(TempFile), "%s.tmp", HistoryFile);
+
+    FILE *fp = fopen(TempFile, "w");
+    if (!fp) return;
+    
+    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+    GtkTreeIter iter;
+    gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
+
+    int count = 0;
+    while (valid && count < 50) { 
+        gchar *fecha=NULL, *hora=NULL, *lat_s=NULL, *lon_s=NULL, *dep_s=NULL, *res_s=NULL, *azm_s=NULL, *stn_s=NULL, *id_s=NULL, *ml_s=NULL, *mwp_s=NULL;
+        double otime=0, lat=0, lon=0, depth=0;
+        int qver=0, qid=0;
+
+        gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 
+            0, &fecha, 1, &hora, 2, &lat_s, 3, &lon_s, 4, &dep_s, 5, &res_s, 
+            6, &azm_s, 7, &stn_s, 8, &id_s, 9, &ml_s, 10, &mwp_s, 14, &otime, 15, &qver, 
+            16, &qid, 17, &lat, 18, &lon, 19, &depth, -1);
+
+        fprintf(fp, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%lf,%d,%d,%lf,%lf,%lf\n", 
+                fecha ? fecha : "-", hora ? hora : "-", lat_s ? lat_s : "-", 
+                lon_s ? lon_s : "-", dep_s ? dep_s : "-", res_s ? res_s : "-", 
+                azm_s ? azm_s : "-", stn_s ? stn_s : "-", id_s ? id_s : "-", 
+                ml_s ? ml_s : "-", mwp_s ? mwp_s : "-", 
+                otime, qver, qid, lat, lon, depth);
+
+        if (fecha) g_free(fecha); 
+        if (hora) g_free(hora); 
+        if (lat_s) g_free(lat_s); 
+        if (lon_s) g_free(lon_s); 
+        if (dep_s) g_free(dep_s); 
+        if (res_s) g_free(res_s); 
+        if (azm_s) g_free(azm_s); 
+        if (stn_s) g_free(stn_s); 
+        if (id_s) g_free(id_s); 
+        if (ml_s) g_free(ml_s); 
+        if (mwp_s) g_free(mwp_s);
+
+        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+        count++;
+    }
+    fclose(fp);
+    rename(TempFile, HistoryFile);
+}
+
+void cargar_sismos_iniciales(GtkWidget *tree) {
+    FILE *fp = fopen(HistoryFile, "r");
+    if (!fp) return;
+    
+    char line[512];
+    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+    GtkTreeIter iter;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        if (line[0] == '\n' || line[0] == '\r') continue;
+        
+        char fecha[32], hora[32], lat_s[32], lon_s[32], dep_s[32], res_s[32], azm_s[32], stn_s[32], id_s[32], ml_s[32], mwp_s[32];
+        double otime, lat, lon, depth;
+        int qver, qid;
+
+        int parsed = sscanf(line, "%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%lf,%d,%d,%lf,%lf,%lf", 
+               fecha, hora, lat_s, lon_s, dep_s, res_s, azm_s, stn_s, id_s, ml_s, mwp_s, &otime, &qver, &qid, &lat, &lon, &depth);
+               
+        if (parsed == 17) {
+            gtk_list_store_append(store, &iter);
+            gtk_list_store_set(store, &iter, 
+                0, fecha, 1, hora, 2, lat_s, 3, lon_s, 4, dep_s, 5, res_s, 
+                6, azm_s, 7, stn_s, 8, id_s, 9, ml_s, 10, mwp_s, 14, otime, 15, qver, 
+                16, qid, 17, lat, 18, lon, 19, depth, -1);
+        }
+    }
+    fclose(fp);
+
+    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree));
+    GtkTreePath *path = gtk_tree_path_new_first();
+    if (path) { 
+        gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tree), path, NULL, FALSE, 0.0, 0.0);
+        gtk_tree_selection_select_path(selection, path); 
+        gtk_tree_path_free(path); 
+    }
+}
+
+int procesar_mensaje_sismo(GtkWidget *tree, const char *payload) {
+    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+    double otime, lat, lon, depth, res, pref_mag;
+    int nps, azm, qid, qver;
+    char mag_type[16] = "";
+
+    if (ParseY2K_Hypo((char*)payload, &otime, &lat, &lon, &depth, &res, &nps, &azm, &qid, &qver, &pref_mag, mag_type) < 0) {
+        return 0;
+    }
+
+    char fecha[32], hora[32], szLat[32], szLon[32], szDep[32], szRes[32], szAzm[32], szStn[32], szID[32];
+    time_t rawtime = (time_t)(otime);
+    struct tm *ptm = gmtime(&rawtime); 
+    if (ptm) { 
+        snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); 
+        snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); 
+    } else { 
+        strcpy(fecha, "--/--"); strcpy(hora, "--:--:--"); 
+    }
+
+    snprintf(szLat, sizeof(szLat), "%.2f%c", fabs(lat), lat < 0 ? 'S' : 'N'); 
+    snprintf(szLon, sizeof(szLon), "%.2f%c", fabs(lon), lon < 0 ? 'W' : 'E');
+    snprintf(szDep, sizeof(szDep), "%.0f", depth); 
+    snprintf(szRes, sizeof(szRes), "%.1f", res); 
+    snprintf(szAzm, sizeof(szAzm), "%d", azm);
+    snprintf(szStn, sizeof(szStn), "%d", nps); 
+    snprintf(szID, sizeof(szID), "%010d", qid);
+
+    GtkTreeIter iter, match_iter; gboolean existe = FALSE;
+    gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
+
+    while (valid) {
+        int row_qid;
+        gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 16, &row_qid, -1);
+        if (row_qid == qid) { existe = TRUE; match_iter = iter; break; }
+        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+    }
+
+    int result_status = 0;
+    if (existe) {
+        int existing_qver; gtk_tree_model_get(GTK_TREE_MODEL(store), &match_iter, 15, &existing_qver, -1);
+        if (qver >= existing_qver) {
+            gchar *old_ml = NULL, *old_mwp = NULL;
+            char szMl[32] = "-", szMwp[32] = "-";
+            gtk_tree_model_get(GTK_TREE_MODEL(store), &match_iter, 9, &old_ml, 10, &old_mwp, -1);
+            
+            if (old_ml) { strncpy(szMl, old_ml, 31); szMl[31]='\0'; g_free(old_ml); }
+            if (old_mwp) { strncpy(szMwp, old_mwp, 31); szMwp[31]='\0'; g_free(old_mwp); }
+
+            gtk_list_store_set(store, &match_iter, 0, fecha, 1, hora, 2, szLat, 3, szLon, 4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID, 9, szMl, 10, szMwp, 14, otime, 15, qver, 16, qid, 17, lat, 18, lon, 19, depth, -1); 
+            if (qid == selected_qid) result_status = 1;
+            g_history_needs_saving = TRUE; 
+        }
+    } else {
+        char szMl[32] = "-", szMwp[32] = "-";
+        gtk_list_store_append(store, &match_iter);
+        gtk_list_store_set(store, &match_iter, 0, fecha, 1, hora, 2, szLat, 3, szLon, 4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID, 9, szMl, 10, szMwp, 14, otime, 15, qver, 16, qid, 17, lat, 18, lon, 19, depth, -1);
+        result_status = 2;
+        g_history_needs_saving = TRUE;
+    }
+
+    return result_status;
+}
+
+int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
+    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+    MAG_INFO mag;
+    
+    if (rd_mag((char*)payload, strlen(payload), &mag) < 0) {
+        return 0;
+    }
+
+    int qid = atoi(mag.qid);
+    char mag_str[32];
+    snprintf(mag_str, sizeof(mag_str), "%.1f-%d", mag.mag, mag.nstations);
+
+    GtkTreeIter iter;
+    gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
+    while (valid) {
+        int row_qid;
+        gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 16, &row_qid, -1);
+        if (row_qid == qid) {
+            if (strcmp(mag.szmagtype, "ML") == 0 || strcmp(mag.szmagtype, "Ml") == 0) {
+                gtk_list_store_set(store, &iter, 9, mag_str, -1);
+            } else if (strcmp(mag.szmagtype, "Mwp") == 0 || strcmp(mag.szmagtype, "MWP") == 0) {
+                gtk_list_store_set(store, &iter, 10, mag_str, -1);
+            }
+            g_history_needs_saving = TRUE;
+            return 1;
+        }
+        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+    }
+    return 0;
+}
+
+static gboolean escuchar_anillo_earthworm(gpointer user_data) {
+    GtkWidget *tree = GTK_WIDGET(user_data);
+    char msg[65000]; MSG_LOGO reclogo; long recsize; int res;
+    gboolean active_needs_refresh = FALSE;
+    gboolean new_event_added = FALSE;
+    
+    while (TRUE) {
+        res = tport_getmsg(&InRegion, GetLogo, 2, &reclogo, &recsize, msg, sizeof(msg)-1);
+        if (res == GET_NONE) break;
+        if (res == GET_OK || res == GET_NOTRACK) {
+            msg[recsize] = '\0'; 
+            if (reclogo.type == TypeHyp2000Arc) {
+                int status = procesar_mensaje_sismo(tree, msg);
+                if (status == 1) active_needs_refresh = TRUE;
+                if (status == 2) new_event_added = TRUE;
+            } else if (reclogo.type == TypeMagnitude) {
+                int status = procesar_mensaje_mag(tree, msg);
+                if (status == 1) active_needs_refresh = TRUE;
+            }
+        }
+    } 
+    
+    if (new_event_added && !edit_mode) {
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree));
+        GtkTreePath *path = gtk_tree_path_new_first();
+        if (path) {
+            gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tree), path, NULL, FALSE, 0.0, 0.0);
+            gtk_tree_selection_select_path(selection, path);
+            gtk_tree_path_free(path);
+        }
+    } else if (active_needs_refresh && !edit_mode) {
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree));
+        g_signal_emit_by_name(selection, "changed");
+    }
+    return TRUE; 
+}
+
+
+/* --------------------------------------------------------------------
+ * FASE 3: FUNCIONES DE DESCARGA DE ONDAS (WAVE_SERVER)
+ * -------------------------------------------------------------------- */
+
+void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid) {
+
+    for (int i = 0; i < NumEstaciones; i++) {
+        bHasData[i] = 0;
+        StaArray[i].lRawCircCtr = 0;
+        StaArray[i].filter.initialized = FALSE;
+        StaArray[i].iNumPicks = 0;
+        StaArray[i].dManualPickTime = 0.0; /* Reset del pick manual al cambiar de sismo */
+        g_StaDist[i] = 0.0;
+    }
+
+    if (ws_menu.head == NULL) {
+        if (wsAppendMenu(WsIP, WsPort, &ws_menu, WsTimeout) != WS_ERR_NONE) {
+            logit("e", "csnhypodbp: Error conectando a WaveServer en %s:%s\n", WsIP, WsPort);
+            return;
+        }
+    }
+
+    double req_start = otime - 30.0;
+    double req_end = otime + 240.0; 
+    
+    long max_trace_buf = 2000000; 
+    char *trace_buffer = malloc(max_trace_buf);
+    if (!trace_buffer) return;
+
+    for (int i = 0; i < NumEstaciones; i++) {
+        for(int c = 0; c < MAX_CACHED_EVENTS; c++) {
+            if (PickCache[c].qid == qid) {
+                for (int p = 0; p < PickCache[c].num_picks; p++) {
+                    if (!strcmp(StaArray[i].szStation, PickCache[c].picks[p].sta) &&
+                        !strcmp(StaArray[i].szChannel, PickCache[c].picks[p].chan)) {
+                        int spIdx = StaArray[i].iNumPicks % MAX_PICKS_PER_STA;
+                        StaArray[i].picks[spIdx].dTime = PickCache[c].picks[p].pTime;
+                        strcpy(StaArray[i].picks[spIdx].szPhase, PickCache[c].picks[p].phase);
+                        StaArray[i].iNumPicks++;
+                    }
+                }
+                break;
+            }
+        }
+
+        if (StaArray[i].dLat != 0.0 && StaArray[i].dLon != 0.0 && eq_lat != 0.0) {
+            double rlat1 = eq_lat * M_PI / 180.0, rlat2 = StaArray[i].dLat * M_PI / 180.0;
+            double dlon = (StaArray[i].dLon - eq_lon) * M_PI / 180.0;
+            double dlat = (StaArray[i].dLat - eq_lat) * M_PI / 180.0;
+            double a = sin(dlat/2.0)*sin(dlat/2.0) + cos(rlat1)*cos(rlat2)*sin(dlon/2.0)*sin(dlon/2.0);
+            if (a < 0.0) a = 0.0; if (a > 1.0) a = 1.0; 
+            g_StaDist[i] = 2.0 * atan2(sqrt(a), sqrt(1.0-a)) * 180.0 / M_PI; 
+        }
+
+        if (g_StaDist[i] * 111.19 > g_max_dist_km && g_StaDist[i] != 0.0) continue;
+
+        TRACE_REQ req;
+        memset(&req, 0, sizeof(TRACE_REQ));
+        snprintf(req.sta, sizeof(req.sta), "%s", StaArray[i].szStation);
+        snprintf(req.net, sizeof(req.net), "%s", StaArray[i].szNetID);
+        snprintf(req.chan, sizeof(req.chan), "%s", StaArray[i].szChannel);
+        snprintf(req.loc, sizeof(req.loc), "%s", StaArray[i].szLocation);
+        
+        req.reqStarttime = req_start;
+        req.reqEndtime = req_end;
+        req.pBuf = trace_buffer;
+        req.bufLen = max_trace_buf;
+        req.timeout = WsTimeout;
+        req.fill = 0;
+
+        int ws_res = wsGetTraceBinL(&req, &ws_menu, WsTimeout);
+        
+        if (ws_res == WS_ERR_NONE && req.actLen > 0) {
+            bHasData[i] = 1;
+            char *ptr = req.pBuf;
+            char *end_ptr = req.pBuf + req.actLen;
+            double rate = 0.0;
+            
+            while (ptr < end_ptr) {
+                if (ptr + sizeof(TRACE2_HEADER) > end_ptr) break;
+                TRACE2_HEADER *trh = (TRACE2_HEADER *)ptr;
+                if (trh->nsamp < 0 || trh->nsamp > 500000 || trh->samprate <= 0.0) break;
+                if (rate == 0.0) rate = trh->samprate;
+                int dsize = (trh->datatype[1] == '2') ? 2 : 4;
+                char *dptr = ptr + sizeof(TRACE2_HEADER);
+
+                if (dptr + (trh->nsamp * dsize) > end_ptr) break;
+                if (StaArray[i].lRawCircCtr + trh->nsamp >= StaArray[i].lRawCircSize) break;
+
+                if (!StaArray[i].filter.initialized && trh->nsamp > 0) {
+                    double fc = 0.7;
+                    double w0 = 2.0 * M_PI * fc / rate; 
+                    double cosW = cos(w0);
+                    double sinW = sin(w0);
+                    double Q[2] = { 0.54119610, 1.30656296 }; 
+                    for(int b = 0; b < 2; b++) {
+                        double alpha = sinW / (2.0 * Q[b]);
+                        double a0 = 1.0 + alpha;
+                        StaArray[i].filter.bq[b].b0 = ((1.0 + cosW) / 2.0) / a0;
+                        StaArray[i].filter.bq[b].b1 = -(1.0 + cosW) / a0;
+                        StaArray[i].filter.bq[b].b2 = ((1.0 + cosW) / 2.0) / a0;
+                        StaArray[i].filter.bq[b].a1 = (-2.0 * cosW) / a0;
+                        StaArray[i].filter.bq[b].a2 = (1.0 - alpha) / a0;
+                        StaArray[i].filter.bq[b].y1 = 0.0;
+                        StaArray[i].filter.bq[b].y2 = 0.0;
+                    }
+                    double x_dc = (dsize == 4) ? (double)*((int32_t*)dptr) : (double)*((int16_t*)dptr);
+                    StaArray[i].filter.bq[0].x1 = x_dc; StaArray[i].filter.bq[0].x2 = x_dc;
+                    StaArray[i].filter.bq[1].x1 = 0.0;  StaArray[i].filter.bq[1].x2 = 0.0;
+                    StaArray[i].filter.initialized = TRUE;
+                }
+                
+                for (int s = 0; s < trh->nsamp; s++) {
+                    double x = (dsize == 4) ? (double)*((int32_t*)(dptr + s*4)) : (double)*((int16_t*)(dptr + s*2));
+                    BIQUAD *bq1 = &StaArray[i].filter.bq[0];
+                    double v = bq1->b0 * x + bq1->b1 * bq1->x1 + bq1->b2 * bq1->x2 - bq1->a1 * bq1->y1 - bq1->a2 * bq1->y2;
+                    bq1->x2 = bq1->x1; bq1->x1 = x; bq1->y2 = bq1->y1; bq1->y1 = v;
+                    BIQUAD *bq2 = &StaArray[i].filter.bq[1];
+                    double y = bq2->b0 * v + bq2->b1 * bq2->x1 + bq2->b2 * bq2->x2 - bq2->a1 * bq2->y1 - bq2->a2 * bq2->y2;
+                    bq2->x2 = bq2->x1; bq2->x1 = v; bq2->y2 = bq2->y1; bq2->y1 = y;
+                    
+                    long k = StaArray[i].lRawCircCtr;
+                    StaArray[i].plRawCircBuff[k] = (int32_t)x;
+                    StaArray[i].plFiltCircBuff[k] = (int32_t)y;
+                    StaArray[i].lRawCircCtr++;
+                }
+                ptr += sizeof(TRACE2_HEADER) + trh->nsamp * dsize;
+            }
+            StaArray[i].dSampRate = rate;
+            StaArray[i].dOldestTime = req_start;
+        } else if (ws_res == WS_ERR_BROKEN_CONNECTION || ws_res == WS_ERR_TIMEOUT) {
+            wsKillMenu(&ws_menu); ws_menu.head = NULL; 
+            break; 
+        }
+    }
+    free(trace_buffer);
+}
+
+void actualizar_altura_canvas() {
+    if (!canvas_global) return;
+    int count = 0;
+    for (int i = 0; i < NumEstaciones; i++) {
+        if (bHasData[i] == 1 && (g_StaDist[i] * 6371.0) <= g_max_dist_km) count++;
+    }
+    if (count > 0) gtk_widget_set_size_request(canvas_global, -1, (count * g_spacing) + 60);
+    else gtk_widget_set_size_request(canvas_global, -1, 600);
+}
+
+static void on_btn_fetch_clicked(GtkWidget *widget, gpointer data) {
+    if (!entry_dist || !entry_time) return;
+    double new_dist = atof(gtk_entry_get_text(GTK_ENTRY(entry_dist)));
+    double new_time_min = atof(gtk_entry_get_text(GTK_ENTRY(entry_time)));
+    gboolean changed = FALSE;
+    if (new_dist > 0.0) { g_max_dist_km = new_dist; changed = TRUE; }
+    if (new_time_min > 0.0) {
+        if (new_time_min > 10.0) { new_time_min = 10.0; gtk_entry_set_text(GTK_ENTRY(entry_time), "10"); }
+        g_dScreenTime = new_time_min * 60.0; 
+        changed = TRUE;
+    }
+    if (changed) {
+        actualizar_altura_canvas();
+        if (canvas_global) gtk_widget_queue_draw(canvas_global);
+        logit("t", ">> Fetch UI: Mostrando estaciones hasta %.1f km, ventana de %.1f min\n", g_max_dist_km, g_dScreenTime/60.0);
+    }
+}
+
+static void color_rows_func(GtkTreeViewColumn *col, GtkCellRenderer *rend, GtkTreeModel *model, GtkTreeIter *iter, gpointer data) {
+    GtkTreePath *path = gtk_tree_model_get_path(model, iter);
+    if (path) {
+        gint *indices = gtk_tree_path_get_indices(path);
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_global));
+        if (gtk_tree_selection_path_is_selected(selection, path)) {
+            g_object_set(rend, "cell-background", "#007bff", "foreground", "#ffffff", "weight", 700, NULL);
+        } else {
+            if (indices && indices[0] % 2 == 0) g_object_set(rend, "cell-background", "#ffcece", "foreground", "#000000", "weight", 400, NULL);
+            else g_object_set(rend, "cell-background", "#ffffff", "foreground", "#000000", "weight", 400, NULL);
+        }
+        gtk_tree_path_free(path);
+    }
+}
+
+static gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data) {
+    if (!edit_mode) return FALSE; 
+    if (event->keyval == GDK_KEY_Up) { g_zoom_factor *= 1.5; if (canvas_global) gtk_widget_queue_draw(canvas_global); return TRUE; } 
+    else if (event->keyval == GDK_KEY_Down) { g_zoom_factor /= 1.5; if (canvas_global) gtk_widget_queue_draw(canvas_global); return TRUE; }
+    return FALSE;
+}
+
+static void on_row_selected(GtkTreeSelection *selection, gpointer data) {
+    if (edit_mode) return;
+    GtkTreeIter iter; GtkTreeModel *model;
+    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
+        gchar *id_str; double otime, lat, lon; int qid;
+        gtk_tree_model_get(model, &iter, 8, &id_str, 14, &otime, 16, &qid, 17, &lat, 18, &lon, -1);
+        if (id_str) { strcpy(selected_id, id_str); g_free(id_str); }
+        selected_otime = otime; selected_qid = qid;
+        g_zoom_factor = 1.0; 
+        gtk_widget_set_sensitive(btn_repick, TRUE);
+
+        if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Descargando ondas historicas...");
+        
+        FetchWaveformsForEvent(otime, lat, lon, qid);
+        
+        if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
+
+        if (canvas_global) {
+            g_dWindowStart = otime - 20.0;
+            g_dScreenTime = 120.0; 
+            if (entry_dist) gtk_entry_set_text(GTK_ENTRY(entry_dist), "500");
+            if (entry_time) gtk_entry_set_text(GTK_ENTRY(entry_time), "2");
+            actualizar_altura_canvas();
+            gtk_widget_queue_draw(canvas_global);
+        }
+    } else {
+        gtk_widget_set_sensitive(btn_repick, FALSE);
+    }
+}
+
+static void on_btn_repick_clicked(GtkWidget *widget, gpointer data) {
+    if (selected_qid == 0) return;
+    if (!edit_mode) {
+        edit_mode = TRUE; g_zoom_factor = 1.0; 
+        gtk_widget_set_sensitive(tree_global, FALSE); 
+        gtk_button_set_label(GTK_BUTTON(btn_repick), "Finish");
+        gtk_widget_set_name(btn_repick, "btn_relocate");
+        if (box_fetch) gtk_widget_show_all(box_fetch);
+        gtk_widget_queue_draw(canvas_global);
+    } else {
+        edit_mode = FALSE; g_zoom_factor = 1.0; 
+        gtk_widget_set_sensitive(tree_global, TRUE); 
+        gtk_button_set_label(GTK_BUTTON(btn_repick), "Repick mode");
+        gtk_widget_set_name(btn_repick, "btn_repick");
+        if (box_fetch) gtk_widget_hide(box_fetch);
+        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_global));
+        g_signal_emit_by_name(selection, "changed");
+    }
+}
+
+/* --------------------------------------------------------------------
+ * FASE 4: LOGICA DE REPICKING SCNL INTERACTIVA
+ * -------------------------------------------------------------------- */
+static gboolean on_canvas_clicked(GtkWidget *widget, GdkEventButton *event, gpointer data) {
+    if (!edit_mode || event->button != 1) return TRUE; 
+
+    int width = gtk_widget_get_allocated_width(widget);
+    int margin_right = 10;
+    int draw_width = width - g_margin_left - margin_right;
+    
+    if (event->x <= g_margin_left || event->x >= width - margin_right) return TRUE;
+
+    /* Encontrar el indice de la pista clickeada basado en la coordenada Y */
+    int n = (int)((event->y - 30) / g_spacing);
+    if (n < 0 || n >= g_NumSortedNodes) return TRUE;
+    
+    int i = g_SortedNodes[n].idx;
+    
+    /* Calcular el tiempo exacto del click interpolando la coordenada X */
+    double fraction = (event->x - g_margin_left) / (double)draw_width;
+    double clicked_time = g_dWindowStart + fraction * g_dScreenTime;
+    
+    StaArray[i].dManualPickTime = clicked_time;
+    
+    char out_msg[256], time_str[32];
+    time_t t_sec = (time_t)clicked_time;
+    double t_msec = clicked_time - (double)t_sec;
+    struct tm *ptm = gmtime(&t_sec);
+    
+    snprintf(time_str, sizeof(time_str), "%04d%02d%02d%02d%02d%06.3f", 
+             ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, 
+             ptm->tm_hour, ptm->tm_min, (double)ptm->tm_sec + t_msec);
+             
+    /* Reemplazar comas por puntos en caso de problemas con locale del OS */
+    for (int k = 0; time_str[k] != '\0'; k++) {
+        if (time_str[k] == ',') time_str[k] = '.';
+    }
+    
+    static unsigned char pick_seq = 0;
+    
+    /* Formato estricto Earthworm: TYPE_PICK_SCNL <modid> <instid> <seq> <sta> <chan> <net> <loc> <phase_name> <time> ... */
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 P 0 0 0\n", 
+             TypePickSCNL, MyModId, MyInstId, pick_seq++, 
+             StaArray[i].szStation, StaArray[i].szChannel, 
+             StaArray[i].szNetID, StaArray[i].szLocation, time_str);
+             
+    MSG_LOGO logo = {MyInstId, MyModId, TypePickSCNL};
+    if (tport_putmsg(&PRegion, &logo, strlen(out_msg), out_msg) != PUT_OK) {
+        logit("e", "csnhypodbp: Error inyectando pick manual al anillo PRegion.\n");
+    } else {
+        logit("t", "csnhypodbp: MANUAL PICK INYECTADO -> %s", out_msg);
+    }
+    
+    /* Forzamos repintado para dibujar la linea azul de P(m) */
+    gtk_widget_queue_draw(widget);
+    return TRUE;
+}
+
+static gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data) {
+    int width = gtk_widget_get_allocated_width(widget);
+    cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
+    cairo_set_source_rgb(cr, 0.5, 0.1, 0.1); cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+    cairo_set_font_size(cr, 14); cairo_move_to(cr, width / 2 - 120, 20);
+    char buf[128]; 
+    if (edit_mode) snprintf(buf, sizeof(buf), "Repick Mode (Up/Down to Zoom) - Quake ID: %s", selected_id); 
+    else snprintf(buf, sizeof(buf), "Historical Data - Quake ID: %s", selected_id); 
+    cairo_show_text(cr, buf);
+
+    int margin_right = 10;
+    int draw_width = width - g_margin_left - margin_right;
+
+    g_NumSortedNodes = 0;
+    for (int i = 0; i < NumEstaciones; i++) {
+        if (bHasData[i] == 1 && (g_StaDist[i] * 111.19) <= g_max_dist_km) { 
+            g_SortedNodes[g_NumSortedNodes].idx = i; 
+            g_SortedNodes[g_NumSortedNodes].dist = g_StaDist[i]; 
+            g_NumSortedNodes++; 
+        }
+    }
+
+    for (int i = 0; i < g_NumSortedNodes - 1; i++) {
+        for (int j = 0; j < g_NumSortedNodes - i - 1; j++) {
+            if (g_SortedNodes[j].dist > g_SortedNodes[j+1].dist) { 
+                StaNode temp = g_SortedNodes[j]; g_SortedNodes[j] = g_SortedNodes[j+1]; g_SortedNodes[j+1] = temp; 
+            }
+        }
+    }
+
+    for (int n = 0; n < g_NumSortedNodes; n++) {
+        int i = g_SortedNodes[n].idx; 
+        int y_center = (n * g_spacing) + (g_spacing / 2) + 30;
+        
+        cairo_set_source_rgb(cr, 0.1, 0.2, 0.7); 
+        char sta_label[64]; 
+        snprintf(sta_label, sizeof(sta_label), "%s (%.0f km)", StaArray[i].szStation, g_SortedNodes[n].dist * 111.19);
+        cairo_set_font_size(cr, 12);
+        cairo_move_to(cr, 28, y_center + 5); 
+        cairo_show_text(cr, sta_label);
+
+        cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); cairo_set_line_width(cr, 1);
+        cairo_move_to(cr, g_margin_left, y_center); cairo_line_to(cr, width - margin_right, y_center); cairo_stroke(cr);
+
+        if (StaArray[i].dSampRate > 0) {
+            long start_k = (long)((g_dWindowStart - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
+            long end_k = (long)(((g_dWindowStart + g_dScreenTime) - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
+
+            if (start_k < 0) start_k = 0;
+            if (end_k > StaArray[i].lRawCircCtr) end_k = StaArray[i].lRawCircCtr;
+
+            long max_abs = 0;
+            for (long k = start_k; k < end_k; k++) {
+                long abs_val = labs(StaArray[i].plFiltCircBuff[k]);
+                if (abs_val > max_abs) max_abs = abs_val;
+            }
+
+            if (max_abs > 0) {
+                cairo_set_source_rgb(cr, 0.1, 0.1, 0.9); 
+                cairo_set_line_width(cr, 0.8);
+                double scale = (g_spacing * 0.45) / (double)max_abs * g_zoom_factor; 
+                
+                cairo_save(cr);
+                cairo_rectangle(cr, g_margin_left, y_center - (g_spacing / 2.0), draw_width, g_spacing);
+                cairo_clip(cr);
+
+                int first = 1;
+                for (long k = start_k; k < end_k; k++) {
+                    double t = StaArray[i].dOldestTime + (double)k / StaArray[i].dSampRate;
+                    double px = g_margin_left + ((t - g_dWindowStart) / g_dScreenTime) * draw_width;
+                    double y = y_center - (StaArray[i].plFiltCircBuff[k] * scale);
+
+                    if (first) { cairo_move_to(cr, px, y); first = 0; } 
+                    else { cairo_line_to(cr, px, y); }
+                }
+                cairo_stroke(cr);
+                cairo_restore(cr);
+            }
+        }
+        
+        /* DIBUJO DE PICKS ALMACENADOS EN EL MENSAJE ARC */
+        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0); 
+        cairo_set_line_width(cr, 2.0);
+        for (int p = 0; p < StaArray[i].iNumPicks; p++) {
+            double pTime = StaArray[i].picks[p].dTime;
+            if (pTime >= g_dWindowStart && pTime <= g_dWindowStart + g_dScreenTime) {
+                double x_pos = g_margin_left + ((pTime - g_dWindowStart) / g_dScreenTime * draw_width);
+                if (x_pos > g_margin_left && x_pos < width) { 
+                    cairo_move_to(cr, x_pos, y_center - (g_spacing / 2.5)); 
+                    cairo_line_to(cr, x_pos, y_center + (g_spacing / 2.5)); 
+                    cairo_stroke(cr); 
+                    cairo_move_to(cr, x_pos + 4, y_center - (g_spacing / 3)); 
+                    cairo_show_text(cr, StaArray[i].picks[p].szPhase); 
+                }
+            }
+        }
+
+        /* FASE 4: DIBUJO DE PICKS MANUALES (Repicking) */
+        if (StaArray[i].dManualPickTime > 0.0 && StaArray[i].dManualPickTime >= g_dWindowStart && StaArray[i].dManualPickTime <= g_dWindowStart + g_dScreenTime) {
+            double x_pos = g_margin_left + ((StaArray[i].dManualPickTime - g_dWindowStart) / g_dScreenTime * draw_width);
+            if (x_pos > g_margin_left && x_pos < width - margin_right) { 
+                cairo_set_source_rgb(cr, 0.0, 0.5, 1.0); /* Azul vibrante */
+                cairo_move_to(cr, x_pos, y_center - (g_spacing / 2.5)); 
+                cairo_line_to(cr, x_pos, y_center + (g_spacing / 2.5)); 
+                cairo_stroke(cr); 
+                cairo_move_to(cr, x_pos + 4, y_center + (g_spacing / 3)); 
+                cairo_show_text(cr, "P(m)"); 
+            }
+        }
+    }
+
+    return FALSE;
+}
+
+gboolean ew_background_tasks(gpointer user_data) {
+    time_t timeNow;
+    time(&timeNow);
+    if (timeNow - timeLastBeat >= HeartBeatInt) {
+        timeLastBeat = timeNow;
+        Status(TypeHeartBeat, 0, "");
+    }
+
+    if (g_history_needs_saving) {
+        SaveHistoryFile(tree_global);
+        g_history_needs_saving = FALSE;
+    }
+
+    int flag = tport_getflag(&InRegion);
+    if (flag == TERMINATE || flag == MyPid) {
+        logit("t", "csnhypodbp: Señal de terminacion recibida de Earthworm. Cerrando...\n");
+        gtk_main_quit();
+        return G_SOURCE_REMOVE;
+    }
+    return G_SOURCE_CONTINUE;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
+    if (ReadConfig(argv[1]) != 0) { fprintf(stderr, "Error leyendo config\n"); exit(1); }
+
+    setenv("TZ", "GMT", 1); tzset(); 
+    logit_init(argv[1], 0, 1024, LogFile);
+    MyPid = getpid();
+
+    gtk_init(&argc, &argv); setlocale(LC_NUMERIC, "C");
+
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(provider,
+        "treeview grid-line { border-color: #555555; }\n"
+        "#btn_repick { background-color: #cce5ff; color: #0a58ca; font-weight: bold; border-radius: 4px; }\n"
+        "#btn_relocate { background-color: #28a745; color: #ffffff; font-weight: bold; border-radius: 4px; }\n"
+        "#btn_fetch { background-color: #e2e3e5; font-weight: bold; border-radius: 4px; }", -1, NULL);
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+
+    ConnectToEarthworm();
+    LoadStationsFromFile();
+
+    window_global = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
+    gtk_window_set_default_size(GTK_WINDOW(window_global), 1100, 750); 
+    g_signal_connect(window_global, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    gtk_widget_add_events(window_global, GDK_KEY_PRESS_MASK);
+    g_signal_connect(window_global, "key-press-event", G_CALLBACK(on_key_press), NULL);
+
+    /* BLINDAJE SIGPIPE: Se coloca despues de init por seguridad */
+    signal(SIGPIPE, SIG_IGN);
+
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_container_add(GTK_CONTAINER(window_global), vbox);
+
+    GtkWidget *sw_lista = gtk_scrolled_window_new(NULL, NULL);
+    gtk_widget_set_size_request(sw_lista, -1, 250);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_lista), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    
+    GtkListStore *store = gtk_list_store_new(20, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_DOUBLE, G_TYPE_INT, G_TYPE_INT, G_TYPE_DOUBLE, G_TYPE_DOUBLE, G_TYPE_DOUBLE);
+    gtk_tree_sortable_set_sort_column_id(GTK_TREE_SORTABLE(store), 14, GTK_SORT_DESCENDING);
+
+    tree_global = gtk_tree_view_new_with_model(GTK_TREE_MODEL(store));
+    gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(tree_global), GTK_TREE_VIEW_GRID_LINES_BOTH);
+    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_global));
+    g_signal_connect(selection, "changed", G_CALLBACK(on_row_selected), NULL);
+
+    const char *headers[] = {"Date", "O-time", "Lat.", "Lon.", "Dep", "Res", "Azm", "#Stn", "ID", "Ml", "Mwp"};
+    for (int i = 0; i < 11; i++) {
+        GtkCellRenderer *rend = gtk_cell_renderer_text_new();
+        GtkTreeViewColumn *col = gtk_tree_view_column_new_with_attributes(headers[i], rend, "text", i, NULL);
+        g_object_set(rend, "xalign", 0.5, NULL); 
+        gtk_tree_view_column_set_alignment(col, 0.5); 
+        gtk_tree_view_column_set_expand(col, TRUE); 
+        gtk_tree_view_column_set_cell_data_func(col, rend, color_rows_func, NULL, NULL);
+        gtk_tree_view_append_column(GTK_TREE_VIEW(tree_global), col);
+    }
+    gtk_container_add(GTK_CONTAINER(sw_lista), tree_global); 
+    gtk_box_pack_start(GTK_BOX(vbox), sw_lista, FALSE, FALSE, 0);
+
+    GtkWidget *sw_ondas = gtk_scrolled_window_new(NULL, NULL);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_ondas), GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
+    gtk_box_pack_start(GTK_BOX(vbox), sw_ondas, TRUE, TRUE, 0);
+
+    canvas_global = gtk_drawing_area_new();
+    gtk_widget_set_size_request(canvas_global, -1, 600); 
+    gtk_widget_add_events(canvas_global, GDK_BUTTON_PRESS_MASK);
+    g_signal_connect(G_OBJECT(canvas_global), "button-press-event", G_CALLBACK(on_canvas_clicked), NULL);
+    gtk_container_add(GTK_CONTAINER(sw_ondas), canvas_global);
+    g_signal_connect(G_OBJECT(canvas_global), "draw", G_CALLBACK(on_draw_signal), NULL);
+
+    GtkWidget *hbox_bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_margin_start(hbox_bottom, 10); gtk_widget_set_margin_end(hbox_bottom, 10); gtk_widget_set_margin_bottom(hbox_bottom, 5);
+    GtkWidget *hbox_center = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 15);
+    
+    btn_repick = gtk_button_new_with_label("Repick mode");
+    gtk_widget_set_name(btn_repick, "btn_repick");
+    gtk_widget_set_sensitive(btn_repick, FALSE); 
+    g_signal_connect(btn_repick, "clicked", G_CALLBACK(on_btn_repick_clicked), NULL);
+
+    box_fetch = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    entry_dist = gtk_entry_new(); gtk_entry_set_width_chars(GTK_ENTRY(entry_dist), 5); gtk_entry_set_text(GTK_ENTRY(entry_dist), "500");
+    entry_time = gtk_entry_new(); gtk_entry_set_width_chars(GTK_ENTRY(entry_time), 5); gtk_entry_set_text(GTK_ENTRY(entry_time), "2");
+    GtkWidget *btn_fetch = gtk_button_new_with_label("Fetch from WS");
+    gtk_widget_set_name(btn_fetch, "btn_fetch");
+    g_signal_connect(btn_fetch, "clicked", G_CALLBACK(on_btn_fetch_clicked), NULL);
+    
+    gtk_box_pack_start(GTK_BOX(box_fetch), gtk_label_new("Distance (km):"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_fetch), entry_dist, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_fetch), gtk_label_new("  Window (min):"), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_fetch), entry_time, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_fetch), btn_fetch, FALSE, FALSE, 5);
+
+    gtk_box_pack_start(GTK_BOX(hbox_center), btn_repick, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox_center), box_fetch, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(hbox_bottom), hbox_center, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(vbox), hbox_bottom, FALSE, FALSE, 0);
+
+    cargar_sismos_iniciales(tree_global);
+    
+    gtk_widget_show_all(window_global);
+    gtk_widget_hide(box_fetch);
+    
+    g_timeout_add(1000, ew_background_tasks, NULL);
+    g_timeout_add(500, escuchar_anillo_earthworm, tree_global);
+
+    gtk_main(); 
+    
+    tport_detach(&InRegion); 
+    tport_detach(&PRegion);
+    
+    if (StaArray) {
+        for (int i = 0; i < NumEstaciones; i++) {
+            if (StaArray[i].plRawCircBuff) free(StaArray[i].plRawCircBuff);
+            if (StaArray[i].plFiltCircBuff) free(StaArray[i].plFiltCircBuff);
+        }
+        free(StaArray);
+    }
+    return 0;
+}
