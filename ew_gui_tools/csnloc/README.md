@@ -136,7 +136,64 @@ configuración anterior de grilla única (regresión).
 | `RefineIterations` | 3 | Iteraciones del refinamiento |
 | `RefineNodeKm` | 5.0 | Paso inicial de la caja de refinamiento (km) |
 | `AgencyID` / `Author` | `CL` / `csnloc` | Metadatos de salida |
-| `EventTTLSec` | 300.0 | (reservado para dinámica de eventos) |
+| `EventTTLSec` | 300.0 | Expiración de eventos activos sin actualizaciones (s) |
+| `MaxRMSDegrade` | 0.10 | Empeoramiento de RMS tolerado al aceptar una versión nueva (fracción) |
+| `MaxGapDegradeDeg` | 10.0 | Empeoramiento de gap tolerado (grados) |
+| `PhaseAssocTolSec` | 2.0 | Residual máximo para asociar una fase P nueva al evento (s) |
+| `PhaseAssocTolSecS` | 4.0 | Idem para S |
+| `PhaseResidualMaxSec` | 3.0 | Umbral de poda por residual para P (s) |
+| `PhaseResidualMaxSecS` | 5.0 | Idem para S |
+| `RenucleateMinNewPhases` | 3 | Fases nuevas que disparan re-núcleo con back-projection |
+
+## Versionado dinámico de eventos
+
+`csnloc` mantiene un **registro de eventos activos** con identidad estable:
+
+- **ID base** derivado del epoch de arranque: `(epoch % 100000) * 100000 + seq`.
+  Sin configuración ni contador en disco. En modo offline el epoch es 0
+  (determinismo de tests).
+- **Fases acumuladas**: la ventana deslizante solo *descubre* eventos nuevos.
+  Una vez creado, el evento conserva sus fases y las optimiza (incorpora
+  re-picks y fases nuevas, poda las que no se ajustan a la solución vigente).
+- **Versión**: cada mejora emite el **mismo ID** con versión incrementada
+  (`ID-version`). La política de aceptación exige que la solución nueva mejore
+  o no empeore más allá de `MaxRMSDegrade`/`MaxGapDegradeDeg`.
+- **Poda por calidad**: una fase con residual > umbral se descarta si la
+  solución nueva es mejor. La primera estación solo se poda con residual
+  grosero (2× umbral). Las fases podadas no se re-incorporan si vuelven
+  idénticas.
+- **Re-núcleo**: si se podó alguna fase o entraron ≥ `RenucleateMinNewPhases`
+  fases nuevas, se re-nuclea con back-projection restringido a la región del
+  evento (verificando que la grilla cubra su profundidad).
+- **Sin picks nuevos**: no se re-localiza ni se emite.
+
+### Formato ARC
+
+La línea 1 usa el layout canónico de EarthWorm (`read_arc.h`):
+
+| Campo | Offset | Contenido |
+|---|---|---|
+| `qid` | 136 (10 chars) | ID base |
+| `version` | 161 (1 char) | Dígito menos significativo de la versión |
+| `eventVersion` | 178 (19 chars) | Versión completa (`%04u`) |
+
+La línea 1 mide **197 chars** (no se acorta el layout estándar).
+
+### Estado persistido (recuperación)
+
+`csnloc` es el **único escritor** del estado de eventos
+(`$EW_LOG/csnloc.events`, escritura atómica `.tmp` + `rename`). Los
+consumidores lo leen **solo al arrancar** para recuperarse; el display en
+tiempo real siempre viene del anillo:
+
+- `csnhypodbp`: `HYPO_RING` (`tport_getmsg`); recuperación desde `StateFile`.
+- `csnrv`: `HYPO_RING` (`tport_getmsg`); muestra la mayor versión por `qid` y
+  las magnitudes ML/Mwp de `TYPE_MAGNITUDE` (preferida destacada en rojo).
+- `csnmags_toy`: no recalcula magnitudes si la versión entrante es ≤ la última
+  procesada para ese evento.
+
+`csnhypodbp_hist.txt` fue **eliminado**: ya no hay archivo intermedio entre
+módulos.
 
 ## Compilación y tests
 
@@ -169,6 +226,12 @@ copias en `run_working_v8/params/`).
 | `test_precompute_equiv` | Precómputo CSR ≡ camino sin CSR |
 | `test_grid_activation` | Activación de grillas por picks |
 | `test_nested_dedup` | Dos grillas del mismo sismo ⇒ un evento |
+| `test_event_version` | Versionado: evento nuevo v1, mejora v2, empeora no emite |
+| `test_phase_prune` | Poda por calidad y no re-incorporación de fases podadas |
+| `test_event_ttl` | Expiración de eventos por `EventTTLSec` |
+| `test_state_recover` | Persistencia y recuperación del registro |
+| `test_event_id` | ID base derivado del epoch de arranque |
+| `test_renucleate` | Re-núcleo con back-projection al cambiar mucho las fases |
 
 ## Nota sobre `taulib_csnloc.c`
 
@@ -186,7 +249,6 @@ En `startstop_unix.d` las entradas de `ew2glass`/`glass2ew` quedaron
 comentadas y se agregó `csnloc`. Para volver al flujo GLASS3, descomentar
 aquellas y comentar la de `csnloc`. No se borró código.
 
-## Pendiente (fase 6, no implementada)
+## Pendiente
 
-- Re-localización dinámica al ingresar picks nuevos y reemisión de eventos
-  activos (`EventTTLSec`).
+- (ninguno)

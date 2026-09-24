@@ -13,7 +13,8 @@ CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
 LIBS = -lm -lpthread
 
 OBJS = csnloc.o pick_scln.o pick_buffer.o stations.o ttmodel.o grid.o \
-       gridset.o backprojection.o dbscan.o refine.o hypo_out.o
+       gridset.o backprojection.o dbscan.o refine.o hypo_out.o \
+       event_registry.o state.o
 
 # taulib_csnloc.c es una copia local del motor IASP91 con el PATCH NULL-safe
 # de strstr/strchr (bug de 64 bits que corrompia memoria al sustituir fases).
@@ -39,7 +40,9 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_dbscan test/test_hypo_format test/test_synth_locate \
         test/test_two_events test/test_grid_parse test/test_gridset_load \
         test/test_precompute_equiv test/test_grid_activation \
-        test/test_nested_dedup
+        test/test_nested_dedup test/test_event_version test/test_phase_prune \
+        test/test_event_ttl test/test_state_recover test/test_event_id \
+        test/test_renucleate
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -70,6 +73,12 @@ check: $(TESTS) iasp91.tbl iasp91.hed
 	@echo "=== test_precompute_equiv ==="; ./test/test_precompute_equiv
 	@echo "=== test_grid_activation ===";  ./test/test_grid_activation
 	@echo "=== test_nested_dedup ===";     ./test/test_nested_dedup
+	@echo "=== test_event_version ===";    ./test/test_event_version
+	@echo "=== test_phase_prune ===";      ./test/test_phase_prune
+	@echo "=== test_event_ttl ===";        ./test/test_event_ttl
+	@echo "=== test_state_recover ===";    ./test/test_state_recover
+	@echo "=== test_event_id ===";         ./test/test_event_id
+	@echo "=== test_renucleate ===";       ./test/test_renucleate
 	@echo "TODOS LOS TESTS OK"
 
 test/test_pick_parse: test/test_pick_parse.c pick_scln.o
@@ -125,6 +134,31 @@ test/test_nested_dedup: test/test_nested_dedup.c backprojection.o dbscan.o \
 	      dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \
 	      $(TAUOBJS) $(LIBS)
 
+EVREG_DEPS = event_registry.o backprojection.o dbscan.o refine.o gridset.o \
+             grid.o ttmodel.o stations.o $(TAUOBJS)
+
+test/test_event_version: test/test_event_version.c $(EVREG_DEPS)
+	$(CC) $(CFLAGS) -o $@ test/test_event_version.c $(EVREG_DEPS) $(LIBS)
+
+test/test_phase_prune: test/test_phase_prune.c $(EVREG_DEPS)
+	$(CC) $(CFLAGS) -o $@ test/test_phase_prune.c $(EVREG_DEPS) $(LIBS)
+
+test/test_event_ttl: test/test_event_ttl.c $(EVREG_DEPS)
+	$(CC) $(CFLAGS) -o $@ test/test_event_ttl.c $(EVREG_DEPS) $(LIBS)
+
+test/test_state_recover: test/test_state_recover.c state.o $(EVREG_DEPS)
+	$(CC) $(CFLAGS) -o $@ test/test_state_recover.c state.o $(EVREG_DEPS) $(LIBS)
+
+test/test_event_id: test/test_event_id.c
+	$(CC) $(CFLAGS) -o $@ test/test_event_id.c $(LIBS)
+
+test/test_renucleate: test/test_renucleate.c event_registry.o backprojection.o \
+                      dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \
+                      $(TAUOBJS)
+	$(CC) $(CFLAGS) -o $@ test/test_renucleate.c event_registry.o \
+	      backprojection.o dbscan.o refine.o gridset.o grid.o ttmodel.o \
+	      stations.o $(TAUOBJS) $(LIBS)
+
 # Generador de picks sinteticos para el test del modo offline.
 test/gen_offline_picks: test/gen_offline_picks.c ttmodel.o stations.o $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $@ test/gen_offline_picks.c ttmodel.o stations.o \
@@ -150,7 +184,8 @@ check-offline: $(TARGET) test/gen_offline_picks iasp91.tbl iasp91.hed
 
 clean:
 	rm -f *.o $(TARGET) csnloc_asan $(TESTS) test/gen_offline_picks \
-	      test/test_offline.picks test/test_tt_asan
+	      test/test_offline.picks test/test_tt_asan \
+	      /tmp/opencode/csnloc_test_state.events
 
 # Diagnostico: compila el test de TT con AddressSanitizer y lo ejecuta.
 asan-tt: iasp91.tbl iasp91.hed

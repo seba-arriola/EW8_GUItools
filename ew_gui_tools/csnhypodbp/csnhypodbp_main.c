@@ -5,7 +5,7 @@ char MyModName[MAX_STR];
 char InRingName[MAX_STR];
 char OutRingName[MAX_STR];
 char StaFile[MAX_STR];
-char HistoryFile[MAX_STR]; 
+char StateFile[MAX_STR];   /* archivo de estado de csnloc (recuperacion) */
 char WsIP[MAX_STR];
 char WsPort[MAX_STR];
 int  WsTimeout;
@@ -86,7 +86,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("StaFile")) { str = k_str(); if (str) strcpy(StaFile, str); init[5] = 1; } 
         else if (k_its("WsIP")) { str = k_str(); if (str) strcpy(WsIP, str); init[6] = 1; } 
         else if (k_its("WsPort")) { str = k_str(); if (str) strcpy(WsPort, str); init[7] = 1; } 
-        else if (k_its("HistoryFile")) { str = k_str(); if (str) strcpy(HistoryFile, str); init[8] = 1; }
+        else if (k_its("StateFile")) { str = k_str(); if (str) strcpy(StateFile, str); init[8] = 1; }
         else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
         else { continue; }
         if (k_err()) { fprintf(stderr, "Error parseando <%s>\n", com); return -1; }
@@ -159,9 +159,8 @@ gboolean escuchar_anillo_earthworm(gpointer user_data) {
 gboolean ew_background_tasks(gpointer user_data) {
     time_t timeNow; time(&timeNow);
     if (timeNow - timeLastBeat >= HeartBeatInt) { timeLastBeat = timeNow; Status(TypeHeartBeat, 0, ""); }
-    if (g_history_needs_saving) {
-        SaveHistoryFile(tree_global); g_history_needs_saving = FALSE;
-    }
+    /* El estado de eventos lo persiste csnloc (unico escritor). csnhypodbp
+       solo lo lee al arrancar para recuperarse. */
     int flag = tport_getflag(&InRegion);
     if (flag == TERMINATE || flag == MyPid) { gtk_main_quit(); return G_SOURCE_REMOVE; }
     return G_SOURCE_CONTINUE;

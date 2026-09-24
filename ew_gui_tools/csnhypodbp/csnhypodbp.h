@@ -89,7 +89,7 @@ extern char MyModName[MAX_STR];
 extern char InRingName[MAX_STR];
 extern char OutRingName[MAX_STR];
 extern char StaFile[MAX_STR];
-extern char HistoryFile[MAX_STR]; 
+extern char StateFile[MAX_STR];   /* archivo de estado de csnloc (recuperacion) */
 extern char WsIP[MAX_STR];
 extern char WsPort[MAX_STR];
 extern int  WsTimeout;
@@ -162,7 +162,7 @@ void Status(unsigned char type, short ierr, char *note);
 void ConnectToEarthworm(void);
 void LoadStationsFromFile(void);
 int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type);
-void SaveHistoryFile(GtkWidget *tree);
+
 void cargar_sismos_iniciales(GtkWidget *tree);
 int procesar_mensaje_sismo(GtkWidget *tree, const char *payload);
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload);

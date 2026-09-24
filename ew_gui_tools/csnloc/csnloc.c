@@ -73,6 +73,14 @@ static void set_defaults(CSLocParams *c)
     strcpy(c->AgencyID, "CL");
     strcpy(c->Author, "csnloc");
     c->EventTTLSec = 300.0;
+
+    c->MaxRMSDegrade = 0.10;
+    c->MaxGapDegradeDeg = 10.0;
+    c->PhaseAssocTolSec = 2.0;
+    c->PhaseAssocTolSecS = 4.0;
+    c->PhaseResidualMaxSec = 3.0;
+    c->PhaseResidualMaxSecS = 5.0;
+    c->RenucleateMinNewPhases = 3;
 }
 
 /* Registra un archivo de grilla con su nivel (GRID_LEVEL_*). */
@@ -143,6 +151,13 @@ static int read_config(const char *file, CSLocParams *c)
         else if (k_its("AgencyID"))     { str = k_str(); if (str) strncpy(c->AgencyID, str, sizeof(c->AgencyID)-1); }
         else if (k_its("Author"))       { str = k_str(); if (str) strncpy(c->Author, str, sizeof(c->Author)-1); }
         else if (k_its("EventTTLSec"))  c->EventTTLSec = k_val();
+        else if (k_its("MaxRMSDegrade")) c->MaxRMSDegrade = k_val();
+        else if (k_its("MaxGapDegradeDeg")) c->MaxGapDegradeDeg = k_val();
+        else if (k_its("PhaseAssocTolSec")) c->PhaseAssocTolSec = k_val();
+        else if (k_its("PhaseAssocTolSecS")) c->PhaseAssocTolSecS = k_val();
+        else if (k_its("PhaseResidualMaxSec")) c->PhaseResidualMaxSec = k_val();
+        else if (k_its("PhaseResidualMaxSecS")) c->PhaseResidualMaxSecS = k_val();
+        else if (k_its("RenucleateMinNewPhases")) c->RenucleateMinNewPhases = k_int();
         else continue;
 
         if (k_err()) { fprintf(stderr, "csnloc: error de config en '%s'\n", com); k_close(); return -1; }
@@ -225,7 +240,8 @@ static void Epoch_ToISO(double t, char *buf, int buflen)
 /* Emision de un evento: JSON a stdout (offline) o HYP2000ARC al anillo.      */
 /* ------------------------------------------------------------------------- */
 static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
-                      const Pick *window, int nwin, char *arc)
+                      const Pick *window, int nwin, unsigned int version,
+                      char *arc)
 {
     if (ctx->Offline) {
         char t0iso[32];
@@ -233,12 +249,13 @@ static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
 
         Epoch_ToISO(h->t0, t0iso, sizeof(t0iso));
         fprintf(ctx->OfflineOut,
-                "{\"event\":%lu,\"t0\":%.3f,\"t0_utc\":\"%s\","
+                "{\"event\":%lu,\"id\":%lu,\"version\":%u,"
+                "\"t0\":%.3f,\"t0_utc\":\"%s\","
                 "\"lat\":%.4f,\"lon\":%.4f,\"depth_km\":%.1f,"
                 "\"nphases\":%d,\"rms_sec\":%.3f,\"gap_deg\":%.1f,"
                 "\"dmin_km\":%.1f,\"score\":%.3f,\"grid_level\":%d,"
                 "\"nwin\":%d,\"phases\":[",
-                h->id, h->t0, t0iso,
+                h->id, h->id, version, h->t0, t0iso,
                 h->lat, h->lon, h->depth_km,
                 h->nphases, h->rms_sec, h->gap_deg,
                 h->dmin_km, h->score, h->grid_level, nwin);
@@ -401,7 +418,9 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
     if (nev > ctx->cfg.MaxEventsPerWindow) nev = ctx->cfg.MaxEventsPerWindow;
 
     for (i = 0; i < nev; i++) {
-        char arc[65536];
+        char          arc[65536];
+        unsigned long id_out = 0;
+        unsigned int  ver_out = 0;
 
         /* El índice de fase se refiere a la ventana; el refinado usa esa
            misma copia, por lo que es consistente. */
@@ -411,19 +430,36 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
         if (cand[i].nphases < ctx->cfg.MinPhasesPerEvent) continue;
         if (ctx->cfg.MaxRMS > 0.0 && cand[i].rms_sec > ctx->cfg.MaxRMS) continue;
 
-        cand[i].id = ctx->next_event_id++;
+        /* El registro decide si es un evento nuevo o una actualizacion de uno
+           existente, y si hay que emitir (fases nuevas que mejoran). El ID de
+           un evento nuevo es id_base + seq (seq no se reutiliza). */
+        if (!EventRegistry_Upsert(&ctx->events, &cand[i], window, nwin,
+                                  &ctx->cfg, &ctx->stations, &ctx->tt,
+                                  &ctx->grids,
+                                  ctx->id_base + ctx->seq, &id_out, &ver_out))
+            continue;
+        if (id_out >= ctx->id_base + ctx->seq) ctx->seq++;
+
+        cand[i].id = id_out;
 
         if (FormatHYP2000ARC(&cand[i], &ctx->stations, window, &ctx->cfg,
-                             cand[i].id, arc, sizeof(arc)) != 0)
+                             id_out, ver_out, arc, sizeof(arc)) != 0)
             continue;
 
         if (ctx->cfg.DumpHypo)
-            logit("t", "csnloc: --- HYP2000ARC evento %lu ---\n%s"
-                       "csnloc: --- fin HYP2000ARC evento %lu ---\n",
-                  cand[i].id, arc, cand[i].id);
+            logit("t", "csnloc: --- HYP2000ARC evento %lu-%u ---\n%s"
+                       "csnloc: --- fin HYP2000ARC evento %lu-%u ---\n",
+                  id_out, ver_out, arc, id_out, ver_out);
 
-        emit_hypo(ctx, &cand[i], window, nwin, arc);
+        emit_hypo(ctx, &cand[i], window, nwin, ver_out, arc);
     }
+
+    /* Expirar eventos sin actividad reciente. */
+    EventRegistry_Expire(&ctx->events, now_epoch, ctx->cfg.EventTTLSec);
+
+    /* Persistir el estado (solo modo anillo; offline es determinista). */
+    if (!ctx->Offline && ctx->state_path[0])
+        State_Save(ctx->state_path, &ctx->events);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -598,7 +634,24 @@ int main(int argc, char **argv)
 
     /* --- buffers --- */
     PickBuffer_Init(&ctx.picks, CSLOC_MAX_PICKS, ctx.cfg.RePickWindowSec);
-    ctx.next_event_id = 1;
+    EventRegistry_Init(&ctx.events);
+
+    /* ID base derivado del epoch de arranque: sin config ni contador en disco.
+       Offline usa epoch 0 para que los tests sean deterministas. */
+    if (ctx.Offline) {
+        ctx.id_base = 0;
+    } else {
+        ctx.id_base = ((unsigned long)time(NULL) % 100000UL) * 100000UL;
+    }
+    ctx.seq = 0;
+    ctx.next_event_id = ctx.id_base;
+
+    /* Archivo de estado (recuperacion): mismo directorio que el LogFile. */
+    {
+        const char *logdir = getenv("EW_LOG");
+        snprintf(ctx.state_path, sizeof(ctx.state_path), "%s/csnloc.events",
+                 (logdir && logdir[0]) ? logdir : ".");
+    }
 
     if (ctx.Offline) {
         int rc = run_offline(&ctx, argv[2]);
@@ -607,6 +660,17 @@ int main(int argc, char **argv)
         GridSet_Free(&ctx.grids);
         TTModel_Free(&ctx.tt);
         return rc == 0 ? 0 : 1;
+    }
+
+    /* Recuperacion: cargar eventos activos de la sesion anterior. */
+    if (State_Load(ctx.state_path, &ctx.events) == 0 && ctx.events.n > 0) {
+        unsigned long maxid = 0;
+        for (i = 0; i < ctx.events.n; i++)
+            if (ctx.events.ev[i].id > maxid) maxid = ctx.events.ev[i].id;
+        /* Continuar la secuencia por encima del mayor ID recuperado. */
+        if (maxid >= ctx.id_base) ctx.id_base = maxid + 1;
+        logit("t", "csnloc: recuperados %d eventos activos de %s\n",
+              ctx.events.n, ctx.state_path);
     }
 
     /* --- anillos (solo modo produccion) --- */

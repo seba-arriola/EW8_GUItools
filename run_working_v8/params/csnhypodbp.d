@@ -15,4 +15,4 @@ WsTimeout       10000
 
 # Archivo de estaciones a graficar (Podemos usar el mismo de csntvp)
 StaFile         estaciones_107.txt         # Archivo de estaciones con formato: Estacion Canal Red Loc Escala
-HistoryFile     csnhypodbp_hist.txt        # Archivo donde se guardan los últimos sismos
+StateFile       csnloc.events             # Estado de eventos de csnloc (solo recuperacion al arrancar)

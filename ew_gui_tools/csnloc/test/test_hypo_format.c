@@ -61,12 +61,12 @@ int main(void)
     h.residual[0] = 0.5; h.residual[1] = -0.5;
     h.rms_sec = 0.5; h.gap_deg = 120.0; h.dmin_km = 50.0;
 
-    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, buf, sizeof(buf)) == 0,
+    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, buf, sizeof(buf)) == 0,
           "formatea sin error");
 
     nl1 = strchr(buf, '\n');
     CHECK(nl1 != NULL, "linea 1 con salto");
-    CHECK(nl1 && (nl1 - buf) == 162, "linea 1 mide 162 chars");
+    CHECK(nl1 && (nl1 - buf) == 197, "linea 1 mide 197 chars (layout canonico)");
     CHECK(strncmp(buf, "2026030916373600", 16) == 0,
           "prefijo YYYYMMDDHHMM + ss*100");
     CHECK(strncmp(buf + 39, "  2", 3) == 0 ||
@@ -74,9 +74,11 @@ int main(void)
     /* nps=2 (%3d) en 39..41, gap=120 en 42..44, dmin=50 en 45..47, rms=50 en 48..51 */
     CHECK(buf[39] == ' ' && buf[40] == ' ' && buf[41] == '2', "nps=2");
     CHECK(strncmp(buf + 136, "0000000042", 10) == 0, "event id en offset 136");
+    CHECK(buf[161] == '3', "version[1] en offset 161");
+    CHECK(strncmp(buf + 178, "0003", 4) == 0, "eventVersion en offset 178");
 
     nl2 = nl1 ? strchr(nl1 + 1, '\n') : NULL;
-    CHECK(nl2 != NULL && (nl2 - (nl1 + 1)) == 162, "linea $1 mide 162 chars");
+    CHECK(nl2 != NULL && (nl2 - (nl1 + 1)) == 197, "linea $1 mide 197 chars");
     CHECK(nl1 && nl1[1] == '$' && nl1[2] == '1', "linea $1 inicia con $1");
 
     nl3 = nl2 ? strchr(nl2 + 1, '\n') : NULL;

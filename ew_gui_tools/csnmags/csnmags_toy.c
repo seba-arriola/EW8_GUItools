@@ -55,6 +55,7 @@ typedef struct {
     int active, num_ml, used_ml, num_mwp, used_mwp;
     char event_id[20], pref_type[10];
     time_t origin_time, last_update;
+    unsigned int version;   /* ultima version del ARC procesada */
     STA_MAG ml_data[MAX_STATIONS], mwp_data[MAX_STATIONS];
     double avg_ml, avg_mwp, pref_mag;
 } EVENT_STATE;
@@ -266,6 +267,26 @@ void ProcessArcMessage(char *msg) {
     strncpy(event_id, msg + 136, 10);
     char *pe; for(pe=event_id+9; pe>=event_id && *pe==' '; pe--) *pe='\0';
     strncpy(origin_time_str, msg, 14);
+
+    /* Version del ARC (eventVersion en offset 178, 4 chars). Si llega una
+       version <= la ultima procesada para este evento, no recalcular. */
+    unsigned int arc_version = 0;
+    {
+        char ver_str[5] = {0};
+        strncpy(ver_str, msg + 178, 4);
+        arc_version = (unsigned int)atoi(ver_str);
+    }
+    for (int i = 0; i < MAX_EVENTS; i++) {
+        if (Eventos[i].active && strcmp(Eventos[i].event_id, event_id) == 0) {
+            if (arc_version <= Eventos[i].version) {
+                if (Debug) logit("t", "csnmags_toy: ID %s version %u ya procesada, ignoro\n",
+                                 event_id, arc_version);
+                return;
+            }
+            Eventos[i].version = arc_version;
+            break;
+        }
+    }
 
     char lat_deg_str[3]={0}, lat_min_str[5]={0}, lat_dir, lon_deg_str[4]={0}, lon_min_str[5]={0}, lon_dir;
     strncpy(lat_deg_str, msg+16, 2); lat_dir = msg[18]; strncpy(lat_min_str, msg+19, 4);

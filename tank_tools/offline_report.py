@@ -230,8 +230,9 @@ def print_table(headers, rows):
 # --------------------------------------------------------------------------
 # Reporte de UNA corrida
 # --------------------------------------------------------------------------
-ONE_HEADERS = ["evento", "ev", "t0 (UTC)", "lat", "lon", "z_km", "nph",
-               "rms", "gap", "dmin_km", "score", "n_sol", "span_s", "span_km"]
+ONE_HEADERS = ["evento", "ev", "id", "ver", "t0 (UTC)", "lat", "lon", "z_km",
+               "nph", "rms", "gap", "dmin_km", "score", "n_sol", "span_s",
+               "span_km"]
 
 
 def one_rows(evs):
@@ -240,7 +241,9 @@ def one_rows(evs):
         for e in evs[slug]:
             r = e["rep"]
             rows.append([
-                slug, str(e["ev"]), fmt_t0(r),
+                slug, str(e["ev"]),
+                str(r.get("id", "-")), str(r.get("version", "-")),
+                fmt_t0(r),
                 fnum(r.get("lat"), 3), fnum(r.get("lon"), 3),
                 fnum(r.get("depth_km"), 1), str(r.get("nphases", "?")),
                 fnum(r.get("rms_sec"), 2), fnum(r.get("gap_deg"), 0),

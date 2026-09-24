@@ -96,6 +96,15 @@ typedef struct {
     char   AgencyID[16];
     char   Author[32];
     double EventTTLSec;
+
+    /* Versionado dinamico de eventos */
+    double MaxRMSDegrade;          /* empeoramiento RMS tolerado (fraccion) */
+    double MaxGapDegradeDeg;       /* empeoramiento de gap tolerado (grados) */
+    double PhaseAssocTolSec;       /* residual max. asociacion P (s)         */
+    double PhaseAssocTolSecS;      /* residual max. asociacion S (s)         */
+    double PhaseResidualMaxSec;    /* umbral de poda P (s)                   */
+    double PhaseResidualMaxSecS;   /* umbral de poda S (s)                   */
+    int    RenucleateMinNewPhases; /* fases nuevas para re-nuclear           */
 } CSLocParams;
 
 /* ------------------------------------------------------------------------- */
@@ -150,6 +159,37 @@ typedef struct {
     double residual[CSLOC_MAX_PHASES];
     unsigned long id;
 } HypoCandidate;
+
+/* ------------------------------------------------------------------------- */
+/* Registro de eventos activos (versionado dinamico).                         */
+/*                                                                            */
+/* Un evento acumula sus fases: la ventana deslizante solo sirve para         */
+/* DESCUBRIR eventos nuevos; una vez creado, el evento conserva sus fases y   */
+/* las optimiza (incorpora re-picks / fases nuevas, poda las que no ajustan). */
+/* ------------------------------------------------------------------------- */
+typedef struct {
+    unsigned long id;              /* ID base persistente                  */
+    unsigned int  version;         /* ultima version emitida (0 = ninguna) */
+    double t0, lat, lon, depth_km;
+    double t0_detect;              /* t0 del candidato que lo detecto      */
+    int    nphases;
+    double rms_sec, gap_deg, dmin_km, score;
+    int    grid_level;
+    double last_update_epoch;      /* para TTL                             */
+    int    emitted;                /* 1 si ya se emitio alguna version     */
+
+    Pick   phases[CSLOC_MAX_PHASES];    /* copia autocontenida de las fases */
+    double residual[CSLOC_MAX_PHASES];  /* residual vs solucion vigente     */
+    int    nphases_stored;
+
+    Pick   pruned[CSLOC_MAX_PHASES];    /* fases podadas (no re-incorporar) */
+    int    npruned;
+} EventRecord;
+
+typedef struct {
+    EventRecord ev[CSLOC_MAX_EVENTS];
+    int         n;
+} EventRegistry;
 
 typedef struct {
     /* --- especificacion (archivo .grid) --- */
@@ -215,6 +255,10 @@ typedef struct {
     GridSet      grids;
     TTModel      tt;
     unsigned long next_event_id;
+    unsigned long id_base;         /* base de IDs de la sesion (epoch)      */
+    unsigned long seq;             /* contador de eventos de la sesion     */
+    EventRegistry events;          /* eventos activos (versionado)         */
+    char          state_path[CSLOC_STR]; /* archivo de estado (recuperacion) */
 
     unsigned char MyInstId;
     unsigned char MyModId;
@@ -299,10 +343,34 @@ int  DBSCAN_Cluster(const double *X, int n, int dim, double eps, int min_pts,
 int  RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
                 TTModel *tt, const CSLocParams *cfg);
 
+/* event_registry.c */
+void EventRegistry_Init(EventRegistry *r);
+int  EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
+                             const CSLocParams *cfg, int *idx_out);
+int  EventRegistry_Accept(const EventRecord *prev, const HypoCandidate *c,
+                          const CSLocParams *cfg);   /* 1 = aceptar version */
+int  EventRegistry_AddPhase(EventRecord *e, const Pick *p,
+                            const CSLocParams *cfg);  /* 1 = cambio */
+int  EventRegistry_PrunePhases(EventRecord *e, const CSLocParams *cfg);
+void EventRegistry_Expire(EventRegistry *r, double now, double ttl_sec);
+/* Fusiona un candidato con el registro. Devuelve 1 si hay que emitir y llena
+   id_out/ver_out; 0 si no hay nada nuevo que emitir. */
+int  EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
+                          const Pick *window, int nwin, const CSLocParams *cfg,
+                          const StationList *st, TTModel *tt,
+                          const GridSet *grids,
+                          unsigned long id_base, unsigned long *id_out,
+                          unsigned int *ver_out);
+
+/* state.c */
+int  State_Save(const char *path, const EventRegistry *r);
+int  State_Load(const char *path, EventRegistry *r);
+
 /* hypo_out.c */
 int  FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
                       const Pick *picks, const CSLocParams *cfg,
-                      unsigned long event_id, char *buf, int buflen);
+                      unsigned long event_id, unsigned int version,
+                      char *buf, int buflen);
 
 /* Fases auxiliares compartidas */
 const char *Phase_Name(int phase);

@@ -11,6 +11,7 @@
 #include <earthworm.h>
 #include <transport.h>
 #include <kom.h>
+#include <rw_mag.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -35,8 +36,19 @@ double InitialZoom = ZOOM_DEFAULT;   /* Clave opcional InitialZoom de csnrv.d */
 /* --- Variables Globales Earthworm --- */
 SHM_INFO Region;
 pid_t MyPid;
-unsigned char MyInstId, MyModId, TypeHeartBeat, TypeError;
+unsigned char MyInstId, MyModId, TypeHeartBeat, TypeError, TypeHyp2000Arc, TypeMagnitude;
+MSG_LOGO HypoLogo;   /* filtro de lectura de HYPO_RING (TYPE_HYP2000ARC) */
+MSG_LOGO MagLogo;    /* filtro de lectura de HYPO_RING (TYPE_MAGNITUDE) */
 time_t timeLastBeat = 0;
+
+/* --- Magnitudes del evento vigente (por qid) --- */
+typedef struct {
+    int    qid;
+    double ml, mwp;
+    int    ml_stn, mwp_stn;
+} MagState;
+static MagState g_mag = { 0, 0.0, 0.0, 0, 0 };
+static gboolean g_ui_ready = FALSE;   /* FALSE en modo headless: no tocar widgets */
 
 /* --- Variables del Visor --- */
 time_t last_file_mod_time = 0;
@@ -70,7 +82,7 @@ GtkWidget *lbl_ml_val, *lbl_ml_stn;
  * FUNCIONES EARTHWORM
  * -------------------------------------------------------------------- */
 int ReadConfig(char *configfile) {
-    int ncommand = 6, nmiss = 0, i;
+    int ncommand = 5, nmiss = 0, i;
     char init[10] = {0};
     char *com, *str;
 
@@ -98,13 +110,13 @@ int ReadConfig(char *configfile) {
             LogFile = k_int();
             init[3] = 1;
         } else if (k_its("QuakeFile")) {
+            /* Clave OPCIONAL (obsoleta): el display viene del anillo. */
             str = k_str();
             if (str) strcpy(QuakeFile, str);
-            init[4] = 1;
         } else if (k_its("MapImageFile")) {
             str = k_str();
             if (str) strcpy(MapImageFile, str);
-            init[5] = 1;
+            init[4] = 1;
         } else if (k_its("InitialZoom")) {
             /* Clave OPCIONAL: si falta se conserva ZOOM_DEFAULT (comportamiento previo).
              * NO cuenta en ncommand/nmiss. */
@@ -140,6 +152,8 @@ void Lookup(void) {
     if (GetModId(MyModName, &MyModId) != 0) { fprintf(stderr, "Falla en GetModId (%s).\n", MyModName); exit(-1); }
     if (GetType("TYPE_HEARTBEAT", &TypeHeartBeat) != 0) { fprintf(stderr, "Falta TYPE_HEARTBEAT.\n"); exit(-1); }
     if (GetType("TYPE_ERROR", &TypeError) != 0) { fprintf(stderr, "Falta TYPE_ERROR.\n"); exit(-1); }
+    if (GetType("TYPE_HYP2000ARC", &TypeHyp2000Arc) != 0) { fprintf(stderr, "Falta TYPE_HYP2000ARC.\n"); exit(-1); }
+    if (GetType("TYPE_MAGNITUDE", &TypeMagnitude) != 0) { fprintf(stderr, "Falta TYPE_MAGNITUDE.\n"); exit(-1); }
 }
 
 void Status(unsigned char type, short ierr, char *note) {
@@ -254,116 +268,175 @@ static gboolean on_map_motion(GtkWidget *widget, GdkEventMotion *event, gpointer
 }
 
 /* --------------------------------------------------------------------
- * FUNCION VIGIA: Lectura de csnhypodbp CSV History (CON TRACERS)
+ * MAGNITUDES: parseo de TYPE_MAGNITUDE y seleccion de la preferida.
+ *
+ * csnmags_toy publica TYPE_MAGNITUDE al mismo HYPO_RING. Se correlaciona
+ * por qid con el evento vigente y se muestran ML y Mwp; la preferida se
+ * destaca en rojo/negrita (regla: Mwp si >=5.5 con >=3 estaciones; si no
+ * Ml si >0; si no Mwp si >0).
+ * -------------------------------------------------------------------- */
+static void mag_preferida(double *mag, int *stn, const char **type) {
+    if (g_mag.mwp >= 5.5 && g_mag.mwp_stn >= 3) {
+        *mag = g_mag.mwp; *stn = g_mag.mwp_stn; *type = "Mwp";
+    } else if (g_mag.ml > 0.0) {
+        *mag = g_mag.ml; *stn = g_mag.ml_stn; *type = "Ml";
+    } else if (g_mag.mwp > 0.0) {
+        *mag = g_mag.mwp; *stn = g_mag.mwp_stn; *type = "Mwp";
+    } else {
+        *mag = 0.0; *stn = 0; *type = "--";
+    }
+}
+
+static void aplicar_magnitudes(void) {
+    double pref_mag = 0.0;
+    int    pref_stn = 0;
+    const char *pref_type = "--";
+
+    mag_preferida(&pref_mag, &pref_stn, &pref_type);
+
+    if (!g_ui_ready) return;   /* modo headless: solo actualizar el estado */
+
+    update_mag_row(lbl_pref_val, lbl_pref_stn, pref_mag, pref_stn, TRUE, pref_type);
+    update_mag_row(lbl_ml_val, lbl_ml_stn, g_mag.ml, g_mag.ml_stn, FALSE, "");
+    update_mag_row(lbl_mwp_val, lbl_mwp_stn, g_mag.mwp, g_mag.mwp_stn, FALSE, "");
+}
+
+static void procesar_mensaje_mag(const char *msg, long recsize, int current_qid) {
+    MAG_INFO mag;
+    int qid;
+
+    if (recsize <= 0) return;
+    /* rd_mag lee pMagAux/size_aux ANTES de su memset interno: hay que
+       inicializar la estructura para no usar punteros basura. */
+    memset(&mag, 0, sizeof(mag));
+    if (rd_mag((char *)msg, (int)recsize, &mag) != 0) return;
+
+    qid = atoi(mag.qid);
+    /* Magnitud de un evento que ya no es el vigente: ignorar. */
+    if (qid == 0 || qid != current_qid) return;
+
+    if (strcmp(mag.szmagtype, "ML") == 0) {
+        g_mag.ml = mag.mag;
+        g_mag.ml_stn = mag.nstations;
+    } else if (strcmp(mag.szmagtype, "Mwp") == 0) {
+        g_mag.mwp = mag.mag;
+        g_mag.mwp_stn = mag.nstations;
+    } else {
+        return;
+    }
+    aplicar_magnitudes();
+}
+
+/* --------------------------------------------------------------------
+ * FUNCION VIGIA: consumo de HYPO_RING (fuente primaria en tiempo real).
+ *
+ * Drena el anillo y se queda con la solucion de mayor version por qid.
+ * El archivo de estado de csnloc solo se usa al arrancar (recuperacion).
  * -------------------------------------------------------------------- */
 static gboolean update_summary_loop(gpointer data) {
-    struct stat file_stat;
     static int last_processed_qid = 0;
-    static int warn_file_missing = 0;
-    
-    if (stat(QuakeFile, &file_stat) == 0) {
-        warn_file_missing = 0; /* Reset warning si encuentra el archivo */
-        if (file_stat.st_mtime > last_file_mod_time) {
-            logit("t", ">> TRACER: Archivo %s detecto modificaciones. Abriendo...\n", QuakeFile);
-            last_file_mod_time = file_stat.st_mtime;
-            
-            FILE *f = fopen(QuakeFile, "r");
-            if (f) {
-                char line[512];
-                char target_line[512] = "";
-                int line_count = 0;
-                
-                while (fgets(line, sizeof(line), f)) {
-                    line_count++;
-                    if (strlen(line) > 20) {
-                        strcpy(target_line, line);
-                        break; 
-                    }
-                }
-                fclose(f);
+    static int last_qver = -1;
+    MSG_LOGO reclogo;
+    MSG_LOGO logos[2];
+    long     recsize;
+    char     msg[65536];
+    int      res;
 
-                logit("t", ">> TRACER: Lineas procesadas: %d. Linea objetivo: '%s'\n", line_count, target_line);
+    logos[0] = HypoLogo;
+    logos[1] = MagLogo;
 
-                if (strlen(target_line) > 0) {
-                    char fecha[32], hora[32], lat_s[32], lon_s[32], dep_s[32], res_s[32], azm_s[32], stn_s[32], id_s[32], ml_s[32], mwp_s[32];
-                    double otime=0, lat=0, lon=0, depth=0;
-                    int qver=0, qid=0;
+    /* Drenar todos los mensajes disponibles del anillo (ARC o magnitud). */
+    while ((res = tport_getmsg(&Region, logos, 2, &reclogo, &recsize,
+                               msg, sizeof(msg) - 1)) == GET_OK) {
+        char str[32];
+        double otime, lat, lon, depth;
+        int    qid, qver;
 
-                    int parsed = sscanf(target_line, "%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%lf,%d,%d,%lf,%lf,%lf", 
-                           fecha, hora, lat_s, lon_s, dep_s, res_s, azm_s, stn_s, id_s, ml_s, mwp_s, &otime, &qver, &qid, &lat, &lon, &depth);
+        if (recsize <= 0 || recsize >= (long)sizeof(msg) - 1) continue;
+        msg[recsize] = '\0';
 
-                    logit("t", ">> TRACER: sscanf extrajo %d variables de las 17 esperadas.\n", parsed);
+        /* Magnitudes: se procesan contra el evento vigente y no tocan el
+           hipocentro. */
+        if (reclogo.type == TypeMagnitude) {
+            procesar_mensaje_mag(msg, recsize, last_processed_qid);
+            continue;
+        }
+        if (reclogo.type != TypeHyp2000Arc) continue;
 
-                    if (parsed == 17) {
-                        logit("t", ">> TRACER: Sismo valido detectado (QID %d). Actualizando UI...\n", qid);
-                        has_valid_data = TRUE;
-                        g_origin_time = otime;
-                        g_epicenter_lat = lat;
-                        g_epicenter_lon = lon;
-                        
-                        if (g_epicenter_lon > 180.0) g_epicenter_lon -= 360.0;
-                        
-                        if (qid != last_processed_qid) {
-                            g_map_zoom = InitialZoom; 
-                            g_map_pan_x = 0.0;
-                            g_map_pan_y = 0.0;
-                            last_processed_qid = qid;
-                        }
-                        
-                        char buffer[512]; 
-                        time_t rawtime = (time_t)(otime + 0.5);
-                        struct tm *ptm = gmtime(&rawtime); 
-                        if (ptm) {
-                            snprintf(buffer, sizeof(buffer), "<span size='xx-large' weight='bold' foreground='#0055a4'>%02d:%02d:%02d UTC\n%02d/%02d/%04d</span>", 
-                                     ptm->tm_hour, ptm->tm_min, ptm->tm_sec,
-                                     ptm->tm_mday, ptm->tm_mon + 1, ptm->tm_year + 1900);
-                            gtk_label_set_markup(GTK_LABEL(lbl_origin_time), buffer);
-                        }
-                        
-                        snprintf(buffer, sizeof(buffer), "<span size='large'>Lat: %.3f  Lon: %.3f</span>", lat, lon);
-                        gtk_label_set_markup(GTK_LABEL(lbl_coordinates), buffer);
-                        
-                        snprintf(buffer, sizeof(buffer), "<span size='large'>Depth: %.0f km</span>", depth);
-                        gtk_label_set_markup(GTK_LABEL(lbl_depth), buffer);
-                        
-                        double ml_mag = 0.0, mwp_mag = 0.0;
-                        int ml_stn = 0, mwp_stn = 0;
+        /* Parseo minimo del ARC: t0, lat, lon, depth, qid, eventVersion. */
+        strncpy(str, msg, 14); str[14] = '\0';
+        {
+            struct tm t; memset(&t, 0, sizeof(t));
+            char tmp[8];
+            strncpy(tmp, str, 4); tmp[4] = '\0'; t.tm_year = atoi(tmp) - 1900;
+            strncpy(tmp, str + 4, 2); tmp[2] = '\0'; t.tm_mon = atoi(tmp) - 1;
+            strncpy(tmp, str + 6, 2); tmp[2] = '\0'; t.tm_mday = atoi(tmp);
+            strncpy(tmp, str + 8, 2); tmp[2] = '\0'; t.tm_hour = atoi(tmp);
+            strncpy(tmp, str + 10, 2); tmp[2] = '\0'; t.tm_min = atoi(tmp);
+            strncpy(tmp, str + 12, 2); tmp[2] = '\0'; t.tm_sec = atoi(tmp);
+            setenv("TZ", "GMT", 1); tzset();
+            otime = (double)mktime(&t);
+        }
+        strncpy(str, msg + 14, 2); str[2] = '\0'; otime += atof(str) / 100.0;
 
-                        if (strcmp(ml_s, "-") != 0) sscanf(ml_s, "%lf-%d", &ml_mag, &ml_stn);
-                        if (strcmp(mwp_s, "-") != 0) sscanf(mwp_s, "%lf-%d", &mwp_mag, &mwp_stn);
+        strncpy(str, msg + 16, 2); str[2] = '\0'; lat = atof(str);
+        { char dir = msg[18]; strncpy(str, msg + 19, 4); str[4] = '\0';
+          lat += (atof(str) / 100.0) / 60.0; if (dir == 'S') lat = -lat; }
+        strncpy(str, msg + 23, 3); str[3] = '\0'; lon = atof(str);
+        { char dir = msg[26]; strncpy(str, msg + 27, 4); str[4] = '\0';
+          lon += (atof(str) / 100.0) / 60.0; if (dir == 'W') lon = -lon; }
+        strncpy(str, msg + 31, 5); str[5] = '\0'; depth = atof(str) / 100.0;
 
-                        double pref_mag = 0.0;
-                        int pref_stn = 0;
-                        char pref_type[16] = "--";
+        strncpy(str, msg + 136, 10); str[10] = '\0'; qid = atoi(str);
+        strncpy(str, msg + 178, 4); str[4] = '\0'; qver = atoi(str);
+        if (qver == 0) { strncpy(str, msg + 161, 1); str[1] = '\0'; qver = atoi(str); }
 
-                        if (mwp_mag >= 5.5 && mwp_stn >= 3) {
-                            pref_mag = mwp_mag; pref_stn = mwp_stn; strcpy(pref_type, "Mwp");
-                        } else if (ml_mag > 0.0) {
-                            pref_mag = ml_mag; pref_stn = ml_stn; strcpy(pref_type, "Ml");
-                        } else if (mwp_mag > 0.0) {
-                            pref_mag = mwp_mag; pref_stn = mwp_stn; strcpy(pref_type, "Mwp");
-                        }
+        /* Solo actualizar si es un evento nuevo o una version mas reciente. */
+        if (qid == last_processed_qid && qver <= last_qver) continue;
 
-                        update_mag_row(lbl_pref_val, lbl_pref_stn, pref_mag, pref_stn, TRUE, pref_type);
-                        update_mag_row(lbl_ml_val, lbl_ml_stn, ml_mag, ml_stn, FALSE, "");
-                        update_mag_row(lbl_mwp_val, lbl_mwp_stn, mwp_mag, mwp_stn, FALSE, "");
+        has_valid_data = TRUE;
+        g_origin_time = otime;
+        g_epicenter_lat = lat;
+        g_epicenter_lon = lon;
+        if (g_epicenter_lon > 180.0) g_epicenter_lon -= 360.0;
 
-                        if (map_canvas) gtk_widget_queue_draw(map_canvas);
-                    } else {
-                        logit("e", ">> TRACER ERROR: El formato del string no coincide. Revisa si tiene menos variables.\n");
-                    }
-                } else {
-                    logit("e", ">> TRACER ERROR: El archivo parece estar vacio o corrupto.\n");
-                }
-            } else {
-                logit("e", ">> TRACER ERROR: fopen fallo. No se pudo leer %s\n", QuakeFile);
+        if (qid != last_processed_qid) {
+            g_map_zoom = InitialZoom;
+            g_map_pan_x = 0.0;
+            g_map_pan_y = 0.0;
+            last_processed_qid = qid;
+            /* Evento nuevo: limpiar magnitudes hasta que lleguen las suyas. */
+            g_mag.qid = qid;
+            g_mag.ml = g_mag.mwp = 0.0;
+            g_mag.ml_stn = g_mag.mwp_stn = 0;
+            aplicar_magnitudes();
+        }
+        last_qver = qver;
+
+        {
+            char buffer[512];
+            time_t rawtime = (time_t)(otime + 0.5);
+            struct tm *ptm = gmtime(&rawtime);
+            if (ptm) {
+                snprintf(buffer, sizeof(buffer),
+                         "<span size='xx-large' weight='bold' foreground='#0055a4'>%02d:%02d:%02d UTC\n%02d/%02d/%04d</span>",
+                         ptm->tm_hour, ptm->tm_min, ptm->tm_sec,
+                         ptm->tm_mday, ptm->tm_mon + 1, ptm->tm_year + 1900);
+                gtk_label_set_markup(GTK_LABEL(lbl_origin_time), buffer);
             }
+            snprintf(buffer, sizeof(buffer),
+                     "<span size='large'>Lat: %.3f  Lon: %.3f</span>", lat, lon);
+            gtk_label_set_markup(GTK_LABEL(lbl_coordinates), buffer);
+            snprintf(buffer, sizeof(buffer),
+                     "<span size='large'>Depth: %.0f km</span>", depth);
+            gtk_label_set_markup(GTK_LABEL(lbl_depth), buffer);
         }
-    } else {
-        if (!warn_file_missing) {
-            logit("e", ">> TRACER ERROR: stat() fallo. El archivo %s no existe aun.\n", QuakeFile);
-            warn_file_missing = 1;
-        }
+
+        /* Las magnitudes se actualizan al recibir TYPE_MAGNITUDE; aqui solo
+           se refresca la vista con el estado vigente del evento. */
+        aplicar_magnitudes();
+
+        if (map_canvas) gtk_widget_queue_draw(map_canvas);
     }
 
     if (has_valid_data && g_origin_time > 0.0) {
@@ -486,6 +559,68 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
 }
 
 int main(int argc, char *argv[]) {
+    /* Modo headless para tests: ejercita el parseo de TYPE_MAGNITUDE y la
+     * regla de magnitud preferida, sin GTK ni Earthworm. */
+    if (argc == 2 && strcmp(argv[1], "--test-mag") == 0) {
+        MAG_INFO m;
+        char buf[1024];
+        double pm; int ps; const char *pt;
+        int fails = 0;
+
+        /* C3: parseo de una linea wr_mag real (ML). */
+        memset(&m, 0, sizeof(m));
+        strcpy(m.qid, "42"); m.imagtype = 1; strcpy(m.szmagtype, "ML");
+        m.mag = 4.7; strcpy(m.algorithm, "CSNNet"); m.nstations = 5;
+        m.nchannels = 5; m.error = 0.1; m.quality = 1.0; m.mindist = 0.0;
+        m.azimuth = 0; strcpy(m.qauthor, "CL");
+        if (wr_mag(&m, buf, sizeof(buf)) != 0) { printf("FAIL: wr_mag ML\n"); return 1; }
+        g_mag.qid = 42; g_mag.ml = g_mag.mwp = 0.0; g_mag.ml_stn = g_mag.mwp_stn = 0;
+        procesar_mensaje_mag(buf, (long)strlen(buf), 42);
+        if (g_mag.ml != 4.7 || g_mag.ml_stn != 5) { printf("FAIL: C3 ML parse\n"); fails++; }
+        else printf("ok  : C3 ML parse (%.1f, %d stn)\n", g_mag.ml, g_mag.ml_stn);
+
+        /* C4: magnitud de qid ajeno se ignora. */
+        memset(&m, 0, sizeof(m));
+        strcpy(m.qid, "7"); m.imagtype = 1; strcpy(m.szmagtype, "Mwp");
+        m.mag = 6.0; strcpy(m.algorithm, "CSNNet"); m.nstations = 4;
+        if (wr_mag(&m, buf, sizeof(buf)) != 0) { printf("FAIL: wr_mag Mwp\n"); return 1; }
+        procesar_mensaje_mag(buf, (long)strlen(buf), 42);
+        if (g_mag.mwp != 0.0) { printf("FAIL: C4 qid ajeno\n"); fails++; }
+        else printf("ok  : C4 qid ajeno ignorado\n");
+
+        /* C5: regla de preferencia. */
+        g_mag.ml = 4.7; g_mag.ml_stn = 5; g_mag.mwp = 6.0; g_mag.mwp_stn = 4;
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "Mwp") != 0 || pm != 6.0) { printf("FAIL: C5 Mwp>=5.5\n"); fails++; }
+        else printf("ok  : C5 Mwp preferida (%.1f)\n", pm);
+
+        g_mag.mwp = 5.0; g_mag.mwp_stn = 4;   /* Mwp < 5.5 -> Ml */
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "Ml") != 0 || pm != 4.7) { printf("FAIL: C5 Ml\n"); fails++; }
+        else printf("ok  : C5 Ml preferida (%.1f)\n", pm);
+
+        g_mag.ml = 0.0; g_mag.ml_stn = 0;     /* sin Ml -> Mwp */
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "Mwp") != 0 || pm != 5.0) { printf("FAIL: C5 Mwp fallback\n"); fails++; }
+        else printf("ok  : C5 Mwp fallback (%.1f)\n", pm);
+
+        g_mag.mwp = 0.0; g_mag.mwp_stn = 0;   /* sin nada -> -- */
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "--") != 0) { printf("FAIL: C5 sin magnitud\n"); fails++; }
+        else printf("ok  : C5 sin magnitud -> --\n");
+
+        /* C6: cambio de qid resetea magnitudes. */
+        g_mag.ml = 4.7; g_mag.mwp = 6.0;
+        g_mag.qid = 99; g_mag.ml = g_mag.mwp = 0.0; g_mag.ml_stn = g_mag.mwp_stn = 0;
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "--") != 0) { printf("FAIL: C6 reset\n"); fails++; }
+        else printf("ok  : C6 reset a --\n");
+
+        if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
+        printf("\nOK test_mag\n");
+        return 0;
+    }
+
     /* Modo headless para tests: valida la config y sale sin inicializar GTK
      * ni Earthworm. No requiere DISPLAY. */
     if (argc == 3 && strcmp(argv[1], "--print-config") == 0) {
@@ -525,6 +660,14 @@ int main(int argc, char *argv[]) {
     }
     tport_attach(&Region, RingKey);
     logit("t", "csnrv: Conectado a anillo %s\n", RingName);
+
+    /* Filtro de lectura: TYPE_HYP2000ARC + TYPE_MAGNITUDE (mismo anillo). */
+    HypoLogo.instid = 0;
+    HypoLogo.mod    = 0;
+    HypoLogo.type   = TypeHyp2000Arc;
+    MagLogo.instid  = 0;
+    MagLogo.mod     = 0;
+    MagLogo.type    = TypeMagnitude;
 
     gtk_init(&argc, &argv);
     setlocale(LC_NUMERIC, "C");
@@ -621,6 +764,7 @@ int main(int argc, char *argv[]) {
     g_timeout_add(1000, ew_background_tasks, NULL);
 
     gtk_widget_show_all(window);
+    g_ui_ready = TRUE;   /* a partir de aqui aplicar_magnitudes puede tocar widgets */
     gtk_main();
 
     tport_detach(&Region);

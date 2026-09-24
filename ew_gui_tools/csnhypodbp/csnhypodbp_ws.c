@@ -72,7 +72,10 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
     strncpy(str, msg+42, 3); str[3] = '\0'; *azm = atoi(str);
     strncpy(str, msg+48, 4); str[4] = '\0'; *res = atof(str) / 100.0;
     strncpy(str, msg+136, 10); str[10] = '\0'; *qid = atoi(str);
-    strncpy(str, msg+160, 2); str[2] = '\0'; *qver = atoi(str);
+    /* Version canonica EarthWorm: eventVersion en offset 178 (read_arc.h:215).
+       Fallback a version[1] en offset 161 si eventVersion viene vacio. */
+    strncpy(str, msg+178, 4); str[4] = '\0'; *qver = atoi(str);
+    if (*qver == 0) { strncpy(str, msg+161, 1); str[1] = '\0'; *qver = atoi(str); }
     strncpy(str, msg+147, 3); str[3] = '\0'; *pref_mag = atof(str) / 100.0;
     strncpy(mag_type, msg+150, 3); mag_type[3] = '\0';
 
@@ -115,34 +118,45 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
     return 1;
 }
 
-void SaveHistoryFile(GtkWidget *tree) {
-    char TempFile[512]; snprintf(TempFile, sizeof(TempFile), "%s.tmp", HistoryFile);
-    FILE *fp = fopen(TempFile, "w"); if (!fp) return;
-    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
-    GtkTreeIter iter; gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
-    int count = 0;
-    while (valid && count < 50) { 
-        gchar *fecha=NULL, *hora=NULL, *lat_s=NULL, *lon_s=NULL, *dep_s=NULL, *res_s=NULL, *azm_s=NULL, *stn_s=NULL, *id_s=NULL, *ml_s=NULL, *mwp_s=NULL;
-        double otime=0, lat=0, lon=0, depth=0; int qver=0, qid=0;
-        gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 0, &fecha, 1, &hora, 2, &lat_s, 3, &lon_s, 4, &dep_s, 5, &res_s, 6, &azm_s, 7, &stn_s, 8, &id_s, 9, &ml_s, 10, &mwp_s, 14, &otime, 15, &qver, 16, &qid, 17, &lat, 18, &lon, 19, &depth, -1);
-        fprintf(fp, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%lf,%d,%d,%lf,%lf,%lf\n", fecha ? fecha : "-", hora ? hora : "-", lat_s ? lat_s : "-", lon_s ? lon_s : "-", dep_s ? dep_s : "-", res_s ? res_s : "-", azm_s ? azm_s : "-", stn_s ? stn_s : "-", id_s ? id_s : "-", ml_s ? ml_s : "-", mwp_s ? mwp_s : "-", otime, qver, qid, lat, lon, depth);
-        if (fecha) g_free(fecha); if (hora) g_free(hora); if (lat_s) g_free(lat_s); if (lon_s) g_free(lon_s); if (dep_s) g_free(dep_s); if (res_s) g_free(res_s); if (azm_s) g_free(azm_s); if (stn_s) g_free(stn_s); if (id_s) g_free(id_s); if (ml_s) g_free(ml_s); if (mwp_s) g_free(mwp_s);
-        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter); count++;
-    }
-    fclose(fp); rename(TempFile, HistoryFile);
-}
-
+/* Recuperacion al arrancar: lee el archivo de estado de csnloc (unico
+   escritor). Formato:
+     E <id> <version> <t0> <lat> <lon> <depth> <nph> <rms> <gap> <dmin>
+       <score> <grid_level> <last_update> <emitted> <nstored> <npruned> <t0_detect>
+     P <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <residual>
+   El display en tiempo real NO usa este archivo: viene del anillo. */
 void cargar_sismos_iniciales(GtkWidget *tree) {
-    FILE *fp = fopen(HistoryFile, "r"); if (!fp) return;
-    char line[512]; GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree))); GtkTreeIter iter;
+    FILE *fp = fopen(StateFile, "r"); if (!fp) return;
+    char line[512];
+    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+    GtkTreeIter iter;
     while (fgets(line, sizeof(line), fp)) {
-        if (line[0] == '\n' || line[0] == '\r') continue;
-        char fecha[32], hora[32], lat_s[32], lon_s[32], dep_s[32], res_s[32], azm_s[32], stn_s[32], id_s[32], ml_s[32], mwp_s[32];
-        double otime, lat, lon, depth; int qver, qid;
-        int parsed = sscanf(line, "%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%lf,%d,%d,%lf,%lf,%lf", fecha, hora, lat_s, lon_s, dep_s, res_s, azm_s, stn_s, id_s, ml_s, mwp_s, &otime, &qver, &qid, &lat, &lon, &depth);
-        if (parsed == 17) {
+        if (line[0] == 'E') {
+            unsigned long id; unsigned int version; double t0, lat, lon, depth;
+            int nph, grid_level, emitted, nstored, npruned; double rms, gap, dmin, score, last_update, t0_detect;
+            if (sscanf(line + 2,
+                       "%lu %u %lf %lf %lf %lf %d %lf %lf %lf %lf %d %lf %d %d %d %lf",
+                       &id, &version, &t0, &lat, &lon, &depth, &nph, &rms,
+                       &gap, &dmin, &score, &grid_level, &last_update,
+                       &emitted, &nstored, &npruned, &t0_detect) != 17)
+                continue;
+
+            char fecha[32], hora[32], szLat[32], szLon[32], szDep[32], szRes[32], szAzm[32], szStn[32], szID[32];
+            time_t rawtime = (time_t)t0; struct tm *ptm = gmtime(&rawtime);
+            if (ptm) { snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); }
+            else { strcpy(fecha, "--/--"); strcpy(hora, "--:--:--"); }
+            snprintf(szLat, sizeof(szLat), "%.2f%c", fabs(lat), lat < 0 ? 'S' : 'N');
+            snprintf(szLon, sizeof(szLon), "%.2f%c", fabs(lon), lon < 0 ? 'W' : 'E');
+            snprintf(szDep, sizeof(szDep), "%.0f", depth);
+            snprintf(szRes, sizeof(szRes), "%.1f", rms);
+            snprintf(szAzm, sizeof(szAzm), "%.0f", gap);
+            snprintf(szStn, sizeof(szStn), "%d", nph);
+            snprintf(szID, sizeof(szID), "%010lu", id);
+
             gtk_list_store_append(store, &iter);
-            gtk_list_store_set(store, &iter, 0, fecha, 1, hora, 2, lat_s, 3, lon_s, 4, dep_s, 5, res_s, 6, azm_s, 7, stn_s, 8, id_s, 9, ml_s, 10, mwp_s, 14, otime, 15, qver, 16, qid, 17, lat, 18, lon, 19, depth, -1);
+            gtk_list_store_set(store, &iter, 0, fecha, 1, hora, 2, szLat, 3, szLon,
+                               4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID,
+                               9, "-", 10, "-", 14, t0, 15, (int)version, 16, (int)id,
+                               17, lat, 18, lon, 19, depth, -1);
         }
     }
     fclose(fp);

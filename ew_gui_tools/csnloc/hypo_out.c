@@ -13,7 +13,10 @@
 #define RAD 0.017453292519943
 #endif
 
-#define ARC_LINE1   162
+/* Linea 1 canonica de EarthWorm: qid en 136, version en 161, eventVersion en
+   178 (read_arc.h:202/207/215). Se extiende a 197 para cubrir eventVersion[19]
+   (178+19). No se acorta el layout estandar. */
+#define ARC_LINE1   197
 #define ARC_PHASE   114
 
 static void pad_string(char *dest, const char *src, int length)
@@ -41,11 +44,13 @@ static double norm_lon(double lon)
 
 int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
                      const Pick *picks, const CSLocParams *cfg,
-                     unsigned long event_id, char *buf, int buflen)
+                     unsigned long event_id, unsigned int version,
+                     char *buf, int buflen)
 {
     char    line[256];
     char    temp[64];
     char    temp_id[16];
+    char    temp_ver[24];
     double  lat_geo;
     time_t  t0;
     struct tm tmv;
@@ -93,8 +98,11 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
 
     final_id = event_id % 2147000000UL;
     snprintf(temp_id, sizeof(temp_id), "%010lu", final_id);
+    /* version[1] en offset 161 (digito menos significativo) y eventVersion[19]
+       en offset 178 (version completa). */
+    snprintf(temp_ver, sizeof(temp_ver), "%04u", version);
 
-    /* ---- linea 1: hipocentro (162 chars) ---- */
+    /* ---- linea 1: hipocentro (ARC_LINE1 chars) ---- */
     memset(line, ' ', ARC_LINE1);
     line[ARC_LINE1] = '\n';
     line[ARC_LINE1 + 1] = '\0';
@@ -110,6 +118,11 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
     memcpy(line + 39, temp, 13);
 
     memcpy(line + 136, temp_id, 10);
+
+    /* version[1] en offset 161: digito menos significativo. */
+    line[161] = (char)('0' + (version % 10));
+    /* eventVersion[19] en offset 178: version completa. */
+    memcpy(line + 178, temp_ver, 4);
 
     if ((int)strlen(buf) + ARC_LINE1 + 2 >= buflen) return -1;
     strcat(buf, line);
