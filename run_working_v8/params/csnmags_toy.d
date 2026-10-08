@@ -1,7 +1,7 @@
 #Archivo de configuracion para CSNmags_toy
 
 MyModuleId      MOD_CSNMAGS      # Module ID
-RingName        HYPO_RING        # Anillo donde llegan los TYPE_HYP2000ARC y enviamos TYPE_MAGNITUDE
+RingName        HYPO_RING_REF    # Anillo donde llegan los TYPE_HYP2000ARC y enviamos TYPE_MAGNITUDE
 LogFile         1                # 1=escribir log a disco
 HeartBeatInt    30               # Segundos entre latidos
 Debug           0                # 0=Mensajes limpios de red, 1=Matematicas detalladas por estacion

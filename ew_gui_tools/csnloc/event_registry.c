@@ -12,6 +12,31 @@
 #include "csnloc.h"
 
 /* ------------------------------------------------------------------------- */
+/* Trazas de decision (solo con Debug >= 1; no afectan a produccion)          */
+/*                                                                            */
+/* event_registry.c es logica pura y testeable sin EarthWorm, por eso NO      */
+/* llama a logit() directamente: usa un callback que csnloc.c conecta a       */
+/* logit(). En los tests el callback es NULL y no se emite nada.              */
+/* ------------------------------------------------------------------------- */
+static void (*g_log_cb)(const char *msg) = NULL;
+
+void EventRegistry_SetLogCallback(void (*cb)(const char *msg))
+{
+    g_log_cb = cb;
+}
+
+static void log_decision(const CSLocParams *cfg, const char *fmt, ...)
+{
+    char    buf[512];
+    va_list ap;
+    if (!cfg || cfg->Debug < 1 || !g_log_cb) return;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    g_log_cb(buf);
+}
+
+/* ------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* ------------------------------------------------------------------------- */
 
@@ -28,13 +53,6 @@ static int same_scnl(const Pick *a, const Pick *b)
 static int same_sta_phase(const Pick *a, const Pick *b)
 {
     return strcmp(a->sta, b->sta) == 0 && a->phase == b->phase;
-}
-
-/* Umbral de residual para asociar una fase nueva al evento. */
-static double assoc_tol(const CSLocParams *cfg, int phase)
-{
-    return (phase == CSLOC_PHASE_S) ? cfg->PhaseAssocTolSecS
-                                    : cfg->PhaseAssocTolSec;
 }
 
 /* Umbral de residual para podar una fase de la solucion. */
@@ -157,6 +175,12 @@ int EventRegistry_PrunePhases(EventRecord *e, const CSLocParams *cfg)
             /* Guardar en la lista de podadas para no re-incorporar. */
             if (e->npruned < CSLOC_MAX_PHASES)
                 e->pruned[e->npruned++] = e->phases[i];
+            log_decision(cfg, "csnloc: [ev %lu] poda %s.%s.%s.%s fase %s "
+                              "resid=%.2f tol=%.2f%s\n",
+                         e->id, e->phases[i].sta, e->phases[i].net,
+                         e->phases[i].chan, e->phases[i].loc,
+                         e->phases[i].phase_name, r, tol,
+                         first ? " (primera)" : "");
             removed++;
             continue;
         }
@@ -304,6 +328,10 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
         store_hypo(e, c);
         e->version = 1;
         e->emitted = 1;
+        log_decision(cfg, "csnloc: [ev %lu] nuevo v1 lat=%.3f lon=%.3f z=%.1f "
+                          "nph=%d rms=%.2f gap=%.0f\n",
+                     e->id, e->lat, e->lon, e->depth_km,
+                     e->nphases, e->rms_sec, e->gap_deg);
         if (id_out)  *id_out = e->id;
         if (ver_out) *ver_out = e->version;
         return 1;
@@ -320,6 +348,11 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
             if (EventRegistry_AddPhase(e, &window[pi], cfg)) {
                 changed = 1;
                 nnew++;
+                log_decision(cfg, "csnloc: [ev %lu] fase nueva %s.%s.%s.%s %s "
+                                  "t=%.3f\n",
+                             e->id, window[pi].sta, window[pi].net,
+                             window[pi].chan, window[pi].loc,
+                             window[pi].phase_name, window[pi].t_epoch);
             }
         }
 
@@ -351,8 +384,14 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
 
             /* Politica de aceptacion: si la solucion nueva no mejora (ni
                empeora dentro del umbral), no se emite version nueva. */
-            if (!EventRegistry_Accept(e, &h, cfg))
+            if (!EventRegistry_Accept(e, &h, cfg)) {
+                log_decision(cfg, "csnloc: [ev %lu] version RECHAZADA "
+                                  "(nph=%d rms=%.2f gap=%.0f vs nph=%d "
+                                  "rms=%.2f gap=%.0f)\n",
+                             e->id, h.nphases, h.rms_sec, h.gap_deg,
+                             e->nphases, e->rms_sec, e->gap_deg);
                 return 0;
+            }
 
             /* Poda por calidad: solo si la solucion nueva es mejor. */
             npruned_before = e->npruned;
@@ -366,11 +405,19 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                o entraron varias nuevas. RefineHypo podria estar en un minimo
                local. renucleate() sobreescribe el hipocentro del evento. */
             if ((e->npruned > npruned_before) ||
-                (nnew >= cfg->RenucleateMinNewPhases))
+                (nnew >= cfg->RenucleateMinNewPhases)) {
+                log_decision(cfg, "csnloc: [ev %lu] re-nucleo (podadas=%d "
+                                  "nuevas=%d)\n",
+                             e->id, e->npruned - npruned_before, nnew);
                 renucleate(e, st, tt, grids, cfg);
+            }
 
             e->version++;
             e->emitted = 1;
+            log_decision(cfg, "csnloc: [ev %lu] v%u lat=%.3f lon=%.3f z=%.1f "
+                              "nph=%d rms=%.2f gap=%.0f\n",
+                         e->id, e->version, e->lat, e->lon, e->depth_km,
+                         e->nphases, e->rms_sec, e->gap_deg);
             if (id_out)  *id_out = e->id;
             if (ver_out) *ver_out = e->version;
             return 1;

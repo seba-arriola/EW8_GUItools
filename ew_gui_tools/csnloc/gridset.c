@@ -77,11 +77,16 @@ int Grid_IsActive(const Grid *g, const Pick *picks, const int *pick_sidx,
                 g->name, g->level, n_assoc);
     if (n_assoc >= cfg->GridActivationMinPicks) return 1;
 
-    /* (b) cercania a una nucleacion de un nivel mas grueso. */
+    /* (b) cercania a una nucleacion de un nivel MAS GRUESO. Se filtra por
+       `grid_level` a proposito: asi la activacion no depende de las demas
+       grillas del mismo nivel ni del orden en que se procesen, y el bucle de
+       grillas se puede paralelizar sin cambiar el resultado. */
     if (nuc && nnuc > 0) {
         int i;
         for (i = 0; i < nnuc; i++) {
-            double lat_geo = geoc_to_geo(nuc[i].lat);
+            double lat_geo;
+            if (nuc[i].grid_level >= g->level) continue;
+            lat_geo = geoc_to_geo(nuc[i].lat);
             if (Grid_ContainsLL(g, lat_geo, nuc[i].lon,
                                 cfg->GridActivationMarginDeg))
                 return 1;

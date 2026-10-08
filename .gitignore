@@ -1,0 +1,116 @@
+# ===========================================================================
+# EW8_GUItools — .gitignore
+# Se versionan: api_report_locs/, ew_gui_tools/, tank_tools/ y
+# run_working_v8/params/ (config de ejemplo). Sin binarios ni runtime.
+# Los archivos sueltos de la raíz NO se listan aquí: se deciden manualmente.
+# ===========================================================================
+
+# --- 1. Infraestructura y datos que NO se versionan -------------------------
+earthworm_8.0/
+glass3/
+kafka/
+kafka-data/
+kafka-logs/
+mseed/
+tank_repo/
+replay/
+picks/
+runs/
+
+# --- 2. Runtime de EarthWorm ------------------------------------------------
+run_working_v8/tanks/
+run_working_v8/log/*.log
+run_working_v8/log/*.lock
+run_working_v8/log/.noexec_fifo.txt
+
+# ===========================================================================
+# Artefactos dentro de los directorios versionados
+# ===========================================================================
+
+# --- 3. Objetos, librerías y símbolos ---------------------------------------
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.dSYM/
+
+# --- 4. Ejecutables generados por los Makefiles (sin extensión) -------------
+/ew_gui_tools/csnloc/csnloc
+/ew_gui_tools/csnloc/csnloc_asan
+/ew_gui_tools/csnloc/test/test_*
+!/ew_gui_tools/csnloc/test/test_*.c
+!/ew_gui_tools/csnloc/test/test_*.sh
+!/ew_gui_tools/csnloc/test/test_*.txt
+/ew_gui_tools/csnloc/test/gen_offline_picks
+/ew_gui_tools/csnmags/csnmags_toy
+/ew_gui_tools/csnhypodbp/csnhypodbp
+/ew_gui_tools/csnhypodbp/test_filter
+/ew_gui_tools/csnrv/csnrv
+/ew_gui_tools/csntvp/csntvp
+/ew_gui_tools/csntvp/test_filter
+/ew_gui_tools/csnstaevdisp/csnstaevdisp
+/ew_gui_tools/csnstaevdisp/test/test_data
+/ew_gui_tools/ew_controller/ew_controller
+/ew_gui_tools/ew2glass/ew2glass
+/ew_gui_tools/glass2ew/glass2ew
+/ew_gui_tools/_legacy_atwc/loc_wcatwc/loc_wcatwc
+/ew_gui_tools/_legacy_atwc/pick_wcatwc/pick_wcatwc
+/ew_gui_tools/_legacy_atwc/disk_wcatwc/disk_wcatwc
+
+# --- ejecutables sin extensión de los módulos nuevos ---
+/ew_gui_tools/csnloc/ttpred
+/ew_gui_tools/common/build/
+/ew_gui_tools/pickS/pickS
+/ew_gui_tools/pickS/test/test_*
+/ew_gui_tools/pickS/test/gen_tank
+!/ew_gui_tools/pickS/test/test_*.c
+!/ew_gui_tools/pickS/test/test_*.sh
+/ew_gui_tools/hyp2000_ring/hyp2000_ring
+/ew_gui_tools/hyp2000_ring/test/test_*
+!/ew_gui_tools/hyp2000_ring/test/test_*.c
+/ew_gui_tools/nlloc_ring/nlloc_ring
+/ew_gui_tools/nlloc_ring/nlloc/Vel2Grid
+/ew_gui_tools/nlloc_ring/nlloc/Grid2Time
+
+# --- ejemplos/referencias no versionados ---
+/ew_gui_tools/hyp2000_ring/hyp2000_mgr.c.ref
+/ew_gui_tools/hyp2000_ring/hypoinverse/makefile.unix.ref
+/ew_gui_tools/hyp2000_ring/ncal2000.hyp
+
+# --- runtime ---
+/run_working_v8/log/
+/picks_ps/
+/picks_s/
+
+# --- 5. run_working_v8/params: excluir runtime/generados/respaldos/legacy ---
+/run_working_v8/params/*.bak
+/run_working_v8/params/*.bak.*
+/run_working_v8/params/*.bak_*
+/run_working_v8/params/tankplayer_replay.d
+/run_working_v8/params/slink126.state
+/run_working_v8/params/ew2openapi_144.queue
+/run_working_v8/params/pick_FP_151.ndx
+/run_working_v8/params/hyp2000_output/
+/run_working_v8/params/csnhypodbp_hist.txt
+/run_working_v8/params/iasp91.tbl
+/run_working_v8/params/iasp91.hed
+/run_working_v8/params/test_run.cmd
+/run_working_v8/params/_legacy_atwc/
+/run_working_v8/params/*.log
+
+# ===========================================================================
+# Patrones generales (red de seguridad)
+# ===========================================================================
+._*
+.DS_Store
+*.pid
+*.swp
+*~
+core
+core.*
+__pycache__/
+*.pyc
+tank_tools/tests/tmp/
+# Carpeta de pruebas de integracion de localizadores (NLL, HYP2000, etc.)
+tmp/

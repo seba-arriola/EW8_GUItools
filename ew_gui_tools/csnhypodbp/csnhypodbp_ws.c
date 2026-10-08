@@ -30,21 +30,16 @@ void LoadStationsFromFile() {
                 StaArray[NumEstaciones].dLat = 0.0; StaArray[NumEstaciones].dLon = 0.0;
             }
             
-            StaArray[NumEstaciones].lRawCircSize = lMaxBufSamps;
-            StaArray[NumEstaciones].plRawCircBuff = (int32_t *) calloc(lMaxBufSamps, sizeof(int32_t));
-            StaArray[NumEstaciones].plFiltCircBuff = (int32_t *) calloc(lMaxBufSamps, sizeof(int32_t));
-            
-            if (StaArray[NumEstaciones].plRawCircBuff == NULL || StaArray[NumEstaciones].plFiltCircBuff == NULL) {
-                logit("e", ">> TRACER FATAL [WS]: Sin memoria RAM para buffer. Sistema OOM.\n");
-                exit(-1);
-            }
+            /* Buffer perezoso: se crea al recibir datos (ver ws_fetch_finish). */
+            StaArray[NumEstaciones].trace = NULL;
+            (void)lMaxBufSamps;
             NumEstaciones++;
         }
     }
     fclose(fp); 
 }
 
-int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type) {
+int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type, int mod) {
     char str[20];
     if (strlen(msg) < 162) return -1; 
     strncpy(str, msg, 14); str[14] = '\0';
@@ -80,9 +75,9 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
     strncpy(mag_type, msg+150, 3); mag_type[3] = '\0';
 
     int cache_slot = -1;
-    for(int c=0; c<MAX_CACHED_EVENTS; c++) { if(PickCache[c].qid == *qid) { cache_slot = c; break; } }
+    for(int c=0; c<MAX_CACHED_EVENTS; c++) { if(PickCache[c].qid == *qid && PickCache[c].mod == mod) { cache_slot = c; break; } }
     if (cache_slot == -1) { cache_slot = pick_cache_idx; pick_cache_idx = (pick_cache_idx + 1) % MAX_CACHED_EVENTS; }
-    PickCache[cache_slot].qid = *qid; PickCache[cache_slot].num_picks = 0;
+    PickCache[cache_slot].qid = *qid; PickCache[cache_slot].mod = mod; PickCache[cache_slot].num_picks = 0;
 
     char *line = strchr(msg, '\n');
     while (line != NULL && *line != '\0') {
@@ -125,10 +120,19 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
      P <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <residual>
    El display en tiempo real NO usa este archivo: viene del anillo. */
 void cargar_sismos_iniciales(GtkWidget *tree) {
-    FILE *fp = fopen(StateFile, "r"); if (!fp) return;
+    (void)tree;
+    char state_path[MAX_STR];
+    if (StateFile[0] == '/') {
+        snprintf(state_path, sizeof(state_path), "%s", StateFile);
+    } else {
+        const char *logdir = getenv("EW_LOG");
+        snprintf(state_path, sizeof(state_path), "%s/%s",
+                 (logdir && logdir[0]) ? logdir : ".", StateFile);
+    }
+
+    FILE *fp = fopen(state_path, "r"); if (!fp) return;
     char line[512];
-    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
-    GtkTreeIter iter;
+    int nrec = 0;
     while (fgets(line, sizeof(line), fp)) {
         if (line[0] == 'E') {
             unsigned long id; unsigned int version; double t0, lat, lon, depth;
@@ -151,54 +155,66 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
             snprintf(szAzm, sizeof(szAzm), "%.0f", gap);
             snprintf(szStn, sizeof(szStn), "%d", nph);
             snprintf(szID, sizeof(szID), "%010lu", id);
+            char szVer[32]; snprintf(szVer, sizeof(szVer), "%u", version);
 
-            gtk_list_store_append(store, &iter);
-            gtk_list_store_set(store, &iter, 0, fecha, 1, hora, 2, szLat, 3, szLon,
-                               4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID,
-                               9, "-", 10, "-", 14, t0, 15, (int)version, 16, (int)id,
-                               17, lat, 18, lon, 19, depth, -1);
+            CsnhypodbpRow *row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes,
+                szAzm, szStn, szID, "-", "-", "csnloc", szVer, t0, (int)version, (int)id,
+                lat, lon, depth, 0);
+            g_list_store_append(g_store_hypo, row);
+            g_object_unref(row);
+            nrec++;
         }
     }
     fclose(fp);
-    GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree));
-    GtkTreePath *path = gtk_tree_path_new_first();
-    if (path) { gtk_tree_view_scroll_to_cell(GTK_TREE_VIEW(tree), path, NULL, FALSE, 0.0, 0.0); gtk_tree_selection_select_path(selection, path); gtk_tree_path_free(path); }
+    logit("t", "csnhypodbp: recuperados %d eventos de %s\n", nrec, state_path);
+    if (nrec > 0) gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_selection_hypo), 0, TRUE);
 }
 
-int procesar_mensaje_sismo(GtkWidget *tree, const char *payload) {
-    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree)));
+int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
+    (void)tree;
     double otime, lat, lon, depth, res, pref_mag; int nps, azm, qid, qver; char mag_type[16] = "";
-    if (ParseY2K_Hypo((char*)payload, &otime, &lat, &lon, &depth, &res, &nps, &azm, &qid, &qver, &pref_mag, mag_type) < 0) return 0;
-    
+    if (ParseY2K_Hypo((char*)payload, &otime, &lat, &lon, &depth, &res, &nps, &azm, &qid, &qver, &pref_mag, mag_type, mod) < 0) return 0;
+
     char fecha[32], hora[32], szLat[32], szLon[32], szDep[32], szRes[32], szAzm[32], szStn[32], szID[32];
-    time_t rawtime = (time_t)(otime); struct tm *ptm = gmtime(&rawtime); 
-    if (ptm) { snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); } 
+    char szMod[32], szVer[32];
+    time_t rawtime = (time_t)(otime); struct tm *ptm = gmtime(&rawtime);
+    if (ptm) { snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); }
     else { strcpy(fecha, "--/--"); strcpy(hora, "--:--:--"); }
     snprintf(szLat, sizeof(szLat), "%.2f%c", fabs(lat), lat < 0 ? 'S' : 'N'); snprintf(szLon, sizeof(szLon), "%.2f%c", fabs(lon), lon < 0 ? 'W' : 'E');
     snprintf(szDep, sizeof(szDep), "%.0f", depth); snprintf(szRes, sizeof(szRes), "%.1f", res); snprintf(szAzm, sizeof(szAzm), "%d", azm);
     snprintf(szStn, sizeof(szStn), "%d", nps); snprintf(szID, sizeof(szID), "%010d", qid);
+    snprintf(szMod, sizeof(szMod), "%s", ModLabel(mod)); snprintf(szVer, sizeof(szVer), "%d", qver);
 
-    GtkTreeIter iter, match_iter; gboolean existe = FALSE; gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
-    while (valid) {
-        int row_qid; gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 16, &row_qid, -1);
-        if (row_qid == qid) { existe = TRUE; match_iter = iter; break; }
-        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(g_store_hypo));
+    int found = -1;
+    for (guint i = 0; i < n; i++) {
+        CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), i);
+        int rqid = 0, rmod = 0; g_object_get(row, "qid", &rqid, "mod", &rmod, NULL);
+        g_object_unref(row);
+        if (rqid == qid && rmod == mod) { found = (int)i; break; }
     }
     int result_status = 0;
-    if (existe) {
-        int existing_qver; gtk_tree_model_get(GTK_TREE_MODEL(store), &match_iter, 15, &existing_qver, -1);
+    if (found >= 0) {
+        CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), found);
+        int existing_qver = 0; g_object_get(row, "qver", &existing_qver, NULL);
         if (qver >= existing_qver) {
-            gchar *old_ml = NULL, *old_mwp = NULL; char szMl[32] = "-", szMwp[32] = "-";
-            gtk_tree_model_get(GTK_TREE_MODEL(store), &match_iter, 9, &old_ml, 10, &old_mwp, -1);
-            if (old_ml) { strncpy(szMl, old_ml, 31); szMl[31]='\0'; g_free(old_ml); }
-            if (old_mwp) { strncpy(szMwp, old_mwp, 31); szMwp[31]='\0'; g_free(old_mwp); }
-            gtk_list_store_set(store, &match_iter, 0, fecha, 1, hora, 2, szLat, 3, szLon, 4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID, 9, szMl, 10, szMwp, 14, otime, 15, qver, 16, qid, 17, lat, 18, lon, 19, depth, -1); 
-            if (qid == selected_qid) result_status = 1;
-            g_history_needs_saving = TRUE; 
+            char szMl[32] = "-", szMwp[32] = "-";
+            const char *oml = csnhypodbp_row_col(row, 9);
+            const char *omwp = csnhypodbp_row_col(row, 10);
+            if (oml && oml[0]) { strncpy(szMl, oml, 31); szMl[31]='\0'; }
+            if (omwp && omwp[0]) { strncpy(szMwp, omwp, 31); szMwp[31]='\0'; }
+            g_object_set(row, "c0",fecha,"c1",hora,"c2",szLat,"c3",szLon,"c4",szDep,"c5",szRes,
+                         "c6",szAzm,"c7",szStn,"c8",szID,"c9",szMl,"c10",szMwp,"c11",szMod,"c12",szVer,
+                         "otime",otime,"qver",qver,"qid",qid,"lat",lat,"lon",lon,"depth",depth,"mod",mod,NULL);
+            if (qid == selected_qid && mod == selected_mod) result_status = 1;
+            g_history_needs_saving = TRUE;
         }
+        g_object_unref(row);
     } else {
-        char szMl[32] = "-", szMwp[32] = "-"; gtk_list_store_append(store, &match_iter);
-        gtk_list_store_set(store, &match_iter, 0, fecha, 1, hora, 2, szLat, 3, szLon, 4, szDep, 5, szRes, 6, szAzm, 7, szStn, 8, szID, 9, szMl, 10, szMwp, 14, otime, 15, qver, 16, qid, 17, lat, 18, lon, 19, depth, -1);
+        CsnhypodbpRow *row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes, szAzm,
+            szStn, szID, "-", "-", szMod, szVer, otime, qver, qid, lat, lon, depth, mod);
+        g_list_store_append(g_store_hypo, row);
+        g_object_unref(row);
         result_status = 2; g_history_needs_saving = TRUE;
     }
     return result_status;
@@ -206,132 +222,224 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload) {
 
 /* FIX 1: Lectura segura de Magnitudes utilizando rd_mag() nativo de Earthworm */
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
-    GtkListStore *store = GTK_LIST_STORE(gtk_tree_view_get_model(GTK_TREE_VIEW(tree))); 
+    (void)tree;
     MAG_INFO mag;
-    
-    memset(&mag, 0, sizeof(MAG_INFO)); /* Asegurar que no hay basura en memoria */
-    
+    memset(&mag, 0, sizeof(MAG_INFO));
     if (rd_mag((char*)payload, strlen(payload), &mag) < 0) {
         logit("e", "csnhypodbp: Error en rd_mag al parsear TYPE_MAGNITUDE\n");
         return 0;
     }
-    
     int qid = atoi(mag.qid);
-    char mag_str[32]; 
+    char mag_str[32];
     snprintf(mag_str, sizeof(mag_str), "%.1f-%d", mag.mag, mag.nstations);
-    
-    GtkTreeIter iter; gboolean valid = gtk_tree_model_get_iter_first(GTK_TREE_MODEL(store), &iter);
-    while (valid) {
-        int row_qid; gtk_tree_model_get(GTK_TREE_MODEL(store), &iter, 16, &row_qid, -1);
-        if (row_qid == qid) {
+
+    guint n = g_list_model_get_n_items(G_LIST_MODEL(g_store_hypo));
+    for (guint i = 0; i < n; i++) {
+        CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), i);
+        int rqid = 0; g_object_get(row, "qid", &rqid, NULL);
+        if (rqid == qid) {
             if (strcmp(mag.szmagtype, "ML") == 0 || strcmp(mag.szmagtype, "Ml") == 0) {
-                gtk_list_store_set(store, &iter, 9, mag_str, -1);
+                g_object_set(row, "c9", mag_str, NULL);
                 logit("t", "csnhypodbp: Mag actualizada ID %d -> ML: %s\n", qid, mag_str);
             } else if (strcmp(mag.szmagtype, "Mwp") == 0 || strcmp(mag.szmagtype, "MWP") == 0) {
-                gtk_list_store_set(store, &iter, 10, mag_str, -1);
+                g_object_set(row, "c10", mag_str, NULL);
                 logit("t", "csnhypodbp: Mag actualizada ID %d -> Mwp: %s\n", qid, mag_str);
             }
-            g_history_needs_saving = TRUE; 
+            g_object_unref(row);
+            g_history_needs_saving = TRUE;
             return 1;
         }
-        valid = gtk_tree_model_iter_next(GTK_TREE_MODEL(store), &iter);
+        g_object_unref(row);
     }
     return 0;
 }
 
-void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid) {
-    for (int i = 0; i < NumEstaciones; i++) {
-        bHasData[i] = 0; StaArray[i].lRawCircCtr = 0;
-        StaArray[i].iNumPicks = 0; StaArray[i].dManualPickTime = 0.0; g_StaDist[i] = 0.0;
-        for (long k = 0; k < StaArray[i].lRawCircSize; k++) {
-            StaArray[i].plRawCircBuff[k] = INT_MAX;
-            StaArray[i].plFiltCircBuff[k] = INT_MAX;
-        }
-    }
-    if (ws_menu.head == NULL) {
-        if (wsAppendMenu(WsIP, WsPort, &ws_menu, WsTimeout) != WS_ERR_NONE) return;
-    }
-    /* Ventana de fetch escalada con el tiempo de visualizacion (g_dScreenTime).
-       Cubre: 30 s previos al origen + la ventana de visualizacion completa +
-       el tiempo de viaje de la onda P de la estacion mas lejana (conservador,
-       ~5.5 km/s) y la alineacion por P (g_align_lead). */
-    double req_start = otime - 30.0;
-    double req_end   = otime + g_dScreenTime + g_max_dist_km / 5.5 + g_align_lead;
-    long max_trace_buf = 2000000; 
-    char *trace_buffer = malloc(max_trace_buf);
-    if (!trace_buffer) return;
+/* --- Descarga asincrona de formas de onda (worker + publicacion) ---
+ * El fetch a wave_serverV bloquea (TCP con WsTimeout); hacerlo en el hilo
+ * principal congelaba la UI al seleccionar un sismo. El worker SOLO hace I/O
+ * (y lee metadata de estaciones, estable tras el arranque) y copia los bytes
+ * crudos; el parseo a StaArray, el post-proceso y el filtrado corren en el
+ * hilo principal (GTK no es thread-safe). Un solo job a la vez (g_ws_busy). */
+typedef struct {
+    int    idx;
+    int    has_data;
+    double rate;
+    double dist;
+    long   act_len;
+    char  *raw;
+} WsFetchedSta;
 
-    for (int i = 0; i < NumEstaciones; i++) {
-        StaArray[i].dOldestTime = req_start;
-        for(int c = 0; c < MAX_CACHED_EVENTS; c++) {
-            if (PickCache[c].qid == qid) {
-                for (int p = 0; p < PickCache[c].num_picks; p++) {
-                    if (!strcmp(StaArray[i].szStation, PickCache[c].picks[p].sta) && !strcmp(StaArray[i].szChannel, PickCache[c].picks[p].chan)) {
-                        int spIdx = StaArray[i].iNumPicks % MAX_PICKS_PER_STA;
-                        StaArray[i].picks[spIdx].dTime = PickCache[c].picks[p].pTime;
-                        strcpy(StaArray[i].picks[spIdx].szPhase, PickCache[c].picks[p].phase); StaArray[i].iNumPicks++;
-                    }
-                }
-                break;
-            }
+typedef struct {
+    int           qid;
+    int           mod;
+    double        eq_lat, eq_lon;
+    double        req_start, req_end;
+    double        max_dist_km;
+    int           nsta;
+    WsFetchedSta *stas;
+} WsFetchJob;
+
+static int g_ws_busy = 0;
+
+static gboolean ws_fetch_finish(gpointer data);
+
+static gpointer ws_fetch_thread(gpointer data)
+{
+    WsFetchJob *job = data;
+    long max_trace_buf = 2000000;
+    char *trace_buffer = malloc(max_trace_buf);
+
+    if (trace_buffer && ws_menu.head == NULL) {
+        if (wsAppendMenu(WsIP, WsPort, &ws_menu, WsTimeout) != WS_ERR_NONE) {
+            free(trace_buffer);
+            trace_buffer = NULL;
         }
-        if (StaArray[i].dLat != 0.0 && StaArray[i].dLon != 0.0 && eq_lat != 0.0) {
-            double rlat1 = eq_lat * M_PI / 180.0, rlat2 = StaArray[i].dLat * M_PI / 180.0;
-            double dlon = (StaArray[i].dLon - eq_lon) * M_PI / 180.0, dlat = (StaArray[i].dLat - eq_lat) * M_PI / 180.0;
+    }
+
+    for (int i = 0; trace_buffer && i < job->nsta; i++) {
+        WsFetchedSta *f = &job->stas[i];
+        f->idx = i; f->has_data = 0; f->rate = 0.0; f->dist = 0.0;
+        f->act_len = 0; f->raw = NULL;
+
+        if (StaArray[i].dLat != 0.0 && StaArray[i].dLon != 0.0 && job->eq_lat != 0.0) {
+            double rlat1 = job->eq_lat * M_PI / 180.0, rlat2 = StaArray[i].dLat * M_PI / 180.0;
+            double dlon = (StaArray[i].dLon - job->eq_lon) * M_PI / 180.0, dlat = (StaArray[i].dLat - job->eq_lat) * M_PI / 180.0;
             double a = sin(dlat/2.0)*sin(dlat/2.0) + cos(rlat1)*cos(rlat2)*sin(dlon/2.0)*sin(dlon/2.0);
-            if (a < 0.0) a = 0.0; if (a > 1.0) a = 1.0; 
-            g_StaDist[i] = 2.0 * atan2(sqrt(a), sqrt(1.0-a)) * 180.0 / M_PI; 
+            if (a < 0.0) a = 0.0; if (a > 1.0) a = 1.0;
+            f->dist = 2.0 * atan2(sqrt(a), sqrt(1.0-a)) * 180.0 / M_PI;
         }
-        if (g_StaDist[i] * 111.19 > g_max_dist_km && g_StaDist[i] != 0.0) continue;
+        if (f->dist * 111.19 > job->max_dist_km && f->dist != 0.0) continue;
 
         TRACE_REQ req; memset(&req, 0, sizeof(TRACE_REQ));
         snprintf(req.sta, sizeof(req.sta), "%s", StaArray[i].szStation);
         snprintf(req.net, sizeof(req.net), "%s", StaArray[i].szNetID);
         snprintf(req.chan, sizeof(req.chan), "%s", StaArray[i].szChannel);
         snprintf(req.loc, sizeof(req.loc), "%s", StaArray[i].szLocation);
-        req.reqStarttime = req_start; req.reqEndtime = req_end; req.pBuf = trace_buffer; req.bufLen = max_trace_buf; req.timeout = WsTimeout; req.fill = 0;
+        req.reqStarttime = job->req_start; req.reqEndtime = job->req_end;
+        req.pBuf = trace_buffer; req.bufLen = max_trace_buf; req.timeout = WsTimeout; req.fill = 0;
 
         int ws_res = wsGetTraceBinL(&req, &ws_menu, WsTimeout);
         if (ws_res == WS_ERR_NONE && req.actLen > 0) {
-            bHasData[i] = 1; 
-            char *ptr = req.pBuf, *end_ptr = req.pBuf + req.actLen; double rate = 0.0;
-            while (ptr < end_ptr) {
-                if (ptr + sizeof(TRACE2_HEADER) > end_ptr) break;
-                TRACE2_HEADER *trh = (TRACE2_HEADER *)ptr;
-                if (trh->nsamp < 0 || trh->nsamp > 500000 || trh->samprate <= 0.0) break;
-                if (rate == 0.0) rate = trh->samprate;
-                int dsize = (trh->datatype[1] == '2') ? 2 : 4; char *dptr = ptr + sizeof(TRACE2_HEADER);
-                if (dptr + (trh->nsamp * dsize) > end_ptr) break;
-
-                double t_start_paq = trh->starttime;
-                for (int s = 0; s < trh->nsamp; s++) {
-                    double x = (dsize == 4) ? (double)*((int32_t*)(dptr + s*4)) : (double)*((int16_t*)(dptr + s*2));
-                    double t_samp = t_start_paq + ((double)s / rate);
-                    long k = (long)((t_samp - req_start) * rate + 0.5); 
-                    if (k >= 0 && k < StaArray[i].lRawCircSize) {
-                        StaArray[i].plRawCircBuff[k] = (int32_t)x; 
-                        if (k >= StaArray[i].lRawCircCtr) StaArray[i].lRawCircCtr = k + 1;
-                    }
-                }
-                ptr += sizeof(TRACE2_HEADER) + trh->nsamp * dsize;
-            }
-            StaArray[i].dSampRate = rate; 
+            f->raw = malloc(req.actLen);
+            if (f->raw) { memcpy(f->raw, req.pBuf, req.actLen); f->act_len = req.actLen; f->has_data = 1; }
         } else if (ws_res == WS_ERR_BROKEN_CONNECTION || ws_res == WS_ERR_TIMEOUT) {
-            wsKillMenu(&ws_menu); ws_menu.head = NULL; break; 
+            wsKillMenu(&ws_menu); ws_menu.head = NULL; break;
         }
     }
-
-    /* Post-proceso por estacion (portado de EW7 ReloadWaveforms):
-       interpola los gaps cortos, recorta la cola de datos futuros y
-       aplica el filtro seleccionado (Raw/HP/LP/BP) + demean. */
-    for (int i = 0; i < NumEstaciones; i++) {
-        if (bHasData[i]) {
-            interpolate_short_gaps(&StaArray[i]);
-            find_data_end_station(&StaArray[i]);
-            if (StaArray[i].lRawCircCtr <= 0) bHasData[i] = 0;
-        }
-    }
-    ApplySelectedFilter();
-
     free(trace_buffer);
+
+    g_idle_add(ws_fetch_finish, job);
+    return NULL;
 }
+
+static gboolean ws_fetch_finish(gpointer data)
+{
+    WsFetchJob *job = data;
+    int stale = (selected_qid != job->qid || selected_mod != job->mod);
+
+    if (!stale) {
+        for (int i = 0; i < NumEstaciones; i++) {
+            EwGuiTrace *tr = StaArray[i].trace;
+            bHasData[i] = 0;
+            if (tr) ewgui_trace_clear(tr);
+            StaArray[i].iNumPicks = 0; StaArray[i].dManualPickTime = 0.0; g_StaDist[i] = 0.0;
+            if (tr) ewgui_trace_set_oldest(tr, job->req_start);
+
+            for (int c = 0; c < MAX_CACHED_EVENTS; c++) {
+                if (PickCache[c].qid == job->qid && PickCache[c].mod == job->mod) {
+                    for (int p = 0; p < PickCache[c].num_picks; p++) {
+                        if (!strcmp(StaArray[i].szStation, PickCache[c].picks[p].sta) &&
+                            !strcmp(StaArray[i].szChannel, PickCache[c].picks[p].chan)) {
+                            int spIdx = StaArray[i].iNumPicks % MAX_PICKS_PER_STA;
+                            StaArray[i].picks[spIdx].dTime = PickCache[c].picks[p].pTime;
+                            strcpy(StaArray[i].picks[spIdx].szPhase, PickCache[c].picks[p].phase);
+                            StaArray[i].iNumPicks++;
+                        }
+                    }
+                    break;
+                }
+            }
+
+            if (i < job->nsta) {
+                g_StaDist[i] = job->stas[i].dist;
+                WsFetchedSta *f = &job->stas[i];
+                if (f->has_data && f->raw) {
+                    if (!tr) { tr = ewgui_trace_new((long)MAX_MINUTES * 60 * 100); StaArray[i].trace = tr; }
+                    if (!tr) continue;
+                    bHasData[i] = 1;
+                    int32_t *rawbuf = ewgui_trace_raw(tr);
+                    long cap = ewgui_trace_capacity(tr);
+                    long ctr = 0;
+                    char *ptr = f->raw, *end_ptr = f->raw + f->act_len; double rate = 0.0;
+                    while (ptr < end_ptr) {
+                        if (ptr + sizeof(TRACE2_HEADER) > end_ptr) break;
+                        TRACE2_HEADER *trh = (TRACE2_HEADER *)ptr;
+                        if (trh->nsamp < 0 || trh->nsamp > 500000 || trh->samprate <= 0.0) break;
+                        if (rate == 0.0) rate = trh->samprate;
+                        int dsize = (trh->datatype[1] == '2') ? 2 : 4;
+                        char *dptr = ptr + sizeof(TRACE2_HEADER);
+                        if (dptr + (trh->nsamp * dsize) > end_ptr) break;
+                        double t_start_paq = trh->starttime;
+                        for (int s = 0; s < trh->nsamp; s++) {
+                            double x = (dsize == 4) ? (double)*((int32_t*)(dptr + s*4)) : (double)*((int16_t*)(dptr + s*2));
+                            double t_samp = t_start_paq + ((double)s / rate);
+                            long k = (long)((t_samp - job->req_start) * rate + 0.5);
+                            if (k >= 0 && k < cap) {
+                                rawbuf[k] = (int32_t)x;
+                                if (k >= ctr) ctr = k + 1;
+                            }
+                        }
+                        ptr += sizeof(TRACE2_HEADER) + trh->nsamp * dsize;
+                    }
+                    ewgui_trace_set_rate(tr, rate);
+                    ewgui_trace_set_length(tr, ctr);
+                }
+            }
+        }
+
+        /* Post-proceso por estacion (portado de EW7 ReloadWaveforms):
+           interpola los gaps cortos, recorta la cola de datos futuros y
+           aplica el filtro seleccionado (Raw/HP/LP/BP) + demean. */
+        for (int i = 0; i < NumEstaciones; i++) {
+            if (bHasData[i]) {
+                ewgui_trace_finish(StaArray[i].trace);
+                if (ewgui_trace_length(StaArray[i].trace) <= 0) bHasData[i] = 0;
+            }
+        }
+        ApplySelectedFilter();
+
+        if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
+        if (canvas_global) {
+            actualizar_altura_canvas();
+            ewgui_canvas_queue_draw(canvas_global);
+        }
+    } else {
+        pending_waveform_reload = TRUE;   /* la seleccion cambio: reintentar */
+    }
+
+    for (int i = 0; i < job->nsta; i++) free(job->stas[i].raw);
+    free(job->stas);
+    free(job);
+    g_ws_busy = 0;
+    return G_SOURCE_REMOVE;
+}
+
+void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid, int mod) {
+    if (g_ws_busy) { pending_waveform_reload = TRUE; return; }
+
+    WsFetchJob *job = calloc(1, sizeof(*job));
+    if (!job) return;
+    job->qid = qid; job->mod = mod;
+    job->eq_lat = eq_lat; job->eq_lon = eq_lon;
+    job->req_start = otime - 30.0;
+    job->req_end   = otime + g_dScreenTime + g_max_dist_km / 5.5 + g_align_lead;
+    job->max_dist_km = g_max_dist_km;
+    job->nsta = NumEstaciones;
+    job->stas = calloc(NumEstaciones > 0 ? (size_t)NumEstaciones : 1, sizeof(WsFetchedSta));
+    if (!job->stas) { free(job); return; }
+
+    g_ws_busy = 1;
+    GThread *th = g_thread_new("ws_fetch", ws_fetch_thread, job);
+    g_thread_unref(th);
+}
+

@@ -2,22 +2,27 @@
 
 CC = gcc
 
-# Usamos pkg-config para obtener automaticamente los flags de GTK3
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags gtk+-3.0) -I$(EW_HOME)/$(EW_VERSION)/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+# Módulo migrado a GTK4 + libadwaita (Fase 6). Enlaza libewgui_gtk4.a.
+GUI_PKG = gtk4 libadwaita-1
 
-# Usamos pkg-config para obtener las librerias a enlazar de GTK3
-LDFLAGS = $(shell pkg-config --libs gtk+-3.0) -lm -lpthread
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+
+LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
 
 OBJS = csnrv.o
 
 # Libreria base nativa de Earthworm 8 (contiene logit, kom, tport, time_ew, etc.)
 # rw_mag.o aporta rd_mag() para parsear TYPE_MAGNITUDE del anillo.
-EWLIBS = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
+EWLIBS = ../common/libewgui_gtk4.a \
+         $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
 all: csnrv
 
-csnrv: $(OBJS)
+../common/libewgui_gtk4.a:
+	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+
+csnrv: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csnrv $(OBJS) $(EWLIBS) $(LDFLAGS)
 	cp csnrv $(EW_HOME)/$(EW_VERSION)/bin/
 

@@ -183,11 +183,31 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
         line[13] = ' ';
         line[14] = phase_char;
         line[15] = ' ';
-        line[16] = '0';
+        /* Peso P (`LPWT`): 0 es el mejor (codigos 0..3; 4-9 = peso 0,
+           hycmd.for:1925). Para una S hay que dejarlo en 4: si no,
+           HYPOINVERSE la mete por la rama P (hyloc.for:204) y nunca por la S
+           (hyloc.for:211). */
+        line[16] = (phase_char == 'S') ? '4' : '0';
 
         snprintf(temp, sizeof(temp), "%04d%02d%02d%02d%02d%05.2f",
                  py, pm, pd, ph, pmn, psec);
         memcpy(&line[17], temp, 17);
+
+        /* La S va ADEMAS en sus columnas canonicas del ARC: tiempo S (41-45),
+           remark `KSRK` (46-47) y peso `LSWT` (49). Sin esto hyphs.for:552
+           anula el remark S (la ventana STRI(42:46) esta en blanco) y la S no
+           entra nunca al calculo: medido, borrar las 1896 fases S del suelo de
+           1777 ARC deja los resultados de hyp2000 identicos byte a byte.
+           Se conserva la letra de fase en [14] porque es lo que leen nlloc_ring
+           (write_obs) y las GUIs. */
+        if (phase_char == 'S') {
+            char sec[8];
+            snprintf(sec, sizeof(sec), "%05.2f", psec);
+            memcpy(&line[41], sec, 5);
+            line[46] = 'S';
+            line[47] = ' ';
+            line[49] = '0';
+        }
 
         pad_string(&line[111], loc_str, 2);
         strcat(buf, line);

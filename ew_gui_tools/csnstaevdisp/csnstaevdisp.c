@@ -12,6 +12,12 @@
 
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
+#include <adwaita.h>
+#include "ewgui/ring.h"
+#include "ewgui/geo.h"
+#include "ewgui/actions.h"
+#include "ewgui/view.h"
+#include "ewgui/sta.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -47,7 +53,6 @@ int  LogFile = 1;                            /* 1 = write log to disk */
 double g_station_size = 5.0;                 /* size of the station triangles (from the .d) */
 
 pid_t MyPid;                                 /* this process id */
-time_t timeLastBeat = 0;                     /* time of the last heartbeat sent */
 unsigned char TypeHeartBeat = 0;             /* TYPE_HEARTBEAT */
 unsigned char TypeError = 0;                 /* TYPE_ERROR */
 unsigned char MyModId = 0;                   /* Earthworm module id */
@@ -93,7 +98,14 @@ double g_last_mouse_y = 0.0;                 /* last mouse y during a drag */
 int g_max_events_display = 10;               /* number of quakes to draw */
 
 /* Interface Widgets */
-GtkWidget *map_canvas;                       /* map drawing area */
+EwGuiCanvas *map_canvas;
+
+static GMainLoop *g_loop = NULL;
+static gboolean on_window_close(GtkWindow *w, gpointer data) {
+    (void)w; (void)data;
+    if (g_loop) g_main_loop_quit(g_loop);
+    return FALSE;
+}                       /* map drawing area */
 
 /* --------------------------------------------------------------------
  * EARTHWORM CONFIGURATION READING
@@ -199,16 +211,15 @@ void ConnectToEarthworm() {
   ***********************************************************************/
 
 gboolean ew_background_tasks(gpointer user_data) {
+    static EwGuiHeartbeat hb = {0};
     time_t timeNow; time(&timeNow);
-    if (timeNow - timeLastBeat >= HeartBeatInt) {
-        timeLastBeat = timeNow;
+    if (ewgui_heartbeat_due(&hb, (double)timeNow, HeartBeatInt)) {
         Status(TypeHeartBeat, 0, "");
     }
 
-    int flag = tport_getflag(&Region);
-    if (flag == TERMINATE || flag == MyPid) {
+    if (ewgui_ring_should_quit(&Region, MyPid)) {
         printf("csnstaevdisp: Termination signal received. Closing...\n");
-        gtk_main_quit();
+        if (g_loop) g_main_loop_quit(g_loop);
         return G_SOURCE_REMOVE;
     }
     return G_SOURCE_CONTINUE;
@@ -226,15 +237,12 @@ gboolean ew_background_tasks(gpointer user_data) {
 
 /* Parsea una linea del station file: Sta Net Chan Loc Lat Lon Elev Sens. */
 static int parse_station_line(const char *line, STATION_MARK *s) {
-    char sta[16], net[16], chan[16], loc[16];
-    double lat, lon, elev, sens;
-    int n = sscanf(line, "%15s %15s %15s %15s %lf %lf %lf %lf",
-                   sta, net, chan, loc, &lat, &lon, &elev, &sens);
-    if (n < 7) return -1;
-    snprintf(s->sta, sizeof(s->sta), "%s", sta);
-    s->lat    = lat;
-    s->lon    = lon;
-    s->elev_m = elev;
+    EwStation st;
+    if (ewgui_sta_parse_line(line, &st) != 0) return -1;
+    snprintf(s->sta, sizeof(s->sta), "%s", st.sta);
+    s->lat    = st.lat;
+    s->lon    = st.lon;
+    s->elev_m = st.elev_m;
     return 0;
 }
 
@@ -344,29 +352,29 @@ void LoadQuakeHistory() {
   *               Nothing.                                              *
   ***********************************************************************/
 
+static void on_events_dialog_response(GObject *src, GAsyncResult *res, gpointer data) {
+    GtkWidget *spin = data;
+    const char *r = adw_message_dialog_choose_finish(ADW_MESSAGE_DIALOG(src), res);
+    if (r && !strcmp(r, "ok")) {
+        g_max_events_display = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin));
+        if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+    }
+    g_object_unref(src);
+}
+
 void on_events_number_activate(GtkWidget *widget, gpointer data) {
-    GtkWidget *window = GTK_WIDGET(data);
-    GtkWidget *dialog = gtk_dialog_new_with_buttons("Events number", GTK_WINDOW(window),
-        GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
-        "_OK", GTK_RESPONSE_ACCEPT, "_Cancel", GTK_RESPONSE_REJECT, NULL);
-
-    GtkWidget *content_area = gtk_dialog_get_content_area(GTK_DIALOG(dialog));
-    GtkWidget *hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-    gtk_box_pack_start(GTK_BOX(content_area), hbox, TRUE, TRUE, 15);
-    GtkWidget *label = gtk_label_new("Number of events to display:");
-    gtk_box_pack_start(GTK_BOX(hbox), label, FALSE, FALSE, 5);
-
+    (void)widget;
+    AdwMessageDialog *dlg = ADW_MESSAGE_DIALOG(adw_message_dialog_new(GTK_WINDOW(data),
+                                                   "Events number",
+                                                   "Number of events to display:"));
     GtkWidget *spin = gtk_spin_button_new_with_range(1, MAX_QUAKES, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(spin), g_max_events_display);
-    gtk_box_pack_start(GTK_BOX(hbox), spin, FALSE, FALSE, 5);
-    
-    gtk_widget_show_all(dialog);
-
-    if (gtk_dialog_run(GTK_DIALOG(dialog)) == GTK_RESPONSE_ACCEPT) {
-        g_max_events_display = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(spin));
-        if (map_canvas) gtk_widget_queue_draw(map_canvas);
-    }
-    gtk_widget_destroy(dialog);
+    adw_message_dialog_set_extra_child(dlg, spin);
+    adw_message_dialog_add_response(dlg, "cancel", "_Cancel");
+    adw_message_dialog_add_response(dlg, "ok", "_OK");
+    adw_message_dialog_set_default_response(dlg, "ok");
+    adw_message_dialog_set_close_response(dlg, "cancel");
+    adw_message_dialog_choose(dlg, NULL, on_events_dialog_response, spin);
 }
 
  /***********************************************************************
@@ -376,67 +384,38 @@ void on_events_number_activate(GtkWidget *widget, gpointer data) {
   *               TRUE (event consumed).                                *
   ***********************************************************************/
 
-static gboolean on_map_scroll(GtkWidget *widget, GdkEventScroll *event, gpointer data) {
-    if (event->direction == GDK_SCROLL_UP) {
-        g_map_zoom *= 1.2; 
-    } else if (event->direction == GDK_SCROLL_DOWN) {
-        g_map_zoom /= 1.2; 
-    }
-    
-    if (g_map_zoom < 0.2) g_map_zoom = 0.2;
-    if (g_map_zoom > 100.0) g_map_zoom = 100.0;
-    
-    gtk_widget_queue_draw(widget);
-    return TRUE;
+static void on_map_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data) {
+    (void)ctrl; (void)dx; (void)data;
+    g_map_zoom = ewgui_geo_zoom_step(g_map_zoom, dy < 0.0, 0.2, 100.0);
+    ewgui_canvas_queue_draw(map_canvas);
 }
 
- /***********************************************************************
-  *                        on_map_button_press()                        *
-  *             GTK handler for the left button press: starts a drag to *
-  *             pan the map.                                            *
-  *               TRUE (event consumed).                                *
-  ***********************************************************************/
-
-static gboolean on_map_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-    if (event->button == 1) { 
+static void on_map_button_press(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
+    (void)n_press; (void)data;
+    if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == 1) {
         g_is_dragging = TRUE;
-        g_last_mouse_x = event->x;
-        g_last_mouse_y = event->y;
+        g_last_mouse_x = x;
+        g_last_mouse_y = y;
     }
-    return TRUE;
 }
 
- /***********************************************************************
-  *                       on_map_button_release()                       *
-  *             GTK handler for the left button release: ends the drag. *
-  *               TRUE (event consumed).                                *
-  ***********************************************************************/
-
-static gboolean on_map_button_release(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-    if (event->button == 1) { 
+static void on_map_button_release(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
+    (void)n_press; (void)x; (void)y; (void)data;
+    if (gtk_gesture_single_get_current_button(GTK_GESTURE_SINGLE(gesture)) == 1)
         g_is_dragging = FALSE;
-    }
-    return TRUE;
 }
 
- /***********************************************************************
-  *                           on_map_motion()                           *
-  *             GTK handler for mouse motion: pans the map while        *
-  *             dragging, and redraws.                                  *
-  *               TRUE (event consumed).                                *
-  ***********************************************************************/
-
-static gboolean on_map_motion(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
+static void on_map_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer data) {
+    (void)ctrl; (void)data;
     if (g_is_dragging) {
-        double dx = event->x - g_last_mouse_x;
-        double dy = event->y - g_last_mouse_y;
+        double dx = x - g_last_mouse_x;
+        double dy = y - g_last_mouse_y;
         g_map_pan_x += dx;
         g_map_pan_y += dy;
-        g_last_mouse_x = event->x;
-        g_last_mouse_y = event->y;
-        gtk_widget_queue_draw(widget);
+        g_last_mouse_x = x;
+        g_last_mouse_y = y;
+        ewgui_canvas_queue_draw(map_canvas);
     }
-    return TRUE;
 }
 
 /* --------------------------------------------------------------------
@@ -459,7 +438,7 @@ static gboolean check_history_file_loop(gpointer data) {
             LoadQuakeHistory();
             
             if (map_canvas) {
-                gtk_widget_queue_draw(map_canvas);
+                ewgui_canvas_queue_draw(map_canvas);
             }
         }
     }
@@ -477,9 +456,8 @@ static gboolean check_history_file_loop(gpointer data) {
   *               FALSE always.                                         *
   ***********************************************************************/
 
-static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    guint width = gtk_widget_get_allocated_width(widget);
-    guint height = gtk_widget_get_allocated_height(widget);
+static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
+    (void)canvas; (void)data;
 
     if (g_map_pixbuf != NULL) {
         double img_w = gdk_pixbuf_get_width(g_map_pixbuf);
@@ -490,8 +468,8 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
         double screen_cy = height / 2.0 + g_map_pan_y;
 
         /* Default focus on Chile if the image is the whole world map (-70.0 Lon, -30.0 Lat) */
-        double center_x = img_w * (-70.0 + 180.0) / 360.0;
-        double center_y = img_h * (90.0 - (-30.0)) / 180.0;
+        double center_x, center_y;
+        ewgui_geo_project(-30.0, -70.0, img_w, img_h, &center_x, &center_y);
 
         cairo_save(cr);
         
@@ -505,21 +483,18 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
         cairo_paint(cr);
         
         /* 3. Draw Grid (Latitude / Longitude) */
-        double step = 10.0; 
-        if (g_map_zoom > 30.0) step = 1.0;
-        else if (g_map_zoom > 15.0) step = 2.0;
-        else if (g_map_zoom > 5.0) step = 5.0;
+        double step = ewgui_geo_grid_step(g_map_zoom);
 
         cairo_new_path(cr);
         cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.3); /* Semi-transparent white */
         cairo_set_line_width(cr, 1.0 / g_map_zoom);    /* Thickness invariant to zoom */
 
         for (double lon = -180.0; lon <= 180.0; lon += step) {
-            double x = img_w * (lon + 180.0) / 360.0;
+            double x; ewgui_geo_project(0.0, lon, img_w, img_h, &x, NULL);
             cairo_move_to(cr, x, 0); cairo_line_to(cr, x, img_h);
         }
         for (double lat = -90.0; lat <= 90.0; lat += step) {
-            double y = img_h * (90.0 - lat) / 180.0;
+            double y; ewgui_geo_project(lat, 0.0, img_w, img_h, NULL, &y);
             cairo_move_to(cr, 0, y); cairo_line_to(cr, img_w, y);
         }
         cairo_stroke(cr);
@@ -532,8 +507,8 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
 
         for(int i = 0; i < NumEstaciones; i++) {
             if (StaArray[i].lat != 0.0 && StaArray[i].lon != 0.0) {
-                double x = img_w * (StaArray[i].lon + 180.0) / 360.0;
-                double y = img_h * (90.0 - StaArray[i].lat) / 180.0;
+                double x, y;
+                ewgui_geo_project(StaArray[i].lat, StaArray[i].lon, img_w, img_h, &x, &y);
 
                 /* Compute the elevation ratio for the color palette [0.0 = low, 1.0 = high] */
                 double elev_ratio = (StaArray[i].elev_m - g_min_elev) / (g_max_elev - g_min_elev);
@@ -562,8 +537,8 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
         int events_to_draw = (NumQuakes > g_max_events_display) ? g_max_events_display : NumQuakes;
         
         for(int i = events_to_draw - 1; i >= 0; i--) { /* We paint from back to front (the newest on top) */
-            double x = img_w * (QuakeList[i].lon + 180.0) / 360.0;
-            double y = img_h * (90.0 - QuakeList[i].lat) / 180.0;
+            double x, y;
+            ewgui_geo_project(QuakeList[i].lat, QuakeList[i].lon, img_w, img_h, &x, &y);
 
             double mag = QuakeList[i].mag;
             if (mag < 0.0) mag = 1.0; 
@@ -716,8 +691,6 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
     cairo_set_line_width(cr, 3.0);
     cairo_rectangle(cr, 0, 0, width, height);
     cairo_stroke(cr);
-
-    return FALSE;
 }
 
  /***********************************************************************
@@ -727,6 +700,11 @@ static gboolean on_draw_map(GtkWidget *widget, cairo_t *cr, gpointer data) {
   *             interface and runs the main loop.                       *
   *               0 on clean exit.                                      *
   ***********************************************************************/
+
+static void act_events_number(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    (void)action; (void)param;
+    on_events_number_activate(NULL, user_data);
+}
 
 int main(int argc, char *argv[]) {
     if (argc != 2) {
@@ -740,7 +718,7 @@ int main(int argc, char *argv[]) {
     logit_init(argv[1], 0, 1024, LogFile);
     MyPid = getpid();
     
-    gtk_init(&argc, &argv);
+    gtk_init();
     setlocale(LC_NUMERIC, "C");
 
     ConnectToEarthworm();
@@ -760,49 +738,55 @@ int main(int argc, char *argv[]) {
     }
 
     /* --- GTK WINDOW CREATION --- */
-    GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    GtkWidget *window = gtk_window_new();
     gtk_window_set_title(GTK_WINDOW(window), "Network & Seismicity Viewer");
     gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
-    g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+    g_signal_connect(window, "close-request", G_CALLBACK(on_window_close), NULL);
 
     GtkWidget *vbox_main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_container_add(GTK_CONTAINER(window), vbox_main);
+    gtk_window_set_child(GTK_WINDOW(window), vbox_main);
 
-    /* --- MENU BAR --- */
-    GtkWidget *menu_bar = gtk_menu_bar_new();
-    
-    GtkWidget *ctrl_panel_item = gtk_menu_item_new_with_label("Control Panel"); 
-    GtkWidget *ctrl_panel_menu = gtk_menu_new();
-    gtk_menu_item_set_submenu(GTK_MENU_ITEM(ctrl_panel_item), ctrl_panel_menu);
-    
-    GtkWidget *events_number_item = gtk_menu_item_new_with_label("Events number");
-    g_signal_connect(events_number_item, "activate", G_CALLBACK(on_events_number_activate), window);
-    gtk_menu_shell_append(GTK_MENU_SHELL(ctrl_panel_menu), events_number_item);
-    
-    gtk_menu_shell_append(GTK_MENU_SHELL(menu_bar), ctrl_panel_item); 
-    gtk_box_pack_start(GTK_BOX(vbox_main), menu_bar, FALSE, FALSE, 0);
+    /* --- MENU BAR (acciones GIO + GMenu; GtkPopoverMenuBar en GTK4) --- */
+    GSimpleActionGroup *actions = g_simple_action_group_new();
+    ewgui_action_add(G_ACTION_MAP(actions), "events-number", NULL, act_events_number, window);
+    gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
+    g_object_unref(actions);
+    EwMenuItem ctrl_items[] = {
+        { "Events number", "win.events-number", NULL, 0 },
+    };
+    EwMenuGroup menu_groups[] = { { "Control Panel", ctrl_items, 1 } };
+    GMenuModel *menu_model = ewgui_menu_build(menu_groups, 1);
+    GtkWidget *menu_bar = gtk_popover_menu_bar_new_from_model(menu_model);
+    g_object_unref(menu_model);
+    gtk_box_append(GTK_BOX(vbox_main), menu_bar);
 
     /* --- MAP CANVAS --- */
-    map_canvas = gtk_drawing_area_new();
-    gtk_widget_set_size_request(map_canvas, -1, -1); 
-    
-    /* BIND MOUSE EVENTS */
-    gtk_widget_add_events(map_canvas, GDK_SCROLL_MASK | GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK);
-    g_signal_connect(G_OBJECT(map_canvas), "scroll-event", G_CALLBACK(on_map_scroll), NULL);
-    g_signal_connect(G_OBJECT(map_canvas), "button-press-event", G_CALLBACK(on_map_button_press), NULL);
-    g_signal_connect(G_OBJECT(map_canvas), "button-release-event", G_CALLBACK(on_map_button_release), NULL);
-    g_signal_connect(G_OBJECT(map_canvas), "motion-notify-event", G_CALLBACK(on_map_motion), NULL);
-    
-    g_signal_connect(G_OBJECT(map_canvas), "draw", G_CALLBACK(on_draw_map), NULL);
-    
-    gtk_box_pack_start(GTK_BOX(vbox_main), map_canvas, TRUE, TRUE, 0);
+    map_canvas = ewgui_canvas_new();
+    ewgui_canvas_set_draw(map_canvas, on_draw_map, NULL);
+    GtkWidget *map_widget = ewgui_canvas_widget(map_canvas);
+    gtk_widget_set_size_request(map_widget, -1, -1);
+    gtk_widget_set_vexpand(map_widget, TRUE);
 
-    /* --- BACKGROUND TASK TIMERS --- */
-    g_timeout_add(2000, check_history_file_loop, NULL);  /* Checks quakes every 2s */
-    g_timeout_add(1000, ew_background_tasks, NULL);      /* EW heartbeats every 1s */
+    GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    g_signal_connect(scroll, "scroll", G_CALLBACK(on_map_scroll), NULL);
+    gtk_widget_add_controller(map_widget, scroll);
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 1);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_map_button_press), NULL);
+    g_signal_connect(click, "released", G_CALLBACK(on_map_button_release), NULL);
+    gtk_widget_add_controller(map_widget, GTK_EVENT_CONTROLLER(click));
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion", G_CALLBACK(on_map_motion), NULL);
+    gtk_widget_add_controller(map_widget, motion);
 
-    gtk_widget_show_all(window);
-    gtk_main();
+    gtk_box_append(GTK_BOX(vbox_main), map_widget);
+
+    g_timeout_add(2000, check_history_file_loop, NULL);
+    g_timeout_add(1000, ew_background_tasks, NULL);
+
+    gtk_window_present(GTK_WINDOW(window));
+    g_loop = g_main_loop_new(NULL, FALSE);
+    g_main_loop_run(g_loop);
 
     tport_detach(&Region);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);

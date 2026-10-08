@@ -1,19 +1,24 @@
-# Makefile para csntvp (GTK3 + Earthworm 8)
+# Makefile para csntvp (GTK4 + libadwaita + Earthworm 8)
 
 CC = gcc
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags gtk+-3.0) -I$(EW_HOME)/$(EW_VERSION)/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+GUI_PKG = gtk4 libadwaita-1
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
 
-LIBS = $(shell pkg-config --libs gtk+-3.0) -lm -lpthread
+LIBS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
 
-OBJS = csntvp.o
+OBJS = csntvp_main.o csntvp_data.o csntvp_gui.o
 
 # Dejamos que libew_mt.a maneje kom, logit, getutil, transport, etc.
-EWLIBS = $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
+EWLIBS = ../common/libewgui_gtk4.a \
+         $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
-csntvp: $(OBJS)
+../common/libewgui_gtk4.a:
+	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+
+csntvp: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csntvp $(OBJS) $(EWLIBS) $(LIBS)
 	cp csntvp $(EW_HOME)/$(EW_VERSION)/bin/
 

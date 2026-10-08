@@ -42,7 +42,8 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_precompute_equiv test/test_grid_activation \
         test/test_nested_dedup test/test_event_version test/test_phase_prune \
         test/test_event_ttl test/test_state_recover test/test_event_id \
-        test/test_renucleate
+        test/test_renucleate test/test_refine_depth test/test_pick_s \
+        test/test_repick_phase
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -60,12 +61,13 @@ check-grids: test/test_grid_parse test/test_gridset_load \
 # Las tablas IASP91 viven en este directorio (los tests las abren desde '.').
 
 # Ejecuta la bateria completa.
-check: $(TESTS) iasp91.tbl iasp91.hed
+check: $(TESTS) ttpred iasp91.tbl iasp91.hed
 	@echo "=== test_pick_parse ===";       ./test/test_pick_parse
 	@echo "=== test_repick ===";           ./test/test_repick
 	@echo "=== test_dbscan ===";           ./test/test_dbscan
 	@echo "=== test_hypo_format ===";      ./test/test_hypo_format
 	@echo "=== test_tt ===";               ./test/test_tt
+	@echo "=== test_ttp ===";              sh ./test/test_ttp.sh
 	@echo "=== test_synth_locate ===";     ./test/test_synth_locate
 	@echo "=== test_two_events ===";       ./test/test_two_events
 	@echo "=== test_grid_parse ===";       ./test/test_grid_parse
@@ -79,19 +81,35 @@ check: $(TESTS) iasp91.tbl iasp91.hed
 	@echo "=== test_state_recover ===";    ./test/test_state_recover
 	@echo "=== test_event_id ===";         ./test/test_event_id
 	@echo "=== test_renucleate ===";       ./test/test_renucleate
+	@echo "=== test_refine_depth ===";     ./test/test_refine_depth
+	@echo "=== test_pick_s ===";           ./test/test_pick_s
+	@echo "=== test_repick_phase ===";     ./test/test_repick_phase
 	@echo "TODOS LOS TESTS OK"
 
 test/test_pick_parse: test/test_pick_parse.c pick_scln.o
 	$(CC) $(CFLAGS) -o $@ test/test_pick_parse.c pick_scln.o $(LIBS)
 
+test/test_pick_s: test/test_pick_s.c pick_scln.o
+	$(CC) $(CFLAGS) -o $@ test/test_pick_s.c pick_scln.o $(LIBS)
+
 test/test_repick: test/test_repick.c pick_buffer.o
 	$(CC) $(CFLAGS) -o $@ test/test_repick.c pick_buffer.o $(LIBS)
+
+test/test_repick_phase: test/test_repick_phase.c pick_buffer.o
+	$(CC) $(CFLAGS) -o $@ test/test_repick_phase.c pick_buffer.o $(LIBS)
 
 test/test_dbscan: test/test_dbscan.c dbscan.o
 	$(CC) $(CFLAGS) -o $@ test/test_dbscan.c dbscan.o $(LIBS)
 
 test/test_tt: test/test_tt.c ttmodel.o $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $@ test/test_tt.c ttmodel.o $(TAUOBJS) $(LIBS)
+
+# ttp: predicción batch de tiempos de viaje P/S (reutiliza el motor IASP91).
+ttpred: ttpred.c ttmodel.o stations.o $(TAUOBJS)
+	$(CC) $(CFLAGS) -o $@ ttpred.c ttmodel.o stations.o $(TAUOBJS) $(LIBS)
+
+test/test_ttp: ttpred
+	sh ./test/test_ttp.sh
 
 test/test_hypo_format: test/test_hypo_format.c hypo_out.o stations.o pick_scln.o
 	$(CC) $(CFLAGS) -o $@ test/test_hypo_format.c hypo_out.o stations.o \
@@ -101,6 +119,11 @@ test/test_synth_locate: test/test_synth_locate.c backprojection.o dbscan.o \
                         refine.o grid.o ttmodel.o stations.o $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $@ test/test_synth_locate.c backprojection.o \
 	      dbscan.o refine.o grid.o ttmodel.o stations.o $(TAUOBJS) $(LIBS)
+
+test/test_refine_depth: test/test_refine_depth.c refine.o ttmodel.o stations.o \
+                        $(TAUOBJS)
+	$(CC) $(CFLAGS) -o $@ test/test_refine_depth.c refine.o ttmodel.o \
+	      stations.o $(TAUOBJS) $(LIBS)
 
 test/test_two_events: test/test_two_events.c backprojection.o dbscan.o \
                       refine.o grid.o ttmodel.o stations.o $(TAUOBJS)

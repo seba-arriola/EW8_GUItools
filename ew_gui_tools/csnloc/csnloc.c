@@ -18,6 +18,7 @@
 
 #include <signal.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "csnloc.h"
 #include <kom.h>
@@ -69,6 +70,9 @@ static void set_defaults(CSLocParams *c)
     c->NumThreads = 4;
     c->RefineIterations = 3;
     c->RefineNodeKm = 5.0;
+    c->RefineDepthKm = 2.0 * c->RefineNodeKm;   /* auto: escapa del nodo */
+    c->DepthPriorKm = 0.0;                      /* 0 = sin prior         */
+    c->DepthPriorSigmaKm = 0.0;
 
     strcpy(c->AgencyID, "CL");
     strcpy(c->Author, "csnloc");
@@ -148,6 +152,9 @@ static int read_config(const char *file, CSLocParams *c)
         else if (k_its("NumThreads"))   c->NumThreads = k_int();
         else if (k_its("RefineIterations")) c->RefineIterations = k_int();
         else if (k_its("RefineNodeKm")) c->RefineNodeKm = k_val();
+        else if (k_its("RefineDepthKm")) c->RefineDepthKm = k_val();
+        else if (k_its("DepthPriorKm")) c->DepthPriorKm = k_val();
+        else if (k_its("DepthPriorSigmaKm")) c->DepthPriorSigmaKm = k_val();
         else if (k_its("AgencyID"))     { str = k_str(); if (str) strncpy(c->AgencyID, str, sizeof(c->AgencyID)-1); }
         else if (k_its("Author"))       { str = k_str(); if (str) strncpy(c->Author, str, sizeof(c->Author)-1); }
         else if (k_its("EventTTLSec"))  c->EventTTLSec = k_val();
@@ -239,6 +246,28 @@ static void Epoch_ToISO(double t, char *buf, int buflen)
 /* ------------------------------------------------------------------------- */
 /* Emision de un evento: JSON a stdout (offline) o HYP2000ARC al anillo.      */
 /* ------------------------------------------------------------------------- */
+static void csnloc_log_cb(const char *msg)
+{
+    logit("t", "%s", msg);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Clase cualitativa de control de profundidad (gap, nph, dmin vs z).         */
+/*                                                                           */
+/* La profundidad es el parametro peor resuelto: se declara "sin_control"     */
+/* cuando la geometria no la constrine y "pobre" cuando la estacion mas       */
+/* cercana esta a mas de ~1.5*z (Koper et al.), condicion necesaria para      */
+/* resolverla.                                                               */
+/* ------------------------------------------------------------------------- */
+static const char *depth_control(const HypoCandidate *h)
+{
+    if (h->nphases < 4 || h->gap_deg > 300.0) return "sin_control";
+    if (h->depth_km > 0.0 && h->dmin_km > 1.5 * h->depth_km) return "pobre";
+    if (h->gap_deg > 180.0 || h->nphases < 6) return "pobre";
+    if (h->gap_deg > 120.0 || h->nphases < 8) return "aceptable";
+    return "bien";
+}
+
 static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
                       const Pick *window, int nwin, unsigned int version,
                       char *arc)
@@ -254,11 +283,12 @@ static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
                 "\"lat\":%.4f,\"lon\":%.4f,\"depth_km\":%.1f,"
                 "\"nphases\":%d,\"rms_sec\":%.3f,\"gap_deg\":%.1f,"
                 "\"dmin_km\":%.1f,\"score\":%.3f,\"grid_level\":%d,"
+                "\"depth_ctrl\":\"%s\","
                 "\"nwin\":%d,\"phases\":[",
                 h->id, h->id, version, h->t0, t0iso,
                 h->lat, h->lon, h->depth_km,
                 h->nphases, h->rms_sec, h->gap_deg,
-                h->dmin_km, h->score, h->grid_level, nwin);
+                h->dmin_km, h->score, h->grid_level, depth_control(h), nwin);
 
         for (i = 0; i < h->nphases; i++) {
             int idx = h->phase_idx[i];
@@ -290,9 +320,10 @@ static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
 
         if (tport_putmsg(&ctx->OutRegion, &logo, (long)strlen(arc), arc) == PUT_OK) {
             logit("t", "csnloc: evento %lu lat=%.3f lon=%.3f z=%.1f km "
-                       "nph=%d rms=%.2f gap=%d\n",
+                       "nph=%d rms=%.2f gap=%d ctrl=%s\n",
                   h->id, h->lat, h->lon, h->depth_km,
-                  h->nphases, h->rms_sec, (int)(h->gap_deg + 0.5));
+                  h->nphases, h->rms_sec, (int)(h->gap_deg + 0.5),
+                  depth_control(h));
         } else {
             logit("et", "csnloc: fallo escribiendo HYP2000ARC al anillo\n");
         }
@@ -358,61 +389,174 @@ static int DedupEvents(const HypoCandidate *in, int n,
 /* ------------------------------------------------------------------------- */
 /* Procesa la ventana actual: back-projection, refinado y emisión.            */
 /* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+/* Instrumentacion por fases: solo mide tiempos, no altera el resultado.      */
+/* Sirve para saber donde se va el tiempo serial antes de paralelizar nada.   */
+/* ------------------------------------------------------------------------- */
+static double g_t_snap, g_t_bproj, g_t_assemble, g_t_dedup;
+static double g_t_refine, g_t_registry, g_t_format;
+static long   g_nwin;
+
+static double now_mono(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Paralelizacion del bucle de grillas. Las grillas de un mismo nivel son     */
+/* independientes (la activacion solo mira niveles mas gruesos, ver           */
+/* Grid_IsActive), asi que cada una nuclea y ensambla en su propio slot y     */
+/* luego se compacta en orden de grilla: el resultado es identico al serial.  */
+/* ------------------------------------------------------------------------- */
+typedef struct {
+    const Grid        *g;
+    const StationList *st;
+    const Pick        *win;
+    int                nwin;
+    TTModel           *tt;
+    const CSLocParams *cfg;
+    HypoCandidate     *out;
+    int                max_out;
+    int                nthreads;
+    int                ne;
+    double             t_bp;      /* tiempos propios (los suma el hilo principal) */
+    double             t_as;
+} GridJob;
+
+static void *grid_worker(void *arg)
+{
+    GridJob       *j = (GridJob *)arg;
+    HypoCandidate *nuc;
+    double         t0;
+    int            n;
+
+    nuc = (HypoCandidate *)calloc((size_t)CSLOC_MAX_NUC, sizeof(HypoCandidate));
+    if (!nuc) { j->ne = 0; return NULL; }
+
+    t0 = now_mono();
+    n = BackProject_Nucleations(j->g, j->st, j->win, j->nwin, j->tt, j->cfg,
+                                nuc, CSLOC_MAX_NUC, j->nthreads);
+    j->t_bp = now_mono() - t0;
+
+    j->ne = 0;
+    j->t_as = 0.0;
+    if (n > 0) {
+        t0 = now_mono();
+        j->ne = AssembleCandidates(nuc, n, j->st, j->win, j->nwin, j->tt,
+                                   j->cfg, j->out, j->max_out);
+        j->t_as = now_mono() - t0;
+    }
+    free(nuc);
+    return NULL;
+}
+
 static void process_window(CSLocCtx *ctx, double now_epoch)
 {
     Pick          window[CSLOC_MAX_PICKS];
     int           pick_sidx[CSLOC_MAX_PICKS];
     HypoCandidate cand[CSLOC_MAX_EVENTS];
-    HypoCandidate *nuc, *events;
+    HypoCandidate *events;
     int           nwin, nev, nall = 0, i, gi, lev;
+    double        t0;
 
+    /* El DBSCAN reparte sus filas entre hilos; el resultado no depende del
+       numero (cada celda de la matriz es una funcion pura de los datos). */
+    DBSCAN_SetThreads(ctx->cfg.NumThreads);
+
+    t0 = now_mono();
     nwin = PickBuffer_Snapshot(&ctx->picks, now_epoch,
                                ctx->cfg.AssocWindowSec, window, CSLOC_MAX_PICKS);
     if (nwin < ctx->cfg.MinPhasesPerEvent) return;
 
     for (i = 0; i < nwin; i++)
         pick_sidx[i] = Stations_Find(&ctx->stations, window[i].sta);
+    g_t_snap += now_mono() - t0;
 
-    /* Buffers en heap (sizeof(HypoCandidate) es grande). */
-    nuc = (HypoCandidate *)calloc((size_t)CSLOC_MAX_NUC, sizeof(HypoCandidate));
+    /* Buffer de eventos en heap: un slot por grilla, porque las grillas de un
+       mismo nivel trabajan en paralelo y cada una escribe en el suyo. */
     events = (HypoCandidate *)calloc(
                  (size_t)(ctx->grids.n > 0 ? ctx->grids.n : 1) * CSLOC_MAX_EVENTS,
                  sizeof(HypoCandidate));
-    if (!nuc || !events) { free(nuc); free(events); return; }
+    if (!events) return;
 
     /* Cascada de gruesa a fina. Cada grilla activa se nuclea y ensambla por
        separado (las nucleaciones de resoluciones distintas no son comparables);
        luego los eventos se deduplican. Las grillas finas se activan por
        cobertura de estaciones o por cercania a un evento de nivel mas grueso. */
     for (lev = GRID_LEVEL_GLOBAL; lev <= GRID_LEVEL_LOCAL; lev++) {
-        for (gi = 0; gi < ctx->grids.n; gi++) {
-            Grid *g = &ctx->grids.g[gi];
-            int   n, ne;
+        GridJob   jobs[CSLOC_MAX_GRIDS];
+        pthread_t tids[CSLOC_MAX_GRIDS];
+        int       gidx[CSLOC_MAX_GRIDS];
+        int       ng = 0, k, npar;
 
+        /* 1) Activacion, en orden de grilla y con los candidatos acumulados de
+              los niveles mas gruesos. Como la regla (b) de Grid_IsActive solo
+              mira niveles mas gruesos, ninguna grilla de este nivel influye en
+              las demas: se puede resolver todo antes de paralelizar. */
+        for (gi = 0; gi < ctx->grids.n && ng < CSLOC_MAX_GRIDS; gi++) {
+            Grid *g = &ctx->grids.g[gi];
             if (g->level != lev) continue;
             if (!Grid_IsActive(g, window, pick_sidx, nwin, &ctx->stations,
                                &ctx->cfg, events, nall))
                 continue;
+            gidx[ng++] = gi;
+        }
+        if (ng <= 0) continue;
 
-            n = BackProject_Nucleations(g, &ctx->stations, window, nwin,
-                                        &ctx->tt, &ctx->cfg, nuc,
-                                        CSLOC_MAX_NUC, ctx->cfg.NumThreads);
-            if (n <= 0) continue;
+        /* 2) Cada grilla activa nuclea y ensambla en su propio slot. El
+              presupuesto de hilos se reparte: si hay varias grillas en vuelo,
+              cada retroproyeccion va con 1 hilo para no sobre-suscribir. */
+        npar = (ng < ctx->cfg.NumThreads) ? ng : ctx->cfg.NumThreads;
+        if (npar < 1) npar = 1;
+        for (k = 0; k < ng; k++) {
+            GridJob *j = &jobs[k];
+            j->g        = &ctx->grids.g[gidx[k]];
+            j->st       = &ctx->stations;
+            j->win      = window;
+            j->nwin     = nwin;
+            j->tt       = &ctx->tt;
+            j->cfg      = &ctx->cfg;
+            j->out      = events + (size_t)gidx[k] * CSLOC_MAX_EVENTS;
+            j->max_out  = CSLOC_MAX_EVENTS;
+            j->nthreads = ctx->cfg.NumThreads / npar;
+            if (j->nthreads < 1) j->nthreads = 1;
+            j->ne       = 0;
+            j->t_bp     = 0.0;
+            j->t_as     = 0.0;
+        }
+        if (npar <= 1) {
+            for (k = 0; k < ng; k++) grid_worker(&jobs[k]);
+        } else {
+            for (k = 0; k < ng; k++)
+                pthread_create(&tids[k], NULL, grid_worker, &jobs[k]);
+            for (k = 0; k < ng; k++)
+                pthread_join(tids[k], NULL);
+        }
+        for (k = 0; k < ng; k++) {
+            g_t_bproj   += jobs[k].t_bp;
+            g_t_assemble += jobs[k].t_as;
+        }
 
-            ne = AssembleCandidates(nuc, n, &ctx->stations, window, nwin,
-                                    &ctx->tt, &ctx->cfg, events + nall,
-                                    CSLOC_MAX_EVENTS);
-            if (ne > 0) nall += ne;
+        /* 3) Compactar en orden de grilla: mismo orden que la version serial. */
+        for (k = 0; k < ng; k++) {
+            if (jobs[k].ne <= 0) continue;
+            if (jobs[k].out != events + nall)
+                memmove(events + nall, jobs[k].out,
+                        (size_t)jobs[k].ne * sizeof(HypoCandidate));
+            nall += jobs[k].ne;
         }
     }
-    free(nuc);
 
     if (getenv("CSNLOC_DEBUG"))
         fprintf(stderr, "[dbg] pw nwin=%d grids=%d nall=%d\n",
                 nwin, ctx->grids.n, nall);
     if (nall <= 0) { free(events); return; }
 
+    t0 = now_mono();
     nev = DedupEvents(events, nall, &ctx->cfg, cand, CSLOC_MAX_EVENTS);
+    g_t_dedup += now_mono() - t0;
     free(events);
     if (nev <= 0) return;
     if (nev > ctx->cfg.MaxEventsPerWindow) nev = ctx->cfg.MaxEventsPerWindow;
@@ -424,27 +568,39 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
 
         /* El índice de fase se refiere a la ventana; el refinado usa esa
            misma copia, por lo que es consistente. */
+        t0 = now_mono();
         if (RefineHypo(&cand[i], &ctx->stations, window, &ctx->tt,
-                       &ctx->cfg) != 0)
+                       &ctx->cfg) != 0) {
+            g_t_refine += now_mono() - t0;
             continue;
+        }
+        g_t_refine += now_mono() - t0;
         if (cand[i].nphases < ctx->cfg.MinPhasesPerEvent) continue;
         if (ctx->cfg.MaxRMS > 0.0 && cand[i].rms_sec > ctx->cfg.MaxRMS) continue;
 
         /* El registro decide si es un evento nuevo o una actualizacion de uno
            existente, y si hay que emitir (fases nuevas que mejoran). El ID de
            un evento nuevo es id_base + seq (seq no se reutiliza). */
+        t0 = now_mono();
         if (!EventRegistry_Upsert(&ctx->events, &cand[i], window, nwin,
                                   &ctx->cfg, &ctx->stations, &ctx->tt,
                                   &ctx->grids,
-                                  ctx->id_base + ctx->seq, &id_out, &ver_out))
+                                  ctx->id_base + ctx->seq, &id_out, &ver_out)) {
+            g_t_registry += now_mono() - t0;
             continue;
+        }
+        g_t_registry += now_mono() - t0;
         if (id_out >= ctx->id_base + ctx->seq) ctx->seq++;
 
         cand[i].id = id_out;
 
+        t0 = now_mono();
         if (FormatHYP2000ARC(&cand[i], &ctx->stations, window, &ctx->cfg,
-                             id_out, ver_out, arc, sizeof(arc)) != 0)
+                             id_out, ver_out, arc, sizeof(arc)) != 0) {
+            g_t_format += now_mono() - t0;
             continue;
+        }
+        g_t_format += now_mono() - t0;
 
         if (ctx->cfg.DumpHypo)
             logit("t", "csnloc: --- HYP2000ARC evento %lu-%u ---\n%s"
@@ -452,6 +608,55 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
                   id_out, ver_out, arc, id_out, ver_out);
 
         emit_hypo(ctx, &cand[i], window, nwin, ver_out, arc);
+    }
+
+    g_nwin++;
+    if (ctx->cfg.Debug >= 1) {
+        double tot = g_t_snap + g_t_bproj + g_t_assemble + g_t_dedup
+                   + g_t_refine + g_t_registry + g_t_format;
+        if (tot <= 0.0) tot = 1e-9;
+        logit("t", "csnloc: fases ventanas=%ld  snap=%.0fms(%.0f%%)  "
+                   "bproj=%.0fms(%.0f%%)  asm=%.0fms(%.0f%%)  dedup=%.0fms(%.0f%%)  "
+                   "refine=%.0fms(%.0f%%)  reg=%.0fms(%.0f%%)  fmt=%.0fms(%.0f%%)  "
+                   "total=%.0fms\n",
+              g_nwin,
+              1000 * g_t_snap,     100 * g_t_snap / tot,
+              1000 * g_t_bproj,    100 * g_t_bproj / tot,
+              1000 * g_t_assemble, 100 * g_t_assemble / tot,
+              1000 * g_t_dedup,    100 * g_t_dedup / tot,
+              1000 * g_t_refine,   100 * g_t_refine / tot,
+              1000 * g_t_registry, 100 * g_t_registry / tot,
+              1000 * g_t_format,   100 * g_t_format / tot,
+              1000 * tot);
+        {
+            double d_db, d_av, d_cl;
+            long   tt_calls;
+            AssembleCandidates_Stats(&d_db, &d_av, &d_cl, &tt_calls);
+            logit("t", "csnloc: asm  dbscan=%.0fms  prom+rep=%.0fms  "
+                       "reclamo+stats=%.0fms  predict_tt=%ld llamadas\n",
+                  1000 * d_db, 1000 * d_av, 1000 * d_cl, tt_calls);
+        }
+        {
+            long      calls, sum_n, max_n, hist[10];
+            long long sum_n2, sum_near;
+            char      buf[320];
+            size_t    off;
+            int       k;
+            DBSCAN_Stats(&calls, &sum_n, &sum_n2, &sum_near, &max_n, hist, 10);
+            off = (size_t)snprintf(buf, sizeof(buf),
+                                   "csnloc: dbscan llamadas=%ld sum_n=%ld sum_n2=%lld "
+                                   "pares_en_eps=%lld max_n=%ld",
+                                   calls, sum_n, sum_n2, sum_near, max_n);
+            if (sum_near > 0 && off < sizeof(buf) - 40)
+                off += (size_t)snprintf(buf + off, sizeof(buf) - off,
+                                        " ratio_n2_near=%.1f",
+                                        (double)sum_n2 / (double)sum_near);
+            if (off < sizeof(buf) - 60)
+                off += (size_t)snprintf(buf + off, sizeof(buf) - off, " hist=");
+            for (k = 0; k < 10 && off < sizeof(buf) - 24; k++)
+                off += (size_t)snprintf(buf + off, sizeof(buf) - off, "%ld ", hist[k]);
+            logit("t", "%s\n", buf);
+        }
     }
 
     /* Expirar eventos sin actividad reciente. */
@@ -635,6 +840,7 @@ int main(int argc, char **argv)
     /* --- buffers --- */
     PickBuffer_Init(&ctx.picks, CSLOC_MAX_PICKS, ctx.cfg.RePickWindowSec);
     EventRegistry_Init(&ctx.events);
+    EventRegistry_SetLogCallback(csnloc_log_cb);
 
     /* ID base derivado del epoch de arranque: sin config ni contador en disco.
        Offline usa epoch 0 para que los tests sean deterministas. */
@@ -645,6 +851,8 @@ int main(int argc, char **argv)
     }
     ctx.seq = 0;
     ctx.next_event_id = ctx.id_base;
+    logit("t", "csnloc: id_base=%lu (epoch=%ld offline=%d)\n",
+          ctx.id_base, (long)time(NULL), ctx.Offline);
 
     /* Archivo de estado (recuperacion): mismo directorio que el LogFile. */
     {

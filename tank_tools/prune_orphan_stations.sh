@@ -96,15 +96,17 @@ prune_file() {  # <modo> <fichero>
     awk -v mode="$mode" -v cntf="$cntf" -v remf="$remf" '
         FNR == NR {
             # estaciones_107.txt: STA NET CHAN LOC ...
+            # Clave SIN canal: una estacion puede tener varias componentes
+            # (HHZ + HHE/HHN del picker S) y todas son legitimas.
             if (NF >= 4) {
                 loc = ($4 == "" ? "--" : $4)
-                known[$1 "|" $3 "|" $2 "|" loc] = 1
+                known[$1 "|" $2 "|" loc] = 1
             }
             next
         }
         function key(sta, chan, net, loc) {
             if (loc == "") loc = "--"
-            return sta "|" chan "|" net "|" loc
+            return sta "|" net "|" loc
         }
         /^[[:space:]]*#/ || NF == 0 { print; next }
         {

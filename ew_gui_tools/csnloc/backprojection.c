@@ -149,6 +149,32 @@ static int find_nucleations(const Grid *g, const double *stack,
 /* ------------------------------------------------------------------------- */
 /* Merge de nucleaciones cercanas usando DBSCAN + ensamblado de fases.        */
 /* ------------------------------------------------------------------------- */
+/* ------------------------------------------------------------------------- */
+/* Instrumentacion de AssembleCandidates (solo diagnostico: tiempos y conteo  */
+/* de llamadas a la tabla de tiempos).                                        */
+/* ------------------------------------------------------------------------- */
+static double g_asm_db, g_asm_av, g_asm_cl;
+static long   g_tt_calls;
+/* AssembleCandidates corre en varias grillas en paralelo, asi que estos
+   acumuladores los escriben varios hilos: van con mutex. */
+static pthread_mutex_t g_asm_mx = PTHREAD_MUTEX_INITIALIZER;
+
+static double asm_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + 1e-9 * (double)ts.tv_nsec;
+}
+
+void AssembleCandidates_Stats(double *dbscan, double *avg, double *claim,
+                              long *tt_calls)
+{
+    if (dbscan)   *dbscan   = g_asm_db;
+    if (avg)      *avg      = g_asm_av;
+    if (claim)    *claim    = g_asm_cl;
+    if (tt_calls) *tt_calls = g_tt_calls;
+}
+
 int AssembleCandidates(const HypoCandidate *cand, int ncand,
                        const StationList *st,
                        const Pick *picks, int npick, TTModel *tt,
@@ -160,6 +186,7 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
     double   eps_km;
     int     *counts;
     int      nout = 0;
+    double   t0;
     HypoCandidate *avg = NULL;   /* promedio por cluster (nclusters slots) */
 
     if (ncand <= 0) return 0;
@@ -180,13 +207,18 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
     }
 
     eps_km = (cfg->DBSCAN_Eps > 0.0) ? cfg->DBSCAN_Eps : 50.0;
+    t0 = asm_now();
     nclusters = DBSCAN_Cluster(feat, ncand, 4, eps_km, 1, labels);
+    pthread_mutex_lock(&g_asm_mx);
+    g_asm_db += asm_now() - t0;
+    pthread_mutex_unlock(&g_asm_mx);
     if (nclusters <= 0) { free(feat); free(labels); return 0; }
 
     if (getenv("CSNLOC_DEBUG"))
         fprintf(stderr, "[dbg] nucleaciones=%d clusters=%d eps=%.1f\n",
                 ncand, nclusters, eps_km);
 
+    t0 = asm_now();
     counts = (int *)calloc((size_t)nclusters, sizeof(int));
     avg    = (HypoCandidate *)calloc((size_t)nclusters, sizeof(HypoCandidate));
     if (!counts || !avg) { free(avg); free(counts); free(feat); free(labels); return 0; }
@@ -255,6 +287,9 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
             }
             order[j + 1] = key;
         }
+        pthread_mutex_lock(&g_asm_mx);
+        g_asm_av += asm_now() - t0;
+        pthread_mutex_unlock(&g_asm_mx);
 
         /*
          * FASE 2: asignacion EXCLUSIVA y codiciosa.
@@ -275,6 +310,7 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
             owner = (int *)malloc(sizeof(int) * (size_t)npick);
             if (!owner) { free(cl); free(avg); free(counts); free(feat); free(labels); return 0; }
             for (p = 0; p < npick; p++) owner[p] = -1;
+            t0 = asm_now();
 
             for (i = 0; i < ncl2; i++) {
                 int cc = order[i];
@@ -285,6 +321,7 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
                     double tpred, delta, resid;
                     int    dup = 0;
                     if (owner[p] != -1) continue;
+                    __atomic_fetch_add(&g_tt_calls, 1, __ATOMIC_RELAXED);
                     if (predict_tt(tt, st, &picks[p], cl[cc].lat, cl[cc].lon,
                                    cl[cc].depth_km, &tpred, &delta) != 0)
                         continue;
@@ -329,6 +366,7 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
                     int    sidx;
                     if (cc < 0 || cc >= ncl2) continue;
                     if (cl[cc].nphases >= CSLOC_MAX_PHASES) continue;
+                    __atomic_fetch_add(&g_tt_calls, 1, __ATOMIC_RELAXED);
                     if (predict_tt(tt, st, &picks[p], cl[cc].lat, cl[cc].lon,
                                    cl[cc].depth_km, &tpred, &delta) != 0)
                         continue;
@@ -375,6 +413,9 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
                 }
                 free(sum_sq);
             }
+            pthread_mutex_lock(&g_asm_mx);
+            g_asm_cl += asm_now() - t0;
+            pthread_mutex_unlock(&g_asm_mx);
 
             /* Emitir en orden de evidencia con umbrales. */
             for (i = 0; i < ncl2 && nout < max_out; i++) {

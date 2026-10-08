@@ -1,0 +1,15 @@
+{
+  "_comentario": "Sets de nlloc_ring. 'd.bands=false' deja solo el fallback 1D (nlloc.in + time/model); 'ctrl' pisa lineas de la plantilla de control de NLLoc (LOCSEARCH/LOCMETH/LOCGAU...), que el .d no expone. MinPhases/MaxRMS si los aplica nlloc en offline (locate_arc).",
+  "refiner": "nlloc",
+  "variants": [
+    { "tag": "n_bandas",     "d": {} },
+    { "tag": "n_fallback1d", "d": { "bands": false } },
+    { "tag": "n_oct_more",   "ctrl": { "LOCSEARCH": "OCT 200 100 6 0.05 50000 10000 4 0" } },
+    { "tag": "n_oct_less",   "ctrl": { "LOCSEARCH": "OCT 48 24 6 0.05 50000 10000 4 0" } },
+    { "tag": "n_vpvs173",    "ctrl": { "LOCMETH": "EDT_OT_WT 9999.0 4 -1 -1 1.73 6 -1.0 1" } },
+    { "tag": "n_vpvs185",    "ctrl": { "LOCMETH": "EDT_OT_WT 9999.0 4 -1 -1 1.85 6 -1.0 1" } },
+    { "tag": "n_gau",        "ctrl": { "LOCGAU": "0.5 0.0" } },
+    { "tag": "n_minph3",     "d": { "MinPhases": 3 } },
+    { "tag": "n_maxrms1",    "d": { "MaxRMS": 1.0 } }
+  ]
+}

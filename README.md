@@ -165,9 +165,18 @@ Genera una copia autónoma y **con rutas relativas** en `~/ew8portable` (o `--ds
 - Es **idempotente**: una segunda corrida sin cambios no transfiere nada (`cambiados=0`).
 - `wave_serverV.d` se **regenera** con las rutas de tanks relativas (`../tanks/…`); ninguna config
   conserva rutas absolutas `/home/...`.
-- Excluye `_legacy_atwc/`, `response/`, `hyp2000_output/`, respaldos, estado, logs y tanks.
-- Opciones: `--with-replay` (añade `startstop_replay.d`), `--with-monitor` (copia `ew_monitor.sh`),
-  `--no-delete` (no purga obsoletos).
+- `hyp2000_ring.d` y `nlloc_ring.d` también se **regeneran** con rutas relativas (`../../tmp/…`).
+  El refinamiento NLLoc necesita los datos de `tmp/nlloc_ring/` (grillas 3D de tiempos) en el
+  destino; el deploy **no** los copia (hay que copiarlos aparte o regenerarlos con
+  `ew_gui_tools/nlloc_ring/mk_nll_grids_3d.py`).
+- Excluye `_legacy_atwc/`, `response/`, `hyp2000_output/`, respaldos, logs y tanks. El **estado en
+  vivo** de los módulos (`*.state`, `*.ndx`, `*.queue`) se excluye de la copia pero queda
+  **protegido** de la purga: `slink2ew`/`pick_FP` lo recrean mientras operan y borrarlo les quita
+  la posición de SeedLink y el índice de picks.
+- Por defecto el portable es un **espejo completo**: incluye `ew_monitor.sh` (copia literal del
+  repo) y los params de replay (`startstop_replay.d`, `tankplayer.d.tmpl`), para que no diverjan
+  en silencio. Opciones: `--no-monitor` y `--no-replay` (los excluyen) y `--no-delete` (no purga
+  obsoletos). `--with-monitor`/`--with-replay` se aceptan por compatibilidad y ya no cambian nada.
 
 En la máquina destino basta copiar la carpeta completa y arrancar:
 
@@ -177,8 +186,8 @@ source ./ew8_unix.sh
 startstop
 ```
 
-Requisitos en el destino: Linux x86_64, `rsync`, y `GTK3` + `DISPLAY` si se usan las GUIs. El
-entorno portable **no** define las variables legacy `GLASS_*` / `KAFKA_*`.
+Requisitos en el destino: Linux x86_64, `rsync`, y `GTK4` + `libadwaita` + `DISPLAY` si se usan las
+GUIs. El entorno portable **no** define las variables legacy `GLASS_*` / `KAFKA_*`.
 
 ### Coherencia de estaciones
 

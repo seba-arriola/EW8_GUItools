@@ -5,8 +5,11 @@ MODULE = csnstaevdisp
 
 CC = gcc
 
-# Flags GTK3 + Earthworm
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags gtk+-3.0) -I$(EW_HOME)/$(EW_VERSION)/include -fcommon -D_LINUX -D_REENTRANT -D_INTEL -Wno-format
+# Módulo migrado a GTK4 + libadwaita (Fase 6). Enlaza libewgui_gtk4.a.
+GUI_PKG = gtk4 libadwaita-1
+
+# Flags GTK4 + Earthworm
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -fcommon -D_LINUX -D_REENTRANT -D_INTEL -Wno-format
 
 # Librerias base de Earthworm necesarias (objetos ya compilados)
 EW_SRC_UTIL = $(EW_HOME)/$(EW_VERSION)/src/libsrc/util
@@ -22,12 +25,15 @@ EW_OBJS = $(EW_SRC_UNIX)/transport.o \
           $(EW_SRC_UNIX)/threads_ew.o \
           $(EW_SRC_UTIL)/swap.c
 
-LDFLAGS = $(shell pkg-config --libs gtk+-3.0) -lm -lpthread
+LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
 
 all: $(MODULE)
 
-$(MODULE): $(MODULE).c
-	$(CC) $(CFLAGS) -o $(MODULE) $(MODULE).c $(EW_OBJS) $(LDFLAGS)
+../common/libewgui_gtk4.a:
+	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+
+$(MODULE): $(MODULE).c ../common/libewgui_gtk4.a
+	$(CC) $(CFLAGS) -o $(MODULE) $(MODULE).c ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
 	cp $(MODULE) $(EW_HOME)/$(EW_VERSION)/bin/
 	@echo "======================================================"
 	@echo " EXITO: $(MODULE) compilado y copiado a EW bin!"
@@ -45,6 +51,6 @@ test/test_data: test/test_data.c $(MODULE).c
 	$(CC) $(CFLAGS) -Dmain=csnstaevdisp_unused_main -c $(MODULE).c \
 	      -o test/csnstaevdisp_nomain.o
 	$(CC) $(CFLAGS) -o $@ test/test_data.c test/csnstaevdisp_nomain.o \
-	      $(EW_OBJS) $(LDFLAGS)
+	      ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
 
 .PHONY: all clean test-data

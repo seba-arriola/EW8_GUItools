@@ -2,6 +2,10 @@
 #define CSNHYPODBP_H
 
 #include <gtk/gtk.h>
+#include "ewgui/ring.h"
+#include "ewgui/wave.h"
+#include "ewgui/view.h"
+#include "csnhypodbp_row.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -45,13 +49,8 @@ typedef struct {
     double dLat;
     double dLon;
     
-    int32_t *plRawCircBuff;
-    int32_t *plFiltCircBuff;
-    long lRawCircSize;
-    long lRawCircCtr;
+    EwGuiTrace *trace;   /* buffer crudo + vista filtrada + rate + oldest */
     
-    double dSampRate;     
-    double dOldestTime;   
     double dScreenScale;  
     
     int64_t lLastAbsIdx; 
@@ -73,6 +72,7 @@ typedef struct {
 
 typedef struct {
     int qid;
+    int mod;        /* modulo origen del ARC (MOD_CSNLOC / MOD_HYP2000_RING / MOD_NLLOC_RING) */
     int num_picks;
     CACHED_PICK picks[MAX_PICKS_PER_EVENT];
 } EVENT_PICK_CACHE;
@@ -96,7 +96,6 @@ extern int  WsTimeout;
 extern int  HeartBeatInt;
 extern int  LogFile;
 extern pid_t MyPid;
-extern time_t timeLastBeat;
 
 extern unsigned char MyInstId;
 extern unsigned char MyModId;
@@ -118,12 +117,16 @@ extern int     bHasData[MAX_ESTA];
 extern double  g_StaDist[MAX_ESTA]; 
 extern int     NumEstaciones;
 extern int     selected_qid;
+extern int     selected_mod;
 extern double  selected_otime;
 extern char    selected_id[32];
 extern WS_MENU_QUEUE_REC ws_menu; 
 
-extern GtkWidget *canvas_global;
+extern EwGuiCanvas *canvas_global;
 extern GtkWidget *tree_global;
+extern GListStore *g_store_hypo;              /* modelo de la tabla (GTK4) */
+extern GtkSingleSelection *g_selection_hypo;  /* selección de la tabla (GTK4) */
+extern GtkWidget *g_notebook;                 /* pestañas Eventos/Ondas (GTK4) */
 extern GtkWidget *btn_repick;
 extern GtkWidget *window_global; 
 extern GtkWidget *box_fetch;
@@ -161,12 +164,13 @@ int ReadConfig(char *configfile);
 void Status(unsigned char type, short ierr, char *note);
 void ConnectToEarthworm(void);
 void LoadStationsFromFile(void);
-int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type);
+int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *depth, double *res, int *nps, int *azm, int *qid, int *qver, double *pref_mag, char *mag_type, int mod);
 
 void cargar_sismos_iniciales(GtkWidget *tree);
-int procesar_mensaje_sismo(GtkWidget *tree, const char *payload);
+int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod);
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload);
-void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid);
+void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid, int mod);
+const char *ModLabel(int mod);
 
 gboolean escuchar_anillo_earthworm(gpointer user_data);
 gboolean ew_background_tasks(gpointer user_data);
@@ -174,22 +178,16 @@ gboolean ew_background_tasks(gpointer user_data);
 /* Callbacks de GUI */
 void actualizar_altura_canvas(void);
 void on_btn_fetch_clicked(GtkWidget *widget, gpointer data);
-void color_rows_func(GtkTreeViewColumn *col, GtkCellRenderer *rend, GtkTreeModel *model, GtkTreeIter *iter, gpointer data);
-gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data);
-void on_row_selected(GtkTreeSelection *selection, gpointer data);
+gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data);
+void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data);
+void on_list_double_click(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
 void on_btn_repick_clicked(GtkWidget *widget, gpointer data);
-gboolean on_canvas_clicked(GtkWidget *widget, GdkEventButton *event, gpointer data);
-gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data);
-
-/* --- DSP: filtro IIR + manejo de gaps (portado de EW7 dataprocessing.c) --- */
-void aplicar_filtro_iir_int32(int32_t *data, long size, double fs, int type, double fc, int order);
-void demean_trace_station(DEV_STATION *pSta);
-void interpolate_short_gaps(DEV_STATION *pSta);
-void find_data_end_station(DEV_STATION *pSta);
+void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data);
+void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data);
 
 /* --- Filtro configurable (UI) --- */
 void ApplySelectedFilter(void);
-void on_filter_changed(GtkComboBox *widget, gpointer data);
+void on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer data);
 void on_btn_apply_filter_clicked(GtkWidget *widget, gpointer data);
 
 /* --- Debounce de recarga --- */

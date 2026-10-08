@@ -29,6 +29,8 @@
  Ring   WAVE_RING        1000    # public waveform data
  Ring   PICK_RING        1005    # public parametric data
  Ring   HYPO_RING        1015    # public hypocenters etc.
+ Ring   HYPO_RING_REF    1016    # hipocentros refinados (hyp2000_ring / nlloc_ring)
+ Ring   HYPO_RING_REF2   1017    # hipocentros refinados por nlloc_ring
  Ring   BINDER_RING      1020    # private buffer for binder_ew
  Ring   EQALARM_EW_RING  1025    # private buffer for eqalam_ew
  Ring   DRINK_RING       1030    # DST drink messages
@@ -226,6 +228,9 @@
  Module   MOD_CONTROL           160
  Module   MOD_STAEVDISP         161
  Module   MOD_CSNLOC            162
+ Module   MOD_HYP2000_RING      163
+ Module   MOD_NLLOC_RING        164
+ Module   MOD_PICKS             165
 #--------------------------------------------------------------------------
 #                          Message Types
 #

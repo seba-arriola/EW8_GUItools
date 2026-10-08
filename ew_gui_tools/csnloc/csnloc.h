@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdarg.h>
 #include <math.h>
 #include <time.h>
 
@@ -91,6 +92,10 @@ typedef struct {
     int    NumThreads;         /* hilos de back-projection         */
     int    RefineIterations;   /* iteraciones de refinamiento      */
     double RefineNodeKm;       /* resolucion de grilla fina        */
+    double RefineDepthKm;      /* semiancho inicial de la caja en z (km);
+                                  0 = auto (2*RefineNodeKm)          */
+    double DepthPriorKm;       /* profundidad a priori (km); 0 = sin prior */
+    double DepthPriorSigmaKm;  /* sigma del prior gaussiano (km)          */
 
     /* Salida */
     char   AgencyID[16];
@@ -331,6 +336,19 @@ int  AssembleCandidates(const HypoCandidate *nuc, int nnuc,
                         const StationList *st, const Pick *picks, int npick,
                         TTModel *tt, const CSLocParams *cfg,
                         HypoCandidate *out, int max_out);
+/* Diagnostico interno de AssembleCandidates (segundos acumulados y conteo de
+   llamadas a la tabla de tiempos). Solo lectura; no altera el resultado. */
+void AssembleCandidates_Stats(double *dbscan, double *avg, double *claim,
+                              long *tt_calls);
+
+/* dbscan.c: numero de hilos para la matriz de adyacencia (el resultado no
+   depende de el; solo reparte filas). */
+void DBSCAN_SetThreads(int nthreads);
+
+/* dbscan.c: diagnostico (llamadas, suma de n, de n^2, de pares dentro de eps,
+   maximo n y histograma de n en potencias de 2). `hn` = tamano de `hist`. */
+void DBSCAN_Stats(long *calls, long *sum_n, long long *sum_n2,
+                  long long *sum_near, long *max_n, long *hist, int hn);
 int  BackProject(const Grid *g, const StationList *st, const Pick *picks,
                  int npick, TTModel *tt, const CSLocParams *cfg,
                  HypoCandidate *cand, int max_cand, int nthreads);
@@ -345,6 +363,8 @@ int  RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
 
 /* event_registry.c */
 void EventRegistry_Init(EventRegistry *r);
+/* Callback de trazas (Debug>=1). csnloc.c lo conecta a logit(); en tests NULL. */
+void EventRegistry_SetLogCallback(void (*cb)(const char *msg));
 int  EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
                              const CSLocParams *cfg, int *idx_out);
 int  EventRegistry_Accept(const EventRecord *prev, const HypoCandidate *c,

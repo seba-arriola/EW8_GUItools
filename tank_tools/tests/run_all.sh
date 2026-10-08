@@ -30,7 +30,7 @@ if [ "$LIVE" -eq 1 ]; then
 fi
 
 fail=0
-for t in test_remux.sh test_fastmode.sh test_chan_align.sh test_deploy_portable.sh; do
+for t in test_remux.sh test_fastmode.sh test_chan_align.sh test_deploy_portable.sh test_picks_manual.sh test_merge_picks.sh test_catalog_report.sh test_calibrate_refiners.sh; do
     echo
     echo "############ $t ############"
     if [ ! -f "$DIR/$t" ]; then

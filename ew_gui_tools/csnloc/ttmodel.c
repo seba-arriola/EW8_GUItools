@@ -89,10 +89,13 @@ static int fill_depth_row(TTModel *m, int idep, FILE *err, FILE *tbl)
         if (n > CSLOC_TT_MAX) n = CSLOC_TT_MAX;   /* nunca deberia pasar   */
         for (j = 0; j < n; j++) {
             if (tt[j] <= 0.0) continue;
-            /* Familia P: P, Pn, Pg, Pdiff, PKP... ; S: S, Sn, Sg, SKS... */
-            if (ph_out[j][0] == 'P' || ph_out[j][0] == 'p') {
+            /* Familia P: primera llegada de la rama directa (P, Pn, Pg,
+             * Pdiff, PKP...); S: S, Sn, Sg, SKS... Solo fases DOWNGOING
+             * (inicial mayuscula). Las upgoing (prefijo minuscula, p. ej.
+             * sPn) llegan junto a la familia P y contaminaban la tabla S. */
+            if (ph_out[j][0] == 'P') {
                 if (best_p < 0.0 || tt[j] < best_p) best_p = tt[j];
-            } else if (ph_out[j][0] == 'S' || ph_out[j][0] == 's') {
+            } else if (ph_out[j][0] == 'S') {
                 if (best_s < 0.0 || tt[j] < best_s) best_s = tt[j];
             }
         }
@@ -144,8 +147,9 @@ int TTModel_Init(TTModel *m, const char *tau_dir, const char *model,
 
     tabin(&tbl, modnam, err);              /* carga .hed + .tbl            */
 
-    /* Por cada profundidad se calculan P y S por separado (ver
-       fill_family_row: trtm no soporta las dos familias juntas). */
+    /* De cada nodo (profundidad, distancia) se toma la primera llegada de la
+       rama directa P y de la rama directa S (fill_depth_row), ignorando las
+       fases upgoing para no contaminar la familia S. */
     for (i = 0; i < m->nd; i++) {
         if (fill_depth_row(m, i, err, tbl) != 0)
             ret = -1;                      /* fila incompleta, se tolera   */

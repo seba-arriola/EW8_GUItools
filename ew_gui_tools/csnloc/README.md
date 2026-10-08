@@ -112,7 +112,7 @@ configuración anterior de grilla única (regresión).
 | `InRing` / `OutRing` | `PICK_RING` / `HYPO_RING` | Anillos de entrada/salida |
 | `HeartBeatInt` | 30 | Heartbeat (s) |
 | `LogFile` | 1 | 0=consola, 1=disco+consola, 2=disco |
-| `Debug` | 0 | Verbosidad (loguea picks malformados) |
+| `Debug` | 0 | Verbosidad. `>=1` traza las decisiones de versionado: `id_base` al arrancar, fases nuevas, podas, re-núcleo, versiones emitidas/rechazadas |
 | `DumpHypo` | 0 | 1 = vuelca el `HYP2000ARC` crudo completo al log |
 | `StaFile` | `estaciones_107.txt` | Metadata de estaciones |
 | `TauTable` | `iasp91` | Modelo tau (`<modelo>.tbl/.hed` en `$EW_PARAMS`) |
@@ -122,7 +122,7 @@ configuración anterior de grilla única (regresión).
 | `EventDedupSec` | 30.0 | Dedup de eventos entre grillas (s) |
 | `EventDedupKm` | 100.0 | Dedup de eventos entre grillas (km) |
 | `AssocWindowSec` | 120.0 | Ventana temporal de picks |
-| `RePickWindowSec` | 10.0 | Re-pick del mismo SCNL reemplaza al anterior |
+| `RePickWindowSec` | 10.0 | Re-pick del mismo SCNL **y fase** reemplaza al anterior (P y S coexisten) |
 | `PickTTLSec` | 300.0 | Expiración de picks |
 | `T0ToleranceSec` | 2.0 | Tolerancia del stacking de `t0` (s) |
 | `DBSCAN_Eps` | 60.0 | Epsilon de clustering (`(km, km, km, v·s)`) |
@@ -135,6 +135,8 @@ configuración anterior de grilla única (regresión).
 | `NumThreads` | 4 | Hilos de back-projection |
 | `RefineIterations` | 3 | Iteraciones del refinamiento |
 | `RefineNodeKm` | 5.0 | Paso inicial de la caja de refinamiento (km) |
+| `RefineDepthKm` | 2*RefineNodeKm | Semiancho de la caja de refinamiento **en profundidad** (km), desacoplado del horizontal. Un valor mayor permite a `z` escapar de la cuantización de los nodos de grilla; `0` = auto |
+| `DepthPriorKm` / `DepthPriorSigmaKm` | 0 / 0 | Prior gaussiano de profundidad (km). `0` = desactivado (sin sesgo) |
 | `AgencyID` / `Author` | `CL` / `csnloc` | Metadatos de salida |
 | `EventTTLSec` | 300.0 | Expiración de eventos activos sin actualizaciones (s) |
 | `MaxRMSDegrade` | 0.10 | Empeoramiento de RMS tolerado al aceptar una versión nueva (fracción) |
@@ -232,6 +234,11 @@ copias en `run_working_v8/params/`).
 | `test_state_recover` | Persistencia y recuperación del registro |
 | `test_event_id` | ID base derivado del epoch de arranque |
 | `test_renucleate` | Re-núcleo con back-projection al cambiar mucho las fases |
+
+> **Ensayo offline con S.** La tabla de arriba cubre solo P. Para validar `csnloc` con
+> picks S automáticos en modo offline hay que combinar P+S en un `.picks` por slug
+> (`tank_tools/capture_picks_ps.sh` y `tank_tools/merge_picks.py`; ver
+> `tank_tools/RUNBOOK.md` §9.3). En vivo no hace falta: `PICK_RING` ya trae P y S.
 
 ## Nota sobre `taulib_csnloc.c`
 

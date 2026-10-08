@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include <adwaita.h>
 
 /* Forward declarations de los helpers estaticos de alineacion por P */
 static double station_pick_time(int i, int *is_real);
@@ -10,24 +11,24 @@ void actualizar_altura_canvas() {
     for (int i = 0; i < NumEstaciones; i++) {
         if (bHasData[i] == 1 && (g_StaDist[i] * 111.19) <= g_max_dist_km) count++;
     }
-    if (count > 0) gtk_widget_set_size_request(canvas_global, -1, (count * g_spacing) + 60);
-    else gtk_widget_set_size_request(canvas_global, -1, 600);
+    if (count > 0) gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, (count * g_spacing) + 60);
+    else gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, 600);
 }
 
 void on_btn_fetch_clicked(GtkWidget *widget, gpointer data) {
     if (!entry_dist || !entry_time) return;
-    double new_dist = atof(gtk_entry_get_text(GTK_ENTRY(entry_dist)));
-    double new_time_min = atof(gtk_entry_get_text(GTK_ENTRY(entry_time)));
+    double new_dist = atof(gtk_editable_get_text(GTK_EDITABLE(entry_dist)));
+    double new_time_min = atof(gtk_editable_get_text(GTK_EDITABLE(entry_time)));
     gboolean changed = FALSE;
     if (new_dist > 0.0) { g_max_dist_km = new_dist; changed = TRUE; }
     if (new_time_min > 0.0) {
-        if (new_time_min > 10.0) { new_time_min = 10.0; gtk_entry_set_text(GTK_ENTRY(entry_time), "10"); }
+        if (new_time_min > 10.0) { new_time_min = 10.0; gtk_editable_set_text(GTK_EDITABLE(entry_time), "10"); }
         g_dScreenTime = new_time_min * 60.0; 
         changed = TRUE;
     }
     if (changed) {
         actualizar_altura_canvas();
-        if (canvas_global) gtk_widget_queue_draw(canvas_global);
+        if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         /* Re-fetch: al variar la ventana/distancia se descarga mas datos
            (la ventana de fetch escala con g_dScreenTime). */
         pending_waveform_reload = TRUE;
@@ -35,60 +36,56 @@ void on_btn_fetch_clicked(GtkWidget *widget, gpointer data) {
     }
 }
 
-void color_rows_func(GtkTreeViewColumn *col, GtkCellRenderer *rend, GtkTreeModel *model, GtkTreeIter *iter, gpointer data) {
-    GtkTreePath *path = gtk_tree_model_get_path(model, iter);
-    if (path) {
-        gint *indices = gtk_tree_path_get_indices(path);
-        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_global));
-        if (gtk_tree_selection_path_is_selected(selection, path)) {
-            g_object_set(rend, "cell-background", "#007bff", "foreground", "#ffffff", "weight", 700, NULL);
-        } else {
-            if (indices && indices[0] % 2 == 0) g_object_set(rend, "cell-background", "#ffcece", "foreground", "#000000", "weight", 400, NULL);
-            else g_object_set(rend, "cell-background", "#ffffff", "foreground", "#000000", "weight", 400, NULL);
-        }
-        gtk_tree_path_free(path);
-    }
-}
+/* color_rows_func eliminado: en GTK4 el resaltado de fila lo da el tema. */
 
-gboolean on_key_press(GtkWidget *widget, GdkEventKey *event, gpointer data) {
-    if (!edit_mode) return FALSE; 
-    if (event->keyval == GDK_KEY_Up) { g_zoom_factor *= 1.5; if (canvas_global) gtk_widget_queue_draw(canvas_global); return TRUE; } 
-    else if (event->keyval == GDK_KEY_Down) { g_zoom_factor /= 1.5; if (canvas_global) gtk_widget_queue_draw(canvas_global); return TRUE; }
+gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
+    (void)ctrl; (void)keycode; (void)state; (void)data;
+    if (!edit_mode) return FALSE;
+    if (keyval == GDK_KEY_Up) { g_zoom_factor *= 1.5; if (canvas_global) ewgui_canvas_queue_draw(canvas_global); return TRUE; }
+    else if (keyval == GDK_KEY_Down) { g_zoom_factor /= 1.5; if (canvas_global) ewgui_canvas_queue_draw(canvas_global); return TRUE; }
     return FALSE;
 }
 
-void on_row_selected(GtkTreeSelection *selection, gpointer data) {
+void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) {
+    (void)sel; (void)pspec; (void)data;
     if (edit_mode) return;
-    GtkTreeIter iter; GtkTreeModel *model;
-    if (gtk_tree_selection_get_selected(selection, &model, &iter)) {
-        gchar *id_str; double otime, lat, lon; int qid;
-        gtk_tree_model_get(model, &iter, 8, &id_str, 14, &otime, 16, &qid, 17, &lat, 18, &lon, -1);
-        if (id_str) { strcpy(selected_id, id_str); g_free(id_str); }
-        selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon;
-        g_zoom_factor = 1.0; 
+    guint idx = gtk_single_selection_get_selected(g_selection_hypo);
+    if (idx != GTK_INVALID_LIST_POSITION) {
+        CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), idx);
+        if (row) {
+            double otime = 0, lat = 0, lon = 0; int qid = 0, mod = 0;
+            const char *id_str = csnhypodbp_row_col(row, 8);
+            g_object_get(row, "otime", &otime, "qid", &qid, "lat", &lat, "lon", &lon, "mod", &mod, NULL);
+            if (id_str) strcpy(selected_id, id_str);
+            selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon; selected_mod = mod;
+            g_object_unref(row);
+        }
+        g_zoom_factor = 1.0;
         gtk_widget_set_sensitive(btn_repick, TRUE);
-
-        /* Debounce (portado de EW7 waveform_reload_timer): la recarga de
-           waveforms se difiere al timer de 3 s para no bloquear la UI al
-           navegar rapidamente por la tabla. */
-        pending_waveform_reload = TRUE;
     } else {
         gtk_widget_set_sensitive(btn_repick, FALSE);
     }
 }
 
+void on_list_double_click(GtkGestureClick *g, int n_press, double x, double y, gpointer data) {
+    (void)g; (void)x; (void)y; (void)data;
+    if (n_press != 2) return;
+    guint idx = gtk_single_selection_get_selected(g_selection_hypo);
+    if (idx == GTK_INVALID_LIST_POSITION) return;
+    if (g_notebook) gtk_notebook_set_current_page(GTK_NOTEBOOK(g_notebook), 1);  /* pestaña Ondas */
+    pending_waveform_reload = TRUE;
+    waveform_reload_timer(NULL);   /* fetch inmediato */
+}
+
 gboolean waveform_reload_timer(gpointer data) {
     if (pending_waveform_reload && !edit_mode && selected_qid != 0) {
         pending_waveform_reload = FALSE;
-        if (entry_dist) g_max_dist_km = atof(gtk_entry_get_text(GTK_ENTRY(entry_dist)));
-        if (entry_time) g_dScreenTime = atof(gtk_entry_get_text(GTK_ENTRY(entry_time))) * 60.0;
+        if (entry_dist) g_max_dist_km = atof(gtk_editable_get_text(GTK_EDITABLE(entry_dist)));
+        if (entry_time) g_dScreenTime = atof(gtk_editable_get_text(GTK_EDITABLE(entry_time))) * 60.0;
         if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Descargando ondas historicas...");
-        FetchWaveformsForEvent(selected_otime, selected_lat, selected_lon, selected_qid);
-        if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
-        if (canvas_global) {
-            actualizar_altura_canvas();
-            gtk_widget_queue_draw(canvas_global);
-        }
+        FetchWaveformsForEvent(selected_otime, selected_lat, selected_lon, selected_qid, selected_mod);
+        /* La descarga corre en un worker (no bloquea la UI); el titulo y el
+           redibujado se restauran en ws_fetch_finish() al publicar el resultado. */
     }
     return TRUE;
 }
@@ -100,66 +97,55 @@ void on_btn_repick_clicked(GtkWidget *widget, gpointer data) {
         gtk_widget_set_sensitive(tree_global, FALSE); 
         gtk_button_set_label(GTK_BUTTON(btn_repick), "Finish");
         gtk_widget_set_name(btn_repick, "btn_relocate");
-        if (box_fetch) gtk_widget_show_all(box_fetch);
-        gtk_widget_queue_draw(canvas_global);
+        if (box_fetch) gtk_widget_set_visible(box_fetch, TRUE);
+        ewgui_canvas_queue_draw(canvas_global);
     } else {
         edit_mode = FALSE; g_zoom_factor = 1.0; 
         gtk_widget_set_sensitive(tree_global, TRUE); 
         gtk_button_set_label(GTK_BUTTON(btn_repick), "Repick mode");
         gtk_widget_set_name(btn_repick, "btn_repick");
-        if (box_fetch) gtk_widget_hide(box_fetch);
-        GtkTreeSelection *selection = gtk_tree_view_get_selection(GTK_TREE_VIEW(tree_global));
-        g_signal_emit_by_name(selection, "changed");
+        if (box_fetch) gtk_widget_set_visible(box_fetch, FALSE);
+        on_row_selected(g_selection_hypo, NULL, NULL);
     }
 }
 
-gboolean on_canvas_clicked(GtkWidget *widget, GdkEventButton *event, gpointer data) {
-    if (!edit_mode || event->button != 1) return TRUE; 
-    int width = gtk_widget_get_allocated_width(widget);
+void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
+    (void)gesture; (void)n_press; (void)data;
+    if (!edit_mode) return;
+    int width = 0;
+    ewgui_canvas_get_size(canvas_global, &width, NULL);
     int margin_right = 10;
     int draw_width = width - g_margin_left - margin_right;
-    
-    if (event->x <= g_margin_left || event->x >= width - margin_right) return TRUE;
-
+    if (x <= g_margin_left || x >= width - margin_right) return;
     int target = -1;
     for (int n = 0; n < g_NumSortedNodes; n++) {
-        if (event->y >= g_SortedNodes[n].y_top && event->y <= g_SortedNodes[n].y_bottom) { target = n; break; }
+        if (y >= g_SortedNodes[n].y_top && y <= g_SortedNodes[n].y_bottom) { target = n; break; }
     }
-    if (target == -1) return TRUE;
-
+    if (target == -1) return;
     int i = g_SortedNodes[target].idx;
-    /* Alineacion por P: el tiempo absoluto del click se calcula usando
-       la ventana propia de la estacion (winStart), no la global. */
     double winStart = station_win_start(i);
-    double fraction = (event->x - g_margin_left) / (double)draw_width;
+    double fraction = (x - g_margin_left) / (double)draw_width;
     double clicked_time = winStart + fraction * g_dScreenTime;
     StaArray[i].dManualPickTime = clicked_time;
-    
     char out_msg[256], time_str[32];
     time_t t_sec = (time_t)clicked_time;
     double t_msec = clicked_time - (double)t_sec;
     struct tm *ptm = gmtime(&t_sec);
-    
-    snprintf(time_str, sizeof(time_str), "%04d%02d%02d%02d%02d%06.3f", 
-             ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, 
+    snprintf(time_str, sizeof(time_str), "%04d%02d%02d%02d%02d%06.3f",
+             ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday,
              ptm->tm_hour, ptm->tm_min, (double)ptm->tm_sec + t_msec);
-             
     for (int k = 0; time_str[k] != '\0'; k++) { if (time_str[k] == ',') time_str[k] = '.'; }
     static unsigned char pick_seq = 0;
-    /* Formato TYPE_PICK_SCNL: type mod inst seq S.C.N.L fmwt time amp1 amp2 amp3
-       (mismo formato que csntvp, ver ew2glass ConvertAndSendPick). */
-    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0\n", 
-             TypePickSCNL, MyModId, MyInstId, pick_seq++, 
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0\n",
+             TypePickSCNL, MyModId, MyInstId, pick_seq++,
              StaArray[i].szStation, StaArray[i].szChannel, StaArray[i].szNetID, StaArray[i].szLocation, time_str);
-             
     MSG_LOGO logo = {MyInstId, MyModId, TypePickSCNL};
     if (tport_putmsg(&PRegion, &logo, strlen(out_msg), out_msg) != PUT_OK) {
         logit("e", "csnhypodbp: Error inyectando pick manual.\n");
     } else {
         logit("t", "csnhypodbp: MANUAL PICK INYECTADO -> %s", out_msg);
     }
-    gtk_widget_queue_draw(widget);
-    return TRUE;
+    ewgui_canvas_queue_draw(canvas_global);
 }
 
 /* --------------------------------------------------------------------
@@ -197,71 +183,50 @@ void ApplySelectedFilter(void) {
     double f1 = 0.7, f2 = 2.0;
     int order = 4;
 
-    if (entry_freq1) f1 = atof(gtk_entry_get_text(GTK_ENTRY(entry_freq1)));
-    if (entry_freq2) f2 = atof(gtk_entry_get_text(GTK_ENTRY(entry_freq2)));
+    if (entry_freq1) f1 = atof(gtk_editable_get_text(GTK_EDITABLE(entry_freq1)));
+    if (entry_freq2) f2 = atof(gtk_editable_get_text(GTK_EDITABLE(entry_freq2)));
     if (combo_order) {
-        int active = gtk_combo_box_get_active(GTK_COMBO_BOX(combo_order));
+        int active = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(combo_order));
         order = (active == 0) ? 2 : 4;
     }
 
+    EwFilterParams fp;
+    fp.filter_type = g_filter_type;
+    fp.f1 = f1;
+    fp.f2 = f2;
+    fp.order = order;
+
     for (int i = 0; i < NumEstaciones; i++) {
-        if (StaArray[i].lRawCircCtr <= 0) continue;
-        if (StaArray[i].lRawCircCtr > StaArray[i].lRawCircSize)
-            StaArray[i].lRawCircCtr = StaArray[i].lRawCircSize;
-
-        double nyquist = StaArray[i].dSampRate / 2.0;
-        double safe_f1 = f1;
-        double safe_f2 = f2;
-
-        if (g_filter_type != 0) {
-            if (safe_f1 >= nyquist) safe_f1 = nyquist * 0.95;
-            if (g_filter_type == 3) {
-                if (safe_f2 >= nyquist) safe_f2 = nyquist * 0.95;
-                if (safe_f1 >= safe_f2) safe_f1 = safe_f2 * 0.5;
-            }
-        }
-
-        demean_trace_station(&StaArray[i]);
-
-        if (g_filter_type == 1) {
-            aplicar_filtro_iir_int32(StaArray[i].plFiltCircBuff, StaArray[i].lRawCircCtr, StaArray[i].dSampRate, 1, safe_f1, order);
-        } else if (g_filter_type == 2) {
-            aplicar_filtro_iir_int32(StaArray[i].plFiltCircBuff, StaArray[i].lRawCircCtr, StaArray[i].dSampRate, 2, safe_f1, order);
-        } else if (g_filter_type == 3) {
-            aplicar_filtro_iir_int32(StaArray[i].plFiltCircBuff, StaArray[i].lRawCircCtr, StaArray[i].dSampRate, 1, safe_f1, order);
-            aplicar_filtro_iir_int32(StaArray[i].plFiltCircBuff, StaArray[i].lRawCircCtr, StaArray[i].dSampRate, 2, safe_f2, order);
-        }
+        if (ewgui_trace_length(StaArray[i].trace) <= 0) continue;
+        ewgui_trace_filter(StaArray[i].trace, &fp);
     }
 }
 
-void on_filter_changed(GtkComboBox *widget, gpointer data) {
-    g_filter_type = gtk_combo_box_get_active(widget);
-
+void on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer data) {
+    (void)pspec; (void)data;
+    g_filter_type = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
     gboolean is_hp_lp = (g_filter_type == 1 || g_filter_type == 2);
     gboolean is_bp = (g_filter_type == 3);
-
     if (entry_freq1) gtk_widget_set_sensitive(entry_freq1, is_hp_lp || is_bp);
     if (entry_freq2) gtk_widget_set_sensitive(entry_freq2, is_bp);
     if (combo_order) gtk_widget_set_sensitive(combo_order, is_hp_lp || is_bp);
     if (btn_apply_filter) gtk_widget_set_sensitive(btn_apply_filter, g_filter_type != 0);
-
     ApplySelectedFilter();
-    if (canvas_global) gtk_widget_queue_draw(canvas_global);
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
 void on_btn_apply_filter_clicked(GtkWidget *widget, gpointer data) {
     ApplySelectedFilter();
-    if (canvas_global) gtk_widget_queue_draw(canvas_global);
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
-gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data) {
-    int width = gtk_widget_get_allocated_width(widget);
-    int height = gtk_widget_get_allocated_height(widget);
+void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
+    (void)canvas; (void)data;
     cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
 
     int margin_right = 10;
     int draw_width = width - g_margin_left - margin_right;
-    if (draw_width <= 0) return FALSE;
+    if (draw_width <= 0) return;
 
     /* Titulo */
     cairo_set_source_rgb(cr, 0.5, 0.1, 0.1);
@@ -337,17 +302,24 @@ gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data) {
         cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); cairo_set_line_width(cr, 1);
         cairo_move_to(cr, g_margin_left, y_center); cairo_line_to(cr, width - margin_right, y_center); cairo_stroke(cr);
 
-        if (StaArray[i].dSampRate > 0 && StaArray[i].lRawCircCtr > 0) {
-            long start_k = (long)((winStart - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
-            long end_k = (long)(((winStart + g_dScreenTime) - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
+        EwGuiTrace *tr = StaArray[i].trace;
+        double tr_rate = ewgui_trace_rate(tr);
+        double tr_oldest = ewgui_trace_oldest(tr);
+        long tr_len = ewgui_trace_length(tr);
+        long tr_cap = ewgui_trace_capacity(tr);
+        int32_t *tr_filt = ewgui_trace_filtered(tr);
+
+        if (tr_rate > 0 && tr_len > 0) {
+            long start_k = (long)((winStart - tr_oldest) * tr_rate);
+            long end_k = (long)(((winStart + g_dScreenTime) - tr_oldest) * tr_rate);
             if (start_k < 0) start_k = 0;
-            if (end_k > StaArray[i].lRawCircSize) end_k = StaArray[i].lRawCircSize;
-            if (end_k > StaArray[i].lRawCircCtr) end_k = StaArray[i].lRawCircCtr;
+            if (end_k > tr_cap) end_k = tr_cap;
+            if (end_k > tr_len) end_k = tr_len;
 
             long max_abs = 0;
             for (long k = start_k; k < end_k; k++) {
-                if (StaArray[i].plFiltCircBuff[k] == INT_MAX) continue;
-                long abs_val = labs(StaArray[i].plFiltCircBuff[k]);
+                if (tr_filt[k] == INT_MAX) continue;
+                long abs_val = labs(tr_filt[k]);
                 if (abs_val > max_abs) max_abs = abs_val;
             }
 
@@ -365,16 +337,16 @@ gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data) {
                 for (int px = 0; px < draw_width; px++) {
                     double px_t_start = winStart + ((double)px / draw_width) * g_dScreenTime;
                     double px_t_end   = winStart + ((double)(px + 1) / draw_width) * g_dScreenTime;
-                    long p_start_k = (long)((px_t_start - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
-                    long p_end_k   = (long)((px_t_end   - StaArray[i].dOldestTime) * StaArray[i].dSampRate);
+                    long p_start_k = (long)((px_t_start - tr_oldest) * tr_rate);
+                    long p_end_k   = (long)((px_t_end   - tr_oldest) * tr_rate);
                     if (p_end_k == p_start_k) p_end_k++;
                     if (p_start_k < 0) p_start_k = 0;
-                    if (p_end_k > StaArray[i].lRawCircCtr) p_end_k = StaArray[i].lRawCircCtr;
+                    if (p_end_k > tr_len) p_end_k = tr_len;
 
                     double p_min = 1e12, p_max = -1e12;
                     gboolean px_has_data = FALSE;
                     for (long k = p_start_k; k < p_end_k; k++) {
-                        int32_t val = StaArray[i].plFiltCircBuff[k];
+                        int32_t val = tr_filt[k];
                         if (val != INT_MAX) {
                             double scaled_val = val * scale;
                             if (scaled_val < p_min) p_min = scaled_val;
@@ -422,6 +394,4 @@ gboolean on_draw_signal(GtkWidget *widget, cairo_t *cr, gpointer data) {
             }
         }
     }
-
-    return FALSE;
 }

@@ -8,11 +8,12 @@
 #    The maximum size of a ring is 1024 kilobytes.
 #    Ring names are listed in file earthworm.h.
 #
-  nRing               8
+  nRing               9
   Ring   WAVE_RING   51200
   Ring    SCN_RING   500
   Ring   PICK_RING   256
   Ring   HYPO_RING   128
+  Ring  HYPO_RING_REF 128
   Ring  SLINK_RING   51200
   Ring   DECI_RING   500
   Ring  ALARM_RING   256
@@ -66,6 +67,11 @@
  Process	  "pick_FP pick_FP.d"
  Class/Priority    OTHER 0
 #
+# Picker de onda S (STA/LTA+AIC+polarizacion 3C). Lee ondas de SLINK_RING y
+# picks P de PICK_RING, y publica picks S en PICK_RING (TYPE_PICK_SCNL).
+ Process	  "pickS pickS.d"
+ Class/Priority    OTHER 0
+#
 # Puentes Kafka/GLASS3 (LEGACY, deshabilitados): la asociacion+localizacion la
 # hace csnloc localmente. Para volver al flujo GLASS3: descomentar estas dos
 # entradas y COMENTAR la de csnloc (no pueden convivir: ambos escriben
@@ -78,6 +84,17 @@
 # Class/Priority    OTHER 0
 #
  Process	  "csnloc csnloc.d"
+ Class/Priority    OTHER 0
+#
+# Refinador HYPOINVERSE por anillo: lee HYPO_RING (ARC de csnloc) y escribe
+# el ARC refinado en HYPO_RING_REF. NO usa la cadena sausage (eq*/pipe).
+ Process	  "hyp2000_ring hyp2000_ring.d"
+ Class/Priority    OTHER 0
+#
+# Refinador NonLinLoc por anillo: lee HYPO_RING y escribe en HYPO_RING_REF
+# (el MISMO anillo que hyp2000_ring; csnhypodbp los distingue por modulo).
+# Requiere ControlFile/TtimeRoot/OutRoot y grillas precalculadas (mk_nll_grids.py).
+ Process	  "nlloc_ring nlloc_ring.d"
  Class/Priority    OTHER 0
 #
  Process	  "wave_serverV wave_serverV.d"

@@ -12,7 +12,8 @@ static int same_scnl(const Pick *a, const Pick *b)
     return strcmp(a->sta, b->sta) == 0 &&
            strcmp(a->net, b->net) == 0 &&
            strcmp(a->chan, b->chan) == 0 &&
-           strcmp(a->loc, b->loc) == 0;
+           strcmp(a->loc, b->loc) == 0 &&
+           a->phase == b->phase;   /* P y S del mismo SCNL no se pisan */
 }
 
 void PickBuffer_Init(PickBuffer *b, int cap, double repick_window_sec)

@@ -1,0 +1,51 @@
+* hyp2000_ring: comandos de arranque para HYPOINVERSE-2000.
+* El modulo ya fija PHS/ARC/SUM/COP/CAR por evento; aqui van modelo,
+* estaciones y opciones de localizacion.
+*
+* Modelo 1D REGIONALIZADO: 6 perfiles derivados del 3D de B. Potin, elegidos
+* por epicentro con los circulos NOD, + amortiguamiento 15 + profundidad de
+* prueba 20 km.
+*
+* Justificacion (tank_tools/calib/RESULTS_REFINERS.md §11; 2211 ARC, con la S ya
+* ACTIVA tras corregir los horizontales en estaciones_hyp.sta):
+*
+*   set                          <=25km  <=50km  mediana  |dz| vs publ.  RMS
+*   bandas + DAM 15 + ZTR 20       322     356      9.1       10.1       0.695  <- este
+*   husen (1D) + DAM 15 + ZTR 20   331     363      9.4       13.6       0.691
+*
+* Se elige el set de BANDAS por la PROFUNDIDAD: 3.5 km mejor que el 1D (10.1 vs
+* 13.6). En Chile la geometria de la subduccion cambia a lo largo de ~4300 km
+* norte-sur, asi que un unico perfil 1D para todo el pais arrastra ese error,
+* sobre todo en periodos largos y en los extremos del territorio. El precio son
+* 9 eventos menos a <=25 km de epicentro (322 vs 331).
+*
+* OJO: los numeros de la eleccion original eran S-ciegos (292 vs 302) y quedaron
+* obsoletos al activar la S. La eleccion NO cambia, pero el argumento que la
+* sostiene ahora es la profundidad, no el recall.
+*
+* Regionalizacion: el modelo se elige por EPICENTRO (hytra.for) mezclando hasta
+* 3 circulos NOD con taper coseno. Convenio de signos de hypoinverse
+* (hyphs.for:299-300): LAT negativa al sur, LON positiva al oeste.
+* RAD1 = radio al 100% del modelo, DRAD = ancho de transicion.
+* OJO: los radios 450/150 y los centros NO estan justificados por ningun
+* analisis todavia (ver calib/PARAMETROS.md §2.2).
+
+200 T 1900 0
+LET 5 2 3 0 0
+H71 2 3 3
+STA 'estaciones_hyp.sta'
+CRH 1 'N18-26_1.5k.crh'
+CRH 2 'N22-30_1.5k.crh'
+CRH 3 'N26-34_1.5k.crh'
+CRH 4 'N30-38_1.5k.crh'
+CRH 5 'N34-42_1.5k.crh'
+CRH 6 'N38-46_1.5k.crh'
+MUL T 3
+NOD -21.601 0 68.350 0 450. 150. 1
+NOD -25.975 0 68.692 0 450. 150. 2
+NOD -30.056 0 68.637 0 450. 150. 3
+NOD -33.994 0 70.685 0 450. 150. 4
+NOD -37.968 0 71.769 0 450. 150. 5
+NOD -41.954 0 73.065 0 450. 150. 6
+ZTR 20.0 F
+DAM 15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.

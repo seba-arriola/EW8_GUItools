@@ -9,6 +9,7 @@
 #    D4  idempotencia (2a corrida: 0 cambios, 0 eliminados)
 #    D5  --delete purga obsoletos; --no-delete los conserva
 #    D6  --verify-only detecta fallos (exit 2) y valida un arbol sano (exit 0)
+#    D7  el estado en vivo (*.state/*.ndx) NO se borra con --delete-excluded
 # =============================================================================
 set -u
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
@@ -29,12 +30,14 @@ fi
 echo "=== D1: copia inicial y estructura ==="
 bash "$DEPLOY" --dst "$DST" >"$TESTTMP/d1.out" 2>&1
 check_exit "D1 copia inicial -> exit 0" 0 "$?"
-check_eq "D1 binarios en whitelist" "19" \
+check_eq "D1 binarios en whitelist" "22" \
     "$(ls "$DST/earthworm_8.0/bin" 2>/dev/null | wc -l | tr -d ' ')"
 check_eq "D1 grids copiados" "13" \
     "$(ls "$DST/run_working_v8/params/grids"/*.grid 2>/dev/null | wc -l | tr -d ' ')"
 for f in earthworm.d startstop_unix.d csnloc.d csnmags_toy.d pick_FP.sta \
-         estaciones_107.txt wave_serverV.d iasp91.tbl; do
+         pickS.d pickS.sta estaciones_107.txt wave_serverV.d iasp91.tbl \
+         hyp2000_ring.d nlloc_ring.d hyp2000_ring.hyp estaciones_hyp.sta \
+         chile_1d.crh; do
     if [ -f "$DST/run_working_v8/params/$f" ]; then
         pass "D1 params/$f presente"
     else
@@ -102,5 +105,23 @@ check_exit "D6 detecta binario faltante (exit 2)" 2 "$?"
 mv "$TESTTMP/sniffring.bak" "$DST/earthworm_8.0/bin/sniffring"
 bash "$DEPLOY" --dst "$DST" --verify-only >/dev/null 2>&1
 check_exit "D6 arbol sano (exit 0)" 0 "$?"
+
+# -----------------------------------------------------------------------------
+echo "=== D7: el estado en vivo no se purga ==="
+# slink2ew/pick_FP crean estos ficheros EN params/ mientras corren; el deploy no
+# debe borrarlos (les quitaria la posicion de SeedLink y el indice de picks).
+touch "$DST/run_working_v8/params/slink999.state" \
+      "$DST/run_working_v8/params/pick_FP_999.ndx"
+bash "$DEPLOY" --dst "$DST" >"$TESTTMP/d7.out" 2>&1
+check_contains "D7 sin bajas (eliminados=0)" "$TESTTMP/d7.out" 'eliminados=0'
+for f in slink999.state pick_FP_999.ndx; do
+    if [ -e "$DST/run_working_v8/params/$f" ]; then
+        pass "D7 estado en vivo preservado: $f"
+    else
+        failed "D7 el deploy borro $f"
+    fi
+done
+rm -f "$DST/run_working_v8/params/slink999.state" \
+      "$DST/run_working_v8/params/pick_FP_999.ndx"
 
 summary

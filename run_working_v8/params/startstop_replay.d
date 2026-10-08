@@ -20,11 +20,12 @@
 #    The maximum size of a ring is 1024 kilobytes.
 #    Ring names are listed in file earthworm.h.
 #
-  nRing               8
+  nRing               9
   Ring   WAVE_RING   51200
   Ring    SCN_RING   500
   Ring   PICK_RING   256
   Ring   HYPO_RING   128
+  Ring  HYPO_RING_REF 128
   Ring  SLINK_RING   51200
   Ring   DECI_RING   500
   Ring  ALARM_RING   256
@@ -79,6 +80,11 @@
  Process	  "pick_FP pick_FP.d"
  Class/Priority    OTHER 0
 #
+# Picker de onda S (mismo modulo que en produccion; en replay las ondas llegan
+# por tankplayer a SLINK_RING).
+ Process	  "pickS pickS.d"
+ Class/Priority    OTHER 0
+#
 # Puentes Kafka/GLASS3 (LEGACY, deshabilitados): la asociacion+localizacion la
 # hace csnloc localmente. Para volver al flujo GLASS3: descomentar estas dos
 # entradas y COMENTAR la de csnloc (no pueden convivir: ambos escriben
@@ -91,6 +97,12 @@
 # Class/Priority    OTHER 0
 #
  Process	  "csnloc csnloc.d"
+ Class/Priority    OTHER 0
+#
+ Process	  "hyp2000_ring hyp2000_ring.d"
+ Class/Priority    OTHER 0
+#
+ Process	  "nlloc_ring nlloc_ring.d"
  Class/Priority    OTHER 0
 #
  Process	  "wave_serverV wave_serverV.d"

@@ -3,10 +3,15 @@
 #
 
 MyModuleId      MOD_CSNHYPODBP   # ID del modulo
-InRing          HYPO_RING        # Anillo donde Glass3 envia TYPE_HYP2000ARC
+InRing          HYPO_RING_REF    # Anillo de hipocentros refinados (hyp2000_ring + nlloc_ring)
 OutRing         PICK_RING        # Anillo donde inyectaremos los repicks manuales (TYPE_PICK_SCNL)
 HeartBeatInt    30               
 LogFile         1                
+
+# Etiquetas de modulo origen para la columna "Mod" (id -> nombre).
+ModuleLabel     162  csnloc
+ModuleLabel     163  hyp2000
+ModuleLabel     164  nlloc
 
 # Configuracion del Wave Server para descargar ondas historicas al hacer clic
 WsIP            127.0.0.1

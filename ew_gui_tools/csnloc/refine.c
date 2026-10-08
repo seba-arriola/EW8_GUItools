@@ -97,17 +97,27 @@ static double score_at(const StationList *st, const Pick *picks, int npick,
         free(csum);
     }
 
+    /* Prior gaussiano de profundidad (opcional): penaliza alejarse del valor
+       a priori. Desactivado por defecto (DepthPriorKm = 0). */
+    if (cfg->DepthPriorKm > 0.0 && cfg->DepthPriorSigmaKm > 0.0) {
+        double d = (depth - cfg->DepthPriorKm) / cfg->DepthPriorSigmaKm;
+        best_score *= exp(-0.5 * d * d);
+    }
+
     if (out_t0) *out_t0 = best_t0;
     return best_score;
 }
 
 /* ------------------------------------------------------------------------- */
-/* Refina un candidato. Empieza con caja +-2*RefineNodeKm y la encoge.        */
+/* Refina un candidato. Caja horizontal +-2*RefineNodeKm y vertical           */
+/* +-RefineDepthKm (default 2*RefineNodeKm); se encoge a la mitad por         */
+/* iteracion. El semiancho vertical debe superar el paso de nodos de la       */
+/* grilla para que z no quede clavada en un nodo.                             */
 /* ------------------------------------------------------------------------- */
 int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
                TTModel *tt, const CSLocParams *cfg)
 {
-    double node_km, lat_span, lon_span, dep_span;
+    double node_km, dep_half, step_dep, lat_span, lon_span;
     double best_lat, best_lon, best_dep, best_t0, best_score;
     int    it;
 
@@ -115,9 +125,15 @@ int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
     if (h->nphases <= 0) return -1;
 
     node_km = (cfg->RefineNodeKm > 0.0) ? cfg->RefineNodeKm : 5.0;
+    dep_half = (cfg->RefineDepthKm > 0.0) ? cfg->RefineDepthKm
+                                          : (2.0 * node_km);
     lat_span = node_km * 2.0 / KM_PER_DEG;
     lon_span = node_km * 2.0 / (KM_PER_DEG * 0.8);
-    dep_span = node_km * 2.0;
+    /* Paso vertical FINO e independiente del tamano de la caja: si el paso
+       fuera proporcional al span, una caja grande (para escapar del nodo de
+       grilla) saltaria por encima del optimo local. */
+    step_dep = node_km / 2.0;
+    if (step_dep < 0.5) step_dep = 0.5;
 
     best_lat = h->lat;
     best_lon = h->lon;
@@ -128,14 +144,17 @@ int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
     for (it = 0; it < cfg->RefineIterations && it < 5; it++) {
         double step_lat = lat_span / 4.0;
         double step_lon = lon_span / 4.0;
-        double step_dep = dep_span / 4.0;
+        int    nz = (int)ceil(dep_half / step_dep);
         int    a, b, c;
         double improved_lat = best_lat, improved_lon = best_lon;
         double improved_dep = best_dep, improved_t0 = best_t0, improved = best_score;
 
+        if (nz < 2) nz = 2;
+        if (nz > 100) nz = 100;
+
         for (a = -2; a <= 2; a++)
             for (b = -2; b <= 2; b++)
-                for (c = -2; c <= 2; c++) {
+                for (c = -nz; c <= nz; c++) {
                     double la = best_lat + a * step_lat;
                     double lo = best_lon + b * step_lon;
                     double de = best_dep + c * step_dep;
@@ -156,7 +175,8 @@ int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
         best_dep = improved_dep; best_t0 = improved_t0; best_score = improved;
         lat_span *= 0.5;
         lon_span *= 0.5;
-        dep_span *= 0.5;
+        dep_half *= 0.5;
+        step_dep *= 0.5;
     }
 
     h->lat = best_lat;

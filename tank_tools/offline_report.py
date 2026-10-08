@@ -35,6 +35,7 @@ Opciones:
     --format FMT       table (default) | csv | json | all
     --out PREFIJO      prefijo de los csv/json (default: <dir>/report o <dirA>/compare)
     --quiet            no imprimir tablas, solo resumen
+    --depth            anadir columna 'ctrl' (control de profundidad por evento)
 """
 import argparse
 import json
@@ -42,6 +43,14 @@ import math
 import os
 import sys
 from datetime import datetime, timezone
+
+# Control de profundidad (proxy) compartido con depth_report.py.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    from depth_report import depth_control as _depth_control
+except Exception:  # pragma: no cover - offline_report sigue funcionando sin el
+    def _depth_control(rec):
+        return "-"
 
 KM_PER_DEG = 111.195
 
@@ -62,7 +71,8 @@ def gc_deg(lat1, lon1, lat2, lon2):
 
 
 def has_geo(rec):
-    return all(k in rec for k in ("t0", "lat", "lon"))
+    """True si la solucion tiene tiempo y posicion UTILIZABLES (no solo las claves)."""
+    return all(rec.get(k) is not None for k in ("t0", "lat", "lon"))
 
 
 def fmt_t0(rec):
@@ -235,12 +245,12 @@ ONE_HEADERS = ["evento", "ev", "id", "ver", "t0 (UTC)", "lat", "lon", "z_km",
                "span_km"]
 
 
-def one_rows(evs):
+def one_rows(evs, depth=False):
     rows = []
     for slug in sorted(evs):
         for e in evs[slug]:
             r = e["rep"]
-            rows.append([
+            row = [
                 slug, str(e["ev"]),
                 str(r.get("id", "-")), str(r.get("version", "-")),
                 fmt_t0(r),
@@ -249,11 +259,14 @@ def one_rows(evs):
                 fnum(r.get("rms_sec"), 2), fnum(r.get("gap_deg"), 0),
                 fnum(r.get("dmin_km"), 0), fnum(r.get("score"), 1),
                 str(e["n_sol"]), fnum(e["span_s"], 1), fnum(e["span_km"], 1),
-            ])
+            ]
+            if depth:
+                row.append(_depth_control(r))
+            rows.append(row)
     return rows
 
 
-def report_one(d, T, D, fmt, out, quiet):
+def report_one(d, T, D, fmt, out, quiet, depth=False):
     _, by_slug, expected = load_dir(d)
     evs = events_of(by_slug, T, D)
 
@@ -262,10 +275,11 @@ def report_one(d, T, D, fmt, out, quiet):
     with_hypo = sorted(s for s in by_slug if by_slug[s])
     without = sorted(s for s in expected if not by_slug.get(s))
 
-    rows = one_rows(evs)
+    headers = ONE_HEADERS + (["ctrl"] if depth else [])
+    rows = one_rows(evs, depth)
 
     if not quiet:
-        print_table(ONE_HEADERS, rows)
+        print_table(headers, rows)
         print()
         print(f"resumen: {len(with_hypo)}/{len(expected)} tanks con al menos "
               f"una solucion; {n_raw} soluciones -> {n_events} eventos")
@@ -276,7 +290,7 @@ def report_one(d, T, D, fmt, out, quiet):
 
     if fmt != "table":
         prefix = out or os.path.join(d, "report")
-        write_csv_json(prefix, ONE_HEADERS, rows,
+        write_csv_json(prefix, headers, rows,
                        {"events": evs, "n_raw": n_raw, "n_events": n_events}, fmt)
     return 0
 
@@ -505,6 +519,8 @@ def build_parser():
     p.add_argument("--out", metavar="PREFIJO",
                    help="prefijo de los csv/json")
     p.add_argument("--quiet", action="store_true", help="no imprimir tablas")
+    p.add_argument("--depth", action="store_true",
+                   help="anadir columna 'ctrl' (control de profundidad)")
     return p
 
 
@@ -524,7 +540,7 @@ def main(argv=None):
                        args.format, args.out, args.quiet)
 
     return report_one(args.dirs[0], args.time_window, args.dist_deg,
-                      args.format, args.out, args.quiet)
+                      args.format, args.out, args.quiet, args.depth)
 
 
 if __name__ == "__main__":

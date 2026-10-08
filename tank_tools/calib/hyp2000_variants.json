@@ -1,0 +1,530 @@
+{
+  "_comentario": "Sets de hyp2000_ring. 'hyp.model' elige el bloque CRH/MUL/NOD (husen|ak135|bandas); 'hyp.scalars' pisa lineas sueltas del .hyp (ZTR, DAM, MUL, LET, H71...); 'd' pisa claves del .d. El filtro MinPhases/MaxRMS se emula sobre el ARC de entrada (el modo offline de hyp2000 no lo aplica).",
+  "refiner": "hyp2000",
+  "variants": [
+    {
+      "tag": "h_bandas",
+      "hyp": {
+        "model": "bandas"
+      }
+    },
+    {
+      "tag": "h_husen",
+      "hyp": {
+        "model": "husen"
+      }
+    },
+    {
+      "tag": "h_ak135",
+      "hyp": {
+        "model": "ak135"
+      }
+    },
+    {
+      "tag": "h_moddef1",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "MUL": "T 1"
+        }
+      }
+    },
+    {
+      "tag": "h_ztr0",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "ZTR": "0.0 F"
+        }
+      }
+    },
+    {
+      "tag": "h_minph3",
+      "hyp": {
+        "model": "bandas"
+      },
+      "d": {
+        "MinPhases": 3
+      }
+    },
+    {
+      "tag": "h_minph6",
+      "hyp": {
+        "model": "bandas"
+      },
+      "d": {
+        "MinPhases": 6
+      }
+    },
+    {
+      "tag": "h_maxrms1",
+      "hyp": {
+        "model": "bandas"
+      },
+      "d": {
+        "MaxRMS": 1.0
+      }
+    },
+    {
+      "tag": "h_pos165",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "POS": "1.65"
+        }
+      }
+    },
+    {
+      "tag": "h_pos170",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "POS": "1.70"
+        }
+      }
+    },
+    {
+      "tag": "h_pos175",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "POS": "1.75"
+        }
+      }
+    },
+    {
+      "tag": "h_pos180",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "POS": "1.80"
+        }
+      }
+    },
+    {
+      "tag": "h_pos185",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "POS": "1.85"
+        }
+      }
+    },
+    {
+      "tag": "hb_pos175",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "POS": "1.75"
+        }
+      }
+    },
+    {
+      "tag": "hb_pos180",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "POS": "1.80"
+        }
+      }
+    },
+    {
+      "tag": "h_ztr5",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "ZTR": "5.0 F"
+        }
+      }
+    },
+    {
+      "tag": "h_ztr20",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "ZTR": "20.0 F"
+        }
+      }
+    },
+    {
+      "tag": "h_damp3",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "3. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "h_damp15",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "h_d2far250",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "7. 30. 0.5 0.9 0.012 0.02 0.6 50. 250."
+        }
+      }
+    },
+    {
+      "tag": "h_let",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "LET": "5 2 3 2 2"
+        }
+      }
+    },
+    {
+      "tag": "h_husen_d15",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "hb_d15",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "hb_d15_z20",
+      "hyp": {
+        "model": "bandas",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.",
+          "ZTR": "20.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hb_ak135_d15",
+      "hyp": {
+        "model": "ak135",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "h_d15_z20",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.",
+          "ZTR": "20.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hak135_d15_z20",
+      "hyp": {
+        "model": "ak135",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.",
+          "ZTR": "20.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hb2_plain",
+      "hyp": {
+        "model": "bandas2deg"
+      }
+    },
+    {
+      "tag": "hb2_d15_z20",
+      "hyp": {
+        "model": "bandas2deg",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.",
+          "ZTR": "20.0 F"
+        }
+      }
+    },
+    {
+      "tag": "h_psm150",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "PSM": "1 1.50 0."
+        }
+      }
+    },
+    {
+      "tag": "h_psm178",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "PSM": "1 1.78 0."
+        }
+      }
+    },
+    {
+      "tag": "h_psm195",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "PSM": "1 1.95 0."
+        }
+      }
+    },
+    {
+      "tag": "h_swt0",
+      "hyp": {
+        "scalars": {
+          "SWT": "0.0"
+        }
+      }
+    },
+    {
+      "tag": "h_swt5",
+      "hyp": {
+        "scalars": {
+          "SWT": "5.0"
+        }
+      }
+    },
+    {
+      "tag": "h_prt",
+      "hyp": {
+        "scalars": {
+          "PRT": "'hypo.prt'",
+          "KPR": "2",
+          "REP": "T T"
+        }
+      }
+    },
+    {
+      "tag": "h_norw",
+      "hyp": {
+        "scalars": {
+          "RMS": "100 0.16 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "hp160",
+      "hyp": {
+        "scalars": {
+          "POS": "1.60"
+        }
+      }
+    },
+    {
+      "tag": "hp165",
+      "hyp": {
+        "scalars": {
+          "POS": "1.65"
+        }
+      }
+    },
+    {
+      "tag": "hp170",
+      "hyp": {
+        "scalars": {
+          "POS": "1.70"
+        }
+      }
+    },
+    {
+      "tag": "hp173",
+      "hyp": {
+        "scalars": {
+          "POS": "1.73"
+        }
+      }
+    },
+    {
+      "tag": "hp175",
+      "hyp": {
+        "scalars": {
+          "POS": "1.75"
+        }
+      }
+    },
+    {
+      "tag": "hp178",
+      "hyp": {
+        "scalars": {
+          "POS": "1.78"
+        }
+      }
+    },
+    {
+      "tag": "hp180",
+      "hyp": {
+        "scalars": {
+          "POS": "1.80"
+        }
+      }
+    },
+    {
+      "tag": "hp185",
+      "hyp": {
+        "scalars": {
+          "POS": "1.85"
+        }
+      }
+    },
+    {
+      "tag": "hp190",
+      "hyp": {
+        "scalars": {
+          "POS": "1.90"
+        }
+      }
+    },
+    {
+      "tag": "r_it8",
+      "hyp": {
+        "scalars": {
+          "RMS": "8 0.16 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "r_it12",
+      "hyp": {
+        "scalars": {
+          "RMS": "12 0.16 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "r_it100",
+      "hyp": {
+        "scalars": {
+          "RMS": "100 0.16 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "r_w1_10",
+      "hyp": {
+        "scalars": {
+          "RMS": "4 0.16 1.0 3."
+        }
+      }
+    },
+    {
+      "tag": "r_w1_20",
+      "hyp": {
+        "scalars": {
+          "RMS": "4 0.16 2.0 3."
+        }
+      }
+    },
+    {
+      "tag": "r_w2_5",
+      "hyp": {
+        "scalars": {
+          "RMS": "4 0.16 1.5 5."
+        }
+      }
+    },
+    {
+      "tag": "r_cut10",
+      "hyp": {
+        "scalars": {
+          "RMS": "4 0.10 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "r_cut30",
+      "hyp": {
+        "scalars": {
+          "RMS": "4 0.30 1.5 3."
+        }
+      }
+    },
+    {
+      "tag": "swt05",
+      "hyp": {
+        "scalars": {
+          "SWT": "0.5"
+        }
+      }
+    },
+    {
+      "tag": "swt20",
+      "hyp": {
+        "scalars": {
+          "SWT": "2.0"
+        }
+      }
+    },
+    {
+      "tag": "hb_d5_z20",
+      "hyp": {
+        "scalars": {
+          "DAM": "5. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "hb_d10_z20",
+      "hyp": {
+        "scalars": {
+          "DAM": "10. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "hb_d20_z20",
+      "hyp": {
+        "scalars": {
+          "DAM": "20. 30. 0.5 0.9 0.012 0.02 0.6 50. 800."
+        }
+      }
+    },
+    {
+      "tag": "hb_d15_z0",
+      "hyp": {
+        "scalars": {
+          "ZTR": "0.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hb_d15_z10",
+      "hyp": {
+        "scalars": {
+          "ZTR": "10.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hb_d15_z30",
+      "hyp": {
+        "scalars": {
+          "ZTR": "30.0 F"
+        }
+      }
+    },
+    {
+      "tag": "hus_d15_z20",
+      "hyp": {
+        "model": "husen",
+        "scalars": {
+          "DAM": "15. 30. 0.5 0.9 0.012 0.02 0.6 50. 800.",
+          "ZTR": "20.0 F"
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+C--INCLUDE FILE CONTAINING PROCEDURE INTERFACE (PROTOTYPE) DECLARATIONS
+C--FOR HYPOINVERSE
+
+      INTERFACE
+
+C--allsubs.f
+
+         INTEGER FUNCTION KLAS (NET,Y,X,Z,NAME,FULNAM)
+            IMPLICIT NONE
+            INTEGER   NET
+            REAL      Y
+            REAL      X
+            REAL      Z
+            CHARACTER NAME*3                 !SHORT REGION NAME
+            CHARACTER FULNAM*25              !LONG REGION NAME
+         END FUNCTION
+
+      END INTERFACE

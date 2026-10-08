@@ -1,0 +1,446 @@
+{
+  "_doc": "Variantes del barrido de calibracion de csnloc (calibrate_csnloc.py). Cada variante materializa un csnloc.d aislado con estos overrides. Los valores son absolutos (no incrementos).",
+  "variants": [
+    {
+      "tag": "base",
+      "overrides": {}
+    },
+    {
+      "tag": "refdepth20",
+      "overrides": {
+        "RefineDepthKm": 20.0
+      }
+    },
+    {
+      "tag": "refdepth40",
+      "overrides": {
+        "RefineDepthKm": 40.0
+      }
+    },
+    {
+      "tag": "refnode2",
+      "overrides": {
+        "RefineNodeKm": 2.0
+      }
+    },
+    {
+      "tag": "refiter5",
+      "overrides": {
+        "RefineIterations": 5
+      }
+    },
+    {
+      "tag": "prior30_20",
+      "overrides": {
+        "DepthPriorKm": 30.0,
+        "DepthPriorSigmaKm": 20.0
+      }
+    },
+    {
+      "tag": "prior60_40",
+      "overrides": {
+        "DepthPriorKm": 60.0,
+        "DepthPriorSigmaKm": 40.0
+      }
+    },
+    {
+      "tag": "assoc60",
+      "overrides": {
+        "AssocWindowSec": 60.0
+      }
+    },
+    {
+      "tag": "assoc240",
+      "overrides": {
+        "AssocWindowSec": 240.0
+      }
+    },
+    {
+      "tag": "t0_4",
+      "overrides": {
+        "T0ToleranceSec": 4.0
+      }
+    },
+    {
+      "tag": "minph4",
+      "overrides": {
+        "MinPhasesPerEvent": 4
+      }
+    },
+    {
+      "tag": "maxrms1",
+      "overrides": {
+        "MaxRMS": 1.0
+      }
+    },
+    {
+      "tag": "eps30",
+      "overrides": {
+        "DBSCAN_Eps": 30.0
+      }
+    },
+    {
+      "tag": "eps90",
+      "overrides": {
+        "DBSCAN_Eps": 90.0
+      }
+    },
+    {
+      "tag": "ws10",
+      "overrides": {
+        "PhaseWeightS": 1.0
+      }
+    },
+    {
+      "tag": "bp05",
+      "overrides": {
+        "BackProjThreshold": 0.5
+      }
+    },
+    {
+      "tag": "a180",
+      "overrides": {
+        "AssocWindowSec": 180.0
+      }
+    },
+    {
+      "tag": "a60_eps90",
+      "overrides": {
+        "AssocWindowSec": 60.0,
+        "DBSCAN_Eps": 90.0
+      }
+    },
+    {
+      "tag": "a240_eps90",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "DBSCAN_Eps": 90.0
+      }
+    },
+    {
+      "tag": "a240_minph4",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "MinPhasesPerEvent": 4
+      }
+    },
+    {
+      "tag": "a240_refd20",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "RefineDepthKm": 20.0
+      }
+    },
+    {
+      "tag": "a240_prior30",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "DepthPriorKm": 30.0,
+        "DepthPriorSigmaKm": 20.0
+      }
+    },
+    {
+      "tag": "a240_mp4_prior30",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "MinPhasesPerEvent": 4,
+        "DepthPriorKm": 30.0,
+        "DepthPriorSigmaKm": 20.0
+      }
+    },
+    {
+      "tag": "a240_mp4_eps90",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "MinPhasesPerEvent": 4,
+        "DBSCAN_Eps": 90.0
+      }
+    },
+    {
+      "tag": "a240_mp4_refd20",
+      "overrides": {
+        "AssocWindowSec": 240.0,
+        "MinPhasesPerEvent": 4,
+        "RefineDepthKm": 20.0
+      }
+    },
+    {
+      "tag": "a300_mp4",
+      "overrides": {
+        "AssocWindowSec": 300.0,
+        "MinPhasesPerEvent": 4
+      }
+    },
+    {
+      "tag": "assoc30",
+      "overrides": {
+        "AssocWindowSec": 30.0
+      }
+    },
+    {
+      "tag": "assoc45",
+      "overrides": {
+        "AssocWindowSec": 45.0
+      }
+    },
+    {
+      "tag": "assoc90",
+      "overrides": {
+        "AssocWindowSec": 90.0
+      }
+    },
+    {
+      "tag": "assoc60_mp4",
+      "overrides": {
+        "AssocWindowSec": 60.0,
+        "MinPhasesPerEvent": 4
+      }
+    },
+    {
+      "tag": "PhaseAssocTolSec_1p0",
+      "overrides": {
+        "PhaseAssocTolSec": 1.0
+      }
+    },
+    {
+      "tag": "PhaseAssocTolSec_4p0",
+      "overrides": {
+        "PhaseAssocTolSec": 4.0
+      }
+    },
+    {
+      "tag": "PhaseAssocTolSecS_2p0",
+      "overrides": {
+        "PhaseAssocTolSecS": 2.0
+      }
+    },
+    {
+      "tag": "PhaseAssocTolSecS_8p0",
+      "overrides": {
+        "PhaseAssocTolSecS": 8.0
+      }
+    },
+    {
+      "tag": "PhaseResidualMaxSec_2p0",
+      "overrides": {
+        "PhaseResidualMaxSec": 2.0
+      }
+    },
+    {
+      "tag": "PhaseResidualMaxSec_5p0",
+      "overrides": {
+        "PhaseResidualMaxSec": 5.0
+      }
+    },
+    {
+      "tag": "PhaseResidualMaxSecS_3p0",
+      "overrides": {
+        "PhaseResidualMaxSecS": 3.0
+      }
+    },
+    {
+      "tag": "PhaseResidualMaxSecS_8p0",
+      "overrides": {
+        "PhaseResidualMaxSecS": 8.0
+      }
+    },
+    {
+      "tag": "MaxRMSDegrade_0p05",
+      "overrides": {
+        "MaxRMSDegrade": 0.05
+      }
+    },
+    {
+      "tag": "MaxRMSDegrade_0p3",
+      "overrides": {
+        "MaxRMSDegrade": 0.3
+      }
+    },
+    {
+      "tag": "MaxGapDegradeDeg_5p0",
+      "overrides": {
+        "MaxGapDegradeDeg": 5.0
+      }
+    },
+    {
+      "tag": "MaxGapDegradeDeg_20p0",
+      "overrides": {
+        "MaxGapDegradeDeg": 20.0
+      }
+    },
+    {
+      "tag": "EventDedupSec_15p0",
+      "overrides": {
+        "EventDedupSec": 15.0
+      }
+    },
+    {
+      "tag": "EventDedupSec_60p0",
+      "overrides": {
+        "EventDedupSec": 60.0
+      }
+    },
+    {
+      "tag": "EventDedupKm_50p0",
+      "overrides": {
+        "EventDedupKm": 50.0
+      }
+    },
+    {
+      "tag": "EventDedupKm_200p0",
+      "overrides": {
+        "EventDedupKm": 200.0
+      }
+    },
+    {
+      "tag": "RenucleateMinNewPhases_2",
+      "overrides": {
+        "RenucleateMinNewPhases": 2
+      }
+    },
+    {
+      "tag": "RenucleateMinNewPhases_5",
+      "overrides": {
+        "RenucleateMinNewPhases": 5
+      }
+    },
+    {
+      "tag": "g_reg31",
+      "grids_dir": "tmp/csnloc_grids/reg31",
+      "overrides": {}
+    },
+    {
+      "tag": "g_A",
+      "grids_dir": "tmp/csnloc_grids/A",
+      "overrides": {}
+    },
+    {
+      "tag": "g_d50",
+      "overrides": {
+        "EventDedupKm": 50.0
+      }
+    },
+    {
+      "tag": "g_A_d50",
+      "grids_dir": "tmp/csnloc_grids/A",
+      "overrides": {
+        "EventDedupKm": 50.0
+      }
+    },
+    {
+      "tag": "g_A5",
+      "grids_dir": "tmp/csnloc_grids/A5",
+      "overrides": {}
+    },
+    {
+      "tag": "g_A_mp5",
+      "grids_dir": "tmp/csnloc_grids/A_mp5",
+      "overrides": {}
+    },
+    {
+      "tag": "g_A_bp70",
+      "grids_dir": "tmp/csnloc_grids/A_bp70",
+      "overrides": {}
+    },
+    {
+      "tag": "g_A_mp5bp70",
+      "grids_dir": "tmp/csnloc_grids/A_mp5bp70",
+      "overrides": {}
+    },
+    {
+      "tag": "g_cur_mp5",
+      "grids_dir": "tmp/csnloc_grids/cur_mp5",
+      "overrides": {}
+    },
+    {
+      "tag": "a30_ds30",
+      "overrides": {
+        "AssocWindowSec": 30.0,
+        "EventDedupSec": 30.0
+      }
+    },
+    {
+      "tag": "a30_ds60",
+      "overrides": {
+        "AssocWindowSec": 30.0,
+        "EventDedupSec": 60.0
+      }
+    },
+    {
+      "tag": "a45_ds30",
+      "overrides": {
+        "AssocWindowSec": 45.0,
+        "EventDedupSec": 30.0
+      }
+    },
+    {
+      "tag": "a45_ds60",
+      "overrides": {
+        "AssocWindowSec": 45.0,
+        "EventDedupSec": 60.0
+      }
+    },
+    {
+      "tag": "a60_ds30",
+      "overrides": {
+        "AssocWindowSec": 60.0,
+        "EventDedupSec": 30.0
+      }
+    },
+    {
+      "tag": "a60_ds60",
+      "overrides": {
+        "AssocWindowSec": 60.0,
+        "EventDedupSec": 60.0
+      }
+    },
+    {
+      "tag": "gam15",
+      "overrides": {
+        "GridActivationMarginDeg": 1.5
+      }
+    },
+    {
+      "tag": "gam20",
+      "overrides": {
+        "GridActivationMarginDeg": 2.0
+      }
+    },
+    {
+      "tag": "gam30",
+      "overrides": {
+        "GridActivationMarginDeg": 3.0
+      }
+    },
+    {
+      "tag": "gmp2",
+      "overrides": {
+        "GridActivationMinPicks": 2
+      }
+    },
+    {
+      "tag": "gmp5",
+      "overrides": {
+        "GridActivationMinPicks": 5
+      }
+    },
+    {
+      "tag": "gmp8",
+      "overrides": {
+        "GridActivationMinPicks": 8
+      }
+    },
+    {
+      "tag": "mew2",
+      "overrides": {
+        "MaxEventsPerWindow": 2
+      }
+    },
+    {
+      "tag": "mew10",
+      "overrides": {
+        "MaxEventsPerWindow": 10
+      }
+    }
+  ]
+}
