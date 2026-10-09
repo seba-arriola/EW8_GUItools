@@ -1,0 +1,2 @@
+# <nombre> <latmin> <latmax> <lonmin> <lonmax> <loga0> <q> <stacorr>
+chile -56.0 -17.0 -110.0 -66.0 calib/ml_loga0_default.tab calib/mb_Q.tab calib/station_corr.txt
