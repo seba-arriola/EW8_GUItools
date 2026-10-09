@@ -115,7 +115,7 @@ El módulo **fija por código** `PHS 'arcIn'`, `ARC 'arcOut'`, `SUM 'none'`, `CO
 | clave | producción | barrido | veredicto |
 |---|---|---|---|
 | `CommandFile` | `hyp2000_ring.hyp` | — | — |
-| `WorkDir` | `tmp/hyp2000_ring` | — | — |
+| `WorkDir` | `resources/hyp2000` | — | — |
 | `GridFile` | `grids/chile_regional.grid` | no | sólo filtra bbox; no se probó |
 | `MinPhases` | 4 | 3/6 | 6 descarta 382 ARC y pierde 7 eventos |
 | `MaxRMS` | 2.0 | 1.0 | 1.0 **destructivo** (1648 descartes) |

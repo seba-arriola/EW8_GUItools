@@ -59,8 +59,8 @@ BASE_D = {
 }
 BASE_HYP = os.path.join(PARAMS, "hyp2000_ring.hyp")
 SRC_WORKDIR = {
-    "hyp2000": os.path.join(REPO, "tmp", "hyp2000_ring"),
-    "nlloc": os.path.join(REPO, "tmp", "nlloc_ring"),
+    "hyp2000": os.path.join(REPO, "resources", "hyp2000"),
+    "nlloc": os.path.join(REPO, "resources", "nlloc"),
 }
 DEFAULT_CATALOG = os.path.join(REPO, "tests_soluciones_publicadas.dat")
 

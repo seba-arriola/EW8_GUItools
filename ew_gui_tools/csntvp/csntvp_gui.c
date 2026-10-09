@@ -149,13 +149,28 @@ void on_time_window_activate(GtkWidget *widget, gpointer data) {
     if (dlg) gtk_window_destroy(dlg);
 }
 
-static void on_filter_combo_changed(GObject *obj, GParamSpec *pspec, gpointer data) {
-    (void)pspec;
-    GtkWidget **entries = (GtkWidget **)data;
-    int type = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
-    gtk_widget_set_sensitive(entries[0], (type != 0));
-    gtk_widget_set_sensitive(entries[1], (type == 3));
-    gtk_widget_set_sensitive(entries[2], (type != 0));
+/* Radios del diálogo Filter Settings (sin GtkDropDown: su popup queda detrás
+   de la ventana bajo WSLg/Wayland, bug #1299). */
+typedef struct {
+    GtkWidget *type[4];   /* Raw, HP, LP, BP */
+    GtkWidget *order[2];  /* 2, 4 */
+    GtkWidget *e_f1, *e_f2;
+} FilterCtrls;
+
+static int ec_radio_index(GtkWidget *const *r, int n) {
+    for (int i = 0; i < n; i++)
+        if (r[i] && gtk_check_button_get_active(GTK_CHECK_BUTTON(r[i]))) return i;
+    return 0;
+}
+
+static void on_filter_type_toggled(GtkCheckButton *b, gpointer data) {
+    (void)b;
+    FilterCtrls *c = data;
+    int type = ec_radio_index(c->type, 4);
+    gtk_widget_set_sensitive(c->e_f1, (type != 0));
+    gtk_widget_set_sensitive(c->e_f2, (type == 3));
+    gtk_widget_set_sensitive(c->order[0], (type != 0));
+    gtk_widget_set_sensitive(c->order[1], (type != 0));
 }
 
 void on_filter_menu_activate(GtkWidget *widget, gpointer data) {
@@ -165,39 +180,50 @@ void on_filter_menu_activate(GtkWidget *widget, gpointer data) {
     gtk_grid_set_row_spacing(GTK_GRID(grid), 5);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 10);
 
-    const char *type_items[] = { "Raw (No Filter)", "High-Pass", "Low-Pass", "Band-Pass", NULL };
-    GtkWidget *cb_type = gtk_drop_down_new_from_strings(type_items);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(cb_type), g_filter_type);
+    FilterCtrls ctl;
+
+    const char *type_items[] = { "Raw (No Filter)", "High-Pass", "Low-Pass", "Band-Pass" };
+    for (int i = 0; i < 4; i++) {
+        ctl.type[i] = gtk_check_button_new_with_label(type_items[i]);
+        if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(ctl.type[i]),
+                                              GTK_CHECK_BUTTON(ctl.type[0]));
+    }
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(ctl.type[(g_filter_type >= 0 && g_filter_type < 4) ? g_filter_type : 0]), TRUE);
 
     char buf[16];
-    GtkWidget *e_f1 = gtk_entry_new();
-    snprintf(buf, sizeof(buf), "%.2f", g_f1); gtk_editable_set_text(GTK_EDITABLE(e_f1), buf);
-    GtkWidget *e_f2 = gtk_entry_new();
-    snprintf(buf, sizeof(buf), "%.2f", g_f2); gtk_editable_set_text(GTK_EDITABLE(e_f2), buf);
+    ctl.e_f1 = gtk_entry_new();
+    snprintf(buf, sizeof(buf), "%.2f", g_f1); gtk_editable_set_text(GTK_EDITABLE(ctl.e_f1), buf);
+    ctl.e_f2 = gtk_entry_new();
+    snprintf(buf, sizeof(buf), "%.2f", g_f2); gtk_editable_set_text(GTK_EDITABLE(ctl.e_f2), buf);
 
-    const char *order_items[] = { "2", "4", NULL };
-    GtkWidget *cb_order = gtk_drop_down_new_from_strings(order_items);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(cb_order), (g_order==2)?0:1);
+    const char *order_items[] = { "2", "4" };
+    for (int i = 0; i < 2; i++) {
+        ctl.order[i] = gtk_check_button_new_with_label(order_items[i]);
+        if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(ctl.order[i]),
+                                              GTK_CHECK_BUTTON(ctl.order[0]));
+    }
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(ctl.order[(g_order == 2) ? 0 : 1]), TRUE);
 
     gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Type:"), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), cb_type, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("F1 (Hz):"), 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), e_f1, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("F2 (Hz):"), 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), e_f2, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Order:"), 0, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), cb_order, 1, 3, 1, 1);
+    for (int i = 0; i < 4; i++) gtk_grid_attach(GTK_GRID(grid), ctl.type[i], 1, i, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("F1 (Hz):"), 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ctl.e_f1, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("F2 (Hz):"), 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ctl.e_f2, 1, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Order:"), 0, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ctl.order[0], 1, 6, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), ctl.order[1], 2, 6, 1, 1);
 
-    GtkWidget *entries[3] = { e_f1, e_f2, cb_order };
-    g_signal_connect(cb_type, "notify::selected", G_CALLBACK(on_filter_combo_changed), entries);
-    on_filter_combo_changed(G_OBJECT(cb_type), NULL, entries);
+    for (int i = 0; i < 4; i++)
+        g_signal_connect(ctl.type[i], "toggled", G_CALLBACK(on_filter_type_toggled), &ctl);
+    on_filter_type_toggled(NULL, &ctl);
 
     GtkWindow *dlg = NULL;
     if (run_dialog(GTK_WINDOW(window), "Filter Settings", grid, &dlg)) {
-        g_filter_type = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(cb_type));
-        g_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(e_f1)));
-        g_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(e_f2)));
-        g_order = (gtk_drop_down_get_selected(GTK_DROP_DOWN(cb_order)) == 0) ? 2 : 4;
+        g_filter_type = ec_radio_index(ctl.type, 4);
+        g_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(ctl.e_f1)));
+        g_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(ctl.e_f2)));
+        g_order = (ec_radio_index(ctl.order, 2) == 0) ? 2 : 4;
         g_bForceEnv = TRUE;
         if (g_drawing_waves) ewgui_canvas_queue_draw(g_drawing_waves);
     }

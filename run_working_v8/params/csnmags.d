@@ -19,13 +19,13 @@ WsTimeout         10000
 
 # --- Respuesta instrumental ---
 StaFile           estaciones_107.txt
-ResponseDir       responses
+ResponseDir       ../../resources/csnmags/responses
 ResponsePattern   %S_%C_%N.pz
 ResponseInMeters  0
 
 # --- Calibración regional (grillas + tablas) ---
-CalibFile         calib/calib_map.txt
-StaCorrFile       calib/station_corr.txt
+CalibFile         ../../resources/csnmags/calib/calib_map.txt
+StaCorrFile       ../../resources/csnmags/calib/station_corr.txt
 TauModel          iasp91
 
 # --- ML (Magnitud local) ---
@@ -58,7 +58,7 @@ Mwp_MinSta        1
 Mb_Enable         1
 Mb_Period         1.0
 Mb_Window         30.0
-Mb_QTable         calib/mb_Q.tab
+Mb_QTable         ../../resources/csnmags/calib/mb_Q.tab
 Mb_Band           0.5 2.0
 Mb_MinDelta       5.0
 Mb_MaxDelta       105.0

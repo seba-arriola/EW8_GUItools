@@ -57,9 +57,12 @@ int g_cfg_dirty = 0;           /* 1 if there are unsaved changes */
 int g_cfg_suppress = 0;        /* 1 to suppress the combo "changed" handler */
 
 int g_sel_idx = -1;            /* index of the selected module row */
-int g_sel_pid = -1;            /* pid of the selected module (kept across refreshes) */
-time_t g_last_user_click = 0;  /* time of the last user click on the tree */
 GtkWidget *g_window;           /* main window */
+
+/* El refresco se congela mientras la pestaña activa es Configuration; así no
+   se reconstruye lo que no se puede mirar ni se interrumpe la edición. */
+static int g_refresh_paused = 0;
+static int g_switching_guard = 0;   /* evita reentrar en switch-page al revertir */
 
 
 
@@ -201,18 +204,22 @@ static gboolean on_read(gpointer data)
       if (res == GET_OK || res == GET_MISS || res == GET_NOTRACK || res == GET_MISS_SEQGAP) {
          msg[recsize] = '\0';
          ewgui_ctrl_parse_status(msg, &g_status);
-         poblar_listas();
-         populate_combo();
          time(&g_last_status);
-         char sb[256];
-         if (g_sel_idx >= 0 && g_sel_idx < g_status.nmods)
-            snprintf(sb, sizeof(sb), "Updated %s UTC - %d modules - target: %s (%s)",
-                     g_status.curtime, g_status.nmods, g_status.mods[g_sel_idx].name, g_status.mods[g_sel_idx].status);
-         else
-            snprintf(sb, sizeof(sb), "Updated %s UTC - %d modules", g_status.curtime, g_status.nmods);
-         gtk_label_set_text(GTK_LABEL(g_lbl_statusbar), sb);
-         gtk_widget_set_sensitive(g_btn_reconfig, TRUE);
-         actualizar_log();
+         /* Con la pestaña Configuration activa no se refresca ningún widget;
+            el estado se sigue parseando para no perder mensajes del ring. */
+         if (!g_refresh_paused) {
+            poblar_listas();
+            populate_combo();
+            char sb[256];
+            if (g_sel_idx >= 0 && g_sel_idx < g_status.nmods)
+               snprintf(sb, sizeof(sb), "Updated %s UTC - %d modules - target: %s (%s)",
+                        g_status.curtime, g_status.nmods, g_status.mods[g_sel_idx].name, g_status.mods[g_sel_idx].status);
+            else
+               snprintf(sb, sizeof(sb), "Updated %s UTC - %d modules", g_status.curtime, g_status.nmods);
+            gtk_label_set_text(GTK_LABEL(g_lbl_statusbar), sb);
+            gtk_widget_set_sensitive(g_btn_reconfig, TRUE);
+            actualizar_log();
+         }
       }
    } while (res == GET_OK);
 
@@ -252,6 +259,55 @@ static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user
     g_simple_action_set_state(action, g_variant_new_boolean(active));
     adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
         active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
+}
+
+/* Pestañas: 0 = Modules, 1 = Configuration. Mientras Configuration está activa
+   no se refresca nada; al salir con cambios sin guardar se pide confirmación. */
+#define EC_PAGE_MODULES 0
+#define EC_PAGE_CONFIG  1
+
+/* Respuesta a "¿descartar cambios?" al salir de Configuration (asíncrona). */
+static void ec_page_leave_answer(gboolean accepted, gpointer data)
+{
+   GtkNotebook *nb = data;
+   if (!accepted) {
+      g_switching_guard = 1;
+      gtk_notebook_set_current_page(nb, EC_PAGE_CONFIG);
+      g_switching_guard = 0;
+      g_refresh_paused = 1;
+      return;
+   }
+   if (g_cfg_loaded && g_cfg_modidx >= 0) cfg_cargar_modulo(g_cfg_modidx);
+   else g_cfg_dirty = 0;
+
+   g_refresh_paused = 0;
+   poblar_listas();
+   populate_combo();
+   actualizar_log();
+}
+
+static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint page_num, gpointer data)
+{
+   (void)page; (void)data;
+   if (g_switching_guard) return;
+
+   if (page_num == EC_PAGE_CONFIG) {
+      g_refresh_paused = 1;
+      return;
+   }
+
+   if (g_cfg_dirty) {
+      char msg[300];
+      snprintf(msg, sizeof(msg), "There are unsaved changes in '%s'. Discard them?",
+               (g_cfg_modidx >= 0 && g_cfg_modidx < g_status.nmods) ? g_status.mods[g_cfg_modidx].name : "?");
+      ec_confirmar(msg, ec_page_leave_answer, nb);
+      return;   /* si rechaza, el callback revierte la pestaña */
+   }
+
+   g_refresh_paused = 0;
+   poblar_listas();
+   populate_combo();
+   actualizar_log();
 }
 
 static void on_activate(GtkApplication *app, gpointer user_data)
@@ -347,11 +403,6 @@ static void on_activate(GtkApplication *app, gpointer user_data)
         }
     }
     g_signal_connect(g_mod_sel, "notify::selected", G_CALLBACK(on_row_selected), NULL);
-    {
-        GtkGesture *click = gtk_gesture_click_new();
-        g_signal_connect(click, "pressed", G_CALLBACK(on_tree_pressed), NULL);
-        gtk_widget_add_controller(g_tree, GTK_EVENT_CONTROLLER(click));
-    }
 
     GtkWidget *sw_mod = gtk_scrolled_window_new();
     gtk_widget_set_size_request(sw_mod, 620, 300);
@@ -411,8 +462,10 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     gtk_label_set_xalign(GTK_LABEL(lbl_log), 0.0);
     gtk_box_append(GTK_BOX(box_der), lbl_log);
 
-    g_combo = gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)), NULL);
-    g_signal_connect(g_combo, "notify::selected", G_CALLBACK(on_combo_changed), NULL);
+    /* Selector de modulo para los logs: boton que abre una ventana modal con la
+       lista (sin GtkDropDown/xdg_popup, que bajo WSLg/Wayland queda detras). */
+    g_combo = gtk_button_new_with_label("(none)");
+    g_signal_connect(g_combo, "clicked", G_CALLBACK(on_log_combo_clicked), NULL);
     gtk_box_append(GTK_BOX(box_der), g_combo);
 
     g_logview = gtk_text_view_new();
@@ -428,13 +481,14 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     /* ================= Tab 2: CONFIGURATION ================= */
     GtkWidget *page_cfg = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
     gtk_notebook_append_page(GTK_NOTEBOOK(notebook), page_cfg, gtk_label_new("Configuration"));
+    g_signal_connect(notebook, "switch-page", G_CALLBACK(on_notebook_switch_page), NULL);
 
     GtkWidget *cfg_h = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_box_append(GTK_BOX(page_cfg), cfg_h);
     gtk_box_append(GTK_BOX(cfg_h), gtk_label_new("Module:"));
 
-    g_cfg_combo = gtk_drop_down_new(G_LIST_MODEL(gtk_string_list_new(NULL)), NULL);
-    g_signal_connect(g_cfg_combo, "notify::selected", G_CALLBACK(on_cfg_combo_changed), NULL);
+    g_cfg_combo = gtk_button_new_with_label("(none)");
+    g_signal_connect(g_cfg_combo, "clicked", G_CALLBACK(on_cfg_combo_clicked), NULL);
     gtk_box_append(GTK_BOX(cfg_h), g_cfg_combo);
 
     g_lbl_cfgpath = gtk_label_new("");

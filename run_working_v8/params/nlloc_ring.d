@@ -18,9 +18,9 @@ Debug           1
 SourceCode      W
 
 # Raiz de la salida (LOCFILES). El modulo reemplaza la linea LOCFILES.
-OutRoot         /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/loc/ev
+OutRoot         loc/ev
 
-WorkDir         /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring
+WorkDir         ../../resources/nlloc
 
 # Filtro grueso por bbox (reusa el .grid de csnloc).
 GridFile        grids/chile_regional.grid
@@ -31,12 +31,12 @@ MaxRMS          2.0
 # --- Bandas 3D ---
 # ModelBand <nombre> <latmin> <latmax> <lonmin> <lonmax> <TtimeRoot> <ControlFile>
 # Generadas por mk_nll_grids_3d.py (bbox de la cabecera del .mod de Potin).
-ModelBand N18-26_1.5k -25.2192 -17.9833 -71.5456 -65.1549 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N18-26_1.5k/time/N18-26_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N18-26_1.5k.in
-ModelBand N22-30_1.5k -30.0514 -21.8992 -72.1779 -65.2067 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N22-30_1.5k/time/N22-30_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N22-30_1.5k.in
-ModelBand N26-34_1.5k -34.0516 -26.0611 -72.8184 -64.4555 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N26-34_1.5k/time/N26-34_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N26-34_1.5k.in
-ModelBand N30-38_1.5k -38.0434 -29.9451 -74.4971 -66.8734 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N30-38_1.5k/time/N30-38_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N30-38_1.5k.in
-ModelBand N34-42_1.5k -42.0155 -33.9172 -75.3937 -68.1264 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N34-42_1.5k/time/N34-42_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N34-42_1.5k.in
-ModelBand N38-46_1.5k -45.8956 -38.0129 -75.8988 -70.2262 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/N38-46_1.5k/time/N38-46_1.5k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/N38-46_1.5k.in
+ModelBand N18-26_1.5k -25.2192 -17.9833 -71.5456 -65.1549 time3d/N18-26_1.5k/time/N18-26_1.5k ctrl/N18-26_1.5k.in
+ModelBand N22-30_1.5k -30.0514 -21.8992 -72.1779 -65.2067 time3d/N22-30_1.5k/time/N22-30_1.5k ctrl/N22-30_1.5k.in
+ModelBand N26-34_1.5k -34.0516 -26.0611 -72.8184 -64.4555 time3d/N26-34_1.5k/time/N26-34_1.5k ctrl/N26-34_1.5k.in
+ModelBand N30-38_1.5k -38.0434 -29.9451 -74.4971 -66.8734 time3d/N30-38_1.5k/time/N30-38_1.5k ctrl/N30-38_1.5k.in
+ModelBand N34-42_1.5k -42.0155 -33.9172 -75.3937 -68.1264 time3d/N34-42_1.5k/time/N34-42_1.5k ctrl/N34-42_1.5k.in
+ModelBand N38-46_1.5k -45.8956 -38.0129 -75.8988 -70.2262 time3d/N38-46_1.5k/time/N38-46_1.5k ctrl/N38-46_1.5k.in
 
 # --- Red de seguridad: un solo modelo que cubre TODO Chile a 4 km ---
 # Fusion de los 6 trozos 4k de Potin (ew_gui_tools/nlloc_ring/mk_mod_merge.py,
@@ -49,7 +49,7 @@ ModelBand N38-46_1.5k -45.8956 -38.0129 -75.8988 -70.2262 /home/seba/Dev/EW8_GUI
 # que cubre MAS estaciones del evento, asi que esta (mas gruesa) solo entra
 # cuando ninguna banda fina lo cubre entero: si dos empatan gana la primera de
 # la lista, y por eso las finas van ARRIBA.
-ModelBand CHILE_4k -48.9000 -14.9798 -78.9000 -61.4194 /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time3d/CHILE_4k/time/CHILE_4k /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/ctrl/CHILE_4k.in
+ModelBand CHILE_4k -48.9000 -14.9798 -78.9000 -61.4194 time3d/CHILE_4k/time/CHILE_4k ctrl/CHILE_4k.in
 
 # --- Fallback 1D (y modo sin bandas) ---
 # Plantilla 1D GRID2D centrada en el norte de Chile. OJO: con GRID2D el volumen
@@ -57,9 +57,9 @@ ModelBand CHILE_4k -48.9000 -14.9798 -78.9000 -61.4194 /home/seba/Dev/EW8_GUItoo
 # tiempos (NLLocLib.c IsGrid2DBigEnough); por eso el LOCGRID es pequeno y un
 # evento lejos del origen puede quedar en el borde. El 3D de las bandas evita
 # esto. Para desactivar el fallback, comentar la linea ModelFallback.
-ControlFile     /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/nlloc.in
-TtimeRoot       /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time/model
-ModelFallback   /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/time/model /home/seba/Dev/EW8_GUItools/tmp/nlloc_ring/nlloc.in
+ControlFile     nlloc.in
+TtimeRoot       time/model
+ModelFallback   time/model nlloc.in
 
 # Rate-limit de NLLoc (es caro): recalcula como mucho cada NllIntervalSec por
 # evento, siempre sobre la ultima version recibida. 0 = procesar cada version.

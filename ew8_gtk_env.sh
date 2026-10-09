@@ -22,19 +22,23 @@
 # GPU real es mas lento que el renderer por defecto (ver ADR-0001).
 export GSK_RENDERER=cairo
 
-# GTK4 en WSLg: sobre Wayland (weston 9) los popovers (GtkDropDown, y el
-# GtkPopoverMenuBar del menu "Control Panel") se descolocan, desaparecen al clic
-# o saltan a otro punto de la pantalla (grab/posicion de xdg_popup roto; ver
-# microsoft/wslg#1299, #1226, #1390). Forzamos XWayland (X11), donde funcionan.
-# Efecto lateral: la decoracion pasa a ser la CSD de GTK (titlebar con
-# minimizar/maximizar/cerrar).
+# GTK4 en WSLg: en WSLg antiguos (weston 9) los popovers (GtkDropDown y el menu
+# del headerbar) se descolocaban, desaparecian al clic o saltaban de sitio
+# (grab/posicion de xdg_popup roto; microsoft/wslg#1226, #1390). Por eso se
+# forzaba XWayland (X11). Contra: bajo x11 la CSD de GTK no tiene zona de
+# arrastre alcanzable en WSLg/RAIL y las ventanas NO se pueden redimensionar
+# (ni aparecen flechitas; GTK_CSD=0/SSD tampoco lo arregla).
 #
-# SOLO si hay servidor X: en una maquina Wayland pura (sin XWayland, sin DISPLAY)
-# forzar `x11` haria que GTK no pudiera abrir ventana, asi que ahi se deja el
-# backend por defecto (Wayland). Se usa `${DISPLAY:-}` porque hay llamadores con
-# `set -u` (ew_monitor.sh).
-if [ -n "${DISPLAY:-}" ]; then
+# Verificado 2026-10-09 en WSLg 1.0.73.2 (weston 04d436c): los popovers YA
+# funcionan en Wayland y Wayland si permite redimensionar (el compositor
+# decora). Por eso se deja el backend por defecto: Wayland si hay
+# WAYLAND_DISPLAY, si no X11. El renderer cairo se mantiene.
+#
+# Escape (WSLg viejos / si reaparece el bug de popovers en Wayland):
+#   EWGUI_FORCE_X11=1   -> vuelve a XWayland (se pierde el resize por borde).
+if [ -n "${EWGUI_FORCE_X11:-}" ]; then
     export GDK_BACKEND=x11
 else
+    # Backend por defecto del sistema (Wayland si esta disponible, si no X11).
     unset GDK_BACKEND
 fi

@@ -28,9 +28,9 @@ fi
 
 # -----------------------------------------------------------------------------
 echo "=== D1: copia inicial y estructura ==="
-bash "$DEPLOY" --dst "$DST" >"$TESTTMP/d1.out" 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources >"$TESTTMP/d1.out" 2>&1
 check_exit "D1 copia inicial -> exit 0" 0 "$?"
-check_eq "D1 binarios en whitelist" "22" \
+check_eq "D1 binarios en whitelist" "23" \
     "$(ls "$DST/earthworm_8.0/bin" 2>/dev/null | wc -l | tr -d ' ')"
 check_eq "D1 grids copiados" "13" \
     "$(ls "$DST/run_working_v8/params/grids"/*.grid 2>/dev/null | wc -l | tr -d ' ')"
@@ -75,21 +75,21 @@ check_eq "D3 EW_PARAMS apunta al destino" "$DST/run_working_v8/params" "$ep"
 
 # -----------------------------------------------------------------------------
 echo "=== D4: idempotencia ==="
-bash "$DEPLOY" --dst "$DST" >"$TESTTMP/d4.out" 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources >"$TESTTMP/d4.out" 2>&1
 check_contains "D4 2a corrida -> 0 cambios / 0 eliminados" \
     "$TESTTMP/d4.out" 'cambiados=0 eliminados=0'
 
 # -----------------------------------------------------------------------------
 echo "=== D5: purga (--delete / --no-delete) ==="
 touch "$DST/run_working_v8/params/ZZZ_espurio.d"
-bash "$DEPLOY" --dst "$DST" >/dev/null 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources >/dev/null 2>&1
 if [ -e "$DST/run_working_v8/params/ZZZ_espurio.d" ]; then
     failed "D5 --delete no purgo el obsoleto"
 else
     pass "D5 --delete purga obsoletos"
 fi
 touch "$DST/run_working_v8/params/ZZZ_espurio.d"
-bash "$DEPLOY" --dst "$DST" --no-delete >/dev/null 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources --no-delete >/dev/null 2>&1
 if [ -e "$DST/run_working_v8/params/ZZZ_espurio.d" ]; then
     pass "D5 --no-delete conserva"
 else
@@ -100,10 +100,10 @@ rm -f "$DST/run_working_v8/params/ZZZ_espurio.d"
 # -----------------------------------------------------------------------------
 echo "=== D6: --verify-only ==="
 mv "$DST/earthworm_8.0/bin/sniffring" "$TESTTMP/sniffring.bak"
-bash "$DEPLOY" --dst "$DST" --verify-only >"$TESTTMP/d6.out" 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources --verify-only >"$TESTTMP/d6.out" 2>&1
 check_exit "D6 detecta binario faltante (exit 2)" 2 "$?"
 mv "$TESTTMP/sniffring.bak" "$DST/earthworm_8.0/bin/sniffring"
-bash "$DEPLOY" --dst "$DST" --verify-only >/dev/null 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources --verify-only >/dev/null 2>&1
 check_exit "D6 arbol sano (exit 0)" 0 "$?"
 
 # -----------------------------------------------------------------------------
@@ -112,7 +112,7 @@ echo "=== D7: el estado en vivo no se purga ==="
 # debe borrarlos (les quitaria la posicion de SeedLink y el indice de picks).
 touch "$DST/run_working_v8/params/slink999.state" \
       "$DST/run_working_v8/params/pick_FP_999.ndx"
-bash "$DEPLOY" --dst "$DST" >"$TESTTMP/d7.out" 2>&1
+bash "$DEPLOY" --dst "$DST" --no-resources >"$TESTTMP/d7.out" 2>&1
 check_contains "D7 sin bajas (eliminados=0)" "$TESTTMP/d7.out" 'eliminados=0'
 for f in slink999.state pick_FP_999.ndx; do
     if [ -e "$DST/run_working_v8/params/$f" ]; then
@@ -123,5 +123,31 @@ for f in slink999.state pick_FP_999.ndx; do
 done
 rm -f "$DST/run_working_v8/params/slink999.state" \
       "$DST/run_working_v8/params/pick_FP_999.ndx"
+
+# -----------------------------------------------------------------------------
+echo "=== D8: resources (fixture pequena) ==="
+RESFIX="$TESTTMP/resfix"
+mkdir -p "$RESFIX/nlloc/ctrl" "$RESFIX/hyp2000" "$RESFIX/csnmags"
+printf 'LOCFILES obs.nll NLLOC_OBS time/model loc/ev\n' > "$RESFIX/nlloc/nlloc.in"
+printf 'x\n' > "$RESFIX/hyp2000/hyp2000_ring.hyp"
+printf 'x\n' > "$RESFIX/csnmags/calib_map.txt"
+DST2="$DEPLOY_TMP/resdst"
+if EW8_SRC_RESOURCES="$RESFIX" bash "$DEPLOY" --dst "$DST2" >/dev/null 2>&1; then
+    pass "D8 deploy con resources fixture -> exit 0"
+else
+    failed "D8 deploy con resources fixture fallo"
+fi
+for d in nlloc hyp2000 csnmags; do
+    if [ -d "$DST2/resources/$d" ]; then
+        pass "D8 resources/$d presente"
+    else
+        failed "D8 FALTA resources/$d"
+    fi
+done
+if [ -f "$DST2/resources/nlloc/nlloc.in" ]; then
+    pass "D8 resources/nlloc/nlloc.in copiado"
+else
+    failed "D8 FALTA resources/nlloc/nlloc.in"
+fi
 
 summary

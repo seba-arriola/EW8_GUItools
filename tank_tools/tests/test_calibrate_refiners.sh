@@ -25,8 +25,8 @@ python3 "$ROOT/tank_tools/calibrate_refiners.py" --selftest || fail=1
 
 PARAMS="$ROOT/run_working_v8/params"
 PROT=("$PARAMS/csnloc.d" "$PARAMS/hyp2000_ring.d" "$PARAMS/hyp2000_ring.hyp" \
-      "$PARAMS/nlloc_ring.d" "$ROOT/tmp/hyp2000_ring/hyp2000_ring.hyp" \
-      "$ROOT/tmp/nlloc_ring/ctrl/N18-26_1.5k.in")
+      "$PARAMS/nlloc_ring.d" "$ROOT/resources/hyp2000/hyp2000_ring.hyp" \
+      "$ROOT/resources/nlloc/ctrl/N18-26_1.5k.in")
 declare -A BEFORE
 for f in "${PROT[@]}"; do
     [ -f "$f" ] && BEFORE["$f"]="$(sha256sum "$f" | cut -d' ' -f1)"

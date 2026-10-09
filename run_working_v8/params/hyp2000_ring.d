@@ -15,7 +15,7 @@ SourceCode      W
 CommandFile     hyp2000_ring.hyp
 
 # Directorio de trabajo (hypoinverse escribe arcIn/arcOut aqui).
-WorkDir         /home/seba/Dev/EW8_GUItools/tmp/hyp2000_ring
+WorkDir         ../../resources/hyp2000
 
 # Region opcional (mismo formato .grid que csnloc): solo se refinan eventos
 # dentro del bbox. Vacio = sin filtro.

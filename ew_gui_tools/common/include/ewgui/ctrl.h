@@ -42,6 +42,17 @@ typedef struct {
 /* Repuebla `st` a partir de un mensaje TYPE_STATUS de startstop. */
 void ewgui_ctrl_parse_status(char *buf, EwCtrlStatus *st);
 
+/* Compara dos EwCtrlStatus para decidir el trabajo de refresco de la UI.
+   Sólo mira los campos que se muestran (mods[]/rings[]); ignora los volátiles
+   (curtime, disk, ...) para no refrescar sin motivo. */
+typedef enum {
+    EWCTRL_SYNC_NONE = 0,   /* nada visible cambió -> no tocar widgets       */
+    EWCTRL_SYNC_VALUES,     /* misma estructura; actualizar filas in situ     */
+    EWCTRL_SYNC_STRUCTURE   /* cambió conjunto/orden -> reconstruir filas     */
+} EwCtrlSync;
+
+EwCtrlSync ewgui_ctrl_sync_plan(const EwCtrlStatus *prev, const EwCtrlStatus *next);
+
 /* Helpers de parseo (expuestos para tests). */
 void ewgui_ctrl_campo_despues(char *line, const char *label, char *out, size_t n);
 void ewgui_ctrl_extraer_config(char *detalle, char *config, size_t n);

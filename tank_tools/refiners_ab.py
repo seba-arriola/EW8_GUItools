@@ -142,7 +142,7 @@ def main(argv):
     ap.add_argument("--csnloc-d", default=os.path.join(REPO, "run_working_v8", "params", "csnloc.d"))
     ap.add_argument("--params-dir", default=os.path.join(REPO, "run_working_v8", "params"))
     ap.add_argument("--hyp", default=os.path.join(REPO, "ew_gui_tools", "hyp2000_ring", "hyp2000_ring"))
-    ap.add_argument("--src-workdir", default=os.path.join(REPO, "tmp", "hyp2000_ring"))
+    ap.add_argument("--src-workdir", default=os.path.join(REPO, "resources", "hyp2000"))
     a = ap.parse_args(argv[1:])
 
     out = os.path.abspath(a.out)

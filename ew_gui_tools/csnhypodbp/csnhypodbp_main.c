@@ -64,10 +64,10 @@ gboolean g_history_needs_saving = FALSE;
 
 int      g_filter_type = 0;      /* 0=Raw, 1=HP, 2=LP, 3=BP */
 double   g_align_lead = 20.0;    /* segundos antes de la onda P */
-GtkWidget *combo_filter = NULL;
+GtkWidget *filter_radios[4] = {NULL, NULL, NULL, NULL};  /* Raw, HP, LP, BP */
 GtkWidget *entry_freq1 = NULL;
 GtkWidget *entry_freq2 = NULL;
-GtkWidget *combo_order = NULL;
+GtkWidget *order_radios[2] = {NULL, NULL};               /* orden 2, 4 */
 GtkWidget *btn_apply_filter = NULL;
 
 gboolean pending_waveform_reload = FALSE;
@@ -388,10 +388,21 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(box_fetch), btn_fetch);
 
     GtkWidget *box_filter = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
-    const char *filt_items[] = {"Raw (No Filter)","High-Pass","Low-Pass","Band-Pass",NULL};
-    combo_filter = gtk_drop_down_new_from_strings(filt_items);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(combo_filter), 0);
-    g_signal_connect(combo_filter, "notify::selected", G_CALLBACK(on_filter_changed), NULL);
+    /* Filtro/orden con GtkCheckButton agrupados (radio): sin GtkDropDown, cuyo
+       popup queda detrás de la ventana bajo WSLg/Wayland (bug #1299). */
+    {
+        const char *filt_items[] = {"Raw","HP","LP","BP"};
+        const char *filt_tips[]  = {"Raw (No Filter)","High-Pass","Low-Pass","Band-Pass"};
+        for (int i = 0; i < 4; i++) {
+            filter_radios[i] = gtk_check_button_new_with_label(filt_items[i]);
+            gtk_widget_set_tooltip_text(filter_radios[i], filt_tips[i]);
+            if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(filter_radios[i]),
+                                                  GTK_CHECK_BUTTON(filter_radios[0]));
+        }
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(filter_radios[0]), TRUE);
+        for (int i = 0; i < 4; i++)
+            g_signal_connect(filter_radios[i], "toggled", G_CALLBACK(on_filter_changed), NULL);
+    }
 
     entry_freq1 = gtk_entry_new();
     gtk_editable_set_width_chars(GTK_EDITABLE(entry_freq1), 4);
@@ -403,10 +414,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_editable_set_text(GTK_EDITABLE(entry_freq2), "2.0");
     gtk_widget_set_sensitive(entry_freq2, FALSE);
 
-    const char *ord_items[] = {"2","4",NULL};
-    combo_order = gtk_drop_down_new_from_strings(ord_items);
-    gtk_drop_down_set_selected(GTK_DROP_DOWN(combo_order), 1);
-    gtk_widget_set_sensitive(combo_order, FALSE);
+    {
+        const char *ord_items[] = {"2","4"};
+        for (int i = 0; i < 2; i++) {
+            order_radios[i] = gtk_check_button_new_with_label(ord_items[i]);
+            if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(order_radios[i]),
+                                                  GTK_CHECK_BUTTON(order_radios[0]));
+            gtk_widget_set_sensitive(order_radios[i], FALSE);
+        }
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(order_radios[1]), TRUE);
+    }
 
     btn_apply_filter = gtk_button_new_with_label("Apply");
     gtk_widget_set_name(btn_apply_filter, "btn_filter");
@@ -414,13 +431,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(btn_apply_filter, "clicked", G_CALLBACK(on_btn_apply_filter_clicked), NULL);
 
     gtk_box_append(GTK_BOX(box_filter), gtk_label_new("  Filter:"));
-    gtk_box_append(GTK_BOX(box_filter), combo_filter);
+    for (int i = 0; i < 4; i++) gtk_box_append(GTK_BOX(box_filter), filter_radios[i]);
     gtk_box_append(GTK_BOX(box_filter), gtk_label_new(" F1(Hz):"));
     gtk_box_append(GTK_BOX(box_filter), entry_freq1);
     gtk_box_append(GTK_BOX(box_filter), gtk_label_new(" F2(Hz):"));
     gtk_box_append(GTK_BOX(box_filter), entry_freq2);
     gtk_box_append(GTK_BOX(box_filter), gtk_label_new(" Ord:"));
-    gtk_box_append(GTK_BOX(box_filter), combo_order);
+    for (int i = 0; i < 2; i++) gtk_box_append(GTK_BOX(box_filter), order_radios[i]);
     gtk_box_append(GTK_BOX(box_filter), btn_apply_filter);
 
     gtk_box_append(GTK_BOX(hbox_center), btn_repick);

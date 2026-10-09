@@ -199,9 +199,8 @@ void ApplySelectedFilter(void) {
 
     if (entry_freq1) f1 = atof(gtk_editable_get_text(GTK_EDITABLE(entry_freq1)));
     if (entry_freq2) f2 = atof(gtk_editable_get_text(GTK_EDITABLE(entry_freq2)));
-    if (combo_order) {
-        int active = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(combo_order));
-        order = (active == 0) ? 2 : 4;
+    if (order_radios[0] && order_radios[1]) {
+        order = gtk_check_button_get_active(GTK_CHECK_BUTTON(order_radios[0])) ? 2 : 4;
     }
 
     EwFilterParams fp;
@@ -216,14 +215,19 @@ void ApplySelectedFilter(void) {
     }
 }
 
-void on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer data) {
-    (void)pspec; (void)data;
-    g_filter_type = (int)gtk_drop_down_get_selected(GTK_DROP_DOWN(obj));
+void on_filter_changed(GtkCheckButton *b, gpointer data) {
+    (void)b; (void)data;
+    g_filter_type = 0;
+    for (int i = 0; i < 4; i++)
+        if (filter_radios[i] && gtk_check_button_get_active(GTK_CHECK_BUTTON(filter_radios[i]))) {
+            g_filter_type = i; break;
+        }
     gboolean is_hp_lp = (g_filter_type == 1 || g_filter_type == 2);
     gboolean is_bp = (g_filter_type == 3);
     if (entry_freq1) gtk_widget_set_sensitive(entry_freq1, is_hp_lp || is_bp);
     if (entry_freq2) gtk_widget_set_sensitive(entry_freq2, is_bp);
-    if (combo_order) gtk_widget_set_sensitive(combo_order, is_hp_lp || is_bp);
+    if (order_radios[0]) gtk_widget_set_sensitive(order_radios[0], is_hp_lp || is_bp);
+    if (order_radios[1]) gtk_widget_set_sensitive(order_radios[1], is_hp_lp || is_bp);
     if (btn_apply_filter) gtk_widget_set_sensitive(btn_apply_filter, g_filter_type != 0);
     ApplySelectedFilter();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);

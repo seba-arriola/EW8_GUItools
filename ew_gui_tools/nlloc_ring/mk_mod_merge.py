@@ -13,7 +13,7 @@ En la zona de solape entre dos trozos se **promedia** (son el mismo modelo de
 fondo, asi que el promedio evita una costura dura).
 
 Uso:
-  python3 mk_mod_merge.py --out tmp/nlloc_ring/mod3d/CHILE_4k/CHILE_4k.P.mod \\
+  python3 mk_mod_merge.py --out resources/nlloc/mod3d/CHILE_4k/CHILE_4k.P.mod \\
       --origin -33.0 -70.0 --step 4.0 --pad 3.0 \\
       --bbox -45.90 -17.98 -75.90 -64.46 \\
       --band /mnt/d/nll/time/N18-26_4k/N18-26_4k.P.mod \\

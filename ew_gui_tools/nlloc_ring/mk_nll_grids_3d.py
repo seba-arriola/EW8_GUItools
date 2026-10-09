@@ -13,7 +13,7 @@ y, con --run, ejecuta Grid2Time (--grid2time PATH) para cada una.
 
 Uso:
   python3 mk_nll_grids_3d.py --mod-dir /mnt/d/nll/time \
-      --outdir tmp/nlloc_ring/time3d --ctrl-dir tmp/nlloc_ring/ctrl \
+      --outdir resources/nlloc/time3d --ctrl-dir resources/nlloc/ctrl \
       --estaciones run_working_v8/params/estaciones_107.txt \
       --band N18-26_1.5k --band N22-30_1.5k \
       --grid2time ew_gui_tools/nlloc_ring/nlloc/Grid2Time --run

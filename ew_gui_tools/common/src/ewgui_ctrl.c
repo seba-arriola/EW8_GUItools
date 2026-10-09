@@ -121,6 +121,48 @@ void ewgui_ctrl_parse_status(char *buf, EwCtrlStatus *st)
     }
 }
 
+static int ec_mod_same(const EwCtrlMod *a, const EwCtrlMod *b)
+{
+    return a->pid == b->pid
+        && !strcmp(a->name, b->name)
+        && !strcmp(a->status, b->status)
+        && !strcmp(a->detalle, b->detalle)
+        && !strcmp(a->config, b->config)
+        && !strcmp(a->cfgfile, b->cfgfile);
+}
+
+static int ec_ring_same(const EwCtrlRing *a, const EwCtrlRing *b)
+{
+    return a->key == b->key && a->size == b->size && !strcmp(a->name, b->name);
+}
+
+EwCtrlSync ewgui_ctrl_sync_plan(const EwCtrlStatus *prev, const EwCtrlStatus *next)
+{
+    int i;
+
+    if (!prev || !next) return EWCTRL_SYNC_STRUCTURE;
+
+    /* Estructura: mismo número y misma secuencia de (name,pid)/(name,key). */
+    if (prev->nmods != next->nmods || prev->nrings != next->nrings)
+        return EWCTRL_SYNC_STRUCTURE;
+    for (i = 0; i < next->nmods; i++)
+        if (prev->mods[i].pid != next->mods[i].pid ||
+            strcmp(prev->mods[i].name, next->mods[i].name))
+            return EWCTRL_SYNC_STRUCTURE;
+    for (i = 0; i < next->nrings; i++)
+        if (prev->rings[i].key != next->rings[i].key ||
+            strcmp(prev->rings[i].name, next->rings[i].name))
+            return EWCTRL_SYNC_STRUCTURE;
+
+    /* Valores: ¿cambió algún campo visible de las filas? */
+    for (i = 0; i < next->nmods; i++)
+        if (!ec_mod_same(&prev->mods[i], &next->mods[i])) return EWCTRL_SYNC_VALUES;
+    for (i = 0; i < next->nrings; i++)
+        if (!ec_ring_same(&prev->rings[i], &next->rings[i])) return EWCTRL_SYNC_VALUES;
+
+    return EWCTRL_SYNC_NONE;
+}
+
 int ewgui_ctrl_send(SHM_INFO *region, unsigned char instid, unsigned char modid,
                     unsigned char type, const char *payload)
 {

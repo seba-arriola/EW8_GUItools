@@ -54,6 +54,46 @@ int main(void)
         assert(strcmp(c, "csntvp.d") == 0);
     }
 
+    /* ewgui_ctrl_sync_plan: NONE / VALUES / STRUCTURE */
+    {
+        EwCtrlStatus a, b;
+        memset(&a, 0, sizeof(a));
+        memset(&b, 0, sizeof(b));
+        a.nmods = b.nmods = 2;
+        a.nrings = b.nrings = 1;
+        snprintf(a.mods[0].name, sizeof(a.mods[0].name), "csntvp");
+        a.mods[0].pid = 11; strcpy(a.mods[0].status, "Alive"); strcpy(a.mods[0].detalle, "x");
+        snprintf(a.mods[1].name, sizeof(a.mods[1].name), "startstop");
+        a.mods[1].pid = 22; strcpy(a.mods[1].status, "Alive");
+        snprintf(a.rings[0].name, sizeof(a.rings[0].name), "CONTROL_RING");
+        a.rings[0].key = 1060; a.rings[0].size = 1000;
+        b = a;
+
+        /* sólo cambian campos volátiles -> NONE */
+        strcpy(a.curtime, "t1"); strcpy(a.disk, "100 MB");
+        strcpy(b.curtime, "t2"); strcpy(b.disk, "90 MB");
+        assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_NONE);
+
+        /* cambia un valor visible -> VALUES */
+        strcpy(b.mods[0].status, "Stop");
+        assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_VALUES);
+
+        /* cambia la estructura (pid) -> STRUCTURE */
+        b = a;
+        b.mods[1].pid = 99;
+        assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_STRUCTURE);
+
+        /* cambia el número de módulos -> STRUCTURE */
+        b = a;
+        b.nmods = 1;
+        assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_STRUCTURE);
+
+        /* cambia un ring -> VALUES */
+        b = a;
+        b.rings[0].size = 2000;
+        assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_VALUES);
+    }
+
     printf("ALL CTRL TESTS PASSED\n");
     return 0;
 }

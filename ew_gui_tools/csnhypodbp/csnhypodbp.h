@@ -151,10 +151,10 @@ extern gboolean g_history_needs_saving;
 /* --- FILTRO CONFIGURABLE (portado de EW7 new_hypo_display) --- */
 extern int      g_filter_type;     /* 0=Raw, 1=High-Pass, 2=Low-Pass, 3=Band-Pass */
 extern double   g_align_lead;      /* segundos de ventana antes de la onda P */
-extern GtkWidget *combo_filter;
+extern GtkWidget *filter_radios[4];  /* Raw, HP, LP, BP */
 extern GtkWidget *entry_freq1;
 extern GtkWidget *entry_freq2;
-extern GtkWidget *combo_order;
+extern GtkWidget *order_radios[2];   /* orden 2, 4 */
 extern GtkWidget *btn_apply_filter;
 
 /* --- DEBOUNCE DE RECARGA DE WAVEFORMS --- */
@@ -190,7 +190,7 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
 
 /* --- Filtro configurable (UI) --- */
 void ApplySelectedFilter(void);
-void on_filter_changed(GObject *obj, GParamSpec *pspec, gpointer data);
+void on_filter_changed(GtkCheckButton *b, gpointer data);
 void on_btn_apply_filter_clicked(GtkWidget *widget, gpointer data);
 
 /* --- Debounce de recarga --- */

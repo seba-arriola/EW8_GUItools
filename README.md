@@ -165,10 +165,10 @@ Genera una copia autónoma y **con rutas relativas** en `~/ew8portable` (o `--ds
 - Es **idempotente**: una segunda corrida sin cambios no transfiere nada (`cambiados=0`).
 - `wave_serverV.d` se **regenera** con las rutas de tanks relativas (`../tanks/…`); ninguna config
   conserva rutas absolutas `/home/...`.
-- `hyp2000_ring.d` y `nlloc_ring.d` también se **regeneran** con rutas relativas (`../../tmp/…`).
-  El refinamiento NLLoc necesita los datos de `tmp/nlloc_ring/` (grillas 3D de tiempos) en el
-  destino; el deploy **no** los copia (hay que copiarlos aparte o regenerarlos con
-  `ew_gui_tools/nlloc_ring/mk_nll_grids_3d.py`).
+- `hyp2000_ring.d` y `nlloc_ring.d` usan rutas relativas (`WorkDir ../../resources/…`, y el resto
+  relativo al WorkDir). El deploy **sí** copia `resources/` (grillas 3D de tiempos de `nlloc`, datos
+  de `hyp2000` y de `csnmags`), así que el portable queda autocontenido. `resources/` es grande
+  (decenas de GB) y está en `.gitignore`; se sincroniza de forma incremental.
 - Excluye `_legacy_atwc/`, `response/`, `hyp2000_output/`, respaldos, logs y tanks. El **estado en
   vivo** de los módulos (`*.state`, `*.ndx`, `*.queue`) se excluye de la copia pero queda
   **protegido** de la purga: `slink2ew`/`pick_FP` lo recrean mientras operan y borrarlo les quita

@@ -20,6 +20,7 @@
 #        run_working_v8/params/      (whitelist + grids/ + tablas)
 #        run_working_v8/log/         (vacio)
 #        run_working_v8/tanks/       (vacio)
+#        resources/                  (datos grandes: nlloc, hyp2000, csnmags)
 #
 #  wave_serverV.d se GENERA con las rutas de tanks relativas (../tanks/...); no
 #  se copia verbatim. Es valido porque startstop hace chdir(EW_PARAMS) y
@@ -28,13 +29,15 @@
 #  USO
 #  ---
 #     ./deploy_portable.sh [--dst DIR] [--dry-run] [--verify-only]
-#                          [--no-replay] [--no-monitor] [--no-delete] [-v] [-h]
+#                          [--no-replay] [--no-monitor] [--no-delete]
+#                          [--no-resources] [-v] [-h]
 #
-#     --dry-run     muestra lo que haria, no escribe nada
-#     --verify-only valida un DST ya existente y sale (0 ok, 2 fallo)
-#     --no-delete   no purga obsoletos (omite --delete-excluded)
-#     --no-replay   no copia startstop_replay.d / tankplayer.d.tmpl
-#     --no-monitor  no copia ew_monitor.sh
+#     --dry-run      muestra lo que haria, no escribe nada
+#     --verify-only  valida un DST ya existente y sale (0 ok, 2 fallo)
+#     --no-delete    no purga obsoletos (omite --delete-excluded)
+#     --no-replay    no copia startstop_replay.d / tankplayer.d.tmpl
+#     --no-monitor   no copia ew_monitor.sh
+#     --no-resources no copia resources/ (nlloc/hyp2000/csnmags); util en tests
 #
 #  Por defecto el portable es un espejo COMPLETO: incluye ew_monitor.sh y los
 #  params de replay. Asi no puede divergir en silencio del repo (el monitor del
@@ -64,6 +67,7 @@ VERIFY_ONLY=0
 DELETE=1
 WITH_REPLAY=1
 WITH_MONITOR=1
+WITH_RESOURCES=1
 VERBOSE=0
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
@@ -77,6 +81,7 @@ while [ $# -gt 0 ]; do
         --with-monitor) WITH_MONITOR=1; shift ;; # ya es el default (compat)
         --no-replay)   WITH_REPLAY=0; shift ;;
         --no-monitor)  WITH_MONITOR=0; shift ;;
+        --no-resources) WITH_RESOURCES=0; shift ;;
         -v|--verbose)  VERBOSE=1;    shift ;;
         -h|--help)     usage; exit 0 ;;
         *) echo "ERROR: opcion desconocida: $1" >&2; usage >&2; exit 1 ;;
@@ -95,6 +100,13 @@ SRC_PARAMS="$ROOT_DIR/run_working_v8/params"
 SRC_TANKS="$ROOT_DIR/run_working_v8/tanks"
 SRC_MONITOR="$ROOT_DIR/ew_monitor.sh"
 SRC_GTKENV="$ROOT_DIR/ew8_gtk_env.sh"
+SRC_RESOURCES="${EW8_SRC_RESOURCES:-$ROOT_DIR/resources}"
+
+# resources/ es gitignored: si no esta, el portable queda sin nlloc/hyp2000/csnmags.
+if [ "$WITH_RESOURCES" -eq 1 ] && [ ! -d "$SRC_RESOURCES" ]; then
+    echo "AVISO: $SRC_RESOURCES no existe; el portable quedara SIN resources" >&2
+    WITH_RESOURCES=0
+fi
 
 DST_BIN="$DST_ABS/earthworm_8.0/bin"
 DST_PARAMS="$DST_ABS/run_working_v8/params"
@@ -102,6 +114,7 @@ DST_LOG="$DST_ABS/run_working_v8/log"
 DST_TANKS="$DST_ABS/run_working_v8/tanks"
 DST_ENV="$DST_ABS/ew8_unix.sh"
 DST_GTKENV="$DST_ABS/ew8_gtk_env.sh"
+DST_RESOURCES="$DST_ABS/resources"
 
 # -----------------------------------------------------------------------------
 #  Whitelists
@@ -117,8 +130,7 @@ BINS=(
 PARAMS_FILES=(
     earthworm.d earthworm_global.d earthworm_commonvars.d startstop_unix.d
     slink2ew_HHZ.d pick_FP.d pickS.d csnloc.d csnmags_toy.d
-    csnmags.d calib/ml_loga0_default.tab calib/mb_Q.tab
-    calib/calib_map.txt calib/station_corr.txt
+    csnmags.d
     csntvp.d csnhypodbp.d csnrv.d ew_controller.d csnstaevdisp.d
     pick_FP.sta pickS.sta stations_to_view.sta estaciones_107.txt
     hyp2000_ring.hyp estaciones_hyp.sta ak135.crh chile_1d.crh
@@ -186,8 +198,8 @@ export EW_LOG="${DIR}/run_working_v8/log"
 export SYS_NAME="$(hostname)"
 export PATH="${DIR}/${EW_VERSION}/bin:$PATH"
 
-# GTK4 (WSLg): renderer y backend. Fuente UNICA compartida con el repo; el
-# deploy copia ew8_gtk_env.sh tal cual junto a este script.
+# GTK4 (WSLg): renderer cairo y backend por defecto (Wayland da resize). Fuente
+# UNICA compartida con el repo; el deploy copia ew8_gtk_env.sh tal cual.
 if [ -r "${DIR}/ew8_gtk_env.sh" ]; then
     . "${DIR}/ew8_gtk_env.sh"
 else
@@ -212,8 +224,9 @@ gen_wsv() {
         | write_if_changed "$DST_PARAMS/wave_serverV.d"
 }
 
-# hyp2000_ring.d / nlloc_ring.d apuntan a tmp/ con ruta absoluta del repo; se
-# regeneran con ../../tmp/... (relativo a params/) para que el arbol sea portable.
+# hyp2000_ring.d / nlloc_ring.d ya usan rutas relativas: WorkDir ../../resources/...
+# (relativo a params/) y el resto relativo al WorkDir. Se copian tal cual; el sed
+# queda como red de seguridad por si reaparece alguna ruta absoluta del repo.
 gen_ring_d() {  # <fichero>
     local f="$1"
     [ -f "$SRC_PARAMS/$f" ] || die 1 "no existe $SRC_PARAMS/$f"
@@ -232,6 +245,16 @@ verify() {
     done
     if ! compgen -G "$DST_PARAMS/grids/*.grid" >/dev/null 2>&1; then
         echo "  FALTAN: params/grids/*.grid"; fail=1
+    fi
+    if [ "$WITH_RESOURCES" -eq 1 ]; then
+        for r in nlloc hyp2000 csnmags; do
+            [ -d "$DST_RESOURCES/$r" ] || { echo "  FALTA: resources/$r"; fail=1; }
+        done
+        # Solo texto pequeno: no escanear los .buf/.hdr (decenas de GB).
+        if grep -RIn --include='*.in' --include='*.hyp' --include='*.crh' \
+                --include='*.tab' --include='*.txt' -- '/home/' "$DST_RESOURCES" >/dev/null 2>&1; then
+            echo "  RUTA ABSOLUTA (/home/) encontrada en resources/"; fail=1
+        fi
     fi
     if grep -RIn -- '/home/' "$DST_PARAMS" >/dev/null 2>&1; then
         echo "  RUTA ABSOLUTA (/home/) encontrada en params/"; fail=1
@@ -256,15 +279,17 @@ verify() {
     # comprueba de forma FUNCIONAL y determinista: `source` del env desplegado en
     # dos escenarios (con y sin DISPLAY) y lectura de las variables resultantes.
     # DISPLAY se fija a proposito para no depender del entorno de quien despliega.
+    # GDK_BACKEND NO se fuerza (backend por defecto: Wayland da resize; ver
+    # ew8_gtk_env.sh). Solo con EWGUI_FORCE_X11=1 quedaria en x11.
     local gtk_x gtk_w
     gtk_x="$(DISPLAY=:0 bash -c "source '$DST_ENV' >/dev/null 2>&1; printf '%s|%s' \"\${GSK_RENDERER:-}\" \"\${GDK_BACKEND:-}\"" 2>/dev/null || true)"
     gtk_w="$(env -u DISPLAY bash -c "source '$DST_ENV' >/dev/null 2>&1; printf '%s|%s' \"\${GSK_RENDERER:-}\" \"\${GDK_BACKEND:-}\"" 2>/dev/null || true)"
-    if [ "$gtk_x" != "cairo|x11" ]; then
-        echo "  con DISPLAY, ew8_unix.sh no exporta el entorno GTK4 (='$gtk_x', esperado 'cairo|x11')"
+    if [ "$gtk_x" != "cairo|" ]; then
+        echo "  con DISPLAY, ew8_unix.sh no exporta el entorno GTK4 (='$gtk_x', esperado 'cairo|')"
         fail=1
     fi
     if [ "$gtk_w" != "cairo|" ]; then
-        echo "  sin DISPLAY, ew8_unix.sh no deja Wayland (='$gtk_w', esperado 'cairo|')"
+        echo "  sin DISPLAY, ew8_unix.sh no aplica el entorno GTK4 (='$gtk_w', esperado 'cairo|')"
         fail=1
     fi
     if [ "$WITH_MONITOR" -eq 1 ]; then
@@ -297,8 +322,6 @@ PAR_INC=()
 PAR_INC+=(--exclude='/_legacy_atwc/' --exclude='/hyp2000_output/' --exclude='/response/')
 for p in "${PARAMS_FILES[@]}"; do PAR_INC+=(--include="/$p"); done
 PAR_INC+=(--include='/grids/***')
-PAR_INC+=(--include='/calib/***')
-PAR_INC+=(--include='/responses/***')
 PAR_INC+=(--include='*/')
 PAR_INC+=(--filter='P /wave_serverV.d')   # generado aparte, no borrar
 PAR_INC+=(--filter='P /hyp2000_ring.d')   # generado (rutas relativas)
@@ -318,10 +341,23 @@ fi
 
 if [ "$DRY" -eq 0 ]; then
     mkdir -p "$DST_BIN" "$DST_PARAMS" "$DST_LOG" "$DST_TANKS"
+    [ "$WITH_RESOURCES" -eq 1 ] && mkdir -p "$DST_RESOURCES"
 fi
 
 run_rsync "$SRC_BIN"    "$DST_BIN"    "${BIN_INC[@]}"
 run_rsync "$SRC_PARAMS" "$DST_PARAMS" "${PAR_INC[@]}"
+
+# resources/: datos grandes (nlloc ~decenas de GB, hyp2000, csnmags). Copia
+# ADITIVA (sin --delete-excluded): nunca borra datos del destino. Se excluyen
+# las salidas de runtime (loc/, arcIn/arcOut, logs) para no recopiarlas.
+if [ "$WITH_RESOURCES" -eq 1 ]; then
+    if [ "$DRY" -eq 0 ]; then mkdir -p "$DST_RESOURCES"; fi
+    RES_OPTS=(-a --exclude=loc/ --exclude=arcIn --exclude=arcOut --exclude='*.log')
+    [ "$DRY" -eq 1 ] && RES_OPTS+=(-n)
+    if ! rsync "${RES_OPTS[@]}" "$SRC_RESOURCES/" "$DST_RESOURCES/" >/dev/null 2>&1; then
+        die 1 "rsync fallo: resources -> $DST_RESOURCES"
+    fi
+fi
 
 if [ "$DRY" -eq 0 ]; then
     gen_env | write_if_changed "$DST_ENV"

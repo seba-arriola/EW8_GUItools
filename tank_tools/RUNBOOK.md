@@ -753,8 +753,8 @@ Se decide con **tres familias de métricas**, no una: epicentral (≤25/≤50/�
 - **`POS` (Vp/Vs) no tiene efecto en hyp2000** con estos modelos: el `.crh` es sólo-Vp
   (`hycrh.for:14`, `FORMAT (2F5.2)`), así que no hay columna de Vs que controlar. Además
   HYPOINVERSE lo consume al leer `CRH`, así que el arnés lo emite **antes** del bloque de modelo.
-- `ak135.crh` está en `run_working_v8/params/` pero **no** en `tmp/hyp2000_ring/`, que es el WorkDir
-  que el refiner usa de verdad: un `CRH` a `ak135.crh` en producción fallaría en silencio.
+- El WorkDir real del refiner es `resources/hyp2000/` (contiene `ak135.crh` y los `.crh` de banda). Si
+  un `CRH` apunta a un modelo ausente de ahí, falla en silencio.
 - Test de regresión: `tank_tools/tests/test_calibrate_refiners.sh` (selftests, `--dry-run` que no
   escribe, smoke real por refinador y sha256 de los `.d`/`.hyp`/plantillas de producción).
 
@@ -767,15 +767,15 @@ parcial (33 %) o nula (~10 %)** y NLLoc no converge sin observaciones. Arreglo e
 ```bash
 # 1) modelo fusionado (una vez, ~1 min): los 6 trozos de 4 km en una grilla comun
 python3 ew_gui_tools/nlloc_ring/mk_mod_merge.py \
-    --out tmp/nlloc_ring/mod3d/CHILE_4k/CHILE_4k.P.mod \
+    --out resources/nlloc/mod3d/CHILE_4k/CHILE_4k.P.mod \
     --origin -33.0 -70.0 --step 4.0 --pad 3.0 \
     --bbox -45.90 -17.98 -75.90 -64.46 \
     --band /mnt/d/nll/time/N18-26_4k/N18-26_4k.P.mod --band ... --check
 
 # 2) grillas de tiempos para TODAS las estaciones que caen dentro (108, ~20 min, ~12 GB)
 python3 ew_gui_tools/nlloc_ring/mk_nll_grids_3d.py \
-    --mod-dir tmp/nlloc_ring/mod3d --outdir tmp/nlloc_ring/time3d \
-    --ctrl-dir tmp/nlloc_ring/ctrl --estaciones run_working_v8/params/estaciones_107.txt \
+    --mod-dir resources/nlloc/mod3d --outdir resources/nlloc/time3d \
+    --ctrl-dir resources/nlloc/ctrl --estaciones run_working_v8/params/estaciones_107.txt \
     --band CHILE_4k --margin 0.5 --grid2time ew_gui_tools/nlloc_ring/nlloc/Grid2Time --run
 ```
 

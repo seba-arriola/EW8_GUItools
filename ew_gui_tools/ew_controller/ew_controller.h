@@ -71,8 +71,6 @@ extern int g_cfg_dirty;
 extern int g_cfg_suppress;
 
 extern int g_sel_idx;
-extern int g_sel_pid;
-extern time_t g_last_user_click;
 extern GtkWidget *g_window;
 
 /* --- Prototipos --- */
@@ -93,16 +91,16 @@ void cfg_vaciar_grid(void);
 void cfg_cargar_modulo(int idx);
 
 void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data);
-void on_tree_pressed(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
-gboolean confirmar(const char *msg);
+typedef void (*EcConfirmCb)(gboolean accepted, gpointer user_data);
+void ec_confirmar(const char *msg, EcConfirmCb cb, gpointer user_data);
 void on_btn_stop(GtkWidget *w, gpointer data);
 void on_btn_restart(GtkWidget *w, gpointer data);
 void on_btn_start(GtkWidget *w, gpointer data);
 void on_btn_reconfig(GtkWidget *w, gpointer data);
 void on_btn_refresh(GtkWidget *w, gpointer data);
-void on_combo_changed(GObject *obj, GParamSpec *pspec, gpointer data);
+void on_log_combo_clicked(GtkWidget *w, gpointer data);
 void on_cfg_entry_changed(GtkWidget *entry, gpointer data);
-void on_cfg_combo_changed(GObject *obj, GParamSpec *pspec, gpointer data);
+void on_cfg_combo_clicked(GtkWidget *w, gpointer data);
 void on_btn_cfg_save(GtkWidget *w, gpointer data);
 void on_btn_cfg_reconfig(GtkWidget *w, gpointer data);
 void on_btn_cfg_reload(GtkWidget *w, gpointer data);
