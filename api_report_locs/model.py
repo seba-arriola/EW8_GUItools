@@ -37,6 +37,10 @@ class Magnitude:
     n_mwp: int
     pref: str
     pref_val: float
+    mb: float = 0.0
+    n_mb: int = 0
+    ms: float = 0.0
+    n_ms: int = 0
 
 
 @dataclass

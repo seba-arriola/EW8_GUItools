@@ -107,7 +107,7 @@ DST_GTKENV="$DST_ABS/ew8_gtk_env.sh"
 #  Whitelists
 # -----------------------------------------------------------------------------
 BINS=(
-    startstop slink2ew pick_FP pickS wave_serverV csnloc csnmags_toy
+    startstop slink2ew pick_FP pickS wave_serverV csnloc csnmags_toy csnmags
     csntvp csnhypodbp csnrv ew_controller csnstaevdisp
     hyp2000_ring nlloc_ring
     sniffring sniffrings sniffwave tanksniff remux_tbuf
@@ -117,6 +117,8 @@ BINS=(
 PARAMS_FILES=(
     earthworm.d earthworm_global.d earthworm_commonvars.d startstop_unix.d
     slink2ew_HHZ.d pick_FP.d pickS.d csnloc.d csnmags_toy.d
+    csnmags.d calib/ml_loga0_default.tab calib/mb_Q.tab
+    calib/calib_map.txt calib/station_corr.txt
     csntvp.d csnhypodbp.d csnrv.d ew_controller.d csnstaevdisp.d
     pick_FP.sta pickS.sta stations_to_view.sta estaciones_107.txt
     hyp2000_ring.hyp estaciones_hyp.sta ak135.crh chile_1d.crh
@@ -295,6 +297,8 @@ PAR_INC=()
 PAR_INC+=(--exclude='/_legacy_atwc/' --exclude='/hyp2000_output/' --exclude='/response/')
 for p in "${PARAMS_FILES[@]}"; do PAR_INC+=(--include="/$p"); done
 PAR_INC+=(--include='/grids/***')
+PAR_INC+=(--include='/calib/***')
+PAR_INC+=(--include='/responses/***')
 PAR_INC+=(--include='*/')
 PAR_INC+=(--filter='P /wave_serverV.d')   # generado aparte, no borrar
 PAR_INC+=(--filter='P /hyp2000_ring.d')   # generado (rutas relativas)

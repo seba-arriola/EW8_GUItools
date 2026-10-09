@@ -231,6 +231,7 @@
  Module   MOD_HYP2000_RING      163
  Module   MOD_NLLOC_RING        164
  Module   MOD_PICKS             165
+ Module   MOD_MAGNITUDES        166
 #--------------------------------------------------------------------------
 #                          Message Types
 #

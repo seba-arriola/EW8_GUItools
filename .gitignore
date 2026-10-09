@@ -114,3 +114,16 @@ __pycache__/
 tank_tools/tests/tmp/
 # Carpeta de pruebas de integracion de localizadores (NLL, HYP2000, etc.)
 tmp/
+
+# --- csnmags (motor de magnitudes) ---
+/run_working_v8/params/responses/
+/ew_gui_tools/csnmags/csnmags
+/ew_gui_tools/csnmags/*.o
+/ew_gui_tools/csnmags/test/tmp/
+/ew_gui_tools/csnmags/test/responses/
+/ew_gui_tools/csnmags/test/test_formula
+/ew_gui_tools/csnmags/test/test_amp
+/ew_gui_tools/csnmags/test/test_pz
+/ew_gui_tools/csnmags/test/test_config
+/ew_gui_tools/csnmags/test/gen_tank
+/ew_gui_tools/csnmags/test/gen_hypos

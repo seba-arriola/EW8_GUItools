@@ -5,6 +5,20 @@
 static double station_pick_time(int i, int *is_real);
 static double station_win_start(int i);
 
+/* F3: buffers reutilizables para el binning por columna (evita una segunda
+   pasada sobre las muestras solo para el auto-escalado). */
+#define MAX_DRAW_W 4096
+static double   g_col_min[MAX_DRAW_W];
+static double   g_col_max[MAX_DRAW_W];
+static gboolean g_col_has[MAX_DRAW_W];
+
+/* F3: orden por distancia con qsort (antes burbuja O(n^2) por frame). */
+static int cmp_node_dist(const void *a, const void *b) {
+    double da = ((const StaNode *)a)->dist;
+    double db = ((const StaNode *)b)->dist;
+    return (da > db) - (da < db);
+}
+
 void actualizar_altura_canvas() {
     if (!canvas_global) return;
     int count = 0;
@@ -49,17 +63,17 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
 void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) {
     (void)sel; (void)pspec; (void)data;
     if (edit_mode) return;
-    guint idx = gtk_single_selection_get_selected(g_selection_hypo);
-    if (idx != GTK_INVALID_LIST_POSITION) {
-        CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), idx);
-        if (row) {
-            double otime = 0, lat = 0, lon = 0; int qid = 0, mod = 0;
-            const char *id_str = csnhypodbp_row_col(row, 8);
-            g_object_get(row, "otime", &otime, "qid", &qid, "lat", &lat, "lon", &lon, "mod", &mod, NULL);
-            if (id_str) strcpy(selected_id, id_str);
-            selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon; selected_mod = mod;
-            g_object_unref(row);
-        }
+    /* Con GtkSortListModel la posicion de la seleccion es la de la vista
+     * ordenada (no la del store), asi que se obtiene el item directamente.
+     * get_selected_item es transfer-none: NO se libera. */
+    gpointer item = gtk_single_selection_get_selected_item(g_selection_hypo);
+    if (item) {
+        CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
+        double otime = 0, lat = 0, lon = 0; int qid = 0, mod = 0;
+        const char *id_str = csnhypodbp_row_col(row, 8);
+        g_object_get(row, "otime", &otime, "qid", &qid, "lat", &lat, "lon", &lon, "mod", &mod, NULL);
+        if (id_str) strcpy(selected_id, id_str);
+        selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon; selected_mod = mod;
         g_zoom_factor = 1.0;
         gtk_widget_set_sensitive(btn_repick, TRUE);
     } else {
@@ -136,7 +150,7 @@ void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y
              ptm->tm_hour, ptm->tm_min, (double)ptm->tm_sec + t_msec);
     for (int k = 0; time_str[k] != '\0'; k++) { if (time_str[k] == ',') time_str[k] = '.'; }
     static unsigned char pick_seq = 0;
-    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0\n",
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 P M\n",
              TypePickSCNL, MyModId, MyInstId, pick_seq++,
              StaArray[i].szStation, StaArray[i].szChannel, StaArray[i].szNetID, StaArray[i].szLocation, time_str);
     MSG_LOGO logo = {MyInstId, MyModId, TypePickSCNL};
@@ -246,13 +260,8 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             g_NumSortedNodes++;
         }
     }
-    for (int i = 0; i < g_NumSortedNodes - 1; i++) {
-        for (int j = 0; j < g_NumSortedNodes - i - 1; j++) {
-            if (g_SortedNodes[j].dist > g_SortedNodes[j+1].dist) {
-                StaNode temp = g_SortedNodes[j]; g_SortedNodes[j] = g_SortedNodes[j+1]; g_SortedNodes[j+1] = temp;
-            }
-        }
-    }
+    if (g_NumSortedNodes > 1)
+        qsort(g_SortedNodes, (size_t)g_NumSortedNodes, sizeof(StaNode), cmp_node_dist);
 
     /* Marca P mas temprana -> ventana global de referencia */
     double earliest_pick = 1e15;
@@ -306,59 +315,54 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         double tr_rate = ewgui_trace_rate(tr);
         double tr_oldest = ewgui_trace_oldest(tr);
         long tr_len = ewgui_trace_length(tr);
-        long tr_cap = ewgui_trace_capacity(tr);
         int32_t *tr_filt = ewgui_trace_filtered(tr);
 
         if (tr_rate > 0 && tr_len > 0) {
-            long start_k = (long)((winStart - tr_oldest) * tr_rate);
-            long end_k = (long)(((winStart + g_dScreenTime) - tr_oldest) * tr_rate);
-            if (start_k < 0) start_k = 0;
-            if (end_k > tr_cap) end_k = tr_cap;
-            if (end_k > tr_len) end_k = tr_len;
+            /* F3: una sola pasada sobre las muestras. Se guardan min/max por
+               columna (unidades crudas) y el max_abs global; el trazado usa
+               esos valores escalados (antes eran dos pasadas sobre muestras).
+               Los gaps (INT_MAX) se omiten: columna sin datos -> no se dibuja
+               linea horizontal falsa a traves del hueco. */
+            int ncol = draw_width < MAX_DRAW_W ? draw_width : MAX_DRAW_W;
+            double max_abs = 0.0;
+            for (int px = 0; px < ncol; px++) {
+                double px_t_start = winStart + ((double)px / ncol) * g_dScreenTime;
+                double px_t_end   = winStart + ((double)(px + 1) / ncol) * g_dScreenTime;
+                long p_start_k = (long)((px_t_start - tr_oldest) * tr_rate);
+                long p_end_k   = (long)((px_t_end   - tr_oldest) * tr_rate);
+                if (p_end_k == p_start_k) p_end_k++;
+                if (p_start_k < 0) p_start_k = 0;
+                if (p_end_k > tr_len) p_end_k = tr_len;
 
-            long max_abs = 0;
-            for (long k = start_k; k < end_k; k++) {
-                if (tr_filt[k] == INT_MAX) continue;
-                long abs_val = labs(tr_filt[k]);
-                if (abs_val > max_abs) max_abs = abs_val;
+                double p_min = 1e12, p_max = -1e12;
+                gboolean has = FALSE;
+                for (long k = p_start_k; k < p_end_k; k++) {
+                    int32_t val = tr_filt[k];
+                    if (val == INT_MAX) continue;
+                    double fv = (double)val;
+                    if (fv < p_min) p_min = fv;
+                    if (fv > p_max) p_max = fv;
+                    if (fabs(fv) > max_abs) max_abs = fabs(fv);
+                    has = TRUE;
+                }
+                g_col_min[px] = p_min;
+                g_col_max[px] = p_max;
+                g_col_has[px] = has;
             }
 
-            if (max_abs > 0) {
+            if (max_abs > 0.0) {
                 if (!is_real) cairo_set_source_rgb(cr, 0.7, 0.7, 0.7); else cairo_set_source_rgb(cr, 0.1, 0.1, 0.9);
                 cairo_set_line_width(cr, 0.8);
-                double scale = (g_spacing * 0.45) / (double)max_abs * g_zoom_factor;
+                double scale = (g_spacing * 0.45) / max_abs * g_zoom_factor;
                 cairo_save(cr);
                 cairo_rectangle(cr, g_margin_left, y_center - (g_spacing / 2.0), draw_width, g_spacing);
                 cairo_clip(cr);
 
-                /* Pixel binning sobre la ventana alineada de la estacion.
-                   Los gaps (INT_MAX) se omiten: columna sin datos -> no se
-                   dibuja linea horizontal falsa a traves del hueco. */
-                for (int px = 0; px < draw_width; px++) {
-                    double px_t_start = winStart + ((double)px / draw_width) * g_dScreenTime;
-                    double px_t_end   = winStart + ((double)(px + 1) / draw_width) * g_dScreenTime;
-                    long p_start_k = (long)((px_t_start - tr_oldest) * tr_rate);
-                    long p_end_k   = (long)((px_t_end   - tr_oldest) * tr_rate);
-                    if (p_end_k == p_start_k) p_end_k++;
-                    if (p_start_k < 0) p_start_k = 0;
-                    if (p_end_k > tr_len) p_end_k = tr_len;
-
-                    double p_min = 1e12, p_max = -1e12;
-                    gboolean px_has_data = FALSE;
-                    for (long k = p_start_k; k < p_end_k; k++) {
-                        int32_t val = tr_filt[k];
-                        if (val != INT_MAX) {
-                            double scaled_val = val * scale;
-                            if (scaled_val < p_min) p_min = scaled_val;
-                            if (scaled_val > p_max) p_max = scaled_val;
-                            px_has_data = TRUE;
-                        }
-                    }
-                    if (px_has_data) {
-                        double x = g_margin_left + px;
-                        cairo_move_to(cr, x, y_center - p_min);
-                        cairo_line_to(cr, x, y_center - p_max);
-                    }
+                for (int px = 0; px < ncol; px++) {
+                    if (!g_col_has[px]) continue;
+                    double x = g_margin_left + px;
+                    cairo_move_to(cr, x, y_center - g_col_min[px] * scale);
+                    cairo_line_to(cr, x, y_center - g_col_max[px] * scale);
                 }
                 cairo_stroke(cr); cairo_restore(cr);
             }

@@ -1,4 +1,6 @@
 #include "ew_controller.h"
+#include <adwaita.h>
+#include "ewgui/actions.h"
 
 /* Configuration parameters read from the .d file
  *************************************************/
@@ -38,7 +40,7 @@ time_t g_last_status = 0;    /* time of the last status message received */
 GtkWidget *g_tree, *g_rings_tree;            /* tree views for modules and rings */
 GListStore *g_store, *g_rings_store;
 GtkSingleSelection *g_mod_sel = NULL;
-GMainLoop *g_loop = NULL;       /* tree models */
+GApplication *g_app = NULL;      /* para salir desde los timers */
 GtkWidget *g_btn_start, *g_btn_restart, *g_btn_stop, *g_btn_reconfig, *g_btn_refresh;  /* action buttons */
 GtkWidget *g_lbl_header, *g_lbl_statusbar;   /* header and status bar labels */
 GtkWidget *g_combo, *g_logview;              /* module combo and log text view */
@@ -217,11 +219,6 @@ static gboolean on_read(gpointer data)
    return G_SOURCE_CONTINUE;
 }
 
-static gboolean on_window_close_cb(GtkWindow *w, gpointer data) {
-    (void)w; (void)data;
-    if (g_loop) g_main_loop_quit(g_loop);
-    return FALSE;
-}
 static void ec_col_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer d) {
     (void)f; (void)d;
     GtkWidget *lbl = gtk_label_new(NULL);
@@ -244,38 +241,70 @@ static void ec_col_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer
     g_value_unset(&v);
 }
 
-int main(int argc, char *argv[])
+/* Conmutador claro/oscuro (menú del headerbar) vía AdwStyleManager. */
+static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    GVariant *st;
+    gboolean active;
+    (void)param; (void)user_data;
+    st = g_action_get_state(G_ACTION(action));
+    active = !g_variant_get_boolean(st);
+    g_variant_unref(st);
+    g_simple_action_set_state(action, g_variant_new_boolean(active));
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
+        active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
+}
+
+static void on_activate(GtkApplication *app, gpointer user_data)
 {
-    if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
-    if (ReadConfig(argv[1]) != 0) exit(1);
-    resolve_logdir();
-    logit_init(argv[1], 0, 1024, LogFile);
-    MyPid = getpid();
+    static gboolean css_done = FALSE;
+    (void)user_data;
 
-    gtk_init();
-    setlocale(LC_NUMERIC, "C");
+    if (!css_done) {
+        GtkCssProvider *provider = gtk_css_provider_new();
+        gtk_css_provider_load_from_string(provider,
+           "#btn_stop { background-image: none; box-shadow: none; border: none; background-color: #dc3545; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
+           "#btn_start { background-image: none; box-shadow: none; border: none; background-color: #28a745; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
+           "#btn_restart { background-image: none; box-shadow: none; border: none; background-color: #ffc107; color: #212529; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
+           "#btn_reconfig { background-image: none; box-shadow: none; border: none; background-color: #17a2b8; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
+           "#btn_refresh { background-image: none; box-shadow: none; border: none; background-color: #6c757d; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
+           "textview { font-family: monospace; font-size: 11px; }");
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(),
+            GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        css_done = TRUE;
+    }
 
-    ConnectToEarthworm();
-
-    GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(provider,
-       "#btn_stop { background-image: none; box-shadow: none; border: none; background-color: #dc3545; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
-       "#btn_start { background-image: none; box-shadow: none; border: none; background-color: #28a745; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
-       "#btn_restart { background-image: none; box-shadow: none; border: none; background-color: #ffc107; color: #212529; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
-       "#btn_reconfig { background-image: none; box-shadow: none; border: none; background-color: #17a2b8; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
-       "#btn_refresh { background-image: none; box-shadow: none; border: none; background-color: #6c757d; color: #ffffff; font-weight: bold; padding: 5px 18px; border-radius: 4px; }\n"
-       "textview { font-family: monospace; font-size: 11px; }");
-    gtk_style_context_add_provider_for_display(gdk_display_get_default(),
-        GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
-
-    GtkWidget *window = gtk_window_new();
+    GtkWidget *window = adw_application_window_new(app);
     g_window = window;
     gtk_window_set_title(GTK_WINDOW(window), "Earthworm Controller");
     gtk_window_set_default_size(GTK_WINDOW(window), 980, 720);
-    g_signal_connect(window, "close-request", G_CALLBACK(on_window_close_cb), NULL);
+
+    /* --- Acciones GIO + menú del headerbar --- */
+    GSimpleActionGroup *actions = g_simple_action_group_new();
+    GSimpleAction *dark = g_simple_action_new_stateful("dark-mode", NULL,
+                                                       g_variant_new_boolean(FALSE));
+    g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
+    gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
+    g_object_unref(actions);
+
+    EwMenuItem view_items[] = { { "Dark mode", "win.dark-mode", NULL, 0 } };
+    EwMenuGroup view_groups[] = { { "View", view_items, 1 } };
+    GMenuModel *menu_model = ewgui_menu_build(view_groups, 1);
+
+    GtkWidget *menu_btn = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
+    g_object_unref(menu_model);
+
+    GtkWidget *header = adw_header_bar_new();
+    adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
+
+    GtkWidget *toolbar_view = adw_toolbar_view_new();
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
-    gtk_window_set_child(GTK_WINDOW(window), vbox);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view), vbox);
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toolbar_view);
 
     g_lbl_header = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(g_lbl_header), 0.0);
@@ -454,8 +483,23 @@ int main(int argc, char *argv[])
     g_timeout_add_seconds((guint) PollInt, on_poll, NULL);
     g_timeout_add(500, on_read, NULL);
     g_timeout_add(2000, on_try_attach, NULL);
+}
 
-    g_loop = g_main_loop_new(NULL, FALSE);
-    g_main_loop_run(g_loop);
-    return 0;
+int main(int argc, char *argv[])
+{
+    if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
+    if (ReadConfig(argv[1]) != 0) exit(1);
+    resolve_logdir();
+    logit_init(argv[1], 0, 1024, LogFile);
+    MyPid = getpid();
+
+    setlocale(LC_NUMERIC, "C");
+
+    ConnectToEarthworm();
+
+    AdwApplication *app = adw_application_new("cl.csn.ewcontroller", G_APPLICATION_NON_UNIQUE);
+    g_app = G_APPLICATION(app);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    int status = g_application_run(g_app, 0, NULL);
+    return status;
 }

@@ -6,7 +6,7 @@ CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_
 
 LIBS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
 
-OBJS = csntvp_main.o csntvp_data.o csntvp_gui.o
+OBJS = csntvp_main.o csntvp_data.o csntvp_gui.o csntvp_util.o
 
 # Dejamos que libew_mt.a maneje kom, logit, getutil, transport, etc.
 EWLIBS = ../common/libewgui_gtk4.a \
@@ -15,6 +15,8 @@ EWLIBS = ../common/libewgui_gtk4.a \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
+all: csntvp
+
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
 
@@ -22,12 +24,18 @@ csntvp: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csntvp $(OBJS) $(EWLIBS) $(LIBS)
 	cp csntvp $(EW_HOME)/$(EW_VERSION)/bin/
 
-# Unit test for the ported aplicar_filtro_iir (standalone, no EW/GTK deps)
-test: test_filter
+# Unit tests (standalone, no EW/GTK deps)
+test: test_filter test_util
 	./test_filter
+	./test_util
 
 test_filter: test_filter.c
 	$(CC) -O2 -o test_filter test_filter.c -lm
 
+test_util: test_util.c csntvp_util.c csntvp_util.h
+	$(CC) -O2 -Wall -o test_util test_util.c csntvp_util.c -lm
+
+.PHONY: all test clean
+
 clean:
-	rm -f *.o csntvp test_filter
+	rm -f *.o csntvp test_filter test_util

@@ -49,12 +49,14 @@ RE_CSNLOC_ARC_HEAD = re.compile(r"csnloc: --- HYP2000ARC evento (?P<id>\d+) ---"
 
 RE_CSNMAGS_RED = re.compile(
     r"^(?P<date>\d{8})_UTC_(?P<hms>\d{2}:\d{2}:\d{2})\s+CSNmags_Red: \[ID (?P<id>\S+)\]\s+"
-    r"ML=(?P<ml>-?\d+(?:\.\d+)?)\s+\((?P<nml>\d+)\s+est\)\s+\|\s+"
-    r"MWp=(?P<mwp>-?\d+(?:\.\d+)?)\s+\((?P<nmwp>\d+)\s+est\)\s+->\s+PREF:\s+"
-    r"(?P<pref>ML|Mwp|MWp|None)\s+(?P<prefval>-?\d+(?:\.\d+)?)\s*$"
+    r"ML=(?P<ml>-?\d+(?:\.\d+)?)\s+\((?P<nml>\d+)(?:\s*est)?\)"
+    r"(?:\s+\|\s+Mb=(?P<mb>-?\d+(?:\.\d+)?)\s+\((?P<nmb>\d+)(?:\s*est)?\))?"
+    r"(?:\s+\|\s+Ms=(?P<ms>-?\d+(?:\.\d+)?)\s+\((?P<nms>\d+)(?:\s*est)?\))?"
+    r"\s+\|\s+(?:MWp|Mwp)=(?P<mwp>-?\d+(?:\.\d+)?)\s+\((?P<nmwp>\d+)(?:\s*est)?\)\s+->\s+PREF:\s+"
+    r"(?P<pref>ML|Ml|Mb|MB|Ms|MS|Mwp|MWp|None)\s+(?P<prefval>-?\d+(?:\.\d+)?)\s*$"
 )
 
-RE_CSNMAGS_READY = re.compile(r"csnmags_toy: Listo\. Esperando sismos")
+RE_CSNMAGS_READY = re.compile(r"csnmags(?:_toy)?: Listo\. Esperando")
 RE_WS_DISCARD = re.compile(r"fails validity check, discarding")
 
 
@@ -132,6 +134,10 @@ def parse_csnmags_red(line: str) -> Optional[Magnitude]:
         n_mwp=int(m.group("nmwp")),
         pref=m.group("pref"),
         pref_val=float(m.group("prefval")),
+        mb=float(m.group("mb")) if m.group("mb") else 0.0,
+        n_mb=int(m.group("nmb")) if m.group("nmb") else 0,
+        ms=float(m.group("ms")) if m.group("ms") else 0.0,
+        n_ms=int(m.group("nms")) if m.group("nms") else 0,
     )
 
 

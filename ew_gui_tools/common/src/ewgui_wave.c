@@ -276,6 +276,7 @@ int ewgui_trace_envelope(const int32_t *circ, long circ_size,
     double max_abs = 0.0;
     int has_data = 0;
     for (long k = draw_start_idx; k < real_samps_end; k++) {
+        if (trace_buf[k] == INT_MAX) continue;   /* un gap no contamina la escala */
         double abs_val = fabs((double)trace_buf[k]);
         if (abs_val > max_abs) max_abs = abs_val;
         has_data = 1;
@@ -319,6 +320,7 @@ int ewgui_trace_envelope(const int32_t *circ, long circ_size,
             int px_has = 0;
             for (long local_k = p_local_start; local_k < p_local_end; local_k++) {
                 if (local_k >= real_samps_end) continue;
+                if (trace_buf[local_k] == INT_MAX) continue;   /* un gap no deforma la columna */
                 double val = (double)trace_buf[local_k];
                 if (val < p_min) p_min = val;
                 if (val > p_max) p_max = val;

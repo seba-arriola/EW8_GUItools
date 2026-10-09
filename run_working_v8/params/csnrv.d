@@ -1,5 +1,5 @@
 MyModuleId      MOD_CSNRV        # ID del modulo en Earthworm (debe estar en earthworm.d)
-RingName        HYPO_RING        # Anillo al que se conectara para enviar Heartbeats
+RingName        HYPO_RING_REF    # Anillo de hipocentros refinados + magnitudes (csnloc->hyp2000_ring->HYPO_RING_REF)
 HeartBeatInt    30               # Intervalo de latidos (segundos)
 LogFile         1                # 1 = Escribir log a disco, 0 = Solo consola
 

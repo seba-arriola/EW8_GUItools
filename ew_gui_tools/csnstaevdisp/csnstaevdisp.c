@@ -17,6 +17,7 @@
 #include "ewgui/geo.h"
 #include "ewgui/actions.h"
 #include "ewgui/view.h"
+#include "ewgui/export.h"
 #include "ewgui/sta.h"
 #include <stdlib.h>
 #include <stdio.h>
@@ -100,12 +101,7 @@ int g_max_events_display = 10;               /* number of quakes to draw */
 /* Interface Widgets */
 EwGuiCanvas *map_canvas;
 
-static GMainLoop *g_loop = NULL;
-static gboolean on_window_close(GtkWindow *w, gpointer data) {
-    (void)w; (void)data;
-    if (g_loop) g_main_loop_quit(g_loop);
-    return FALSE;
-}                       /* map drawing area */
+static GApplication *g_app = NULL;   /* para salir desde el timer de Earthworm */
 
 /* --------------------------------------------------------------------
  * EARTHWORM CONFIGURATION READING
@@ -219,7 +215,7 @@ gboolean ew_background_tasks(gpointer user_data) {
 
     if (ewgui_ring_should_quit(&Region, MyPid)) {
         printf("csnstaevdisp: Termination signal received. Closing...\n");
-        if (g_loop) g_main_loop_quit(g_loop);
+        if (g_app) g_application_quit(g_app);
         return G_SOURCE_REMOVE;
     }
     return G_SOURCE_CONTINUE;
@@ -706,59 +702,71 @@ static void act_events_number(GSimpleAction *action, GVariant *param, gpointer u
     on_events_number_activate(NULL, user_data);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s <configfile.d>\n", argv[0]);
-        exit(1);
-    }
-    if (ReadConfig(argv[1]) != 0) exit(1);
+/* Exporta el mapa a SVG/PDF/PNG (diálogo Guardar). */
+static void act_export(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p;
+    ewgui_export_dialog_run(map_canvas, GTK_WINDOW(ud));
+}
 
-    setenv("TZ", "GMT", 1);
-    tzset();
-    logit_init(argv[1], 0, 1024, LogFile);
-    MyPid = getpid();
-    
-    gtk_init();
-    setlocale(LC_NUMERIC, "C");
+/* Conmutador claro/oscuro (menú del headerbar) vía AdwStyleManager. */
+static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    GVariant *st;
+    gboolean active;
+    (void)param; (void)user_data;
+    st = g_action_get_state(G_ACTION(action));
+    active = !g_variant_get_boolean(st);
+    g_variant_unref(st);
+    g_simple_action_set_state(action, g_variant_new_boolean(active));
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
+        active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
+}
 
-    ConnectToEarthworm();
-    
-    /* 1. Load Stations (Extract Lat/Lon and Elevation limits) */
-    LoadStations();
-    
-    /* 2. Initial Load of the Quake History */
-    LoadQuakeHistory();
-    
-    /* 3. Load the base map image into memory */
-    GError *err = NULL;
-    g_map_pixbuf = gdk_pixbuf_new_from_file(MapImageFile, &err);
-    if (!g_map_pixbuf) {
-        printf(">> [WARNING] Could not load %s: %s\n", MapImageFile, err->message);
-        g_error_free(err);
-    }
+static void on_activate(GtkApplication *app, gpointer user_data) {
+    GtkWidget *vbox_main;
+    (void)user_data;
 
-    /* --- GTK WINDOW CREATION --- */
-    GtkWidget *window = gtk_window_new();
+    GtkWidget *window = adw_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window), "Network & Seismicity Viewer");
     gtk_window_set_default_size(GTK_WINDOW(window), 800, 600);
-    g_signal_connect(window, "close-request", G_CALLBACK(on_window_close), NULL);
 
-    GtkWidget *vbox_main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    gtk_window_set_child(GTK_WINDOW(window), vbox_main);
-
-    /* --- MENU BAR (acciones GIO + GMenu; GtkPopoverMenuBar en GTK4) --- */
+    /* --- Acciones GIO (menú del headerbar) --- */
     GSimpleActionGroup *actions = g_simple_action_group_new();
     ewgui_action_add(G_ACTION_MAP(actions), "events-number", NULL, act_events_number, window);
+    GSimpleAction *dark = g_simple_action_new_stateful("dark-mode", NULL,
+                                                       g_variant_new_boolean(FALSE));
+    g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
+    ewgui_action_add(G_ACTION_MAP(actions), "export", NULL, act_export, window);
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
+
     EwMenuItem ctrl_items[] = {
         { "Events number", "win.events-number", NULL, 0 },
     };
-    EwMenuGroup menu_groups[] = { { "Control Panel", ctrl_items, 1 } };
-    GMenuModel *menu_model = ewgui_menu_build(menu_groups, 1);
-    GtkWidget *menu_bar = gtk_popover_menu_bar_new_from_model(menu_model);
+    EwMenuItem view_items[] = {
+        { "Export view...", "win.export", NULL, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0 },
+    };
+    EwMenuGroup menu_groups[] = {
+        { "Control Panel", ctrl_items, 1 },
+        { "View", view_items, 2 },
+    };
+    GMenuModel *menu_model = ewgui_menu_build(menu_groups, 2);
+
+    GtkWidget *menu_btn = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
     g_object_unref(menu_model);
-    gtk_box_append(GTK_BOX(vbox_main), menu_bar);
+
+    GtkWidget *header = adw_header_bar_new();
+    adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
+
+    GtkWidget *toolbar_view = adw_toolbar_view_new();
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
+
+    vbox_main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view), vbox_main);
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toolbar_view);
 
     /* --- MAP CANVAS --- */
     map_canvas = ewgui_canvas_new();
@@ -785,12 +793,46 @@ int main(int argc, char *argv[]) {
     g_timeout_add(1000, ew_background_tasks, NULL);
 
     gtk_window_present(GTK_WINDOW(window));
-    g_loop = g_main_loop_new(NULL, FALSE);
-    g_main_loop_run(g_loop);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        fprintf(stderr, "Usage: %s <configfile.d>\n", argv[0]);
+        exit(1);
+    }
+    if (ReadConfig(argv[1]) != 0) exit(1);
+
+    setenv("TZ", "GMT", 1);
+    tzset();
+    logit_init(argv[1], 0, 1024, LogFile);
+    MyPid = getpid();
+
+    setlocale(LC_NUMERIC, "C");
+
+    ConnectToEarthworm();
+    
+    /* 1. Load Stations (Extract Lat/Lon and Elevation limits) */
+    LoadStations();
+    
+    /* 2. Initial Load of the Quake History */
+    LoadQuakeHistory();
+    
+    /* 3. Load the base map image into memory */
+    GError *err = NULL;
+    g_map_pixbuf = gdk_pixbuf_new_from_file(MapImageFile, &err);
+    if (!g_map_pixbuf) {
+        printf(">> [WARNING] Could not load %s: %s\n", MapImageFile, err->message);
+        g_error_free(err);
+    }
+
+    AdwApplication *app = adw_application_new("cl.csn.csnstaevdisp", G_APPLICATION_NON_UNIQUE);
+    g_app = G_APPLICATION(app);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    int status = g_application_run(g_app, 0, NULL);
 
     tport_detach(&Region);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);
     if (StaArray) free(StaArray);
     
-    return 0;
+    return status;
 }

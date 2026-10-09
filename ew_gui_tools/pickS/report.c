@@ -1,8 +1,8 @@
 /******************************************************************************
  * report.c — formatea una línea TYPE_PICK_SCNL con el token de fase.          *
  *                                                                            *
- * Formato (idéntico a pick_FP + 11º campo de fase):                          *
- *   type mod inst seq STA.CHAN.NET.LOC fmwt YYYYMMDDhhmmss.mmm amp 0 0 S      *
+ * Formato (idéntico a pick_FP + 11º campo de fase + 12º campo origen):       *
+ *   type mod inst seq STA.CHAN.NET.LOC fmwt YYYYMMDDhhmmss.mmm amp 0 0 S A   *
  ******************************************************************************/
 
 #include "pickS.h"
@@ -25,7 +25,7 @@ int PickS_Report_Format(char *buf, size_t n, int modid, int instid, int seq,
 
     return snprintf(buf, n,
         "%d %d %d %d %s.%s.%s.%s %c%d %04d%02d%02d%02d%02d%02d.%03d "
-        "%ld 0 0 %c\n",
+        "%ld 0 0 %c A\n",
         8, modid, instid, seq,
         sta, chan, net, loc,
         fm, weight,

@@ -46,6 +46,18 @@ void ewgui_canvas_set_draw(EwGuiCanvas *c, EwDrawFn fn, void *user_data)
     c->ud = user_data;
 }
 
+void ewgui_canvas_render(EwGuiCanvas *c, cairo_t *cr, int width, int height)
+{
+    if (c && c->draw)
+        c->draw(c, cr, width, height, c->ud);
+}
+
+void ewgui_canvas_get_draw(EwGuiCanvas *c, EwDrawFn *fn, void **user_data)
+{
+    if (fn) *fn = c ? c->draw : NULL;
+    if (user_data) *user_data = c ? c->ud : NULL;
+}
+
 void ewgui_canvas_queue_draw(EwGuiCanvas *c)
 {
     if (c && c->widget)

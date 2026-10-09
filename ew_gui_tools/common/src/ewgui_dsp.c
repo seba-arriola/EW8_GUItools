@@ -10,11 +10,24 @@
 /* Portado de csnhypodbp_dsp.c (a su vez de EW7 dataprocessing.c) y de
  * csntvp.c. Misma matemática; solo se unifica el tipo de muestra a int32_t. */
 
+/* Satura al rango de int32_t. Los no finitos (NaN/Inf) van a 0 para no
+ * envenenar el estado del IIR ni dibujar picos basura por cast indefinido. */
+static int32_t clamp_i32(double v)
+{
+    if (!isfinite(v))
+        return 0;
+    if (v >= 2147483647.0)
+        return INT32_MAX;
+    if (v <= -2147483648.0)
+        return INT32_MIN;
+    return (int32_t)v;
+}
+
 void ewgui_filter_iir(int32_t *data, size_t n, double fs,
                       EwFilterType type, double fc, int order)
 {
-    if (fs <= 0.0 || n == 0 || fc <= 0.0)
-        return;
+    if (fs <= 0.0 || n == 0 || fc <= 0.0 || fc >= fs * 0.5)
+        return;   /* sin frecuencia de Nyquist válida: no filtrar (evita inestabilidad) */
 
     double w0 = 2.0 * M_PI * fc / fs;
     double cosW = cos(w0);
@@ -61,9 +74,15 @@ void ewgui_filter_iir(int32_t *data, size_t n, double fs,
             }
             double x0 = (double)data[i];
             double y0 = b0_f*x0 + b1_f*x1 + b2_f*x2 - a1_f*y1 - a2_f*y2;
+            if (!isfinite(y0)) {
+                x1 = x2 = 0.0;
+                y1 = y2 = 0.0;
+                data[i] = 0;
+                continue;
+            }
             x2 = x1; x1 = x0;
             y2 = y1; y1 = y0;
-            data[i] = (int32_t)y0;
+            data[i] = clamp_i32(y0);
         }
     }
 }
@@ -128,7 +147,7 @@ void ewgui_demean(const int32_t *in, size_t n, int32_t *out)
         if (in[k] == INT_MAX)
             out[k] = INT_MAX;
         else
-            out[k] = (int32_t)((double)in[k] - mean);
+            out[k] = clamp_i32((double)in[k] - mean);
     }
 }
 

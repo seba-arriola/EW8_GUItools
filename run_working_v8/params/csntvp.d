@@ -19,6 +19,8 @@ StaFile         stations_to_view.sta       # Archivo de estaciones con formato: 
 #backgroundColor  FFFFFF
 #fontColor        FF0000
 #separatorColor   D9D9D9
+#pColor           FF0000    # picks P (automaticos y manuales)
+#sColor           000000    # picks S (automaticos y manuales)
 
 # Pantalla
 #StationsPerScreen 12

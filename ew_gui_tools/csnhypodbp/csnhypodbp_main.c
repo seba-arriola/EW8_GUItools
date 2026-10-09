@@ -42,7 +42,7 @@ EwGuiCanvas *canvas_global = NULL;
 GListStore *g_store_hypo = NULL;
 GtkSingleSelection *g_selection_hypo = NULL;
 GtkWidget *g_notebook = NULL;
-GMainLoop *g_loop = NULL;
+GApplication *g_app = NULL;
 GtkWidget *tree_global = NULL;
 GtkWidget *btn_repick = NULL;
 GtkWidget *window_global = NULL; 
@@ -184,56 +184,116 @@ gboolean ew_background_tasks(gpointer user_data) {
     if (ewgui_heartbeat_due(&hb, (double)timeNow, HeartBeatInt)) { Status(TypeHeartBeat, 0, ""); }
     /* El estado de eventos lo persiste csnloc (unico escritor). csnhypodbp
        solo lo lee al arrancar para recuperarse. */
-    if (ewgui_ring_should_quit(&InRegion, MyPid)) { if (g_loop) g_main_loop_quit(g_loop); return G_SOURCE_REMOVE; }
+    if (ewgui_ring_should_quit(&InRegion, MyPid)) { if (g_app) g_application_quit(g_app); return G_SOURCE_REMOVE; }
     return G_SOURCE_CONTINUE;
 }
 
-static void on_window_close(GtkWindow *w, gpointer data) {
-    (void)w; (void)data;
-    if (g_loop) g_main_loop_quit(g_loop);
-}
-static gboolean on_window_close_cb(GtkWindow *w, gpointer data) { on_window_close(w, data); return FALSE; }
 static void col_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
     (void)f; (void)data;
     GtkWidget *lbl = gtk_label_new(NULL);
     gtk_widget_set_halign(lbl, GTK_ALIGN_CENTER);
     gtk_list_item_set_child(item, lbl);
 }
+/* Enlaza la celda a la propiedad "c<col>" de la fila mediante un binding (en
+ * vez de un set_text puntual): asi los cambios posteriores de la fila
+ * (magnitudes, updates de ARC por version) se reflejan en vivo en la vista. */
 static void col_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
     (void)f;
     int col = GPOINTER_TO_INT(data);
     GtkWidget *lbl = gtk_list_item_get_child(item);
     CsnhypodbpRow *row = CSNHYPODBP_ROW(gtk_list_item_get_item(item));
-    gtk_label_set_text(GTK_LABEL(lbl), row ? csnhypodbp_row_col(row, col) : "");
+    char prop[8];
+    GBinding *b;
+    if (!row || !lbl) return;
+    snprintf(prop, sizeof(prop), "c%d", col);
+    b = g_object_bind_property(row, prop, lbl, "label", G_BINDING_SYNC_CREATE);
+    /* Al desenlazar (celda reciclada o destruida) se suelta el binding, para
+     * que la celda no quede mostrando datos de una fila anterior. */
+    g_object_set_data_full(G_OBJECT(item), "cell-binding", b, g_object_unref);
+}
+static void col_unbind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data) {
+    (void)f; (void)data;
+    g_object_set_data(G_OBJECT(item), "cell-binding", NULL);
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
-    if (ReadConfig(argv[1]) != 0) exit(1);
-    setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
-    gtk_init(); setlocale(LC_NUMERIC, "C");
+/* Exporta la vista de trazas a SVG/PDF/PNG (diálogo Guardar). */
+static void act_export(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; (void)ud;
+    ewgui_export_dialog_run(canvas_global, GTK_WINDOW(window_global));
+}
 
-    GtkCssProvider *provider = gtk_css_provider_new();
-    gtk_css_provider_load_from_string(provider,
-        "#btn_repick { background-image: none; box-shadow: none; border: none; background-color: #cce5ff; color: #0a58ca; font-weight: bold; border-radius: 4px; }\n"
-        "#btn_relocate { background-image: none; box-shadow: none; border: none; background-color: #90ee90; color: #000000; font-weight: bold; border-radius: 4px; }\n"
-        "#btn_fetch { background-image: none; box-shadow: none; border: none; background-color: #e2e3e5; font-weight: bold; border-radius: 4px; }\n"
-        "#btn_filter { background-image: none; box-shadow: none; border: none; background-color: #28a745; color: #ffffff; font-weight: bold; padding: 2px 10px; border-radius: 4px; }");
-    gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+/* Conmutador claro/oscuro (menú del headerbar) vía AdwStyleManager. */
+static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    GVariant *st;
+    gboolean active;
+    (void)param; (void)user_data;
+    st = g_action_get_state(G_ACTION(action));
+    active = !g_variant_get_boolean(st);
+    g_variant_unref(st);
+    g_simple_action_set_state(action, g_variant_new_boolean(active));
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
+        active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
+}
 
-    ConnectToEarthworm(); LoadStationsFromFile();
+static void on_activate(GtkApplication *app, gpointer user_data) {
+    static gboolean css_done = FALSE;
+    (void)user_data;
 
-    window_global = gtk_window_new();
+    /* GTK re-aplica setlocale(LC_ALL,"") al inicializar, dejando LC_NUMERIC
+     * en el locale del entorno (p. ej. es_ES -> coma decimal). Los mensajes
+     * TYPE_MAGNITUDE de EarthWorm se leen con sscanf (rd_mag) y usan punto,
+     * asi que restauramos C DESPUES del arranque de GTK. */
+    setlocale(LC_NUMERIC, "C");
+
+    if (!css_done) {
+        GtkCssProvider *provider = gtk_css_provider_new();
+        gtk_css_provider_load_from_string(provider,
+            "#btn_repick { background-image: none; box-shadow: none; border: none; background-color: #cce5ff; color: #0a58ca; font-weight: bold; border-radius: 4px; }\n"
+            "#btn_relocate { background-image: none; box-shadow: none; border: none; background-color: #90ee90; color: #000000; font-weight: bold; border-radius: 4px; }\n"
+            "#btn_fetch { background-image: none; box-shadow: none; border: none; background-color: #e2e3e5; font-weight: bold; border-radius: 4px; }\n"
+            "#btn_filter { background-image: none; box-shadow: none; border: none; background-color: #28a745; color: #ffffff; font-weight: bold; padding: 2px 10px; border-radius: 4px; }");
+        gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        css_done = TRUE;
+    }
+
+    window_global = adw_application_window_new(app);
     gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
     gtk_window_set_default_size(GTK_WINDOW(window_global), 1100, 750);
-    g_signal_connect(window_global, "close-request", G_CALLBACK(on_window_close_cb), NULL);
     GtkEventController *keyctl = gtk_event_controller_key_new();
     g_signal_connect(keyctl, "key-pressed", G_CALLBACK(on_key_press), NULL);
     gtk_widget_add_controller(window_global, keyctl);
-    signal(SIGPIPE, SIG_IGN);
+
+    /* --- Acciones GIO + menú del headerbar --- */
+    GSimpleActionGroup *actions = g_simple_action_group_new();
+    GSimpleAction *dark = g_simple_action_new_stateful("dark-mode", NULL,
+                                                       g_variant_new_boolean(FALSE));
+    g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
+    ewgui_action_add(G_ACTION_MAP(actions), "export", NULL, act_export, window_global);
+    gtk_widget_insert_action_group(window_global, "win", G_ACTION_GROUP(actions));
+    g_object_unref(actions);
+
+    EwMenuItem view_items[] = {
+        { "Export view...", "win.export", NULL, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0 },
+    };
+    EwMenuGroup view_groups[] = { { "View", view_items, 2 } };
+    GMenuModel *menu_model = ewgui_menu_build(view_groups, 1);
+
+    GtkWidget *menu_btn = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
+    g_object_unref(menu_model);
+
+    GtkWidget *header = adw_header_bar_new();
+    adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
+
+    GtkWidget *toolbar_view = adw_toolbar_view_new();
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
 
     GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_window_set_child(GTK_WINDOW(window_global), vbox);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view), vbox);
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window_global), toolbar_view);
 
     g_notebook = gtk_notebook_new();
     gtk_widget_set_vexpand(g_notebook, TRUE);
@@ -246,7 +306,21 @@ int main(int argc, char *argv[]) {
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_lista), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 
     g_store_hypo = g_list_store_new(CSNHYPODBP_TYPE_ROW);
-    g_selection_hypo = gtk_single_selection_new(G_LIST_MODEL(g_store_hypo));
+
+    /* Orden por hora origen DESCENDENTE (mas reciente primero), independiente
+     * del orden de llegada o del archivo de estado. El GtkSortListModel se
+     * interpone entre el store (fuente, en orden de insercion) y la seleccion,
+     * asi que las busquedas por qid sobre g_store_hypo siguen intactas. */
+    {
+        GtkNumericSorter *sorter = gtk_numeric_sorter_new(
+            gtk_property_expression_new(CSNHYPODBP_TYPE_ROW, NULL, "otime"));
+        GtkSortListModel *sorted;
+        gtk_numeric_sorter_set_sort_order(sorter, GTK_SORT_DESCENDING);
+        /* g_object_ref: el sort model toma propiedad de la referencia que le
+         * pasamos, pero g_store_hypo sigue siendo nuestro (global). */
+        sorted = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_store_hypo)), GTK_SORTER(sorter));
+        g_selection_hypo = gtk_single_selection_new(G_LIST_MODEL(sorted));
+    }
     gtk_single_selection_set_autoselect(g_selection_hypo, FALSE);
     gtk_single_selection_set_can_unselect(g_selection_hypo, TRUE);
 
@@ -261,11 +335,12 @@ int main(int argc, char *argv[]) {
         gtk_widget_add_controller(tree_global, GTK_EVENT_CONTROLLER(dclick));
     }
 
-    const char *headers[] = {"Date", "O-time", "Lat.", "Lon.", "Dep", "Res", "Azm", "#Stn", "ID", "Ml", "Mwp", "Mod", "Ver"};
-    for (int i = 0; i < 13; i++) {
+    const char *headers[] = {"Date", "O-time", "Lat.", "Lon.", "Dep", "Res", "Azm", "#Stn", "ID", "Ml", "Mwp", "Mb", "Ms", "Mod", "Ver"};
+    for (int i = 0; i < 15; i++) {
         GtkListItemFactory *f = gtk_signal_list_item_factory_new();
         g_signal_connect(f, "setup", G_CALLBACK(col_setup), NULL);
         g_signal_connect(f, "bind", G_CALLBACK(col_bind), GINT_TO_POINTER(i));
+        g_signal_connect(f, "unbind", G_CALLBACK(col_unbind), NULL);
         GtkColumnViewColumn *col = gtk_column_view_column_new(headers[i], f);
         gtk_column_view_column_set_expand(col, TRUE);
         gtk_column_view_append_column(GTK_COLUMN_VIEW(tree_global), col);
@@ -361,14 +436,26 @@ int main(int argc, char *argv[]) {
     g_timeout_add(1000, ew_background_tasks, NULL);
     g_timeout_add(500, escuchar_anillo_earthworm, tree_global);
     g_timeout_add(1000, waveform_reload_timer, NULL);
+}
 
-    g_loop = g_main_loop_new(NULL, FALSE);
-    g_main_loop_run(g_loop);
+int main(int argc, char *argv[]) {
+    if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
+    if (ReadConfig(argv[1]) != 0) exit(1);
+    setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
+    setlocale(LC_NUMERIC, "C");
+
+    ConnectToEarthworm(); LoadStationsFromFile();
+    signal(SIGPIPE, SIG_IGN);
+
+    AdwApplication *app = adw_application_new("cl.csn.csnhypodbp", G_APPLICATION_NON_UNIQUE);
+    g_app = G_APPLICATION(app);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
+    int status = g_application_run(g_app, 0, NULL);
 
     tport_detach(&InRegion); tport_detach(&PRegion);
     if (StaArray) {
         for (int i = 0; i < NumEstaciones; i++) ewgui_trace_free(StaArray[i].trace);
         free(StaArray);
     }
-    return 0;
+    return status;
 }

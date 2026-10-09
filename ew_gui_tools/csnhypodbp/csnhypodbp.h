@@ -2,9 +2,12 @@
 #define CSNHYPODBP_H
 
 #include <gtk/gtk.h>
+#include <adwaita.h>
 #include "ewgui/ring.h"
+#include "ewgui/actions.h"
 #include "ewgui/wave.h"
 #include "ewgui/view.h"
+#include "ewgui/export.h"
 #include "csnhypodbp_row.h"
 #include <stdlib.h>
 #include <stdio.h>

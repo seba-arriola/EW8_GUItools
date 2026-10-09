@@ -1,8 +1,11 @@
 #define _GNU_SOURCE
 #include <gtk/gtk.h>
+#include <adwaita.h>
 #include "ewgui/ring.h"
 #include "ewgui/geo.h"
 #include "ewgui/view.h"
+#include "ewgui/actions.h"
+#include "ewgui/export.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -46,10 +49,10 @@ MSG_LOGO MagLogo;    /* filtro de lectura de HYPO_RING (TYPE_MAGNITUDE) */
 /* --- Magnitudes del evento vigente (por qid) --- */
 typedef struct {
     int    qid;
-    double ml, mwp;
-    int    ml_stn, mwp_stn;
+    double ml, mwp, mb, ms;
+    int    ml_stn, mwp_stn, mb_stn, ms_stn;
 } MagState;
-static MagState g_mag = { 0, 0.0, 0.0, 0, 0 };
+static MagState g_mag = { 0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 0 };
 static gboolean g_ui_ready = FALSE;   /* FALSE en modo headless: no tocar widgets */
 
 /* --- Variables del Visor --- */
@@ -75,17 +78,15 @@ GtkWidget *lbl_depth;
 GtkWidget *lbl_time_elapsed;
 EwGuiCanvas *map_canvas;
 
-static GMainLoop *g_loop = NULL;
-static gboolean on_window_close(GtkWindow *w, gpointer data) {
-    (void)w; (void)data;
-    if (g_loop) g_main_loop_quit(g_loop);
-    return FALSE;
-}
+/* App de la ventana, para pedir la salida desde el timer de Earthworm. */
+static GApplication *g_app = NULL;
 
 /* Widgets para la Tabla de Magnitudes */
 GtkWidget *lbl_pref_type, *lbl_pref_val, *lbl_pref_stn;
 GtkWidget *lbl_mwp_val, *lbl_mwp_stn;
 GtkWidget *lbl_ml_val, *lbl_ml_stn;
+GtkWidget *lbl_mb_val, *lbl_mb_stn;
+GtkWidget *lbl_ms_val, *lbl_ms_stn;
 
 /* --------------------------------------------------------------------
  * FUNCIONES EARTHWORM
@@ -198,7 +199,7 @@ gboolean ew_background_tasks(gpointer user_data) {
 
     if (ewgui_ring_should_quit(&Region, MyPid)) {
         logit("t", "csnrv: Senal de terminacion recibida. Cerrando...\n");
-        if (g_loop) g_main_loop_quit(g_loop);
+        if (g_app) g_application_quit(g_app);
         return G_SOURCE_REMOVE;
     }
     return G_SOURCE_CONTINUE;
@@ -277,6 +278,10 @@ static void on_map_motion(GtkEventControllerMotion *ctrl, double x, double y, gp
 static void mag_preferida(double *mag, int *stn, const char **type) {
     if (g_mag.mwp >= 5.5 && g_mag.mwp_stn >= 3) {
         *mag = g_mag.mwp; *stn = g_mag.mwp_stn; *type = "Mwp";
+    } else if (g_mag.ms > 0.0 && g_mag.ms_stn >= 3) {
+        *mag = g_mag.ms; *stn = g_mag.ms_stn; *type = "Ms";
+    } else if (g_mag.mb > 0.0 && g_mag.mb_stn >= 3) {
+        *mag = g_mag.mb; *stn = g_mag.mb_stn; *type = "Mb";
     } else if (g_mag.ml > 0.0) {
         *mag = g_mag.ml; *stn = g_mag.ml_stn; *type = "Ml";
     } else if (g_mag.mwp > 0.0) {
@@ -297,6 +302,8 @@ static void aplicar_magnitudes(void) {
 
     update_mag_row(lbl_pref_val, lbl_pref_stn, pref_mag, pref_stn, TRUE, pref_type);
     update_mag_row(lbl_ml_val, lbl_ml_stn, g_mag.ml, g_mag.ml_stn, FALSE, "");
+    update_mag_row(lbl_mb_val, lbl_mb_stn, g_mag.mb, g_mag.mb_stn, FALSE, "");
+    update_mag_row(lbl_ms_val, lbl_ms_stn, g_mag.ms, g_mag.ms_stn, FALSE, "");
     update_mag_row(lbl_mwp_val, lbl_mwp_stn, g_mag.mwp, g_mag.mwp_stn, FALSE, "");
 }
 
@@ -307,6 +314,7 @@ static void procesar_mensaje_mag(const char *msg, long recsize, int current_qid)
     if (recsize <= 0) return;
     /* rd_mag lee pMagAux/size_aux ANTES de su memset interno: hay que
        inicializar la estructura para no usar punteros basura. */
+    setlocale(LC_NUMERIC, "C");
     memset(&mag, 0, sizeof(mag));
     if (rd_mag((char *)msg, (int)recsize, &mag) != 0) return;
 
@@ -317,6 +325,12 @@ static void procesar_mensaje_mag(const char *msg, long recsize, int current_qid)
     if (strcmp(mag.szmagtype, "ML") == 0) {
         g_mag.ml = mag.mag;
         g_mag.ml_stn = mag.nstations;
+    } else if (strcmp(mag.szmagtype, "Mb") == 0 || strcmp(mag.szmagtype, "MB") == 0) {
+        g_mag.mb = mag.mag;
+        g_mag.mb_stn = mag.nstations;
+    } else if (strcmp(mag.szmagtype, "Ms") == 0 || strcmp(mag.szmagtype, "MS") == 0) {
+        g_mag.ms = mag.mag;
+        g_mag.ms_stn = mag.nstations;
     } else if (strcmp(mag.szmagtype, "Mwp") == 0) {
         g_mag.mwp = mag.mag;
         g_mag.mwp_stn = mag.nstations;
@@ -406,8 +420,8 @@ static gboolean update_summary_loop(gpointer data) {
             last_processed_qid = qid;
             /* Evento nuevo: limpiar magnitudes hasta que lleguen las suyas. */
             g_mag.qid = qid;
-            g_mag.ml = g_mag.mwp = 0.0;
-            g_mag.ml_stn = g_mag.mwp_stn = 0;
+            g_mag.ml = g_mag.mwp = g_mag.mb = g_mag.ms = 0.0;
+            g_mag.ml_stn = g_mag.mwp_stn = g_mag.mb_stn = g_mag.ms_stn = 0;
             aplicar_magnitudes();
         }
         last_qver = qver;
@@ -551,6 +565,169 @@ static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height,
     cairo_rectangle(cr, 0, 0, width, height); cairo_stroke(cr);
 }
 
+/* Exporta el mapa a SVG/PDF/PNG (diálogo Guardar). */
+static void act_export(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p;
+    ewgui_export_dialog_run(map_canvas, GTK_WINDOW(ud));
+}
+
+/* Conmutador claro/oscuro (menú del headerbar) vía AdwStyleManager. */
+static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user_data) {
+    GVariant *st;
+    gboolean active;
+    (void)param; (void)user_data;
+    st = g_action_get_state(G_ACTION(action));
+    active = !g_variant_get_boolean(st);
+    g_variant_unref(st);
+    g_simple_action_set_state(action, g_variant_new_boolean(active));
+    adw_style_manager_set_color_scheme(adw_style_manager_get_default(),
+        active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
+}
+
+static void on_activate(GtkApplication *app, gpointer user_data) {
+    (void)user_data;
+
+    /* GTK re-aplica setlocale(LC_ALL,"") al inicializar; rd_mag usa sscanf
+     * (punto decimal), asi que restauramos C tras el arranque de GTK. */
+    setlocale(LC_NUMERIC, "C");
+
+    GtkWidget *window = adw_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(window), "CSNrv - Report Viewer");
+    gtk_window_set_default_size(GTK_WINDOW(window), 450, 780);
+
+    /* Acciones + menú del headerbar (View -> Dark mode). */
+    GSimpleActionGroup *actions = g_simple_action_group_new();
+    GSimpleAction *dark = g_simple_action_new_stateful("dark-mode", NULL,
+                                                       g_variant_new_boolean(FALSE));
+    g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
+    g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
+    ewgui_action_add(G_ACTION_MAP(actions), "export", NULL, act_export, window);
+    gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
+
+    EwMenuItem view_items[] = {
+        { "Export view...", "win.export", NULL, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0 },
+    };
+    EwMenuGroup view_groups[] = { { "View", view_items, 2 } };
+    GMenuModel *menu_model = ewgui_menu_build(view_groups, 1);
+
+    GtkWidget *header = adw_header_bar_new();
+    GtkWidget *menu_btn = gtk_menu_button_new();
+    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
+    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
+    adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
+    g_object_unref(menu_model);
+
+    GtkWidget *toolbar_view = adw_toolbar_view_new();
+    adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
+
+    GtkWidget *vbox_main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    gtk_widget_set_margin_start(vbox_main, 15);
+    gtk_widget_set_margin_end(vbox_main, 15);
+    gtk_widget_set_margin_top(vbox_main, 15);
+    gtk_widget_set_margin_bottom(vbox_main, 15);
+    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar_view), vbox_main);
+    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), toolbar_view);
+
+    lbl_origin_time = gtk_label_new("<span size='xx-large' weight='bold' foreground='gray'>Esperando Datos...</span>");
+    gtk_label_set_use_markup(GTK_LABEL(lbl_origin_time), TRUE);
+    gtk_label_set_justify(GTK_LABEL(lbl_origin_time), GTK_JUSTIFY_CENTER);
+    gtk_box_append(GTK_BOX(vbox_main), lbl_origin_time);
+
+    lbl_coordinates = gtk_label_new("");
+    gtk_box_append(GTK_BOX(vbox_main), lbl_coordinates);
+
+    lbl_depth = gtk_label_new("");
+    gtk_box_append(GTK_BOX(vbox_main), lbl_depth);
+
+    GtkWidget *separator1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_append(GTK_BOX(vbox_main), separator1);
+
+    GtkWidget *lbl_timer_title = gtk_label_new("<span size='large'>Time Since Quake:</span>");
+    gtk_label_set_use_markup(GTK_LABEL(lbl_timer_title), TRUE);
+    gtk_box_append(GTK_BOX(vbox_main), lbl_timer_title);
+
+    lbl_time_elapsed = gtk_label_new("");
+    gtk_box_append(GTK_BOX(vbox_main), lbl_time_elapsed);
+
+    GtkWidget *separator2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+    gtk_box_append(GTK_BOX(vbox_main), separator2);
+
+    GtkWidget *mag_grid = gtk_grid_new();
+    gtk_grid_set_column_spacing(GTK_GRID(mag_grid), 40);
+    gtk_grid_set_row_spacing(GTK_GRID(mag_grid), 5);
+    gtk_widget_set_halign(mag_grid, GTK_ALIGN_CENTER);
+
+    GtkWidget *h1 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h1), "<b>Type</b>");
+    GtkWidget *h2 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h2), "<b>Magnitude</b>");
+    GtkWidget *h3 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h3), "<b>Stations</b>");
+    gtk_grid_attach(GTK_GRID(mag_grid), h1, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), h2, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), h3, 2, 0, 1, 1);
+
+    lbl_pref_type = gtk_label_new("Preferred: --");
+    lbl_pref_val = gtk_label_new("--");
+    lbl_pref_stn = gtk_label_new("--");
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_type, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_val, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_stn, 2, 1, 1, 1);
+
+    GtkWidget *l_ml = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_ml), "<span size='large'>Ml</span>");
+    lbl_ml_val = gtk_label_new("--"); lbl_ml_stn = gtk_label_new("--");
+    gtk_grid_attach(GTK_GRID(mag_grid), l_ml, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_val, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_stn, 2, 2, 1, 1);
+
+    GtkWidget *l_mwp = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_mwp), "<span size='large'>Mwp</span>");
+    lbl_mwp_val = gtk_label_new("--"); lbl_mwp_stn = gtk_label_new("--");
+    gtk_grid_attach(GTK_GRID(mag_grid), l_mwp, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_val, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_stn, 2, 3, 1, 1);
+
+    GtkWidget *l_mb = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_mb), "<span size='large'>Mb</span>");
+    lbl_mb_val = gtk_label_new("--"); lbl_mb_stn = gtk_label_new("--");
+    gtk_grid_attach(GTK_GRID(mag_grid), l_mb, 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_val, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_stn, 2, 4, 1, 1);
+
+    GtkWidget *l_ms = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_ms), "<span size='large'>Ms</span>");
+    lbl_ms_val = gtk_label_new("--"); lbl_ms_stn = gtk_label_new("--");
+    gtk_grid_attach(GTK_GRID(mag_grid), l_ms, 0, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_val, 1, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_stn, 2, 5, 1, 1);
+
+    gtk_box_append(GTK_BOX(vbox_main), mag_grid);
+
+    map_canvas = ewgui_canvas_new();
+    ewgui_canvas_set_draw(map_canvas, on_draw_map, NULL);
+    GtkWidget *map_widget = ewgui_canvas_widget(map_canvas);
+    gtk_widget_set_size_request(map_widget, 400, 400);
+    gtk_widget_set_vexpand(map_widget, TRUE);
+
+    GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    g_signal_connect(scroll, "scroll", G_CALLBACK(on_map_scroll), NULL);
+    gtk_widget_add_controller(map_widget, scroll);
+
+    GtkGesture *click = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 1);
+    g_signal_connect(click, "pressed", G_CALLBACK(on_map_button_press), NULL);
+    g_signal_connect(click, "released", G_CALLBACK(on_map_button_release), NULL);
+    gtk_widget_add_controller(map_widget, GTK_EVENT_CONTROLLER(click));
+
+    GtkEventController *motion = gtk_event_controller_motion_new();
+    g_signal_connect(motion, "motion", G_CALLBACK(on_map_motion), NULL);
+    gtk_widget_add_controller(map_widget, motion);
+
+    gtk_box_append(GTK_BOX(vbox_main), map_widget);
+
+    /* Timers */
+    g_timeout_add(1000, update_summary_loop, NULL);
+    g_timeout_add(1000, ew_background_tasks, NULL);
+
+    gtk_window_present(GTK_WINDOW(window));
+    g_ui_ready = TRUE;
+}
+
 int main(int argc, char *argv[]) {
     /* Modo headless para tests: ejercita el parseo de TYPE_MAGNITUDE y la
      * regla de magnitud preferida, sin GTK ni Earthworm. */
@@ -609,6 +786,35 @@ int main(int argc, char *argv[]) {
         if (strcmp(pt, "--") != 0) { printf("FAIL: C6 reset\n"); fails++; }
         else printf("ok  : C6 reset a --\n");
 
+        /* C7: parseo de Mb y Ms. */
+        g_mag.qid = 42; g_mag.ml = g_mag.mwp = g_mag.mb = g_mag.ms = 0.0;
+        g_mag.ml_stn = g_mag.mwp_stn = g_mag.mb_stn = g_mag.ms_stn = 0;
+        memset(&m, 0, sizeof(m));
+        strcpy(m.qid, "42"); m.imagtype = 3; strcpy(m.szmagtype, "Mb");
+        m.mag = 5.2; m.nstations = 6;
+        wr_mag(&m, buf, sizeof(buf));
+        procesar_mensaje_mag(buf, (long)strlen(buf), 42);
+        memset(&m, 0, sizeof(m));
+        strcpy(m.qid, "42"); m.imagtype = 4; strcpy(m.szmagtype, "Ms");
+        m.mag = 5.6; m.nstations = 5;
+        wr_mag(&m, buf, sizeof(buf));
+        procesar_mensaje_mag(buf, (long)strlen(buf), 42);
+        if (g_mag.mb != 5.2 || g_mag.mb_stn != 6 || g_mag.ms != 5.6 || g_mag.ms_stn != 5) {
+            printf("FAIL: C7 Mb/Ms parse\n"); fails++;
+        } else printf("ok  : C7 Mb/Ms parse (%.1f/%.1f)\n", g_mag.mb, g_mag.ms);
+
+        /* C8: Ms preferida sobre Ml cuando n>=3. */
+        g_mag.ml = 4.5; g_mag.ml_stn = 6; g_mag.mwp = 0.0; g_mag.mwp_stn = 0;
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "Ms") != 0 || pm != 5.6) { printf("FAIL: C8 Ms prefiere\n"); fails++; }
+        else printf("ok  : C8 Ms preferida (%.1f)\n", pm);
+
+        /* C9: Mb preferida sobre Ml cuando no hay Ms. */
+        g_mag.ms = 0.0; g_mag.ms_stn = 0;
+        mag_preferida(&pm, &ps, &pt);
+        if (strcmp(pt, "Mb") != 0 || pm != 5.2) { printf("FAIL: C9 Mb prefiere\n"); fails++; }
+        else printf("ok  : C9 Mb preferida (%.1f)\n", pm);
+
         if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
         printf("\nOK test_mag\n");
         return 0;
@@ -662,7 +868,6 @@ int main(int argc, char *argv[]) {
     MagLogo.mod     = 0;
     MagLogo.type    = TypeMagnitude;
 
-    gtk_init();
     setlocale(LC_NUMERIC, "C");
     
     GError *err = NULL;
@@ -672,107 +877,14 @@ int main(int argc, char *argv[]) {
         g_error_free(err);
     }
 
-    GtkWidget *window = gtk_window_new();
-    gtk_window_set_title(GTK_WINDOW(window), "CSNrv - Report Viewer");
-    gtk_window_set_default_size(GTK_WINDOW(window), 450, 750);
-    g_signal_connect(window, "close-request", G_CALLBACK(on_window_close), NULL);
+    AdwApplication *app = adw_application_new("cl.csn.csnrv", G_APPLICATION_NON_UNIQUE);
+    g_app = G_APPLICATION(app);
+    g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
 
-    GtkWidget *vbox_main = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
-    gtk_widget_set_margin_start(vbox_main, 15);
-    gtk_widget_set_margin_end(vbox_main, 15);
-    gtk_widget_set_margin_top(vbox_main, 15);
-    gtk_widget_set_margin_bottom(vbox_main, 15);
-    gtk_window_set_child(GTK_WINDOW(window), vbox_main);
-
-    lbl_origin_time = gtk_label_new("<span size='xx-large' weight='bold' foreground='gray'>Esperando Datos...</span>");
-    gtk_label_set_use_markup(GTK_LABEL(lbl_origin_time), TRUE);
-    gtk_label_set_justify(GTK_LABEL(lbl_origin_time), GTK_JUSTIFY_CENTER);
-    gtk_box_append(GTK_BOX(vbox_main), lbl_origin_time);
-
-    lbl_coordinates = gtk_label_new("");
-    gtk_box_append(GTK_BOX(vbox_main), lbl_coordinates);
-
-    lbl_depth = gtk_label_new("");
-    gtk_box_append(GTK_BOX(vbox_main), lbl_depth);
-
-    GtkWidget *separator1 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_append(GTK_BOX(vbox_main), separator1);
-
-    GtkWidget *lbl_timer_title = gtk_label_new("<span size='large'>Time Since Quake:</span>");
-    gtk_label_set_use_markup(GTK_LABEL(lbl_timer_title), TRUE);
-    gtk_box_append(GTK_BOX(vbox_main), lbl_timer_title);
-
-    lbl_time_elapsed = gtk_label_new("");
-    gtk_box_append(GTK_BOX(vbox_main), lbl_time_elapsed);
-
-    GtkWidget *separator2 = gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
-    gtk_box_append(GTK_BOX(vbox_main), separator2);
-
-    GtkWidget *mag_grid = gtk_grid_new();
-    gtk_grid_set_column_spacing(GTK_GRID(mag_grid), 40);
-    gtk_grid_set_row_spacing(GTK_GRID(mag_grid), 5);
-    gtk_widget_set_halign(mag_grid, GTK_ALIGN_CENTER);
-
-    GtkWidget *h1 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h1), "<b>Type</b>");
-    GtkWidget *h2 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h2), "<b>Magnitude</b>");
-    GtkWidget *h3 = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(h3), "<b>Stations</b>");
-    gtk_grid_attach(GTK_GRID(mag_grid), h1, 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), h2, 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), h3, 2, 0, 1, 1);
-
-    lbl_pref_type = gtk_label_new("Preferred: --");
-    lbl_pref_val = gtk_label_new("--");
-    lbl_pref_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_type, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_val, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_stn, 2, 1, 1, 1);
-
-    GtkWidget *l_ml = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_ml), "<span size='large'>Ml</span>");
-    lbl_ml_val = gtk_label_new("--"); lbl_ml_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_ml, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_val, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_stn, 2, 2, 1, 1);
-
-    GtkWidget *l_mwp = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_mwp), "<span size='large'>Mwp</span>");
-    lbl_mwp_val = gtk_label_new("--"); lbl_mwp_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_mwp, 0, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_val, 1, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_stn, 2, 3, 1, 1);
-
-    gtk_box_append(GTK_BOX(vbox_main), mag_grid);
-
-    map_canvas = ewgui_canvas_new();
-    ewgui_canvas_set_draw(map_canvas, on_draw_map, NULL);
-    GtkWidget *map_widget = ewgui_canvas_widget(map_canvas);
-    gtk_widget_set_size_request(map_widget, 400, 400);
-    gtk_widget_set_vexpand(map_widget, TRUE);
-
-    GtkEventController *scroll = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
-    g_signal_connect(scroll, "scroll", G_CALLBACK(on_map_scroll), NULL);
-    gtk_widget_add_controller(map_widget, scroll);
-
-    GtkGesture *click = gtk_gesture_click_new();
-    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 1);
-    g_signal_connect(click, "pressed", G_CALLBACK(on_map_button_press), NULL);
-    g_signal_connect(click, "released", G_CALLBACK(on_map_button_release), NULL);
-    gtk_widget_add_controller(map_widget, GTK_EVENT_CONTROLLER(click));
-
-    GtkEventController *motion = gtk_event_controller_motion_new();
-    g_signal_connect(motion, "motion", G_CALLBACK(on_map_motion), NULL);
-    gtk_widget_add_controller(map_widget, motion);
-
-    gtk_box_append(GTK_BOX(vbox_main), map_widget);
-
-    /* Timers */
-    g_timeout_add(1000, update_summary_loop, NULL);
-    g_timeout_add(1000, ew_background_tasks, NULL);
-
-    gtk_window_present(GTK_WINDOW(window));
-    g_ui_ready = TRUE;
-    g_loop = g_main_loop_new(NULL, FALSE);
-    g_main_loop_run(g_loop);
+    /* argv ya se interpreto arriba: no pasamos el <configfile.d> a GApplication. */
+    int status = g_application_run(g_app, 0, NULL);
 
     tport_detach(&Region);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);
-    return 0;
+    return status;
 }

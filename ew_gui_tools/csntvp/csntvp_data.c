@@ -1,18 +1,8 @@
 #include "csntvp.h"
+#include "csntvp_util.h"
 
 static void compute_station_envelope(int i, int width);
 static void update_wave_envelopes(void);
-
-static int ParseHexColor(const char *s, double rgb[3]) {
-    unsigned int r, g, b;
-    if (!s || s[0] == '\0') return -1;
-    while (*s == '#') s++;
-    if (sscanf(s, "%2x%2x%2x", &r, &g, &b) != 3) return -1;
-    rgb[0] = (double)r / 255.0;
-    rgb[1] = (double)g / 255.0;
-    rgb[2] = (double)b / 255.0;
-    return 0;
-}
 
 static void ColorToHex(const double rgb[3], char out[8]) {
     snprintf(out, 8, "%02X%02X%02X",
@@ -20,16 +10,20 @@ static void ColorToHex(const double rgb[3], char out[8]) {
 }
 
 void LogColorConfig(void) {
-    char c_wave[8], c_bg[8], c_font[8], c_sep[8];
+    char c_wave[8], c_bg[8], c_font[8], c_sep[8], c_p[8], c_s[8];
     ColorToHex(g_color_wave, c_wave);
     ColorToHex(g_color_bg, c_bg);
     ColorToHex(g_color_font, c_font);
     ColorToHex(g_color_sep, c_sep);
+    ColorToHex(g_color_p, c_p);
+    ColorToHex(g_color_s, c_s);
     logit("et", "csntvp: Color config (copy to .d):\n");
     logit("et", "  waveformsColor   %s\n", c_wave);
     logit("et", "  backgroundColor  %s\n", c_bg);
     logit("et", "  fontColor        %s\n", c_font);
     logit("et", "  separatorColor   %s\n", c_sep);
+    logit("et", "  pColor           %s\n", c_p);
+    logit("et", "  sColor           %s\n", c_s);
 }
 
 int ReadConfig(char *configfile) {
@@ -70,16 +64,22 @@ int ReadConfig(char *configfile) {
             init[5] = 1;
         } else if (k_its("waveformsColor")) {
             str = k_str();
-            if (str && ParseHexColor(str, g_color_wave)) logit("et", "csntvp: waveformsColor <%s> invalid, using default\n", str);
+            if (str && csntvp_parse_hexcolor(str, g_color_wave)) logit("et", "csntvp: waveformsColor <%s> invalid, using default\n", str);
         } else if (k_its("backgroundColor")) {
             str = k_str();
-            if (str && ParseHexColor(str, g_color_bg)) logit("et", "csntvp: backgroundColor <%s> invalid, using default\n", str);
+            if (str && csntvp_parse_hexcolor(str, g_color_bg)) logit("et", "csntvp: backgroundColor <%s> invalid, using default\n", str);
         } else if (k_its("fontColor")) {
             str = k_str();
-            if (str && ParseHexColor(str, g_color_font)) logit("et", "csntvp: fontColor <%s> invalid, using default\n", str);
+            if (str && csntvp_parse_hexcolor(str, g_color_font)) logit("et", "csntvp: fontColor <%s> invalid, using default\n", str);
         } else if (k_its("separatorColor")) {
             str = k_str();
-            if (str && ParseHexColor(str, g_color_sep)) logit("et", "csntvp: separatorColor <%s> invalid, using default\n", str);
+            if (str && csntvp_parse_hexcolor(str, g_color_sep)) logit("et", "csntvp: separatorColor <%s> invalid, using default\n", str);
+        } else if (k_its("pColor")) {
+            str = k_str();
+            if (str && csntvp_parse_hexcolor(str, g_color_p)) logit("et", "csntvp: pColor <%s> invalid, using default\n", str);
+        } else if (k_its("sColor")) {
+            str = k_str();
+            if (str && csntvp_parse_hexcolor(str, g_color_s)) logit("et", "csntvp: sColor <%s> invalid, using default\n", str);
         } else if (k_its("StationsPerScreen")) {
             str = k_str();
             if (str) { int v = atoi(str); if (v >= 1 && v <= MAX_STATIONS) iVisStas = v; else logit("et", "csntvp: StationsPerScreen <%s> invalid, using default %d\n", str, iVisStas); }
@@ -171,7 +171,7 @@ gboolean ew_background_tasks(gpointer user_data) {
 
     if (ewgui_ring_should_quit(&WaveRegion, MyPid)) {
         logit("t", "csntvp: Señal de terminacion recibida. Cerrando...\n");
-        if (g_loop) g_main_loop_quit(g_loop);
+        if (g_app) g_application_quit(g_app);
         return G_SOURCE_REMOVE;
     }
     return G_SOURCE_CONTINUE;
@@ -357,42 +357,41 @@ gboolean fetch_realtime_data(gpointer user_data) {
         res = tport_getmsg( &PickRegion, PickLogo, 1, &reclogo, &recsize, msg, sizeof(msg) - 1 );
         if ( res == GET_OK || res == GET_MISS || res == GET_NOTRACK ) {
             msg[recsize] = '\0'; if (reclogo.type == TypePickSCNL) {
-                int t, m, inst, seq; char scnl[64], ph[10], ts[30];
-                if (sscanf(msg, "%d %d %d %d %63s %9s %29s", &t, &m, &inst, &seq, scnl, ph, ts) >= 7) {
-                    char sta[10]="", ch[10]="", net[10]="", loc[10]=""; sscanf(scnl, "%9[^.].%9[^.].%9[^.].%9s", sta, ch, net, loc);
-                    for (int k=0; ts[k]; k++) if (ts[k]==',') ts[k]='.';
-                    int py, pm, pd, phh, pmn; double psec;
-                    if (sscanf(ts, "%4d%2d%2d%2d%2d%lf", &py, &pm, &pd, &phh, &pmn, &psec) == 6) {
-                        struct tm pt = {0}; pt.tm_year=py-1900; pt.tm_mon=pm-1; pt.tm_mday=pd; pt.tm_hour=phh; pt.tm_min=pmn; pt.tm_sec=(int)psec;
-                        char *otz=getenv("TZ"); setenv("TZ", "GMT", 1); tzset(); double pT=mktime(&pt)+(psec-(int)psec);
-                        if(otz) setenv("TZ", otz, 1); else unsetenv("TZ"); tzset();
-                        char dph[8]; if (ph[0]=='U'||ph[0]=='D'||ph[0]=='?') snprintf(dph, sizeof(dph), "P(%.4s)", ph); else snprintf(dph, sizeof(dph), "%.7s", ph);
-                        for (int i=0; i<iNumStas; i++) if (!strcmp(StaArray[i].szStation, sta) && !strcmp(StaArray[i].szChannel, ch)) {
-                            DEV_STATION *dev = &StaArray[i];
-                            /* Upsert our own picks by seq (avoid double count of
-                               the manual pick when it comes back through the ring). */
-                            int found = -1;
-                            if (m == MyModId && inst == MyInstId) {
-                                for (int k = 0; k < MAX_PICKS_PER_STA; k++) {
-                                    if (dev->picks[k].lPickIndex == seq && dev->picks[k].iUseMe > 0) { found = k; break; }
-                                }
+                CsntvpPickMsg pm;
+                if (csntvp_pick_parse(msg, &pm)) {
+                    char dph[8];
+                    csntvp_pick_label(pm.phase, pm.origin, dph, sizeof(dph));
+                    /* Match solo por estación: el canal del pick puede diferir
+                       del de la traza mostrada (p. ej. S en HHE/HHN vs HHZ). */
+                    for (int i=0; i<iNumStas; i++) if (!strcmp(StaArray[i].szStation, pm.sta)) {
+                        DEV_STATION *dev = &StaArray[i];
+                        /* Upsert our own picks by seq (avoid double count of
+                           the manual pick when it comes back through the ring). */
+                        int found = -1;
+                        if (pm.mod == MyModId && pm.inst == MyInstId) {
+                            for (int k = 0; k < MAX_PICKS_PER_STA; k++) {
+                                if (dev->picks[k].lPickIndex == pm.seq && dev->picks[k].iUseMe > 0) { found = k; break; }
                             }
-                            if (found >= 0) {
-                                dev->picks[found].dTime = pT;
-                                snprintf(dev->picks[found].szPhase, sizeof(dev->picks[found].szPhase), "%s", dph);
-                                dev->picks[found].iUseMe = 1;
-                            } else {
-                                int slot = (int)(dev->lPickRingNext % MAX_PICKS_PER_STA);
-                                dev->picks[slot].dTime = pT;
-                                snprintf(dev->picks[slot].szPhase, sizeof(dev->picks[slot].szPhase), "%s", dph);
-                                dev->picks[slot].lPickIndex = seq;
-                                dev->picks[slot].iUseMe = 1;
-                                dev->lPickRingNext++;
-                                if (dev->iNumPicks < MAX_PICKS_PER_STA) dev->iNumPicks++;
-                            }
-                            picks_changed = TRUE;
-                            break;
                         }
+                        if (found >= 0) {
+                            dev->picks[found].dTime = pm.t;
+                            snprintf(dev->picks[found].szPhase, sizeof(dev->picks[found].szPhase), "%s", dph);
+                            dev->picks[found].cPhase = pm.phase;
+                            dev->picks[found].cOrigin = pm.origin;
+                            dev->picks[found].iUseMe = 1;
+                        } else {
+                            int slot = (int)(dev->lPickRingNext % MAX_PICKS_PER_STA);
+                            dev->picks[slot].dTime = pm.t;
+                            snprintf(dev->picks[slot].szPhase, sizeof(dev->picks[slot].szPhase), "%s", dph);
+                            dev->picks[slot].lPickIndex = pm.seq;
+                            dev->picks[slot].cPhase = pm.phase;
+                            dev->picks[slot].cOrigin = pm.origin;
+                            dev->picks[slot].iUseMe = 1;
+                            dev->lPickRingNext++;
+                            if (dev->iNumPicks < MAX_PICKS_PER_STA) dev->iNumPicks++;
+                        }
+                        picks_changed = TRUE;
+                        break;
                     }
                 }
             }

@@ -2,11 +2,13 @@
 #define CSNTVP_H
 
 #include <gtk/gtk.h>
+#include <adwaita.h>
 #include "ewgui/ring.h"
 #include "ewgui/dsp.h"
 #include "ewgui/wave.h"
 #include "ewgui/actions.h"
 #include "ewgui/view.h"
+#include "ewgui/export.h"
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
@@ -72,6 +74,8 @@ extern double g_color_bg[3];
 extern double g_color_wave[3];
 extern double g_color_font[3];
 extern double g_color_sep[3];
+extern double g_color_p[3];   /* picks P */
+extern double g_color_s[3];   /* picks S */
 
 /* --- FILTROS --- */
 extern int g_filter_type;
@@ -91,6 +95,7 @@ extern double   g_last_data_realtime;
 extern gboolean g_data_stale;
 extern double   g_pick_replace_secs;
 extern int      g_pick_seq;
+extern char     g_pick_phase;   /* fase activa del pick manual: 'P' | 'S' */
 extern int      g_warned_datatype;
 
 /* estado de la caché de envolvente */
@@ -106,6 +111,8 @@ typedef struct {
     char szPhase[8];
     long lPickIndex;
     int iUseMe;
+    char cPhase;   /* 'P' | 'S' (color) */
+    char cOrigin;  /* 'A' (automático) | 'M' (manual) */
 } PICK;
 
 typedef struct {
@@ -142,7 +149,7 @@ extern double dTrackHeight;
 extern int iVisStas;
 extern int iTimeWindowMinutes;
 
-extern GMainLoop *g_loop;
+extern GApplication *g_app;
 
 /* --- PROTOTIPOS --- */
 int  ReadConfig(char *configfile);

@@ -100,7 +100,7 @@
  Process	  "wave_serverV wave_serverV.d"
  Class/Priority    OTHER 0
 #
- Process	  "csnmags_toy csnmags_toy.d"
+ Process	  "csnmags csnmags.d"
  Class/Priority    OTHER 0
 #
  Process	  "csntvp csntvp.d"

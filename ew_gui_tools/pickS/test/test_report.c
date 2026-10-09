@@ -17,6 +17,9 @@ int main(void)
     if (strncmp(buf, "8 165 0 7 TEST.HHE.C.--", 23) != 0) {
         printf("FAIL: prefijo inesperado\n"); return 1;
     }
+    if (strstr(buf, "S A") == NULL) {
+        printf("FAIL: falta token de origen A\n"); return 1;
+    }
     m = PickS_ParsePickLine(buf, sta, &tgot, &phase);
     if (m < 7) { printf("FAIL: reparseo (%d campos)\n", m); return 1; }
     if (strcmp(sta, "TEST") != 0) { printf("FAIL: estación\n"); return 1; }

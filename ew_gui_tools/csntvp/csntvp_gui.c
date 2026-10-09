@@ -1,4 +1,5 @@
 #include "csntvp.h"
+#include "csntvp_util.h"
 
 typedef struct { GMainLoop *loop; int response; } DialogRun;
 
@@ -61,6 +62,12 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
         if (g_zoom_factor < MIN_ZOOM) g_zoom_factor = MIN_ZOOM;
         if (g_drawing_waves) ewgui_canvas_queue_draw(g_drawing_waves);
         return TRUE;
+    } else if (keyval == GDK_KEY_p || keyval == GDK_KEY_P) {
+        g_pick_phase = 'P';
+        return TRUE;
+    } else if (keyval == GDK_KEY_s || keyval == GDK_KEY_S) {
+        g_pick_phase = 'S';
+        return TRUE;
     }
     return FALSE;
 }
@@ -73,6 +80,8 @@ static void on_color_chosen(GObject *src, GAsyncResult *res, gpointer data) {
         else if (type == 2) { g_color_bg[0]=c->red; g_color_bg[1]=c->green; g_color_bg[2]=c->blue; }
         else if (type == 3) { g_color_font[0]=c->red; g_color_font[1]=c->green; g_color_font[2]=c->blue; }
         else if (type == 4) { g_color_sep[0]=c->red; g_color_sep[1]=c->green; g_color_sep[2]=c->blue; }
+        else if (type == 5) { g_color_p[0]=c->red; g_color_p[1]=c->green; g_color_p[2]=c->blue; }
+        else if (type == 6) { g_color_s[0]=c->red; g_color_s[1]=c->green; g_color_s[2]=c->blue; }
         LogColorConfig();
         if (g_drawing_waves) ewgui_canvas_queue_draw(g_drawing_waves);
         gdk_rgba_free(c);
@@ -89,6 +98,8 @@ void on_colour_select(GtkWidget *widget, gpointer data) {
     else if (type == 2) { current_color.red=g_color_bg[0]; current_color.green=g_color_bg[1]; current_color.blue=g_color_bg[2]; }
     else if (type == 3) { current_color.red=g_color_font[0]; current_color.green=g_color_font[1]; current_color.blue=g_color_font[2]; }
     else if (type == 4) { current_color.red=g_color_sep[0]; current_color.green=g_color_sep[1]; current_color.blue=g_color_sep[2]; }
+    else if (type == 5) { current_color.red=g_color_p[0]; current_color.green=g_color_p[1]; current_color.blue=g_color_p[2]; }
+    else if (type == 6) { current_color.red=g_color_s[0]; current_color.green=g_color_s[1]; current_color.blue=g_color_s[2]; }
     GtkColorDialog *cd = gtk_color_dialog_new();
     gtk_color_dialog_set_title(cd, "Select Colour");
     gtk_color_dialog_choose_rgba(cd, NULL, &current_color, NULL, on_color_chosen, GINT_TO_POINTER(type));
@@ -267,11 +278,14 @@ void on_canvas_button_press(GtkGestureClick *gesture, int n_press, double x, dou
     /* Show the manual pick immediately at the station, without waiting for it
        to circulate back through PICK_RING. */
     {
+        char dph[8];
+        csntvp_pick_label(g_pick_phase, 'M', dph, sizeof(dph));
         int slot = (int)(dev->lPickRingNext % MAX_PICKS_PER_STA);
         dev->picks[slot].dTime = clicked_time;
-        strncpy(dev->picks[slot].szPhase, "P", 7);
-        dev->picks[slot].szPhase[7] = '\0';
+        snprintf(dev->picks[slot].szPhase, sizeof(dev->picks[slot].szPhase), "%s", dph);
         dev->picks[slot].lPickIndex = seq;
+        dev->picks[slot].cPhase = g_pick_phase;
+        dev->picks[slot].cOrigin = 'M';
         dev->picks[slot].iUseMe = 1;
         dev->lPickRingNext++;
         if (dev->iNumPicks < MAX_PICKS_PER_STA) dev->iNumPicks++;
@@ -283,7 +297,7 @@ void on_canvas_button_press(GtkGestureClick *gesture, int n_press, double x, dou
     struct tm *ptm = gmtime(&t_sec);
     snprintf(time_str, sizeof(time_str), "%04d%02d%02d%02d%02d%06.3f", ptm->tm_year+1900, ptm->tm_mon+1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, (double)ptm->tm_sec + t_msec);
     for (int k = 0; time_str[k] != '\0'; k++) if (time_str[k] == ',') time_str[k] = '.';
-    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0\n", TypePickSCNL, MyModId, MyInstId, seq, StaArray[sta_idx].szStation, StaArray[sta_idx].szChannel, StaArray[sta_idx].szNetID, StaArray[sta_idx].szLocation, time_str);
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c M\n", TypePickSCNL, MyModId, MyInstId, seq, StaArray[sta_idx].szStation, StaArray[sta_idx].szChannel, StaArray[sta_idx].szNetID, StaArray[sta_idx].szLocation, time_str, g_pick_phase);
     MSG_LOGO logo = {MyInstId, MyModId, TypePickSCNL};
     if (tport_putmsg(&PickRegion, &logo, strlen(out_msg), out_msg) != PUT_OK) logit("e", "csntvp: Error inyectando pick.\n");
     else logit("t", "csntvp: INYECTADO: %s", out_msg);
@@ -364,7 +378,7 @@ void on_draw_waves(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void
         }
 
         /* --- PICKS --- */
-        cairo_set_source_rgb(cr, 1.0, 0.0, 0.0); cairo_set_line_width(cr, 2.0);
+        cairo_set_line_width(cr, 2.0);
         cairo_select_font_face(cr, "Monospace", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
 
         int n_draw = (StaArray[i].iNumPicks < MAX_PICKS_PER_STA) ? StaArray[i].iNumPicks : MAX_PICKS_PER_STA;
@@ -376,6 +390,8 @@ void on_draw_waves(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void
             if (pTime >= t_left && pTime <= t_right + 15.0) {
                 double x_pos = PANEL_WIDTH + ((pTime - t_left) / window_secs * draw_area_width);
                 if (x_pos > PANEL_WIDTH && x_pos < width) {
+                    const double *pc = (StaArray[i].picks[p].cPhase == 'S') ? g_color_s : g_color_p;
+                    cairo_set_source_rgb(cr, pc[0], pc[1], pc[2]);
                     cairo_move_to(cr, x_pos, y_top); cairo_line_to(cr, x_pos, y_top + dTrackHeight); cairo_stroke(cr);
                     cairo_move_to(cr, x_pos + 4, y_top + font_size + 2); cairo_show_text(cr, StaArray[i].picks[p].szPhase);
                 }

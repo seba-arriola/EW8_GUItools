@@ -137,6 +137,31 @@ int main(void)
         CHECK(ewgui_find_data_end(buf, 40) == 30, "find_data_end: recorta cola");
     }
 
+    /* 10. fc en/por encima de Nyquist: no-op (evita IIR inestable -> NaN/basura) */
+    {
+        int32_t *d = malloc((size_t)N * sizeof(int32_t));
+        int32_t *ref = malloc((size_t)N * sizeof(int32_t));
+        for (long i = 0; i < N; i++) {
+            d[i] = (int32_t)(1000.0 * sin(2.0*M_PI*5.0*(double)i/fs));
+            ref[i] = d[i];
+        }
+        ewgui_filter_iir(d, (size_t)N, fs, EW_FILTER_HP, 50.0, 4);  /* == Nyquist */
+        ewgui_filter_iir(d, (size_t)N, fs, EW_FILTER_LP, 80.0, 4);  /* > Nyquist */
+        int same = 1;
+        for (long i = 0; i < N; i++) if (d[i] != ref[i]) { same = 0; break; }
+        CHECK(same, "fc >= Nyquist: no-op (sin inestabilidad)");
+        free(d); free(ref);
+    }
+
+    /* 11. demean satura en vez de envolver (cast indefinido a int32) */
+    {
+        int32_t raw[200], filt[200];
+        raw[0] = 2147483000;
+        for (int i = 1; i < 200; i++) raw[i] = -2147483000;
+        ewgui_demean(raw, 200, filt);
+        CHECK(filt[0] > 0 && filt[0] <= INT_MAX, "demean: satura sin wrap a negativo");
+    }
+
     if (failures == 0) { printf("\nALL DSP TESTS PASSED\n"); return 0; }
     printf("\n%d DSP TEST(S) FAILED\n", failures);
     return 1;

@@ -158,7 +158,7 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
             char szVer[32]; snprintf(szVer, sizeof(szVer), "%u", version);
 
             CsnhypodbpRow *row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes,
-                szAzm, szStn, szID, "-", "-", "csnloc", szVer, t0, (int)version, (int)id,
+                szAzm, szStn, szID, "-", "-", "-", "-", "csnloc", szVer, t0, (int)version, (int)id,
                 lat, lon, depth, 0);
             g_list_store_append(g_store_hypo, row);
             g_object_unref(row);
@@ -198,13 +198,18 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
         CsnhypodbpRow *row = g_list_model_get_item(G_LIST_MODEL(g_store_hypo), found);
         int existing_qver = 0; g_object_get(row, "qver", &existing_qver, NULL);
         if (qver >= existing_qver) {
-            char szMl[32] = "-", szMwp[32] = "-";
+            char szMl[32] = "-", szMwp[32] = "-", szMb[32] = "-", szMs[32] = "-";
             const char *oml = csnhypodbp_row_col(row, 9);
             const char *omwp = csnhypodbp_row_col(row, 10);
+            const char *omb = csnhypodbp_row_col(row, 11);
+            const char *oms = csnhypodbp_row_col(row, 12);
             if (oml && oml[0]) { strncpy(szMl, oml, 31); szMl[31]='\0'; }
             if (omwp && omwp[0]) { strncpy(szMwp, omwp, 31); szMwp[31]='\0'; }
+            if (omb && omb[0]) { strncpy(szMb, omb, 31); szMb[31]='\0'; }
+            if (oms && oms[0]) { strncpy(szMs, oms, 31); szMs[31]='\0'; }
             g_object_set(row, "c0",fecha,"c1",hora,"c2",szLat,"c3",szLon,"c4",szDep,"c5",szRes,
-                         "c6",szAzm,"c7",szStn,"c8",szID,"c9",szMl,"c10",szMwp,"c11",szMod,"c12",szVer,
+                         "c6",szAzm,"c7",szStn,"c8",szID,"c9",szMl,"c10",szMwp,
+                         "c11",szMb,"c12",szMs,"c13",szMod,"c14",szVer,
                          "otime",otime,"qver",qver,"qid",qid,"lat",lat,"lon",lon,"depth",depth,"mod",mod,NULL);
             if (qid == selected_qid && mod == selected_mod) result_status = 1;
             g_history_needs_saving = TRUE;
@@ -212,7 +217,7 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
         g_object_unref(row);
     } else {
         CsnhypodbpRow *row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes, szAzm,
-            szStn, szID, "-", "-", szMod, szVer, otime, qver, qid, lat, lon, depth, mod);
+            szStn, szID, "-", "-", "-", "-", szMod, szVer, otime, qver, qid, lat, lon, depth, mod);
         g_list_store_append(g_store_hypo, row);
         g_object_unref(row);
         result_status = 2; g_history_needs_saving = TRUE;
@@ -224,6 +229,8 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
     (void)tree;
     MAG_INFO mag;
+    /* rd_mag usa sscanf (sensible al locale); garantizamos punto decimal. */
+    setlocale(LC_NUMERIC, "C");
     memset(&mag, 0, sizeof(MAG_INFO));
     if (rd_mag((char*)payload, strlen(payload), &mag) < 0) {
         logit("e", "csnhypodbp: Error en rd_mag al parsear TYPE_MAGNITUDE\n");
@@ -241,6 +248,12 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
             if (strcmp(mag.szmagtype, "ML") == 0 || strcmp(mag.szmagtype, "Ml") == 0) {
                 g_object_set(row, "c9", mag_str, NULL);
                 logit("t", "csnhypodbp: Mag actualizada ID %d -> ML: %s\n", qid, mag_str);
+            } else if (strcmp(mag.szmagtype, "Mb") == 0 || strcmp(mag.szmagtype, "MB") == 0) {
+                g_object_set(row, "c11", mag_str, NULL);
+                logit("t", "csnhypodbp: Mag actualizada ID %d -> Mb: %s\n", qid, mag_str);
+            } else if (strcmp(mag.szmagtype, "Ms") == 0 || strcmp(mag.szmagtype, "MS") == 0) {
+                g_object_set(row, "c12", mag_str, NULL);
+                logit("t", "csnhypodbp: Mag actualizada ID %d -> Ms: %s\n", qid, mag_str);
             } else if (strcmp(mag.szmagtype, "Mwp") == 0 || strcmp(mag.szmagtype, "MWP") == 0) {
                 g_object_set(row, "c10", mag_str, NULL);
                 logit("t", "csnhypodbp: Mag actualizada ID %d -> Mwp: %s\n", qid, mag_str);
