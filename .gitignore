@@ -24,6 +24,24 @@ run_working_v8/log/.noexec_fifo.txt
 # ===========================================================================
 
 # --- 3. Objetos, librerías y símbolos ---------------------------------------
+# (los patrones *.o/*.a/*.so/*.dSYM de aquí abajo van DESPUÉS a propósito: el
+#  "!*.*" de la regla general re-incluye objetos y estos los vuelven a ignorar)
+
+# --- 3a. Binarios de módulo y de test (regla general, módulos presentes/futuros)
+# Los binarios NO llevan extensión; sus fuentes/datos SÍ. Se ignora lo sin
+# extensión en la raíz del módulo y los binarios de test (test_*/gen_*),
+# preservando todo lo que tenga extensión y los Makefile.
+/ew_gui_tools/*/*
+!/ew_gui_tools/*/*/
+!/ew_gui_tools/*/*.*
+!/ew_gui_tools/*/Makefile*
+
+/ew_gui_tools/**/test_*
+!/ew_gui_tools/**/test_*.*
+/ew_gui_tools/**/gen_*
+!/ew_gui_tools/**/gen_*.*
+/ew_gui_tools/**/build/
+
 *.o
 *.a
 *.so
