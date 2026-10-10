@@ -7,10 +7,6 @@
 
 # --- 1. Infraestructura y datos que NO se versionan -------------------------
 earthworm_8.0/
-glass3/
-kafka/
-kafka-data/
-kafka-logs/
 mseed/
 tank_repo/
 replay/
@@ -43,7 +39,6 @@ run_working_v8/log/.noexec_fifo.txt
 !/ew_gui_tools/csnloc/test/test_*.sh
 !/ew_gui_tools/csnloc/test/test_*.txt
 /ew_gui_tools/csnloc/test/gen_offline_picks
-/ew_gui_tools/csnmags/csnmags_toy
 /ew_gui_tools/csnhypodbp/csnhypodbp
 /ew_gui_tools/csnhypodbp/test_filter
 /ew_gui_tools/csnrv/csnrv
@@ -52,8 +47,6 @@ run_working_v8/log/.noexec_fifo.txt
 /ew_gui_tools/csnstaevdisp/csnstaevdisp
 /ew_gui_tools/csnstaevdisp/test/test_data
 /ew_gui_tools/ew_controller/ew_controller
-/ew_gui_tools/ew2glass/ew2glass
-/ew_gui_tools/glass2ew/glass2ew
 /ew_gui_tools/_legacy_atwc/loc_wcatwc/loc_wcatwc
 /ew_gui_tools/_legacy_atwc/pick_wcatwc/pick_wcatwc
 /ew_gui_tools/_legacy_atwc/disk_wcatwc/disk_wcatwc

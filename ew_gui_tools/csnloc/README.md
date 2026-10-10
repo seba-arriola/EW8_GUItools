@@ -1,13 +1,12 @@
 # csnloc — Asociación de fases + localización rápida
 
-Módulo Earthworm nativo (C) que reemplaza **localmente** el camino
-`ew2glass → GLASS3 → glass2ew` para asociación de fases y primera
-localización.
+Módulo Earthworm nativo (C) de asociación de fases y primera localización
+**localmente** (sin asociador externo).
 
 - **Entrada:** `PICK_RING`, mensajes `TYPE_PICK_SCNL` (tipo 8).
-- **Salida:** `HYPO_RING`, mensajes `TYPE_HYP2000ARC` con el **mismo layout
-  que `glass2ew`**, de modo que `csnhypodbp`, `csnrv` y `csnmags_toy` lo
-  consumen sin cambios.
+- **Salida:** `HYPO_RING`, mensajes `TYPE_HYP2000ARC` con el layout del ARC
+  HYP2000ARC (`common/include/ewgui/arc_layout.h`), de modo que `csnhypodbp`,
+  `csnrv` y `csnmags` lo consumen sin cambios.
 - **Config:** `run_working_v8/params/csnloc.d`.
 
 ## Algoritmo
@@ -100,9 +99,9 @@ Comportamiento:
   2 = local).
 
 Grillas de producción en `run_working_v8/params/grids/`: `global.grid` (100 km),
-`chile_regional.grid` (25 km, cobertura Chile) y las 10 locales réplica de
-Glass3 (10 km). `csnloc_legacy.d` + `grids/legacy_chile.grid` reproducen la
-configuración anterior de grilla única (regresión).
+`chile_regional.grid` (25 km, cobertura Chile) y las 10 locales (10 km).
+`csnloc_legacy.d` + `grids/legacy_chile.grid` reproducen la configuración
+anterior de grilla única (regresión).
 
 ## Parámetros de `csnloc.d`
 
@@ -191,7 +190,7 @@ tiempo real siempre viene del anillo:
 - `csnhypodbp`: `HYPO_RING` (`tport_getmsg`); recuperación desde `StateFile`.
 - `csnrv`: `HYPO_RING` (`tport_getmsg`); muestra la mayor versión por `qid` y
   las magnitudes ML/Mwp de `TYPE_MAGNITUDE` (preferida destacada en rojo).
-- `csnmags_toy`: no recalcula magnitudes si la versión entrante es ≤ la última
+- `csnmags`: no recalcula magnitudes si la versión entrante es ≤ la última
   procesada para ese evento.
 
 `csnhypodbp_hist.txt` fue **eliminado**: ya no hay archivo intermedio entre
@@ -219,7 +218,7 @@ copias en `run_working_v8/params/`).
 | `test_pick_parse` | Parseo de `TYPE_PICK_SCNL` |
 | `test_repick` | Inserción, re-pick y TTL del buffer |
 | `test_dbscan` | DBSCAN separa dos grupos + ruido |
-| `test_hypo_format` | Layout `HYP2000ARC` idéntico a `glass2ew` |
+| `test_hypo_format` | Layout del ARC `HYP2000ARC` |
 | `test_tt` | Tabla de tiempos de viaje P/S (IASP91) |
 | `test_synth_locate` | Localización sintética (CA2) y determinismo (CA6) |
 | `test_two_events` | Dos sismos simultáneos independientes (CA3) |
@@ -250,11 +249,9 @@ truncada a `int` en 64 bits genera índices inválidos y corrompe memoria
 tomaba de `earlybirdlib.h` están en `taulib_compat.h`, y `iasplib.h`/`ttlim.h`
 están vendorizados aquí.
 
-## Coexistencia con GLASS3
+## Nota histórica
 
-En `startstop_unix.d` las entradas de `ew2glass`/`glass2ew` quedaron
-comentadas y se agregó `csnloc`. Para volver al flujo GLASS3, descomentar
-aquellas y comentar la de `csnloc`. No se borró código.
+`csnloc` es el asociador + localizador local; no hay asociador externo.
 
 ## Pendiente
 

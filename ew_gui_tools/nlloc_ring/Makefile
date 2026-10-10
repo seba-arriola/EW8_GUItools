@@ -4,7 +4,7 @@
 # Enlaza el motor vendorizado en nlloc/ (libnlloc.a). Autocontenido.
 
 CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
-         -D_LINUX -D_REENTRANT
+         -I../common/include -D_LINUX -D_REENTRANT
 
 LIBS   = -lm -lpthread
 

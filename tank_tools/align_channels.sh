@@ -13,7 +13,7 @@
 #       y los tanks de formas             -> wave_serverV.d (linea Tank)
 #
 #  Si (3) no coincide con (1)/(2):
-#    - csnmags_toy descarta el 100% de las fases EN SILENCIO (exige strcmp exacto
+#    - csnmags descarta el 100% de las fases EN SILENCIO (exige strcmp exacto
 #      de sta+net+chan contra estaciones_107.txt; csnmagsutils.c:58-68), asi que
 #      nunca calcula ML/Mwp.
 #    - wave_serverV NO almacena ninguna forma (FindSCNL exige strcmp exacto de los

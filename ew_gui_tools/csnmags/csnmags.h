@@ -66,6 +66,7 @@ typedef struct {
     char ws_ip[64];
     char ws_port[16];
     int  ws_timeout;
+    char store_root[MAG_STR];   /* modo store (wstore) */
 
     /* ML */
     double wa_period, wa_damp, wa_gain;   /* Wood-Anderson */
@@ -168,7 +169,7 @@ typedef struct {
 
 /* ============================ Fuente de onda ============================ */
 
-typedef enum { WSRC_WS, WSRC_TANK } WaveSourceMode;
+typedef enum { WSRC_WS, WSRC_TANK, WSRC_STORE, WSRC_AUTO } WaveSourceMode;
 
 typedef struct {
     char   sta[8], net[8], chan[8], loc[8];
@@ -187,6 +188,7 @@ typedef struct {
     char  tank_path[MAG_STR];
     MagTankIndex *idx;             /* índice del tank (offline) */
     int   nidx;
+    void *store;                   /* WStore* (modo store) */
 } WaveSource;
 
 /* ============================ Fórmulas ============================ */
@@ -289,9 +291,12 @@ const char *mag_magtype_name(int imagtype);
 
 /* ============================ Publicación ============================ */
 
+/* Publica una magnitud. `origin_version` lleva el MODULO ORIGEN del ARC que la
+   genero (csnloc 162 / hyp2000 163 / nlloc 164), para que el consumidor pueda
+   asociarla a la solucion exacta y no solo al qid (ver mag_key.h). */
 int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
                     int imagtype, const char *szmagtype, double mag,
                     double err, double qual, double mindist, int gap,
-                    int nsta);
+                    int nsta, int origin_version);
 
 #endif /* CSNMAGS_H */

@@ -64,7 +64,7 @@
 #  SALIDA
 #  ------
 #     <outdir>/<slug>/<NNN>/session.json   manifiesto de la sesion
-#     <outdir>/<slug>/<NNN>/logs/          EW_LOG aislado (csnloc, csnmags_toy,
+#     <outdir>/<slug>/<NNN>/logs/          EW_LOG aislado (csnloc, csnmags,
 #                                          wave_serverV, tankplayer, startstop)
 #     <outdir>/<slug>/<NNN>/play.log       salida completa del replay
 #     <outdir>/<slug>/params/              copia aislada de run_working_v8/params
@@ -393,7 +393,7 @@ run_session() {  # <slug> <idx> <chunk> <start> <nmsgs> <cspan> <delay> <params>
 
     local csl cml wsv nev nmag ndisc
     csl="$(latest_log "$ldir" csnloc)"
-    cml="$(latest_log "$ldir" csnmags_toy)"
+    cml="$(latest_log "$ldir" csnmags)"
     wsv="$(latest_log "$ldir" wave_serverV)"
     nev="$(count_in "$csl" 'csnloc: evento')"
     nmag="$(count_in "$cml" 'CSNmags_Red')"
@@ -432,7 +432,7 @@ run_session() {  # <slug> <idx> <chunk> <start> <nmsgs> <cspan> <delay> <params>
         printf '  "timeout": %s,\n'         "$timeout_flag"
         printf '  "counts": { "events": %s, "magnitudes": %s, "ws_discards": %s },\n' \
                "$nev" "$nmag" "$ndisc"
-        printf '  "logs": { "csnloc": %s, "csnmags_toy": %s, "wave_serverV": %s, "play": %s }\n' \
+        printf '  "logs": { "csnloc": %s, "csnmags": %s, "wave_serverV": %s, "play": %s }\n' \
                "$(json_str "$csl")" "$(json_str "$cml")" "$(json_str "$wsv")" \
                "$(json_str "$sdir/play.log")"
         printf '}\n'

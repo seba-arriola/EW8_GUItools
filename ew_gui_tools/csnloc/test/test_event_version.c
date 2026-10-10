@@ -97,7 +97,7 @@ int main(void)
     window[nwin++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
     c = mk_cand(window, 3, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id1, &v1);
+                             1000UL, &id1, &v1, NULL);
     CHECK(r == 1 && v1 == 1, "evento nuevo emite version 1");
     CHECK(id1 == 1000UL, "id base asignado");
     CHECK(reg.n == 1, "registro con 1 evento");
@@ -105,14 +105,14 @@ int main(void)
 
     /* --- Mismo evento, misma ventana -> sin cambios, no emite --- */
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id2, &v2);
+                             1000UL, &id2, &v2, NULL);
     CHECK(r == 0, "sin picks nuevos no emite");
 
     /* --- Llega una fase nueva (4a estacion) -> version 2, mismo id --- */
     window[nwin++] = mk_pick(&st, &tt, 3, tr_lat_g, tr_lon, tr_depth, t0);
     c = mk_cand(window, 4, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id2, &v2);
+                             1000UL, &id2, &v2, NULL);
     CHECK(r == 1 && v2 == 2, "fase nueva emite version 2");
     CHECK(id2 == id1, "mismo id en la actualizacion");
     CHECK(reg.ev[0].nphases_stored == 4, "4 fases acumuladas");
@@ -127,7 +127,7 @@ int main(void)
         window[0].t_epoch += 2.0;
         c = mk_cand(window, 4, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
         r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                                 1000UL, &id2, &v2);
+                                 1000UL, &id2, &v2, NULL);
         CHECK(r == 0, "C2: re-pick que empeora no emite");
         CHECK(reg.ev[0].version == v_before, "C2: version no incrementa");
     }
@@ -144,7 +144,7 @@ int main(void)
         w2[n2++] = mk_pick(&st, &tt, 2, geoc(-30.0), -72.0, 20.0, t2);
         c2 = mk_cand(w2, 3, t2, geoc(-30.0), -72.0, 20.0, 0.5, 120.0);
         r = EventRegistry_Upsert(&reg, &c2, w2, n2, &cfg, &st, &tt, NULL,
-                                 1001UL, &id3, &v3);
+                                 1001UL, &id3, &v3, NULL);
         CHECK(r == 1 && id3 == 1001UL && v3 == 1, "evento distinto -> id nuevo");
         CHECK(reg.n == 2, "registro con 2 eventos");
     }

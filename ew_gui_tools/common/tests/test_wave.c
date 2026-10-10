@@ -114,6 +114,38 @@ int main(void)
         ewgui_trace_free(t);
     }
 
+    /* 7. set_span: oldest+rate+length de una vez. Regresion csnhypodbp: la
+       primera descarga creaba la traza con oldest=0 y el draw no dibujaba. */
+    {
+        const double req_start = 1600000000.0;
+        const long   len = 500;
+        EwGuiTrace *t = ewgui_trace_new(1000);
+        assert(t != NULL);
+        for (long i = 0; i < len; i++) ewgui_trace_raw(t)[i] = 10;
+
+        ewgui_trace_set_span(t, req_start, rate, len);
+        assert(ewgui_trace_oldest(t) == req_start);
+        assert(ewgui_trace_rate(t) == rate);
+        assert(ewgui_trace_length(t) == len);
+
+        /* clamp a la capacidad */
+        ewgui_trace_set_span(t, req_start, rate, 5000);
+        assert(ewgui_trace_length(t) == 1000);
+
+        /* finish NO resetea oldest */
+        ewgui_trace_set_span(t, req_start, rate, len);
+        ewgui_trace_finish(t);
+        assert(ewgui_trace_oldest(t) == req_start);
+
+        /* invariante del draw: (t - oldest)*rate dentro de [0, length) */
+        {
+            double win_start = req_start + 2.0;
+            long k0 = (long)((win_start - ewgui_trace_oldest(t)) * ewgui_trace_rate(t));
+            assert(k0 >= 0 && k0 < ewgui_trace_length(t));
+        }
+        ewgui_trace_free(t);
+    }
+
     printf("ALL WAVE TESTS PASSED\n");
     return 0;
 }

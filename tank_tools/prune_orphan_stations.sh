@@ -5,7 +5,7 @@
 #
 #  POR QUE EXISTE
 #  --------------
-#  csnloc localiza y csnmags_toy calcula ML/Mwp SOLO con las estaciones que
+#  csnloc localiza y csnmags calcula ML/Mwp SOLO con las estaciones que
 #  tienen metadata en estaciones_107.txt (StaFile). Un SCNL presente en
 #  pick_FP.sta o en las lineas Tank de wave_serverV.d pero AUSENTE en
 #  estaciones_107.txt queda inerte: no se localiza ni se mide, y rompe la

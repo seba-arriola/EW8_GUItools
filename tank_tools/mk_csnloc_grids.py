@@ -4,7 +4,7 @@
 Las grillas de `csnloc` (`GlobalGrid`/`RegionalGrid`/`LocalGrid`) definen la
 **nucleacion por retroproyeccion**: son el primer paso de la localizacion, antes
 del refinamiento. Hasta ahora eran ficheros hechos a mano (una transcripcion de
-la tiling de Glass3), sin generador y sin forma de comparar alternativas.
+la tiling original), sin generador y sin forma de comparar alternativas.
 
 Aqui viven las definiciones como tablas y el script las materializa. Incluye las
 dos tilings para poder contrastarlas:
@@ -203,7 +203,7 @@ def main(argv):
     open(p, "w").write(grid_text(
         g[0], g[1], g[2], g[3], g[4], g[5], depths=g[6],
         sta_max=g[10], nsta=g[11], max_nodes=g[12],
-        comment="Replica de la grilla global de Glass3 (global_grid.d): 100 km, 10 capas."))
+        comment="Grilla global original: 100 km, 10 capas."))
     files.append((g[0], g[1], g[2], g[3], g[4], g[5], len(g[6]), g[12], "global"))
 
     # regional

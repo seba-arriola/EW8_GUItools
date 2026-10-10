@@ -3,7 +3,7 @@
 
 Lee las sesiones que deja `tank_tools/run_events.sh` (carpeta `runs/`) y produce
 una tabla de los eventos localizados por `csnloc` junto con las magnitudes
-calculadas por `csnmags_toy`, mas un resumen de la corrida.
+calculadas por `csnmags`, mas un resumen de la corrida.
 
 Uso:
     python3 -m api_report_locs.report --runs runs
@@ -13,7 +13,7 @@ Uso:
 Cruce csnloc <-> csnmags: csnloc publica el HYP2000ARC con el ID en los bytes
 136-145 como `"%010lu" % (id % 2147000000)` (hypo_out.c:94-95) y loguea ese mismo
 `id` en `csnloc: evento N` (csnloc.c:212/228). csnmags lee esos 10 bytes tal cual
-(csnmags_toy.c:266). Asi que `int([ID ...])` == `N`. El contador se reinicia en
+(csnmags.c). Asi que `int([ID ...])` == `N`. El contador se reinicia en
 cada arranque (csnloc.c:300), por eso el cruce se hace SIEMPRE dentro de una
 misma sesion, nunca entre sesiones.
 
@@ -114,15 +114,15 @@ def load_session(path: str) -> Optional[Session]:
     else:
         sess.warnings.append("falta el log de csnloc")
 
-    cml = sess.logs.get("csnmags_toy") or ""
+    cml = sess.logs.get("csnmags") or ""
     if cml and os.path.isfile(cml):
         info = parse_csnmags_file(cml)
         sess.magnitudes = info["magnitudes"]
         sess.csnmags_ready = bool(info["ready"])
         if not sess.csnmags_ready:
-            sess.warnings.append("csnmags_toy no llego a 'Listo. Esperando sismos'")
+            sess.warnings.append("csnmags no llego a 'Listo. Esperando hipocentros'")
     else:
-        sess.warnings.append("falta el log de csnmags_toy")
+        sess.warnings.append("falta el log de csnmags")
 
     wsv = sess.logs.get("wave_serverV") or ""
     if wsv and os.path.isfile(wsv):
@@ -330,7 +330,7 @@ def print_table(rows: List[EventRow], sessions: List[Session],
                 catalog: Optional[Dict[str, dict]] = None,
                 tol_deg: float = 0.5, tol_s: int = 300) -> None:
     print("=" * 100)
-    print("EVENTOS LOCALIZADOS (csnloc) Y MAGNITUDES (csnmags_toy)")
+    print("EVENTOS LOCALIZADOS (csnloc) Y MAGNITUDES (csnmags)")
     print("=" * 100)
     if not rows:
         print("  (ningun evento)")
@@ -468,7 +468,7 @@ def write_json(path: str, rows: List[EventRow], sessions: List[Session], runs_di
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="python3 -m api_report_locs.report",
-        description="Reporte de localizaciones (csnloc) y magnitudes (csnmags_toy).",
+        description="Reporte de localizaciones (csnloc) y magnitudes (csnmags).",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Ejemplo:\n  python3 -m api_report_locs.report --runs runs --format all\n",
     )

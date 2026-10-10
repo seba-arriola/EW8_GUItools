@@ -86,6 +86,10 @@ void        ewgui_trace_set_rate(EwGuiTrace *t, double rate);
 double      ewgui_trace_oldest(const EwGuiTrace *t);
 void        ewgui_trace_set_oldest(EwGuiTrace *t, double t0);
 
+/* Fija oldest, rate y length en una sola operacion (mismo clamp que
+   set_length). Evita el caso "oldest=0" cuando la traza se crea perezosa. */
+void        ewgui_trace_set_span(EwGuiTrace *t, double oldest, double rate, long len);
+
 int32_t    *ewgui_trace_raw(EwGuiTrace *t);
 int32_t    *ewgui_trace_filtered(EwGuiTrace *t);
 

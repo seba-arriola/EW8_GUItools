@@ -125,7 +125,6 @@
  Module   MOD_GETDST            55
  Module   MOD_GETDST2           56
  Module   MOD_GETTERW           57
- Module   MOD_GLASS_EW          58
  Module   MOD_GLOBALPROC        59
  Module   MOD_GMEW              60
  Module   MOD_GRF2EW            61
@@ -219,8 +218,6 @@
  Module   MOD_CARLSUBTRIGNM     150
  Module   MOD_PICK_FP           151
  Module   MOD_EW2OPENAPI  		153
- Module   MOD_EW2GLASS  		154
- Module   MOD_GLASS2EW  		155 
  Module   MOD_CSNMAGS           156
  Module   MOD_CSNTVP            157
  Module   MOD_CSNHYPODBP        158
@@ -232,6 +229,8 @@
  Module   MOD_NLLOC_RING        164
  Module   MOD_PICKS             165
  Module   MOD_MAGNITUDES        166
+ Module   MOD_MAGNITUDES_RAW    167
+ Module   MOD_CSNMAGS_RAW       168
 #--------------------------------------------------------------------------
 #                          Message Types
 #

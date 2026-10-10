@@ -67,7 +67,7 @@ la localización, antes del refinamiento. `legacy_chile.grid` existe pero **no e
 (config de regresión). El barrido de `csnloc` sólo había movido `RefineNodeKm`/`RefineDepthKm`, que
 son la grilla de *refinamiento*: la de nucleación **nunca se había tocado**.
 
-Hasta ahora eran ficheros hechos a mano, una transcripción de la tiling de Glass3 (60×45 nodos a
+Hasta ahora eran ficheros hechos a mano, una transcripción de la tiling original (60×45 nodos a
 10 km), sin generador ni forma de comparar alternativas. Ahora hay **`tank_tools/mk_csnloc_grids.py`**:
 
 - materializa los `.grid` desde una tabla declarativa (`current`, `reg31`, `A`);

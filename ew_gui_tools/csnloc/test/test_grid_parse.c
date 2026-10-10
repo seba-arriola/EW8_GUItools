@@ -41,7 +41,7 @@ int main(void)
     CHECK(g.n_depth_layers == 7 && g.nz == 7, "CA1: 7 capas de profundidad");
     CHECK(g.depth[0] == 5.0 && g.depth[6] == 300.0, "CA1: profundidades extremas");
     CHECK(g.level == GRID_LEVEL_LOCAL, "CA1: nivel local");
-    CHECK(g.nx >= 44 && g.nx <= 46, "CA1: ~45 columnas (Glass3 60x45)");
+    CHECK(g.nx >= 44 && g.nx <= 46, "CA1: ~45 columnas (grilla 60x45)");
     CHECK(g.ny >= 59 && g.ny <= 61, "CA1: ~60 filas");
     CHECK(strcmp(g.name, "Tarapaca") == 0, "CA1: nombre");
     Grid_Free(&g);

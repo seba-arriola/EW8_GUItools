@@ -4,12 +4,15 @@
 
 #include <ws_clientII.h>
 #include <socket_ew.h>
+#include <wstore.h>
 
 /*
  * wave_source.c - Abstracción de la fuente de onda.
  *
- *   WSRC_WS   : wave_serverV por TCP (modo anillo), patrón de csnmags_toy.
- *   WSRC_TANK : lectura directa del tank (modo offline), patrón de pickS.
+ *   WSRC_WS    : wave_serverV por TCP (modo anillo).
+ *   WSRC_TANK  : lectura directa del tank (modo offline), patrón de pickS.
+ *   WSRC_STORE : store indexado (wstore).
+ *   WSRC_AUTO  : intenta el store y, si no hay datos, cae a wave_serverV.
  *
  * En offline se construye un índice (SCNL + offset) recorriendo el tank una sola
  * vez; wave_get lee sólo los paquetes del SCNL pedido, sin volver a barrer todo.
@@ -202,6 +205,29 @@ static int ws_get(WaveSource *w, const char *sta, const char *net, const char *c
     return (out->n > 0) ? 0 : -1;
 }
 
+/* ------------------------------ store ------------------------------ */
+
+static int store_get(WaveSource *w, const char *sta, const char *net, const char *chan,
+                     const char *loc, double t0, double t1, MagTrace *out)
+{
+    WStoreTrace st;
+
+    out->x = NULL; out->n = 0; out->t0 = 0; out->dt = 0; out->samprate = 0;
+    if (!w->store) return -1;
+    memset(&st, 0, sizeof(st));
+    if (wstore_get((WStore *)w->store, sta, net, chan, loc, t0, t1, &st) != 0) return -1;
+
+    out->x = (double *)malloc((size_t)st.n * sizeof(double));
+    if (!out->x) { wstore_trace_free(&st); return -1; }
+    for (long i = 0; i < st.n; i++) out->x[i] = (double)st.samples[i];
+    out->n = st.n;
+    out->t0 = st.t0;
+    out->samprate = st.samprate;
+    out->dt = 1.0 / st.samprate;
+    wstore_trace_free(&st);
+    return 0;
+}
+
 /* ------------------------------ API ------------------------------ */
 
 int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
@@ -210,6 +236,15 @@ int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
     w->ws_timeout = cfg->ws_timeout;
     scnl_copy(w->ws_ip, sizeof(w->ws_ip), cfg->ws_ip);
     scnl_copy(w->ws_port, sizeof(w->ws_port), cfg->ws_port);
+
+    if (!tank_or_null && cfg->store_root[0]) {
+        /* AUTO: store primero, wave_serverV como red de seguridad. */
+        w->mode = WSRC_AUTO;
+        if (wstore_open((WStore **)&w->store, cfg->store_root, NULL) != 0) return -1;
+        w->ws_menu = calloc(1, sizeof(WS_MENU_QUEUE_REC));
+        if (!w->ws_menu) { wstore_close((WStore *)w->store); w->store = NULL; return -1; }
+        return 0;
+    }
 
     if (tank_or_null) {
         w->mode = WSRC_TANK;
@@ -230,6 +265,9 @@ void wave_close(WaveSource *w)
     if (!w) return;
     if (w->mode == WSRC_TANK) {
         if (w->tank) fclose(w->tank);
+    } else if (w->mode == WSRC_STORE || w->mode == WSRC_AUTO) {
+        if (w->store) wstore_close((WStore *)w->store);
+        if (w->ws_menu) wsKillMenu((WS_MENU_QUEUE_REC *)w->ws_menu);
     } else if (w->ws_menu) {
         wsKillMenu((WS_MENU_QUEUE_REC *)w->ws_menu);
     }
@@ -242,6 +280,11 @@ int wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,
              const char *loc, double t0, double t1, MagTrace *out)
 {
     if (!w) return -1;
+    if (w->mode == WSRC_STORE) return store_get(w, sta, net, chan, loc, t0, t1, out);
     if (w->mode == WSRC_TANK) return tank_get(w, sta, net, chan, loc, t0, t1, out);
+    if (w->mode == WSRC_AUTO) {
+        if (store_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
+        return ws_get(w, sta, net, chan, loc, t0, t1, out);
+    }
     return ws_get(w, sta, net, chan, loc, t0, t1, out);
 }

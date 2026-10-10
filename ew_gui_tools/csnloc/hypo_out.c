@@ -1,13 +1,14 @@
 /******************************************************************************
  * hypo_out.c                                                                 *
  *                                                                            *
- * Construye el mensaje TYPE_HYP2000ARC con el MISMO layout que glass2ew.c     *
+ * Construye el mensaje TYPE_HYP2000ARC con el layout del ARC HYP2000ARC     *
  * (linea 1 de 162 chars + "$1" + lineas de fase de 114 chars + linea vacia),  *
- * para que csnhypodbp, csnrv y csnmags_toy lo consuman sin cambios.           *
+ * para que csnhypodbp, csnrv y csnmags lo consuman sin cambios.           *
  *                                                                            *
- * Referencia de layout: ew_gui_tools/glass2ew/glass2ew.c:242-370.             *
+ * Layout fijado en common/include/ewgui/arc_layout.h.             *
  ******************************************************************************/
 #include "csnloc.h"
+#include <ewgui/arc_layout.h>
 
 #ifndef RAD
 #define RAD 0.017453292519943
@@ -45,7 +46,7 @@ static double norm_lon(double lon)
 int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
                      const Pick *picks, const CSLocParams *cfg,
                      unsigned long event_id, unsigned int version,
-                     char *buf, int buflen)
+                     int manual, char *buf, int buflen)
 {
     char    line[256];
     char    temp[64];
@@ -123,6 +124,10 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
     line[161] = (char)('0' + (version % 10));
     /* eventVersion[19] en offset 178: version completa. */
     memcpy(line + 178, temp_ver, 4);
+
+    /* Marca de solucion manual en el byte 174 (eventID[4], libre). */
+    line[EWGUI_ARC_MANUAL_OFF] = manual ? EWGUI_ARC_MANUAL_CHAR
+                                        : EWGUI_ARC_AUTO_CHAR;
 
     if ((int)strlen(buf) + ARC_LINE1 + 2 >= buflen) return -1;
     strcat(buf, line);

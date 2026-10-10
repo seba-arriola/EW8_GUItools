@@ -286,7 +286,7 @@ void on_canvas_button_press(GtkGestureClick *gesture, int n_press, double x, dou
        for the same station within +/-g_pick_replace_secs, it is marked as
        replaced locally. NOTE: the TYPE_PICK_SCNL protocol has no retract
        message, so the old pick is only deactivated in the local overlay; the
-       associator (ew2glass/GLASS3) will see the corrected pick as a new one. */
+       associator (csnloc) will see the corrected pick as a new one. */
     if (g_pick_replace_secs > 0.0) {
         for (int pi = 0; pi < MAX_PICKS_PER_STA; pi++) {
             if (dev->picks[pi].iUseMe > 0 &&

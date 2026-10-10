@@ -28,6 +28,7 @@
 #include "kom.h"
 #include "earthworm.h"
 #include "transport.h"
+#include <ewgui/arc_layout.h>
 
 #ifndef INST_WILDCARD
 #define INST_WILDCARD 0
@@ -230,12 +231,14 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
     const char *p = arc, *end = arc + len;
     char qid[11], v178[5] = "0000";
     char v161 = '0';
+    char manual = EWGUI_ARC_AUTO_CHAR;
 
     if (in_len >= 146) memcpy(qid, arc_in + 136, 10);
     else               memset(qid, ' ', 10);
     qid[10] = '\0';
     if (in_len >= 162) v161 = arc_in[161];
     if (in_len >= 182) { memcpy(v178, arc_in + 178, 4); v178[4] = '\0'; }
+    if (in_len >= EWGUI_ARC_MANUAL_OFF + 1) manual = arc_in[EWGUI_ARC_MANUAL_OFF];
 
     while (p < end && tlen < MAX_ARC - 260) {
         const char *nl = memchr(p, '\n', (size_t)(end - p));
@@ -257,6 +260,7 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
             memcpy(tmp + tlen + 136, qid, 10);
             tmp[tlen + 161] = v161;
             memcpy(tmp + tlen + 178, v178, 4);
+            tmp[tlen + EWGUI_ARC_MANUAL_OFF] = manual;
             first = 0;
         } else if (l >= 34) {
             /* El estandar Y2K de la linea de fase pone el tiempo en centesimas

@@ -122,13 +122,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
-    EwMenuItem ctrl_items[] = {
+    static const EwMenuItem ctrl_items[] = {
         { "Stations per screen", "win.stas-per-screen", NULL, 0 },
         { "Time window", "win.time-window", NULL, 0 },
         { "Clean view", "win.clean-view", NULL, 0 },
         { "Reload default stations", "win.reload-default", NULL, 0 },
     };
-    EwMenuItem colour_items[] = {
+    static const EwMenuItem colour_items[] = {
         { "Waveforms", "win.colour", "i", 1 },
         { "Background", "win.colour", "i", 2 },
         { "Font", "win.colour", "i", 3 },
@@ -136,25 +136,21 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         { "P picks", "win.colour", "i", 5 },
         { "S picks", "win.colour", "i", 6 },
     };
-    EwMenuItem filter_items[] = {
+    static const EwMenuItem filter_items[] = {
         { "Filter Options", "win.filter-options", NULL, 0 },
     };
-    EwMenuItem view_items[] = {
+    static const EwMenuItem view_items[] = {
         { "Export view...", "win.export", NULL, 0 },
         { "Dark mode", "win.dark-mode", NULL, 0 },
     };
-    EwMenuGroup menu_groups[] = {
+    static const EwMenuGroup menu_groups[] = {
         { "Control Panel", ctrl_items, 4 },
         { "Colours", colour_items, 6 },
         { "Filter", filter_items, 1 },
         { "View", view_items, 2 },
     };
-    GMenuModel *menu_model = ewgui_menu_build(menu_groups, 4);
 
-    GtkWidget *menu_btn = gtk_menu_button_new();
-    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
-    g_object_unref(menu_model);
+    GtkWidget *menu_btn = ewgui_menu_button_new(menu_groups, 4);
 
     GtkWidget *header = adw_header_bar_new();
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);

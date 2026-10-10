@@ -7,6 +7,7 @@
 #include "ewgui/dsp.h"
 #include "ewgui/wave.h"
 #include "ewgui/actions.h"
+#include "ewgui/menu_ui.h"
 #include "ewgui/view.h"
 #include "ewgui/export.h"
 #include <math.h>

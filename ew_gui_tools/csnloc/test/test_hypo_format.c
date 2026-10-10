@@ -1,5 +1,5 @@
 /*
- * Test de FormatHYP2000ARC: verifica el layout exacto que espera glass2ew
+ * Test de FormatHYP2000ARC: verifica el layout exacto del ARC HYP2000ARC
  * (linea 1 de 162 chars + "$1" + lineas de fase de 114 chars + linea final).
  */
 #include <stdio.h>
@@ -61,7 +61,7 @@ int main(void)
     h.residual[0] = 0.5; h.residual[1] = -0.5;
     h.rms_sec = 0.5; h.gap_deg = 120.0; h.dmin_km = 50.0;
 
-    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, buf, sizeof(buf)) == 0,
+    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, 0, buf, sizeof(buf)) == 0,
           "formatea sin error");
 
     nl1 = strchr(buf, '\n');
@@ -76,6 +76,13 @@ int main(void)
     CHECK(strncmp(buf + 136, "0000000042", 10) == 0, "event id en offset 136");
     CHECK(buf[161] == '3', "version[1] en offset 161");
     CHECK(strncmp(buf + 178, "0003", 4) == 0, "eventVersion en offset 178");
+    CHECK(buf[174] == 'A', "marca automatica 'A' en offset 174");
+
+    /* Solucion manual: el byte 174 debe pasar a 'M'. */
+    buf[0] = '\0';
+    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, 1, buf, sizeof(buf)) == 0,
+          "formatea manual sin error");
+    CHECK(buf[174] == 'M', "marca manual 'M' en offset 174");
 
     nl2 = nl1 ? strchr(nl1 + 1, '\n') : NULL;
     CHECK(nl2 != NULL && (nl2 - (nl1 + 1)) == 197, "linea $1 mide 197 chars");

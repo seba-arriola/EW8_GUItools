@@ -47,10 +47,14 @@ PARAMS = ../../run_working_v8/params
 test-data: test/test_data
 	./test/test_data $(PARAMS)/estaciones_107.txt $(PARAMS)/csnhypodbp_hist.txt
 
+# Verifica el parseo de config/overlays en modo headless (sin DISPLAY).
+test-config: $(MODULE)
+	BIN=./$(MODULE) bash ./test_config.sh
+
 test/test_data: test/test_data.c $(MODULE).c
 	$(CC) $(CFLAGS) -Dmain=csnstaevdisp_unused_main -c $(MODULE).c \
 	      -o test/csnstaevdisp_nomain.o
 	$(CC) $(CFLAGS) -o $@ test/test_data.c test/csnstaevdisp_nomain.o \
 	      ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
 
-.PHONY: all clean test-data
+.PHONY: all clean test-data test-config

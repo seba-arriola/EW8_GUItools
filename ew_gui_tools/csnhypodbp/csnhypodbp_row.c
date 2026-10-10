@@ -5,6 +5,8 @@
 struct _CsnhypodbpRow {
     GObject parent_instance;
     char  *cols[15];
+    char  *estado;   /* "A" | "M" (marca de solucion manual)  */
+    char  *nsol;     /* nº de soluciones del evento (maestro)  */
     double otime, lat, lon, depth;
     int    qver, qid, mod;
 };
@@ -14,7 +16,8 @@ G_DEFINE_TYPE(CsnhypodbpRow, csnhypodbp_row, G_TYPE_OBJECT)
 enum {
     PROP_0, PROP_C0, PROP_C1, PROP_C2, PROP_C3, PROP_C4, PROP_C5, PROP_C6,
     PROP_C7, PROP_C8, PROP_C9, PROP_C10, PROP_C11, PROP_C12, PROP_C13, PROP_C14,
-    PROP_OTIME, PROP_QVER, PROP_QID, PROP_LAT, PROP_LON, PROP_DEPTH, PROP_MOD, N_PROPS
+    PROP_OTIME, PROP_QVER, PROP_QID, PROP_LAT, PROP_LON, PROP_DEPTH, PROP_MOD,
+    PROP_ESTADO, PROP_NSOL, N_PROPS
 };
 static GParamSpec *props[N_PROPS];
 
@@ -22,6 +25,8 @@ static void csnhypodbp_row_finalize(GObject *o)
 {
     CsnhypodbpRow *r = CSNHYPODBP_ROW(o);
     for (int i = 0; i < 15; i++) g_free(r->cols[i]);
+    g_free(r->estado);
+    g_free(r->nsol);
     G_OBJECT_CLASS(csnhypodbp_row_parent_class)->finalize(o);
 }
 
@@ -40,7 +45,9 @@ static void csnhypodbp_row_set_property(GObject *o, guint id, const GValue *v, G
         case PROP_LAT:   r->lat   = g_value_get_double(v); break;
         case PROP_LON:   r->lon   = g_value_get_double(v); break;
         case PROP_DEPTH: r->depth = g_value_get_double(v); break;
-        case PROP_MOD:   r->mod   = g_value_get_int(v);    break;
+        case PROP_MOD:    r->mod   = g_value_get_int(v);    break;
+        case PROP_ESTADO: g_free(r->estado); r->estado = g_value_dup_string(v); break;
+        case PROP_NSOL:   g_free(r->nsol);   r->nsol   = g_value_dup_string(v); break;
     }
 }
 
@@ -57,7 +64,9 @@ static void csnhypodbp_row_get_property(GObject *o, guint id, GValue *v, GParamS
         case PROP_LAT:   g_value_set_double(v, r->lat);   break;
         case PROP_LON:   g_value_set_double(v, r->lon);   break;
         case PROP_DEPTH: g_value_set_double(v, r->depth); break;
-        case PROP_MOD:   g_value_set_int(v, r->mod);      break;
+        case PROP_MOD:    g_value_set_int(v, r->mod);      break;
+        case PROP_ESTADO: g_value_set_string(v, r->estado ? r->estado : "A"); break;
+        case PROP_NSOL:   g_value_set_string(v, r->nsol ? r->nsol : ""); break;
     }
 }
 
@@ -79,12 +88,16 @@ static void csnhypodbp_row_class_init(CsnhypodbpRowClass *k)
     props[PROP_LON]   = g_param_spec_double("lon", "lon", NULL, -G_MAXDOUBLE, G_MAXDOUBLE, 0, G_PARAM_READWRITE);
     props[PROP_DEPTH] = g_param_spec_double("depth", "depth", NULL, -G_MAXDOUBLE, G_MAXDOUBLE, 0, G_PARAM_READWRITE);
     props[PROP_MOD]   = g_param_spec_int("mod", "mod", NULL, G_MININT, G_MAXINT, 0, G_PARAM_READWRITE);
+    props[PROP_ESTADO] = g_param_spec_string("estado", "estado", NULL, "A", G_PARAM_READWRITE);
+    props[PROP_NSOL]   = g_param_spec_string("nsol", "nsol", NULL, "", G_PARAM_READWRITE);
     g_object_class_install_properties(o, N_PROPS, props);
 }
 
 static void csnhypodbp_row_init(CsnhypodbpRow *r)
 {
     for (int i = 0; i < 15; i++) r->cols[i] = NULL;
+    r->estado = NULL;
+    r->nsol = NULL;
 }
 
 CsnhypodbpRow *csnhypodbp_row_new(const char *c0, const char *c1, const char *c2,

@@ -9,8 +9,9 @@
  * Formato de texto plano, una linea por evento:                              *
  *   E <id> <version> <t0> <lat> <lon> <depth> <nphases> <rms> <gap> <dmin>   *
  *     <score> <grid_level> <last_update> <emitted> <nstored> <npruned>       *
- *   P <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <residual>         *
- *   X <sta> <net> <chan> <loc> <phase> <t_epoch> <weight>                    *
+ *   P <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <residual> <man>   *
+ *   X <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <man>              *
+ *   (<man> = 0 automatica / 1 manual; opcional al leer por compatibilidad).   *
  *                                                                            *
  * Escritura atomica: se escribe a <path>.tmp y se renombra.                  *
  ******************************************************************************/
@@ -40,15 +41,15 @@ int State_Save(const char *path, const EventRegistry *r)
 
         for (j = 0; j < e->nphases_stored; j++) {
             const Pick *p = &e->phases[j];
-            fprintf(fp, "P %s %s %s %s %d %.3f %d %.3f\n",
+            fprintf(fp, "P %s %s %s %s %d %.3f %d %.3f %d\n",
                     p->sta, p->net, p->chan, p->loc, p->phase,
-                    p->t_epoch, p->weight, e->residual[j]);
+                    p->t_epoch, p->weight, e->residual[j], p->manual ? 1 : 0);
         }
         for (j = 0; j < e->npruned; j++) {
             const Pick *p = &e->pruned[j];
-            fprintf(fp, "X %s %s %s %s %d %.3f %d\n",
+            fprintf(fp, "X %s %s %s %s %d %.3f %d %d\n",
                     p->sta, p->net, p->chan, p->loc, p->phase,
-                    p->t_epoch, p->weight);
+                    p->t_epoch, p->weight, p->manual ? 1 : 0);
         }
     }
 
@@ -101,11 +102,17 @@ int State_Load(const char *path, EventRegistry *r)
             if (e->nphases_stored >= CSLOC_MAX_PHASES) continue;
             p = &e->phases[e->nphases_stored];
             memset(p, 0, sizeof(*p));
-            if (sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d %lf",
-                       p->sta, p->net, p->chan, p->loc, &p->phase,
-                       &p->t_epoch, &p->weight, &resid) == 8) {
-                e->residual[e->nphases_stored] = resid;
-                e->nphases_stored++;
+            resid = 0.0;
+            {
+                int manual = 0;
+                if (sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d %lf %d",
+                           p->sta, p->net, p->chan, p->loc, &p->phase,
+                           &p->t_epoch, &p->weight, &resid, &manual) >= 8) {
+                    p->manual = manual ? 1 : 0;
+                    if (p->manual) e->has_manual = 1;
+                    e->residual[e->nphases_stored] = resid;
+                    e->nphases_stored++;
+                }
             }
         } else if (c == 'X') {
             EventRecord *e;
@@ -115,10 +122,16 @@ int State_Load(const char *path, EventRegistry *r)
             if (e->npruned >= CSLOC_MAX_PHASES) continue;
             p = &e->pruned[e->npruned];
             memset(p, 0, sizeof(*p));
-            if (sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d",
-                       p->sta, p->net, p->chan, p->loc, &p->phase,
-                       &p->t_epoch, &p->weight) == 7)
-                e->npruned++;
+            {
+                int manual = 0;
+                if (sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d %d",
+                           p->sta, p->net, p->chan, p->loc, &p->phase,
+                           &p->t_epoch, &p->weight, &manual) >= 7) {
+                    p->manual = manual ? 1 : 0;
+                    if (p->manual) e->has_manual = 1;
+                    e->npruned++;
+                }
+            }
         }
     }
 

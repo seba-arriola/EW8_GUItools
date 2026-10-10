@@ -1,6 +1,6 @@
 # api_report_locs
 
-Reporte de **localizaciones** (`csnloc`) y **magnitudes** (`csnmags_toy`) a partir
+Reporte de **localizaciones** (`csnloc`) y **magnitudes** (`csnmags`) a partir
 de los logs que deja `tank_tools/run_events.sh` en la carpeta `runs/`.
 
 Solo usa la **biblioteca estándar** de Python 3 (no requiere `numpy`, `pandas`
@@ -52,15 +52,15 @@ los que apunta:
 | log | qué se extrae |
 |---|---|
 | `logs/csnloc_YYYYMMDD.log` | eventos (`csnloc: evento N lat=… lon=…`), resumen de salida, y la hora origen real del volcado `HYP2000ARC` |
-| `logs/csnmags_toy_YYYYMMDD.log` | magnitudes de red (`CSNmags_Red: [ID …] ML=… \| MWp=… -> PREF: …`) |
+| `logs/csnmags_YYYYMMDD.log` | magnitudes de red (`CSNmags_Red: [ID …] ML=… \| MWp=… -> PREF: …`) |
 | `logs/wave_serverV_YYYYMMDD.log` | descartes por validez (`fails validity check, discarding`) |
 
 ## Cómo se cruzan localización y magnitud
 
 `csnloc` escribe el ID del evento en los bytes 136-145 del HYP2000ARC como
 `"%010lu" % (id % 2147000000)` (`hypo_out.c:94-95`) y loguea **ese mismo** `id` en
-`csnloc: evento N` (`csnloc.c:212/228`). `csnmags_toy` lee esos 10 bytes tal cual
-(`csnmags_toy.c:266`). Por tanto `int([ID …]) == N` y el cruce es por igualdad
+`csnloc: evento N` (`csnloc.c:212/228`). `csnmags` lee esos 10 bytes tal cual
+(`csnmags.c:266`). Por tanto `int([ID …]) == N` y el cruce es por igualdad
 numérica.
 
 **Importante:** el contador se reinicia en cada arranque de `csnloc`

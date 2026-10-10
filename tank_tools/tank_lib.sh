@@ -158,7 +158,7 @@ tank_cut() {
 #      estaciones_107.txt (col 3), pick_FP.sta (col 4) y wave_serverV.d (Tank)
 #  - redirige los .tnk y TankStructFile a <tanks_dir> y los encoge a 1 MB / 20
 #    entradas (evita preasignar ~1,4 GB por copia)
-#  - activa Debug 1 en csnmags_toy.d (traza de ARC y de estacion resuelta)
+#  - activa Debug 1 en csnmags.d (traza de magnitud de red)
 #  - comenta las GUIs en startstop_replay.d (cadena headless: sin ventanas y sin
 #    que csnhypodbp escriba csnhypodbp_hist.txt)
 #  OJO: hay que comentar el par Process + Class/Priority. El parser de startstop
@@ -209,11 +209,11 @@ make_params_copy() {
         { print }
     ' "$dst/wave_serverV.d" > "$dst/.wsv.tmp" && mv "$dst/.wsv.tmp" "$dst/wave_serverV.d"
 
-    # csnmags_toy.d: Debug 1 (traza de ARC recibido y de estacion resuelta)
-    if grep -qE '^[[:space:]]*Debug[[:space:]]' "$dst/csnmags_toy.d"; then
-        sed -i -E 's/^([[:space:]]*Debug[[:space:]]+)[0-9]+/\11/' "$dst/csnmags_toy.d"
+    # csnmags.d: Debug 1 (traza de magnitud de red)
+    if grep -qE '^[[:space:]]*Debug[[:space:]]' "$dst/csnmags.d"; then
+        sed -i -E 's/^([[:space:]]*Debug[[:space:]]+)[0-9]+/\11/' "$dst/csnmags.d"
     else
-        printf 'Debug           1\n' >> "$dst/csnmags_toy.d"
+        printf 'Debug           1\n' >> "$dst/csnmags.d"
     fi
 
     # startstop_replay.d: cadena headless (sin GUIs, sin ventanas)

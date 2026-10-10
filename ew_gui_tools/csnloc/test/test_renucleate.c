@@ -122,7 +122,7 @@ int main(void)
         cc.score = 1.0; cc.grid_level = GRID_LEVEL_LOCAL;
         for (i = 0; i < 3; i++) { cc.phase_idx[i] = i; cc.residual[i] = 0.1; }
         r = EventRegistry_Upsert(&reg, &cc, window, nwin, &cfg, &st, &tt,
-                                 &grids, 1000UL, &id1, &v1);
+                                 &grids, 1000UL, &id1, &v1, NULL);
     }
     CHECK(r == 1 && v1 == 1, "evento inicial creado");
 
@@ -138,7 +138,7 @@ int main(void)
         cc.score = 1.0; cc.grid_level = GRID_LEVEL_LOCAL;
         for (i = 0; i < 6; i++) { cc.phase_idx[i] = i; cc.residual[i] = 0.1; }
         r = EventRegistry_Upsert(&reg, &cc, window, nwin, &cfg, &st, &tt,
-                                 &grids, 1000UL, &id2, &v2);
+                                 &grids, 1000UL, &id2, &v2, NULL);
     }
     CHECK(r == 1 && v2 == 2, "re-nucleo emite version 2");
     CHECK(id2 == id1, "mismo id tras re-nucleo");

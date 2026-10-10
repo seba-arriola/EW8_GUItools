@@ -16,6 +16,7 @@ Debug             0
 WsIP              127.0.0.1
 WsPort            16022
 WsTimeout         10000
+StoreRoot         ../wstore
 
 # --- Respuesta instrumental ---
 StaFile           estaciones_107.txt

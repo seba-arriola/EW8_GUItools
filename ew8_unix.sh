@@ -29,31 +29,12 @@ fi
 # 2. Agregar la carpeta bin al PATH
 export PATH="${DIR}/${EW_VERSION}/bin:$PATH"
 
-# 2b. LEGACY: integracion GLASS3 (asociador sismico externo).
-#     El camino activo es csnloc; estas variables solo las usan los scripts
-#     legacy kafka_monitor.sh / glass_monitor.sh (ver AGENTS.md seccion 8).
-export GLASS_HOME="${DIR}/glass3"
-export GLASS_RUN_DIR="${DIR}/glass3/run_glass"
-export GLASS_BROKER_APP="${DIR}/glass3/neic-glass3/dist/glass-broker-app/glass-broker-app"
-export GLASS_LOG="${DIR}/glass3/run_glass/logs"
-
-# 2c. LEGACY: Apache Kafka (KRaft local, datos dentro del proyecto).
-export KAFKA_HOME="/opt/kafka"
-export KAFKA_CONFIG="${DIR}/kafka/config/server.properties"
-export KAFKA_DATA_DIR="${DIR}/kafka-data"
-export KAFKA_LOG_DIR="${DIR}/kafka-logs"
-export KAFKA_BOOTSTRAP="localhost:9092"
-export KAFKA_INPUT_TOPIC="glass3_input_topic"
-export KAFKA_OUTPUT_TOPIC="glass_locations"
-
 echo "Entorno configurado:"
 echo " - HOME: $EW_HOME"
 echo " - Version: $EW_VERSION"
 echo " - Parametros: $EW_PARAMS"
 echo " - Logs: $EW_LOG"
 echo " - Binarios: ${DIR}/${EW_VERSION}/bin"
-echo " - GLASS3 (legacy): $GLASS_HOME"
-echo " - Kafka  (legacy): $KAFKA_BOOTSTRAP (datos en $KAFKA_DATA_DIR)"
 echo ""
 
 # 3. Dar permisos de ejecucion 

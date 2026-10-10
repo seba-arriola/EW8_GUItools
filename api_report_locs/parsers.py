@@ -9,9 +9,9 @@ csnloc (`ew_gui_tools/csnloc/csnloc.c`):
   * `:261`  `csnloc: iniciando (in=%s out=%s threads=%d)`
   * `:273`  `csnloc: %d estaciones cargadas de %s`
 
-csnmags_toy (`ew_gui_tools/csnmags/csnmags_toy.c`):
-  * `:214`  `CSNmags_Red: [ID %s] ML=%.2f (%d est) | MWp=%.2f (%d est) -> PREF: %s %.2f`
-  * `:106`  `csnmags_toy: Listo. Esperando sismos en el anillo...`
+csnmags (`ew_gui_tools/csnmags/csnmags.c`):
+  * `:542`  `CSNmags_Red: [ID %s] ML=%.2f (%d) | Mb=%.2f (%d) | Ms=%.2f (%d) | MWp=%.2f (%d) -> PREF: %s %.2f`
+  * `:526`  `csnmags: Listo. Esperando hipocentros en <anillo>`
 
 wave_serverV (`earthworm_8.0/src/archiving/wave_serverV/wave_serverV.c`):
   * `:1170` `WARNING: Tracebuf fails validity check, discarding: <SCNL>`

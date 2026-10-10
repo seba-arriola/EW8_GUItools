@@ -2,13 +2,13 @@
  * csnloc.h                                                                   *
  *                                                                            *
  * csnloc: asociador de fases + localizacion hipocentral rapida para          *
- * EarthWorm. Reemplaza localmente el camino ew2glass -> GLASS3 -> glass2ew.  *
+ * EarthWorm. Asociador + localizador local (sin asociador externo).  *
  *                                                                            *
  * Estrategia: back-projection 4D (lat, lon, depth, t0) sobre una grilla +    *
  * DBSCAN sobre las fases para separar eventos simultaneos + refinamiento     *
  * en grilla fina. Threading sobre los nodos de la grilla.                    *
  *                                                                            *
- * Salida: TYPE_HYP2000ARC en HYPO_RING (mismo layout que glass2ew).          *
+ * Salida: TYPE_HYP2000ARC en HYPO_RING (layout del ARC HYP2000ARC).          *
  ******************************************************************************/
 #ifndef CSNLOC_H
 #define CSNLOC_H
@@ -125,6 +125,7 @@ typedef struct {
     double t_epoch;        /* tiempo de arribo (epoch, s)       */
     int    weight;         /* 0..4                              */
     int    used;           /* asignado a un evento (0/1)        */
+    int    manual;         /* 1 si el 12.º token fue M/m        */
 } Pick;
 
 typedef struct {
@@ -182,6 +183,7 @@ typedef struct {
     int    grid_level;
     double last_update_epoch;      /* para TTL                             */
     int    emitted;                /* 1 si ya se emitio alguna version     */
+    int    has_manual;             /* 1 si alguna fase es manual           */
 
     Pick   phases[CSLOC_MAX_PHASES];    /* copia autocontenida de las fases */
     double residual[CSLOC_MAX_PHASES];  /* residual vs solucion vigente     */
@@ -380,7 +382,7 @@ int  EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                           const StationList *st, TTModel *tt,
                           const GridSet *grids,
                           unsigned long id_base, unsigned long *id_out,
-                          unsigned int *ver_out);
+                          unsigned int *ver_out, int *manual_out);
 
 /* state.c */
 int  State_Save(const char *path, const EventRegistry *r);
@@ -390,7 +392,7 @@ int  State_Load(const char *path, EventRegistry *r);
 int  FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
                       const Pick *picks, const CSLocParams *cfg,
                       unsigned long event_id, unsigned int version,
-                      char *buf, int buflen);
+                      int manual, char *buf, int buflen);
 
 /* Fases auxiliares compartidas */
 const char *Phase_Name(int phase);

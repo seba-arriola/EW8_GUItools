@@ -207,7 +207,7 @@ localice, y guarda todo en `runs/<slug>/<NNN>/`.
 | `--sendlate 30` | Re-estampa el dato histórico a "ahora"; sin esto `csnloc` descarta los picks por viejos y **nunca localiza** |
 
 **Dónde quedan los resultados:**
-`runs/<slug>/<NNN>/session.json` · `runs/<slug>/<NNN>/logs/` (csnloc, csnmags_toy,
+`runs/<slug>/<NNN>/session.json` · `runs/<slug>/<NNN>/logs/` (csnloc, csnmags,
 wave_serverV…) · `runs/<slug>/<NNN>/play.log`
 
 **Códigos de salida:** `0` ok · `1` error de uso · `2` alguna sesión falló · `3` faltan binarios.
@@ -246,7 +246,7 @@ restando el `offsetTime` del replay). Marca duplicados.
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
 | `csnloc` no localiza **nada** | Sesiones demasiado cortas para la ventana de asociación | Repite con `--assoc-window 40` (cribado rápido) |
-| **No hay magnitudes** (ML/Mwp) | Canal **HHZ/BHZ** incoherente: `csnmags_toy` descarta fases **en silencio** | `./tank_tools/align_channels.sh --dry-run` → `--apply` → **reiniciar EarthWorm** |
+| **No hay magnitudes** (ML/Mwp) | Canal **HHZ/BHZ** incoherente: `csnmags` descarta fases **en silencio** | `./tank_tools/align_channels.sh --dry-run` → `--apply` → **reiniciar EarthWorm** |
 | `wave_serverV` avisa de `.tnk` **huérfanos** al arrancar | Quedaron tanks del canal viejo | `./tank_tools/align_channels.sh --prune-orphans run_working_v8/tanks/_orphan_bhz --apply` |
 | Log dice `fails validity check, discarding` | Paquete a >900 s en el futuro (modo `fast` con corte largo) | Baja `--chunk-span` (por defecto ya es seguro) |
 | Quiero **depurar un solo tank** a mano | Necesitas ver la reproducción en vivo | `./tank_tools/tank_replay.sh play <tank> --dry-run` (genera el `.d` sin arrancar) y luego `play <tank> --mode realtime` |
@@ -478,7 +478,7 @@ Para que las magnitudes (ML/Mwp) usen todas las estaciones posibles, elimina los
     --prune-orphans run_working_v8/tanks/_orphan_removed --apply
 ```
 
-`csnloc` localiza y `csnmags_toy` mide **solo** con estaciones de `estaciones_107.txt`; un pick sin
+`csnloc` localiza y `csnmags` mide **solo** con estaciones de `estaciones_107.txt`; un pick sin
 metadata se descarta en silencio.
 
 ---
@@ -796,7 +796,7 @@ como el resto de `tmp/`.
 
 Las 12 grillas (`grids/*.grid`) son el **primer paso** de la localizacion: la nucleacion por
 retroproyeccion, antes del refinamiento. Se generan con `mk_csnloc_grids.py` (antes eran ficheros
-hechos a mano, copiados de la tiling de Glass3, sin generador ni forma de comparar alternativas).
+hechos a mano, copiados de la tiling original, sin generador ni forma de comparar alternativas).
 
 ```bash
 python3 tank_tools/mk_csnloc_grids.py --tiling A \

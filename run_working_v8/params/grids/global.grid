@@ -1,4 +1,4 @@
-# Replica de la grilla global de Glass3 (global_grid.d): 100 km, 10 capas.
+# Grilla global original (global_grid.d): 100 km, 10 capas.
 Name                Global
 LatMin              -90.0
 LatMax              90.0

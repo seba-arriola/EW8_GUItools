@@ -1,7 +1,7 @@
 """Modelo de datos del reporte de localizaciones.
 
 Cada `session.json` (una sesion de replay) se convierte en un `Session` con sus
-`Event` (localizaciones de csnloc) y `Magnitude` (magnitudes de red de csnmags_toy).
+`Event` (localizaciones de csnloc) y `Magnitude` (magnitudes de red de csnmags).
 El cruce entre ambos se hace por el ID numerico del HYP2000ARC.
 """
 

@@ -35,7 +35,7 @@ CSNMAGS_RED_LINES = [
     "20260918_UTC_17:03:02 CSNmags_Red: [ID 0820651320] ML=0.00 (0 est) | MWp=6.24 (1 est) -> PREF: None 0.00",
     "20260918_UTC_17:04:11 CSNmags_Red: [ID 0197433562] ML=0.00 (0 est) | MWp=5.61 (3 est) -> PREF: Mwp 5.61",
 ]
-CSNMAGS_READY_LINE = "20260101_UTC_00:00:05 csnmags_toy: Listo. Esperando sismos en el anillo..."
+CSNMAGS_READY_LINE = "20260101_UTC_00:00:05 csnmags: Listo. Esperando hipocentros en HYPO_RING_REF"
 
 WS_DISCARD_LINES = [
     "20260922_UTC_23:31:32 WARNING: Tracebuf fails validity check, discarding: <PB14.LHZ.CX.-->",
@@ -170,7 +170,7 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
         ldir = os.path.join(sdir, "logs")
         os.makedirs(ldir, exist_ok=True)
         csl = os.path.join(ldir, "csnloc_20260101.log")
-        cml = os.path.join(ldir, "csnmags_toy_20260101.log")
+        cml = os.path.join(ldir, "csnmags_20260101.log")
         wsv = os.path.join(ldir, "wave_serverV_20260101.log")
         with open(csl, "w") as fh:
             fh.write(CSNLOC_INIT_LINE + "\n")
@@ -189,7 +189,7 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
             "chunk_index": idx, "chunk_start_utc": "2026-01-01T00:00:00Z", "mode": "fast",
             "wall_s": 80, "exit_code": 0, "timeout": False,
             "counts": {"events": len(events), "magnitudes": len(mags), "ws_discards": discards},
-            "logs": {"csnloc": csl, "csnmags_toy": cml, "wave_serverV": wsv},
+            "logs": {"csnloc": csl, "csnmags": cml, "wave_serverV": wsv},
         }
         with open(os.path.join(sdir, "session.json"), "w") as fh:
             json.dump(meta, fh)
@@ -240,7 +240,7 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
         self._mk_session("ev_e", 0, [ev], [], ready=False)
         sessions = [report.load_session(p) for p in report.find_sessions(self.tmp)]
         self.assertFalse(sessions[0].csnmags_ready)
-        self.assertTrue(any("csnmags_toy no llego" in w for w in sessions[0].warnings))
+        self.assertTrue(any("csnmags no llego" in w for w in sessions[0].warnings))
 
 
 class TestCLI(unittest.TestCase):
@@ -265,7 +265,7 @@ class TestCLI(unittest.TestCase):
         ldir = os.path.join(sdir, "logs")
         os.makedirs(ldir)
         csl = os.path.join(ldir, "csnloc_20260101.log")
-        cml = os.path.join(ldir, "csnmags_toy_20260101.log")
+        cml = os.path.join(ldir, "csnmags_20260101.log")
         with open(csl, "w") as fh:
             fh.write(CSNLOC_INIT_LINE + "\n")
             fh.write("20260101_UTC_00:01:00 csnloc: evento 7 lat=-31.570 lon=-71.670 z=5.0 km nph=12 rms=0.50 gap=90\n")
@@ -275,7 +275,7 @@ class TestCLI(unittest.TestCase):
         with open(os.path.join(sdir, "session.json"), "w") as fh:
             json.dump({"session_id": "ev_x/000", "slug": slug, "source_file": "mseed/ev_x.mseed",
                        "chunk_index": 0, "wall_s": 80, "exit_code": 0, "timeout": False,
-                       "counts": {}, "logs": {"csnloc": csl, "csnmags_toy": cml}}, fh)
+                       "counts": {}, "logs": {"csnloc": csl, "csnmags": cml}}, fh)
 
         out_prefix = os.path.join(self.tmp, "rep")
         rc, out = self._run(["--runs", self.tmp, "--format", "all", "--out", out_prefix])

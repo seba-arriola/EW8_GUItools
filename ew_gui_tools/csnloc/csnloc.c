@@ -2,7 +2,7 @@
  * csnloc.c                                                                   *
  *                                                                            *
  * Módulo Earthworm nativo de asociación de fases + localización hipocentral   *
- * rápida. Reemplaza localmente el camino ew2glass -> GLASS3 -> glass2ew.      *
+ * rápida. Asociador + localizador local (sin asociador externo).      *
  *                                                                            *
  * Pipeline:                                                                  *
  *   PICK_RING -> buffer de picks -> back-projection 4D + DBSCAN ->           *
@@ -565,6 +565,7 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
         char          arc[65536];
         unsigned long id_out = 0;
         unsigned int  ver_out = 0;
+        int           manual_out = 0;
 
         /* El índice de fase se refiere a la ventana; el refinado usa esa
            misma copia, por lo que es consistente. */
@@ -585,7 +586,8 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
         if (!EventRegistry_Upsert(&ctx->events, &cand[i], window, nwin,
                                   &ctx->cfg, &ctx->stations, &ctx->tt,
                                   &ctx->grids,
-                                  ctx->id_base + ctx->seq, &id_out, &ver_out)) {
+                                  ctx->id_base + ctx->seq, &id_out, &ver_out,
+                                  &manual_out)) {
             g_t_registry += now_mono() - t0;
             continue;
         }
@@ -596,7 +598,7 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
 
         t0 = now_mono();
         if (FormatHYP2000ARC(&cand[i], &ctx->stations, window, &ctx->cfg,
-                             id_out, ver_out, arc, sizeof(arc)) != 0) {
+                             id_out, ver_out, manual_out, arc, sizeof(arc)) != 0) {
             g_t_format += now_mono() - t0;
             continue;
         }

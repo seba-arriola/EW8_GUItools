@@ -8,7 +8,8 @@
 
 int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
                     int imagtype, const char *szmagtype, double mag,
-                    double err, double qual, double mindist, int gap, int nsta)
+                    double err, double qual, double mindist, int gap, int nsta,
+                    int origin_version)
 {
     char     buf[1024];
     MAG_INFO m;
@@ -27,6 +28,8 @@ int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
     m.mindist   = mindist;
     m.azimuth   = gap;
     m.nstations = nsta;
+    /* Modulo origen del ARC (162/163/164): distingue soluciones del mismo qid. */
+    m.origin_version = (unsigned int)origin_version;
 
     if (wr_mag(&m, buf, sizeof(buf)) != 0) return -1;
     return tport_putmsg(region, logo, (long)strlen(buf), buf);

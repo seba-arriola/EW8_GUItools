@@ -30,11 +30,11 @@ fi
 echo "=== D1: copia inicial y estructura ==="
 bash "$DEPLOY" --dst "$DST" --no-resources >"$TESTTMP/d1.out" 2>&1
 check_exit "D1 copia inicial -> exit 0" 0 "$?"
-check_eq "D1 binarios en whitelist" "23" \
+check_eq "D1 binarios en whitelist" "26" \
     "$(ls "$DST/earthworm_8.0/bin" 2>/dev/null | wc -l | tr -d ' ')"
 check_eq "D1 grids copiados" "13" \
     "$(ls "$DST/run_working_v8/params/grids"/*.grid 2>/dev/null | wc -l | tr -d ' ')"
-for f in earthworm.d startstop_unix.d csnloc.d csnmags_toy.d pick_FP.sta \
+for f in earthworm.d startstop_unix.d csnloc.d csnmags.d pick_FP.sta \
          pickS.d pickS.sta estaciones_107.txt wave_serverV.d iasp91.tbl \
          hyp2000_ring.d nlloc_ring.d hyp2000_ring.hyp estaciones_hyp.sta \
          chile_1d.crh; do
@@ -127,10 +127,11 @@ rm -f "$DST/run_working_v8/params/slink999.state" \
 # -----------------------------------------------------------------------------
 echo "=== D8: resources (fixture pequena) ==="
 RESFIX="$TESTTMP/resfix"
-mkdir -p "$RESFIX/nlloc/ctrl" "$RESFIX/hyp2000" "$RESFIX/csnmags"
+mkdir -p "$RESFIX/nlloc/ctrl" "$RESFIX/hyp2000" "$RESFIX/csnmags" "$RESFIX/overlays"
 printf 'LOCFILES obs.nll NLLOC_OBS time/model loc/ev\n' > "$RESFIX/nlloc/nlloc.in"
 printf 'x\n' > "$RESFIX/hyp2000/hyp2000_ring.hyp"
 printf 'x\n' > "$RESFIX/csnmags/calib_map.txt"
+printf '#layer name=x color=FF0000\n0 0\n1 1\n' > "$RESFIX/overlays/x.lines"
 DST2="$DEPLOY_TMP/resdst"
 if EW8_SRC_RESOURCES="$RESFIX" bash "$DEPLOY" --dst "$DST2" >/dev/null 2>&1; then
     pass "D8 deploy con resources fixture -> exit 0"
@@ -148,6 +149,11 @@ if [ -f "$DST2/resources/nlloc/nlloc.in" ]; then
     pass "D8 resources/nlloc/nlloc.in copiado"
 else
     failed "D8 FALTA resources/nlloc/nlloc.in"
+fi
+if [ -f "$DST2/resources/overlays/x.lines" ]; then
+    pass "D8 resources/overlays/x.lines copiado"
+else
+    failed "D8 FALTA resources/overlays/x.lines"
 fi
 
 summary

@@ -141,9 +141,17 @@ int EventRegistry_AddPhase(EventRecord *e, const Pick *p,
     /* Misma estacion+fase ya presente -> re-pick: reemplaza. */
     for (i = 0; i < e->nphases_stored; i++) {
         if (same_sta_phase(&e->phases[i], p)) {
-            if (fabs(e->phases[i].t_epoch - p->t_epoch) < 0.001)
+            if (fabs(e->phases[i].t_epoch - p->t_epoch) < 0.001) {
+                /* Mismo tiempo: solo cuenta como cambio si pasa a manual. */
+                if (p->manual && !e->phases[i].manual) {
+                    e->phases[i].manual = 1;
+                    e->has_manual = 1;
+                    return 1;
+                }
                 return 0;   /* identico: sin cambio */
+            }
             e->phases[i] = *p;
+            if (p->manual) e->has_manual = 1;
             return 1;
         }
     }
@@ -151,6 +159,7 @@ int EventRegistry_AddPhase(EventRecord *e, const Pick *p,
     /* Fase nueva: solo si hay espacio. */
     if (e->nphases_stored >= CSLOC_MAX_PHASES) return 0;
     e->phases[e->nphases_stored++] = *p;
+    if (p->manual) e->has_manual = 1;
     return 1;
 }
 
@@ -283,6 +292,7 @@ static void seed_phases(EventRecord *e, const HypoCandidate *c,
         if (idx < 0 || idx >= nwin) continue;
         e->phases[e->nphases_stored] = window[idx];
         e->residual[e->nphases_stored] = c->residual[i];
+        if (window[idx].manual) e->has_manual = 1;
         e->nphases_stored++;
     }
 }
@@ -307,7 +317,7 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                          const StationList *st, TTModel *tt,
                          const GridSet *grids,
                          unsigned long id_base, unsigned long *id_out,
-                         unsigned int *ver_out)
+                         unsigned int *ver_out, int *manual_out)
 {
     int idx = -1;
 
@@ -334,13 +344,14 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                      e->nphases, e->rms_sec, e->gap_deg);
         if (id_out)  *id_out = e->id;
         if (ver_out) *ver_out = e->version;
+        if (manual_out) *manual_out = e->has_manual;
         return 1;
     }
 
     /* Evento existente: incorporar fases nuevas / re-picks. */
     {
         EventRecord *e = &r->ev[idx];
-        int changed = 0, i, nnew = 0, npruned_before;
+        int changed = 0, i, nnew = 0, npruned_before, got_manual = 0;
 
         for (i = 0; i < c->nphases; i++) {
             int pi = c->phase_idx[i];
@@ -348,6 +359,7 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
             if (EventRegistry_AddPhase(e, &window[pi], cfg)) {
                 changed = 1;
                 nnew++;
+                if (window[pi].manual) got_manual = 1;
                 log_decision(cfg, "csnloc: [ev %lu] fase nueva %s.%s.%s.%s %s "
                                   "t=%.3f\n",
                              e->id, window[pi].sta, window[pi].net,
@@ -383,8 +395,9 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                 e->residual[i] = h.residual[i];
 
             /* Politica de aceptacion: si la solucion nueva no mejora (ni
-               empeora dentro del umbral), no se emite version nueva. */
-            if (!EventRegistry_Accept(e, &h, cfg)) {
+               empeora dentro del umbral), no se emite version nueva. Una
+               picada manual FUERZA la emision para propagar la marca. */
+            if (!got_manual && !EventRegistry_Accept(e, &h, cfg)) {
                 log_decision(cfg, "csnloc: [ev %lu] version RECHAZADA "
                                   "(nph=%d rms=%.2f gap=%.0f vs nph=%d "
                                   "rms=%.2f gap=%.0f)\n",
@@ -420,6 +433,7 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                          e->nphases, e->rms_sec, e->gap_deg);
             if (id_out)  *id_out = e->id;
             if (ver_out) *ver_out = e->version;
+            if (manual_out) *manual_out = e->has_manual;
             return 1;
         }
     }

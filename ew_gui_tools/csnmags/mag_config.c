@@ -111,6 +111,7 @@ int mag_config_load(const char *path, MagConfig *c)
         else if (k_its("WsIP"))    { str = k_str(); if (str) snprintf(c->ws_ip, sizeof(c->ws_ip), "%s", str); }
         else if (k_its("WsPort"))  { str = k_str(); if (str) snprintf(c->ws_port, sizeof(c->ws_port), "%s", str); }
         else if (k_its("WsTimeout")) c->ws_timeout = k_int();
+        else if (k_its("StoreRoot")) { str = k_str(); if (str) snprintf(c->store_root, sizeof(c->store_root), "%s", str); }
 
         else if (k_its("ResponseDir"))     { str = k_str(); if (str) snprintf(c->resp_dir, sizeof(c->resp_dir), "%s", str); have_resp = 1; }
         else if (k_its("ResponsePattern")) { str = k_str(); if (str) snprintf(c->resp_pattern, sizeof(c->resp_pattern), "%s", str); }

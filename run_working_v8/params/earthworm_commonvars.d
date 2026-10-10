@@ -6,7 +6,7 @@
 SetEnvVariable INSTALLATION_ID       INST_UNKNOWN
 SetEnvVariable EWMOLE_INSTANCENAME   EW8_CHILE_SERVER
 SetEnvVariable EW_INSTALLATION       INST_UNKNOWN
-#Configuracion para RabbitMQ (GLASS3 la necesitara pronto)
+#Configuracion para RabbitMQ
 SetEnvVariable RABBITMQ_HOSTNAME     localhost
 SetEnvVariable RABBITMQ_PORT         5672
 SetEnvVariable RABBITMQ_EXCHANGE     earthworm_exchange

@@ -120,18 +120,20 @@ DST_RESOURCES="$DST_ABS/resources"
 #  Whitelists
 # -----------------------------------------------------------------------------
 BINS=(
-    startstop slink2ew pick_FP pickS wave_serverV csnloc csnmags_toy csnmags
+    startstop slink2ew pick_FP pickS wave_serverV csnloc csnmags
     csntvp csnhypodbp csnrv ew_controller csnstaevdisp
     hyp2000_ring nlloc_ring
+    wstore_ingest tank2store store2tank wstore_query
     sniffring sniffrings sniffwave tanksniff remux_tbuf
     tankplayer ms2tank tankcut
 )
 
 PARAMS_FILES=(
     earthworm.d earthworm_global.d earthworm_commonvars.d startstop_unix.d
-    slink2ew_HHZ.d pick_FP.d pickS.d csnloc.d csnmags_toy.d
-    csnmags.d
+    slink2ew_HHZ.d pick_FP.d pickS.d csnloc.d
+    csnmags.d csnmags_raw.d
     csntvp.d csnhypodbp.d csnrv.d ew_controller.d csnstaevdisp.d
+    wavestore.d
     pick_FP.sta pickS.sta stations_to_view.sta estaciones_107.txt
     hyp2000_ring.hyp estaciones_hyp.sta ak135.crh chile_1d.crh
     N18-26_1.5k.crh N22-30_1.5k.crh N26-34_1.5k.crh
@@ -243,6 +245,18 @@ verify() {
     for p in "${PARAMS_REQUIRED[@]}"; do
         [ -f "$DST_PARAMS/$p" ] || { echo "  FALTA: params/$p"; fail=1; }
     done
+    # Cada Process de startstop debe tener su .d en params/ (si no, ese modulo
+    # muere al arrancar). Cubre wave_serverV.d/hyp2000_ring.d/nlloc_ring.d
+    # (generados) y los .d crudos de csnmags.
+    for sf in startstop_unix.d startstop_replay.d; do
+        [ -f "$DST_PARAMS/$sf" ] || continue
+        while read -r cfg; do
+            [ -n "$cfg" ] || continue
+            [ -f "$DST_PARAMS/$cfg" ] || {
+                echo "  $sf referencia '$cfg' (FALTA en params/)"; fail=1; }
+        done < <(sed -n 's/^[[:space:]]*Process[[:space:]]*"\([^"]*\)".*/\1/p' \
+                     "$DST_PARAMS/$sf" | awk '{print $2}')
+    done
     if ! compgen -G "$DST_PARAMS/grids/*.grid" >/dev/null 2>&1; then
         echo "  FALTAN: params/grids/*.grid"; fail=1
     fi
@@ -250,6 +264,9 @@ verify() {
         for r in nlloc hyp2000 csnmags; do
             [ -d "$DST_RESOURCES/$r" ] || { echo "  FALTA: resources/$r"; fail=1; }
         done
+        if ! compgen -G "$DST_RESOURCES/overlays/*.lines" >/dev/null 2>&1; then
+            echo "  FALTAN: resources/overlays/*.lines (genera con make_overlays.py)"; fail=1
+        fi
         # Solo texto pequeno: no escanear los .buf/.hdr (decenas de GB).
         if grep -RIn --include='*.in' --include='*.hyp' --include='*.crh' \
                 --include='*.tab' --include='*.txt' -- '/home/' "$DST_RESOURCES" >/dev/null 2>&1; then

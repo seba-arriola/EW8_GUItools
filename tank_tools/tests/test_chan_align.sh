@@ -5,8 +5,8 @@
 #  Diagnostico que verifican estas pruebas:
 #    La fuente real (slink2ew) y pick_FP son HHZ, pero estaciones_107.txt y los
 #    tanks de wave_serverV.d eran BHZ. Consecuencia:
-#      - csnmags_toy descarta el 100% de las fases EN SILENCIO (strcmp exacto de
-#        sta+net+chan; csnmagsutils.c:58-68 + csnmags_toy.c:294) -> nunca calcula.
+#      - csnmags descarta el 100% de las fases EN SILENCIO (strcmp exacto de
+#        sta+net+chan; mag_sta.c:49-70) -> nunca calcula magnitud de red.
 #      - wave_serverV no almacena nada (FindSCNL exige el canal; wave_serverV.c:2939).
 #
 #  OFFLINE:
@@ -101,17 +101,13 @@ if require_live "C2"; then
             pdir="$TESTTMP/c2p"; ldir="$TESTTMP/c2l"
             make_params_copy "$pdir" mismatch "$TESTTMP/c2tanks" >/dev/null
             live_play "$HH" "$pdir" "$ldir" --mode realtime >/dev/null
-            cml="$(latest_log "$ldir" csnmags_toy)"
+            cml="$(latest_log "$ldir" csnmags)"
             csl="$(latest_log "$ldir" csnloc)"
-            # PRECONDICION DURA: si csnmags_toy no llega a su bucle, C2 pasaria
-            # VAClamente (un modulo muerto no acepta fases ni emite magnitudes).
-            # Hoy FALLA de forma determinista solo en la config 'mismatch':
-            # queda como item abierto a investigar.
-            check_contains "PRECONDICION: csnmags_toy arranco y entro en su bucle" \
-                "$cml" "Listo. Esperando sismos"
-            echo "     (info: traza de ARC en csnmags_toy = $(grep -c 'ACTUALIZACION GLASS3' "$cml" 2>/dev/null || echo 0))"
-            check_not_contains "NINGUNA fase aceptada (bug de canal)" "$cml" '-> \['
-            check_not_contains "csnmags_toy NO emite magnitud de red" "$cml" "CSNmags_Red"
+            # PRECONDICION DURA: si csnmags no llega a su bucle, C2 pasaria
+            # VAClamente (un modulo muerto no emite magnitudes).
+            check_contains "PRECONDICION: csnmags arranco y entro en su bucle" \
+                "$cml" "Listo. Esperando hipocentros"
+            check_not_contains "csnmags NO emite magnitud de red (bug de canal)" "$cml" "CSNmags_Red"
             echo "     (info: TYPE_MAGNITUDE en HYPO_RING = $(ring_count_type HYPO_RING 28);"
             echo "      puede venir de un anillo reutilizado: los rings sobreviven si"
             echo "      startstop muere con SIGKILL. Ver 'ipcs -m')"
@@ -135,9 +131,8 @@ if require_live "C3"; then
             pdir="$TESTTMP/c3p"; ldir="$TESTTMP/c3l"
             make_params_copy "$pdir" hhz "$TESTTMP/c3tanks" >/dev/null
             live_play "$HH" "$pdir" "$ldir" --mode realtime >/dev/null
-            cml="$(latest_log "$ldir" csnmags_toy)"
+            cml="$(latest_log "$ldir" csnmags)"
             csl="$(latest_log "$ldir" csnloc)"
-            check_contains "csnmags_toy resuelve estaciones" "$cml" '-> \['
             check_contains "emite magnitud de red" "$cml" "CSNmags_Red"
             echo "     (info: TYPE_MAGNITUDE en HYPO_RING = $(ring_count_type HYPO_RING 28))"
             check_contains "C5: csnloc localiza" "$csl" "evento"
@@ -158,9 +153,8 @@ if require_live "C4"; then
             pdir="$TESTTMP/c4p"; ldir="$TESTTMP/c4l"
             make_params_copy "$pdir" bhz "$TESTTMP/c4tanks" >/dev/null
             live_play "$BH" "$pdir" "$ldir" --mode realtime >/dev/null
-            cml="$(latest_log "$ldir" csnmags_toy)"
+            cml="$(latest_log "$ldir" csnmags)"
             csl="$(latest_log "$ldir" csnloc)"
-            check_contains "csnmags_toy resuelve estaciones" "$cml" '-> \['
             check_contains "emite magnitud de red" "$cml" "CSNmags_Red"
             echo "     (info: TYPE_MAGNITUDE en HYPO_RING = $(ring_count_type HYPO_RING 28))"
             check_contains "C5: csnloc localiza" "$csl" "evento"

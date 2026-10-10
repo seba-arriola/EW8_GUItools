@@ -113,7 +113,7 @@ muchos eventos por ventana, o sea justo en el escenario de procesar miles de mSe
 ## 9. Grillas de nucleacion: tiling A vs produccion
 
 Generador nuevo: `tank_tools/mk_csnloc_grids.py` (antes eran ficheros hechos a mano, una
-transcripcion de la tiling de Glass3). Tiling **A**: se conservan las franjas de latitud de
+transcripcion de la tiling original). Tiling **A**: se conservan las franjas de latitud de
 produccion y la **longitud** de cada una pasa a ser la UNION con los bboxes del modelo 3D de Potin
 que solapan esa latitud, mas `magallanes` extendida hasta -56.0; la regional pasa a 31 capas (antes
 13) y se ensancha a -80/-64.

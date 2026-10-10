@@ -54,7 +54,6 @@ int PickSCNL_Parse(const char *msg, int len, Pick *out)
     int   type, mod, inst, seq;
     char  scnl[64], fmwt[16], tstr[64];
     int   amp1, amp2, amp3;
-    char  extra[8];
     char *p, *dot;
     int   n;
 
@@ -106,16 +105,19 @@ int PickSCNL_Parse(const char *msg, int len, Pick *out)
         out->t_epoch = (double)CSLoc_YmdHmsToEpoch(y, mo, d, hh, mi, ss);
     }
 
-    /* Fase: TYPE_PICK_SCNL no siempre la trae. Campo extra opcional. */
-    if (sscanf(msg, "%*d %*d %*d %*d %*63s %*15s %*63s %*d %*d %*d %7s", extra) == 1) {
-        int ph = Phase_FromName(extra);
-        if (ph >= 0) {
-            out->phase = ph;
-        } else {
-            out->phase = CSLOC_PHASE_P;
+    /* Token 11 opcional: fase (P/S). Token 12 opcional: origen (A/M).
+       pick_FP no los emite; pickS emite "S A"; el repick manual de la GUI
+       emite "... P M". Ausentes => P automatica. */
+    out->phase  = CSLOC_PHASE_P;
+    out->manual = 0;
+    {
+        char phase_tok[8] = "", origin_tok[8] = "";
+        if (sscanf(msg, "%*d %*d %*d %*d %*63s %*15s %*63s %*d %*d %*d %7s %7s",
+                   phase_tok, origin_tok) >= 1) {
+            int ph = Phase_FromName(phase_tok);
+            if (ph >= 0) out->phase = ph;
         }
-    } else {
-        out->phase = CSLOC_PHASE_P;   /* default: P (como ew2glass) */
+        if (origin_tok[0] == 'M' || origin_tok[0] == 'm') out->manual = 1;
     }
     strncpy(out->phase_name, Phase_Name(out->phase), sizeof(out->phase_name) - 1);
 

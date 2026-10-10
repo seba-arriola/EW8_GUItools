@@ -1,6 +1,7 @@
 #include "ew_controller.h"
 #include <adwaita.h>
 #include "ewgui/actions.h"
+#include "ewgui/menu_ui.h"
 
 /* Configuration parameters read from the .d file
  *************************************************/
@@ -343,14 +344,10 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
-    EwMenuItem view_items[] = { { "Dark mode", "win.dark-mode", NULL, 0 } };
-    EwMenuGroup view_groups[] = { { "View", view_items, 1 } };
-    GMenuModel *menu_model = ewgui_menu_build(view_groups, 1);
+    static const EwMenuItem view_items[] = { { "Dark mode", "win.dark-mode", NULL, 0 } };
+    static const EwMenuGroup view_groups[] = { { "View", view_items, 1 } };
 
-    GtkWidget *menu_btn = gtk_menu_button_new();
-    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
-    g_object_unref(menu_model);
+    GtkWidget *menu_btn = ewgui_menu_button_new(view_groups, 1);
 
     GtkWidget *header = adw_header_bar_new();
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);

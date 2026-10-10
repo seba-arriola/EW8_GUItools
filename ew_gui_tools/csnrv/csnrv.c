@@ -6,6 +6,10 @@
 #include "ewgui/view.h"
 #include "ewgui/actions.h"
 #include "ewgui/export.h"
+#include "ewgui/overlay.h"
+#include "ewgui/overlay_ui.h"
+#include "ewgui/menu_ui.h"
+#include "ewgui/config.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -38,6 +42,15 @@ char MapImageFile[MAX_STR];
 int HeartBeatInt;
 int LogFile;
 double InitialZoom = ZOOM_DEFAULT;   /* Clave opcional InitialZoom de csnrv.d */
+
+/* --- Capa vectorial de líneas (overlays), claves opcionales de csnrv.d --- */
+static char     g_overlay_files[EWGUI_OVERLAY_MAX_FILES][MAX_STR];
+static int      g_overlay_nfiles = 0;
+typedef struct { char layer[EWGUI_OVERLAY_NAME_MAX]; char hex[8]; } OverlayColorSpec;
+static OverlayColorSpec g_overlay_colors[EWGUI_OVERLAY_MAX_FILES];
+static int      g_overlay_ncolors = 0;
+static double   g_overlay_width = 0.0;   /* 0 = sin override */
+static EwOverlay *g_overlay = NULL;
 
 /* --- Variables Globales Earthworm --- */
 SHM_INFO Region;
@@ -82,7 +95,6 @@ EwGuiCanvas *map_canvas;
 static GApplication *g_app = NULL;
 
 /* Widgets para la Tabla de Magnitudes */
-GtkWidget *lbl_pref_type, *lbl_pref_val, *lbl_pref_stn;
 GtkWidget *lbl_mwp_val, *lbl_mwp_stn;
 GtkWidget *lbl_ml_val, *lbl_ml_stn;
 GtkWidget *lbl_mb_val, *lbl_mb_stn;
@@ -140,6 +152,25 @@ int ReadConfig(char *configfile) {
                         InitialZoom, ZOOM_MAX);
                 InitialZoom = ZOOM_MAX;
             }
+        } else if (k_its("OverlayFile")) {
+            /* OPCIONAL y repetible: ruta a un archivo de líneas ".lines". */
+            str = k_str();
+            if (str && g_overlay_nfiles < EWGUI_OVERLAY_MAX_FILES)
+                snprintf(g_overlay_files[g_overlay_nfiles++], MAX_STR, "%s", str);
+        } else if (k_its("OverlayColor")) {
+            /* OPCIONAL y repetible: <capa> <RRGGBB> (sobrescribe el color). */
+            str = k_str();
+            if (str && g_overlay_ncolors < EWGUI_OVERLAY_MAX_FILES) {
+                char *hex = k_str();
+                if (hex) {
+                    OverlayColorSpec *oc = &g_overlay_colors[g_overlay_ncolors++];
+                    snprintf(oc->layer, sizeof oc->layer, "%s", str);
+                    snprintf(oc->hex, sizeof oc->hex, "%s", hex);
+                }
+            }
+        } else if (k_its("OverlayWidth")) {
+            /* OPCIONAL: ancho global en px (0 = sin override). */
+            g_overlay_width = k_val();
         } else {
             continue;
         }
@@ -155,6 +186,30 @@ int ReadConfig(char *configfile) {
         return -1;
     }
     return 0;
+}
+
+/* Carga/re-carga los overlays declarados en el .d y aplica los overrides de
+ * color/ancho. Headless-safe (usa stderr, no logit). */
+static void LoadOverlays(void) {
+    int i;
+    if (g_overlay) { ewgui_overlay_free(g_overlay); g_overlay = NULL; }
+    if (g_overlay_nfiles == 0) return;
+    g_overlay = ewgui_overlay_new();
+    if (!g_overlay) return;
+    for (i = 0; i < g_overlay_nfiles; i++) {
+        if (ewgui_overlay_append(g_overlay, g_overlay_files[i]) != 0)
+            fprintf(stderr, "csnrv: no se pudo cargar overlay %s\n", g_overlay_files[i]);
+    }
+    if (g_overlay_width > 0.0)
+        ewgui_overlay_set_global_width(g_overlay, g_overlay_width);
+    for (i = 0; i < g_overlay_ncolors; i++) {
+        double rgb[3];
+        if (ewgui_parse_hex_color(g_overlay_colors[i].hex, rgb) == 0)
+            ewgui_overlay_set_color(g_overlay, g_overlay_colors[i].layer, rgb);
+        else
+            fprintf(stderr, "csnrv: OverlayColor %s: hex invalido '%s'\n",
+                    g_overlay_colors[i].layer, g_overlay_colors[i].hex);
+    }
 }
 
 void Lookup(void) {
@@ -208,22 +263,13 @@ gboolean ew_background_tasks(gpointer user_data) {
 /* --------------------------------------------------------------------
  * FUNCION AUXILIAR PARA ACTUALIZAR LA TABLA DE MAGNITUDES
  * -------------------------------------------------------------------- */
-void update_mag_row(GtkWidget *lbl_val, GtkWidget *lbl_stn, double mag, int stn, gboolean is_pref, const char* pref_type) {
+void update_mag_row(GtkWidget *lbl_val, GtkWidget *lbl_stn, double mag, int stn) {
     char buf[128];
     if (mag > 0.0) {
-        if (is_pref) {
-            snprintf(buf, sizeof(buf), "<span size='x-large' weight='bold' foreground='red'>%.1f</span>", mag);
-            gtk_label_set_markup(GTK_LABEL(lbl_val), buf);
-            snprintf(buf, sizeof(buf), "<span size='large' weight='bold' foreground='red'>%d</span>", stn);
-            gtk_label_set_markup(GTK_LABEL(lbl_stn), buf);
-            snprintf(buf, sizeof(buf), "<span size='large' weight='bold'>Preferred: %s</span>", pref_type);
-            gtk_label_set_markup(GTK_LABEL(lbl_pref_type), buf);
-        } else {
-            snprintf(buf, sizeof(buf), "<span size='large'>%.1f</span>", mag);
-            gtk_label_set_markup(GTK_LABEL(lbl_val), buf);
-            snprintf(buf, sizeof(buf), "<span size='large'>%d</span>", stn);
-            gtk_label_set_markup(GTK_LABEL(lbl_stn), buf);
-        }
+        snprintf(buf, sizeof(buf), "<span size='large'>%.1f</span>", mag);
+        gtk_label_set_markup(GTK_LABEL(lbl_val), buf);
+        snprintf(buf, sizeof(buf), "<span size='large'>%d</span>", stn);
+        gtk_label_set_markup(GTK_LABEL(lbl_stn), buf);
     } else {
         gtk_label_set_markup(GTK_LABEL(lbl_val), "<span foreground='gray'>--</span>");
         gtk_label_set_markup(GTK_LABEL(lbl_stn), "<span foreground='gray'>--</span>");
@@ -270,10 +316,9 @@ static void on_map_motion(GtkEventControllerMotion *ctrl, double x, double y, gp
 /* --------------------------------------------------------------------
  * MAGNITUDES: parseo de TYPE_MAGNITUDE y seleccion de la preferida.
  *
- * csnmags_toy publica TYPE_MAGNITUDE al mismo HYPO_RING. Se correlaciona
- * por qid con el evento vigente y se muestran ML y Mwp; la preferida se
- * destaca en rojo/negrita (regla: Mwp si >=5.5 con >=3 estaciones; si no
- * Ml si >0; si no Mwp si >0).
+ * csnmags publica TYPE_MAGNITUDE al mismo HYPO_RING. Se correlaciona
+ * por qid con el evento vigente y se muestran Ml/Mb/Ms/Mwp; la magnitud
+ * "preferida" (mag_preferida) solo la ejercita el modo --test-mag.
  * -------------------------------------------------------------------- */
 static void mag_preferida(double *mag, int *stn, const char **type) {
     if (g_mag.mwp >= 5.5 && g_mag.mwp_stn >= 3) {
@@ -292,19 +337,12 @@ static void mag_preferida(double *mag, int *stn, const char **type) {
 }
 
 static void aplicar_magnitudes(void) {
-    double pref_mag = 0.0;
-    int    pref_stn = 0;
-    const char *pref_type = "--";
-
-    mag_preferida(&pref_mag, &pref_stn, &pref_type);
-
     if (!g_ui_ready) return;   /* modo headless: solo actualizar el estado */
 
-    update_mag_row(lbl_pref_val, lbl_pref_stn, pref_mag, pref_stn, TRUE, pref_type);
-    update_mag_row(lbl_ml_val, lbl_ml_stn, g_mag.ml, g_mag.ml_stn, FALSE, "");
-    update_mag_row(lbl_mb_val, lbl_mb_stn, g_mag.mb, g_mag.mb_stn, FALSE, "");
-    update_mag_row(lbl_ms_val, lbl_ms_stn, g_mag.ms, g_mag.ms_stn, FALSE, "");
-    update_mag_row(lbl_mwp_val, lbl_mwp_stn, g_mag.mwp, g_mag.mwp_stn, FALSE, "");
+    update_mag_row(lbl_ml_val, lbl_ml_stn, g_mag.ml, g_mag.ml_stn);
+    update_mag_row(lbl_mb_val, lbl_mb_stn, g_mag.mb, g_mag.mb_stn);
+    update_mag_row(lbl_ms_val, lbl_ms_stn, g_mag.ms, g_mag.ms_stn);
+    update_mag_row(lbl_mwp_val, lbl_mwp_stn, g_mag.mwp, g_mag.mwp_stn);
 }
 
 static void procesar_mensaje_mag(const char *msg, long recsize, int current_qid) {
@@ -477,6 +515,21 @@ static gboolean update_summary_loop(gpointer data) {
 /* --------------------------------------------------------------------
  * CANVAS DEL MAPA (Proyección Equirectangular)
  * -------------------------------------------------------------------- */
+
+/* Proyección (lat,lon) -> pantalla con la transformación vigente del mapa. */
+typedef struct {
+    double img_w, img_h, zoom, epi_x, epi_y, cx, cy;
+} CsMapCtx;
+
+static void cs_overlay_map(double lat, double lon, void *ud,
+                           double *sx, double *sy) {
+    CsMapCtx *c = ud;
+    double wx, wy;
+    ewgui_geo_project(lat, lon, c->img_w, c->img_h, &wx, &wy);
+    *sx = (wx - c->epi_x) * c->zoom + c->cx;
+    *sy = (wy - c->epi_y) * c->zoom + c->cy;
+}
+
 static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
     (void)canvas; (void)data;
 
@@ -538,6 +591,13 @@ static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height,
             snprintf(lbl, sizeof(lbl), "%.0f\xC2\xB0", lat); cairo_show_text(cr, lbl);
         }
         cairo_restore(cr);
+
+        if (g_overlay != NULL) {
+            CsMapCtx octx = { img_w, img_h, effective_zoom, epi_x, epi_y,
+                              width / 2.0 + g_map_pan_x,
+                              height / 2.0 + g_map_pan_y };
+            ewgui_overlay_draw(cr, g_overlay, cs_overlay_map, &octx, 1.0);
+        }
     } else {
         cairo_set_source_rgb(cr, 0.85, 0.92, 0.98); 
         cairo_rectangle(cr, 0, 0, width, height); cairo_fill(cr);
@@ -584,6 +644,35 @@ static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user
         active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
 }
 
+static void on_overlay_changed(void *ud) {
+    size_t i;
+    (void)ud;
+    if (g_overlay) {
+        for (i = 0; i < g_overlay->nlayers; i++) {
+            EwOverlayLayer *L = &g_overlay->layers[i];
+            logit("et", "  #layer name=%s color=%02X%02X%02X width=%.1f  (copy to overlay file)\n",
+                  L->name,
+                  (unsigned)(L->color[0] > 0.0 ? (L->color[0] < 1.0 ? L->color[0] * 255.0 + 0.5 : 255.0) : 0.0),
+                  (unsigned)(L->color[1] > 0.0 ? (L->color[1] < 1.0 ? L->color[1] * 255.0 + 0.5 : 255.0) : 0.0),
+                  (unsigned)(L->color[2] > 0.0 ? (L->color[2] < 1.0 ? L->color[2] * 255.0 + 0.5 : 255.0) : 0.0),
+                  L->width);
+        }
+    }
+    if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+}
+
+static void act_overlay_layers(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p;
+    if (!g_overlay || g_overlay->nlayers == 0) return;
+    ewgui_overlay_dialog_run(g_overlay, GTK_WINDOW(ud), on_overlay_changed, NULL);
+}
+
+static void act_overlay_reload(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; (void)ud;
+    LoadOverlays();
+    if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     (void)user_data;
 
@@ -602,21 +691,26 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
     g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
     ewgui_action_add(G_ACTION_MAP(actions), "export", NULL, act_export, window);
+    ewgui_action_add(G_ACTION_MAP(actions), "overlay-layers", NULL, act_overlay_layers, window);
+    ewgui_action_add(G_ACTION_MAP(actions), "overlay-reload", NULL, act_overlay_reload, window);
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
 
-    EwMenuItem view_items[] = {
+    static const EwMenuItem view_items[] = {
         { "Export view...", "win.export", NULL, 0 },
         { "Dark mode", "win.dark-mode", NULL, 0 },
     };
-    EwMenuGroup view_groups[] = { { "View", view_items, 2 } };
-    GMenuModel *menu_model = ewgui_menu_build(view_groups, 1);
+    static const EwMenuItem overlay_items[] = {
+        { "Layers...", "win.overlay-layers", NULL, 0 },
+        { "Reload", "win.overlay-reload", NULL, 0 },
+    };
+    static const EwMenuGroup view_groups[] = {
+        { "View", view_items, 2 },
+        { "Overlay", overlay_items, 2 },
+    };
 
     GtkWidget *header = adw_header_bar_new();
-    GtkWidget *menu_btn = gtk_menu_button_new();
-    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
+    GtkWidget *menu_btn = ewgui_menu_button_new(view_groups, 2);
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
-    g_object_unref(menu_model);
 
     GtkWidget *toolbar_view = adw_toolbar_view_new();
     adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar_view), header);
@@ -665,36 +759,29 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_grid_attach(GTK_GRID(mag_grid), h2, 1, 0, 1, 1);
     gtk_grid_attach(GTK_GRID(mag_grid), h3, 2, 0, 1, 1);
 
-    lbl_pref_type = gtk_label_new("Preferred: --");
-    lbl_pref_val = gtk_label_new("--");
-    lbl_pref_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_type, 0, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_val, 1, 1, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_pref_stn, 2, 1, 1, 1);
-
     GtkWidget *l_ml = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_ml), "<span size='large'>Ml</span>");
     lbl_ml_val = gtk_label_new("--"); lbl_ml_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_ml, 0, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_val, 1, 2, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_stn, 2, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), l_ml, 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_val, 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ml_stn, 2, 1, 1, 1);
 
     GtkWidget *l_mwp = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_mwp), "<span size='large'>Mwp</span>");
     lbl_mwp_val = gtk_label_new("--"); lbl_mwp_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_mwp, 0, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_val, 1, 3, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_stn, 2, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), l_mwp, 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_val, 1, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mwp_stn, 2, 2, 1, 1);
 
     GtkWidget *l_mb = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_mb), "<span size='large'>Mb</span>");
     lbl_mb_val = gtk_label_new("--"); lbl_mb_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_mb, 0, 4, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_val, 1, 4, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_stn, 2, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), l_mb, 0, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_val, 1, 3, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_mb_stn, 2, 3, 1, 1);
 
     GtkWidget *l_ms = gtk_label_new(""); gtk_label_set_markup(GTK_LABEL(l_ms), "<span size='large'>Ms</span>");
     lbl_ms_val = gtk_label_new("--"); lbl_ms_stn = gtk_label_new("--");
-    gtk_grid_attach(GTK_GRID(mag_grid), l_ms, 0, 5, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_val, 1, 5, 1, 1);
-    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_stn, 2, 5, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), l_ms, 0, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_val, 1, 4, 1, 1);
+    gtk_grid_attach(GTK_GRID(mag_grid), lbl_ms_stn, 2, 4, 1, 1);
 
     gtk_box_append(GTK_BOX(vbox_main), mag_grid);
 
@@ -829,6 +916,28 @@ int main(int argc, char *argv[]) {
         }
         printf("InitialZoom=%.6f\n", InitialZoom);
         printf("MapImageFile=%s\n", MapImageFile);
+        printf("OverlayFiles=%d\n", g_overlay_nfiles);
+        printf("OverlayColors=%d\n", g_overlay_ncolors);
+        return 0;
+    }
+
+    /* Modo headless: carga los overlays del .d y reporta capas/polilíneas. */
+    if (argc == 3 && strcmp(argv[1], "--check-overlays") == 0) {
+        int nl = 0, np = 0;
+        size_t i;
+        if (ReadConfig(argv[2]) != 0) {
+            fprintf(stderr, "Error leyendo configuracion de %s\n", argv[2]);
+            return 1;
+        }
+        LoadOverlays();
+        if (g_overlay) {
+            nl = (int)g_overlay->nlayers;
+            for (i = 0; i < g_overlay->nlayers; i++)
+                np += (int)g_overlay->layers[i].nlines;
+        }
+        printf("overlay_layers=%d overlay_polylines=%d\n", nl, np);
+        ewgui_overlay_free(g_overlay);
+        g_overlay = NULL;
         return 0;
     }
 
@@ -877,6 +986,8 @@ int main(int argc, char *argv[]) {
         g_error_free(err);
     }
 
+    LoadOverlays();
+
     AdwApplication *app = adw_application_new("cl.csn.csnrv", G_APPLICATION_NON_UNIQUE);
     g_app = G_APPLICATION(app);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
@@ -886,5 +997,6 @@ int main(int argc, char *argv[]) {
 
     tport_detach(&Region);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);
+    ewgui_overlay_free(g_overlay);
     return status;
 }

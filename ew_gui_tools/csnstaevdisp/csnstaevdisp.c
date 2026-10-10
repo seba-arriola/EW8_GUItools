@@ -19,6 +19,10 @@
 #include "ewgui/view.h"
 #include "ewgui/export.h"
 #include "ewgui/sta.h"
+#include "ewgui/overlay.h"
+#include "ewgui/overlay_ui.h"
+#include "ewgui/menu_ui.h"
+#include "ewgui/config.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -52,6 +56,15 @@ int  LogFile = 1;                            /* 1 = write log to disk */
 
 /* PARAMETER: Size of the station triangles (Mandatorily read from the .d) */
 double g_station_size = 5.0;                 /* size of the station triangles (from the .d) */
+
+/* --- Overlay de líneas (claves opcionales del .d) --- */
+static char     g_overlay_files[EWGUI_OVERLAY_MAX_FILES][MAX_STR];
+static int      g_overlay_nfiles = 0;
+typedef struct { char layer[EWGUI_OVERLAY_NAME_MAX]; char hex[8]; } OverlayColorSpec;
+static OverlayColorSpec g_overlay_colors[EWGUI_OVERLAY_MAX_FILES];
+static int      g_overlay_ncolors = 0;
+static double   g_overlay_width = 0.0;
+static EwOverlay *g_overlay = NULL;
 
 pid_t MyPid;                                 /* this process id */
 unsigned char TypeHeartBeat = 0;             /* TYPE_HEARTBEAT */
@@ -139,6 +152,23 @@ int ReadConfig(char *configfile) {
         else if (k_its("StaFile")) { str = k_str(); if (str) strcpy(StaFile, str); init[6] = 1; }
         /* Now it is MANDATORY to ensure Earthworm does not ignore it */
         else if (k_its("StationSize")) { g_station_size = k_val(); init[7] = 1; }
+        else if (k_its("OverlayFile")) {
+            str = k_str();
+            if (str && g_overlay_nfiles < EWGUI_OVERLAY_MAX_FILES)
+                snprintf(g_overlay_files[g_overlay_nfiles++], MAX_STR, "%s", str);
+        }
+        else if (k_its("OverlayColor")) {
+            str = k_str();
+            if (str && g_overlay_ncolors < EWGUI_OVERLAY_MAX_FILES) {
+                char *hex = k_str();
+                if (hex) {
+                    OverlayColorSpec *oc = &g_overlay_colors[g_overlay_ncolors++];
+                    snprintf(oc->layer, sizeof oc->layer, "%s", str);
+                    snprintf(oc->hex, sizeof oc->hex, "%s", hex);
+                }
+            }
+        }
+        else if (k_its("OverlayWidth")) { g_overlay_width = k_val(); }
         else { continue; }
         
         if (k_err()) {
@@ -153,6 +183,28 @@ int ReadConfig(char *configfile) {
         return -1;
     }
     return 0;
+}
+
+/* Overlays: carga los archivos .lines del .d y aplica overrides (stderr). */
+static void LoadOverlays(void) {
+    int i;
+    if (g_overlay) { ewgui_overlay_free(g_overlay); g_overlay = NULL; }
+    if (g_overlay_nfiles == 0) return;
+    g_overlay = ewgui_overlay_new();
+    if (!g_overlay) return;
+    for (i = 0; i < g_overlay_nfiles; i++) {
+        if (ewgui_overlay_append(g_overlay, g_overlay_files[i]) != 0)
+            fprintf(stderr, "csnstaevdisp: no se pudo cargar overlay %s\n", g_overlay_files[i]);
+    }
+    if (g_overlay_width > 0.0) ewgui_overlay_set_global_width(g_overlay, g_overlay_width);
+    for (i = 0; i < g_overlay_ncolors; i++) {
+        double rgb[3];
+        if (ewgui_parse_hex_color(g_overlay_colors[i].hex, rgb) == 0)
+            ewgui_overlay_set_color(g_overlay, g_overlay_colors[i].layer, rgb);
+        else
+            fprintf(stderr, "csnstaevdisp: OverlayColor %s: hex invalido '%s'\n",
+                    g_overlay_colors[i].layer, g_overlay_colors[i].hex);
+    }
 }
 
  /***********************************************************************
@@ -452,6 +504,13 @@ static gboolean check_history_file_loop(gpointer data) {
   *               FALSE always.                                         *
   ***********************************************************************/
 
+/* (lat,lon) -> coordenadas de mundo del mapa (se dibuja dentro de la transformación). */
+typedef struct { double img_w, img_h; } SnMapCtx;
+static void sn_overlay_map(double lat, double lon, void *ud, double *sx, double *sy) {
+    SnMapCtx *c = ud;
+    ewgui_geo_project(lat, lon, c->img_w, c->img_h, sx, sy);
+}
+
 static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
     (void)canvas; (void)data;
 
@@ -494,6 +553,12 @@ static void on_draw_map(EwGuiCanvas *canvas, cairo_t *cr, int width, int height,
             cairo_move_to(cr, 0, y); cairo_line_to(cr, img_w, y);
         }
         cairo_stroke(cr);
+
+        /* 3b. Overlay de líneas (debajo de estaciones y sismos) */
+        if (g_overlay != NULL) {
+            SnMapCtx octx = { img_w, img_h };
+            ewgui_overlay_draw(cr, g_overlay, sn_overlay_map, &octx, 1.0 / g_map_zoom);
+        }
 
         /* 4. Draw Stations with Dynamic Elevation Color */
         cairo_set_line_width(cr, 1.0 / g_map_zoom); 
@@ -721,6 +786,35 @@ static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user
         active ? ADW_COLOR_SCHEME_FORCE_DARK : ADW_COLOR_SCHEME_DEFAULT);
 }
 
+static void on_overlay_changed(void *ud) {
+    size_t i;
+    (void)ud;
+    if (g_overlay) {
+        for (i = 0; i < g_overlay->nlayers; i++) {
+            EwOverlayLayer *L = &g_overlay->layers[i];
+            logit("et", "  #layer name=%s color=%02X%02X%02X width=%.1f  (copy to overlay file)\n",
+                  L->name,
+                  (unsigned)(L->color[0] > 0.0 ? (L->color[0] < 1.0 ? L->color[0] * 255.0 + 0.5 : 255.0) : 0.0),
+                  (unsigned)(L->color[1] > 0.0 ? (L->color[1] < 1.0 ? L->color[1] * 255.0 + 0.5 : 255.0) : 0.0),
+                  (unsigned)(L->color[2] > 0.0 ? (L->color[2] < 1.0 ? L->color[2] * 255.0 + 0.5 : 255.0) : 0.0),
+                  L->width);
+        }
+    }
+    if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+}
+
+static void act_overlay_layers(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p;
+    if (!g_overlay || g_overlay->nlayers == 0) return;
+    ewgui_overlay_dialog_run(g_overlay, GTK_WINDOW(ud), on_overlay_changed, NULL);
+}
+
+static void act_overlay_reload(GSimpleAction *a, GVariant *p, gpointer ud) {
+    (void)a; (void)p; (void)ud;
+    LoadOverlays();
+    if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *vbox_main;
     (void)user_data;
@@ -737,26 +831,29 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_signal_connect(dark, "activate", G_CALLBACK(on_toggle_dark), NULL);
     g_action_map_add_action(G_ACTION_MAP(actions), G_ACTION(dark));
     ewgui_action_add(G_ACTION_MAP(actions), "export", NULL, act_export, window);
+    ewgui_action_add(G_ACTION_MAP(actions), "overlay-layers", NULL, act_overlay_layers, window);
+    ewgui_action_add(G_ACTION_MAP(actions), "overlay-reload", NULL, act_overlay_reload, window);
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
-    EwMenuItem ctrl_items[] = {
+    static const EwMenuItem ctrl_items[] = {
         { "Events number", "win.events-number", NULL, 0 },
     };
-    EwMenuItem view_items[] = {
+    static const EwMenuItem view_items[] = {
         { "Export view...", "win.export", NULL, 0 },
         { "Dark mode", "win.dark-mode", NULL, 0 },
     };
-    EwMenuGroup menu_groups[] = {
+    static const EwMenuItem overlay_items[] = {
+        { "Layers...", "win.overlay-layers", NULL, 0 },
+        { "Reload", "win.overlay-reload", NULL, 0 },
+    };
+    static const EwMenuGroup menu_groups[] = {
         { "Control Panel", ctrl_items, 1 },
         { "View", view_items, 2 },
+        { "Overlay", overlay_items, 2 },
     };
-    GMenuModel *menu_model = ewgui_menu_build(menu_groups, 2);
 
-    GtkWidget *menu_btn = gtk_menu_button_new();
-    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menu_btn), "open-menu-symbolic");
-    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menu_btn), menu_model);
-    g_object_unref(menu_model);
+    GtkWidget *menu_btn = ewgui_menu_button_new(menu_groups, 3);
 
     GtkWidget *header = adw_header_bar_new();
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), menu_btn);
@@ -796,6 +893,22 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char *argv[]) {
+    /* Modo headless: carga los overlays del .d y reporta capas/polilíneas. */
+    if (argc == 3 && strcmp(argv[1], "--check-overlays") == 0) {
+        int nl = 0, np = 0;
+        size_t i;
+        if (ReadConfig(argv[2]) != 0) return 1;
+        LoadOverlays();
+        if (g_overlay) {
+            nl = (int)g_overlay->nlayers;
+            for (i = 0; i < g_overlay->nlayers; i++)
+                np += (int)g_overlay->layers[i].nlines;
+        }
+        printf("overlay_layers=%d overlay_polylines=%d\n", nl, np);
+        ewgui_overlay_free(g_overlay);
+        g_overlay = NULL;
+        return 0;
+    }
     if (argc != 2) {
         fprintf(stderr, "Usage: %s <configfile.d>\n", argv[0]);
         exit(1);
@@ -825,6 +938,8 @@ int main(int argc, char *argv[]) {
         g_error_free(err);
     }
 
+    LoadOverlays();
+
     AdwApplication *app = adw_application_new("cl.csn.csnstaevdisp", G_APPLICATION_NON_UNIQUE);
     g_app = G_APPLICATION(app);
     g_signal_connect(app, "activate", G_CALLBACK(on_activate), NULL);
@@ -832,6 +947,7 @@ int main(int argc, char *argv[]) {
 
     tport_detach(&Region);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);
+    ewgui_overlay_free(g_overlay);
     if (StaArray) free(StaArray);
     
     return status;

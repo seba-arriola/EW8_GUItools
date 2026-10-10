@@ -72,17 +72,6 @@
  Process	  "pickS pickS.d"
  Class/Priority    OTHER 0
 #
-# Puentes Kafka/GLASS3 (LEGACY, deshabilitados): la asociacion+localizacion la
-# hace csnloc localmente. Para volver al flujo GLASS3: descomentar estas dos
-# entradas y COMENTAR la de csnloc (no pueden convivir: ambos escriben
-# HYPO_RING). Requiere Kafka+broker arriba (kafka_monitor.sh, glass_monitor.sh)
-# y las variables GLASS_*/KAFKA_* de ew8_unix.sh. Ver AGENTS.md seccion 8.
-# Process	  "ew2glass ew2glass.d"
-# Class/Priority    OTHER 0
-#
-# Process	  "glass2ew glass2ew.d"
-# Class/Priority    OTHER 0
-#
  Process	  "csnloc csnloc.d"
  Class/Priority    OTHER 0
 #
@@ -100,7 +89,13 @@
  Process	  "wave_serverV wave_serverV.d"
  Class/Priority    OTHER 0
 #
+ Process	  "wstore_ingest wavestore.d"
+ Class/Priority    OTHER 0
+#
  Process	  "csnmags csnmags.d"
+ Class/Priority    OTHER 0
+#
+ Process	  "csnmags csnmags_raw.d"
  Class/Priority    OTHER 0
 #
  Process	  "csntvp csntvp.d"

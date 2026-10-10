@@ -117,10 +117,8 @@ stop() {
     fi
 
     # Limpiar cualquier modulo que siga vivo
-    # (ew2glass|glass2ew son del camino LEGACY GLASS3+Kafka: solo aparecen si
-    #  se reactivo ese flujo; ver AGENTS.md seccion 8)
     local leftovers
-    leftovers="$(pgrep -f 'slink2ew|pick_FP|ew2glass|glass2ew|wave_serverV|csnmags|csntvp|csnhypodbp|csnrv|csnstaevdisp|ew_controller' 2>/dev/null)"
+    leftovers="$(pgrep -f 'slink2ew|pick_FP|wave_serverV|csnmags|csntvp|csnhypodbp|csnrv|csnstaevdisp|ew_controller' 2>/dev/null)"
     if [ -n "$leftovers" ]; then
         echo "  matando modulos remanentes: $(echo $leftovers | tr '\n' ' ')"
         kill -KILL $leftovers 2>/dev/null

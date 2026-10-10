@@ -75,6 +75,15 @@ void ewgui_trace_set_rate(EwGuiTrace *t, double rate) { if (t) t->rate = rate; }
 double ewgui_trace_oldest(const EwGuiTrace *t) { return t ? t->oldest : 0.0; }
 void ewgui_trace_set_oldest(EwGuiTrace *t, double t0) { if (t) t->oldest = t0; }
 
+void ewgui_trace_set_span(EwGuiTrace *t, double oldest, double rate, long len)
+{
+    if (!t)
+        return;
+    t->oldest = oldest;
+    t->rate = rate;
+    ewgui_trace_set_length(t, len);
+}
+
 int32_t *ewgui_trace_raw(EwGuiTrace *t)      { return t ? t->raw : NULL; }
 int32_t *ewgui_trace_filtered(EwGuiTrace *t) { return t ? t->filt : NULL; }
 

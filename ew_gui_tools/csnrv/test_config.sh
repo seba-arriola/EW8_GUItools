@@ -119,5 +119,29 @@ else
     echo "  FAIL: retorno esperado != 0, obtenido $RC"; FAIL=$((FAIL + 1))
 fi
 
+# --- T7: claves de overlay (repetibles) -----------------------------------
+echo "T7: OverlayFile x2 + OverlayColor + OverlayWidth"
+write_cfg "$TMP/t7.d" "OverlayFile     a.lines" "OverlayFile     b.lines" \
+                     "OverlayColor    subduccion 112233" "OverlayWidth    2.0"
+run_cfg "$TMP/t7.d"
+check_eq "retorno 0" "0" "$RC"
+check_eq "OverlayFiles" "2" "$(field "$OUT" OverlayFiles)"
+check_eq "OverlayColors" "1" "$(field "$OUT" OverlayColors)"
+
+# --- T8: --check-overlays carga un .lines real ----------------------------
+echo "T8: --check-overlays con archivo .lines"
+{
+    echo "#layer name=a color=FF0000"
+    echo "0 0"; echo "1 1"; echo ">"; echo "2 2"
+    echo "#layer name=b"
+    echo "-70 -30"
+} > "$TMP/ov.lines"
+write_cfg "$TMP/t8.d" "OverlayFile     $TMP/ov.lines" "OverlayColor    a 00FF00" "OverlayWidth    2.0"
+OUT="$("$BIN" --check-overlays "$TMP/t8.d" 2>"$TMP/stderr")"
+RC=$?
+check_eq "retorno 0" "0" "$RC"
+check_contains "2 capas" "overlay_layers=2" "$OUT"
+check_contains "3 polilineas" "overlay_polylines=3" "$OUT"
+
 echo "== Resultado: $PASS PASS / $FAIL FAIL =="
 [ "$FAIL" -eq 0 ]

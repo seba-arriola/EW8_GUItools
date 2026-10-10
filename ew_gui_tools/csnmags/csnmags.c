@@ -1,4 +1,5 @@
 #include "csnmags.h"
+#include "mag_key.h"
 
 #include <string.h>
 #include <locale.h>
@@ -34,7 +35,9 @@ typedef struct { char sta[8]; double mag; } MagStaMag;
 
 typedef struct {
     int    active;
-    char   event_id[24];
+    char   key[32];        /* "(qid)|(mod)": identifica la SOLUCION, no solo el sismo */
+    int    mod;            /* modulo origen del ARC (162 csnloc / 163 hyp2000 / 164 nlloc) */
+    char   event_id[24];   /* qid desnudo, para la salida (mag.qid) */
     double t0, lat, lon, depth;
     unsigned int version;
     int    nsta[MT_N];
@@ -66,12 +69,12 @@ typedef struct {
 
 /* ------------------------------ eventos ------------------------------ */
 
-static MagEvent *event_get(MagCtx *c, const char *id)
+static MagEvent *event_get(MagCtx *c, const char *key)
 {
     int i, slot = -1;
     time_t now = time(NULL);
     for (i = 0; i < MAG_MAX_EVENTS; i++) {
-        if (c->ev[i].active && strcmp(c->ev[i].event_id, id) == 0) return &c->ev[i];
+        if (c->ev[i].active && strcmp(c->ev[i].key, key) == 0) return &c->ev[i];
         if (!c->ev[i].active && slot < 0) slot = i;
     }
     if (slot < 0) {
@@ -81,7 +84,15 @@ static MagEvent *event_get(MagCtx *c, const char *id)
     }
     memset(&c->ev[slot], 0, sizeof(c->ev[slot]));
     c->ev[slot].active = 1;
-    snprintf(c->ev[slot].event_id, sizeof(c->ev[slot].event_id), "%s", id);
+    snprintf(c->ev[slot].key, sizeof(c->ev[slot].key), "%s", key);
+    /* qid desnudo (para salida/log): parte de la clave antes del '|'. */
+    {
+        const char *bar = strchr(key, '|');
+        size_t qn = bar ? (size_t)(bar - key) : strlen(key);
+        if (qn >= sizeof(c->ev[slot].event_id)) qn = sizeof(c->ev[slot].event_id) - 1;
+        memcpy(c->ev[slot].event_id, key, qn);
+        c->ev[slot].event_id[qn] = '\0';
+    }
     c->ev[slot].last_update = now;
     return &c->ev[slot];
 }
@@ -408,15 +419,16 @@ static double epoch_from_str(const char *s14, const char *s_ss)
     return mag_ymdhms_epoch(y, mo, d, hh, mi, ss);
 }
 
-static int parse_arc(MagCtx *c, const char *msg, MagEvent **evout)
+static int parse_arc(MagCtx *c, const char *msg, int mod, MagEvent **evout)
 {
-    char event_id[24] = {0}, otime[16] = {0};
+    char event_id[24] = {0}, key[32] = {0}, otime[16] = {0};
     char *pe, *line;
     int  line_count = 0, got = 0;
     double eq_lat, eq_lon;
 
     snprintf(event_id, sizeof(event_id), "%.10s", msg + 136);
     for (pe = event_id + strlen(event_id) - 1; pe >= event_id && *pe == ' '; pe--) *pe = '\0';
+    mag_key(key, sizeof(key), event_id, mod);
     snprintf(otime, sizeof(otime), "%.14s", msg);
 
     {
@@ -431,11 +443,13 @@ static int parse_arc(MagCtx *c, const char *msg, MagEvent **evout)
     }
 
     {
-        MagEvent *ev = event_get(c, event_id);
+        MagEvent *ev = event_get(c, key);
         unsigned int ver = 0; char vs[5] = {0};
         snprintf(vs, sizeof(vs), "%.4s", msg + 178); ver = (unsigned int)atoi(vs);
         if (ver && ver <= ev->version) return 0;
         ev->version = ver;
+        ev->mod = mod;
+        snprintf(ev->event_id, sizeof(ev->event_id), "%s", event_id);
         ev->t0 = epoch_from_str(otime, NULL);
         ev->lat = eq_lat; ev->lon = eq_lon; ev->depth = 10.0;
         *evout = ev;
@@ -521,7 +535,7 @@ static void ring_run(MagCtx *c)
         if (res == GET_OK || res == GET_MISS) {
             int type;
             msg[recsize] = '\0';
-            if (parse_arc(c, msg, &ev) && ev) {
+            if (parse_arc(c, msg, reclogo.mod, &ev) && ev) {
                 MSG_LOGO logo; double pref; const char *pt;
                 for (type = 0; type < MT_N; type++) event_update_net(ev, type, &c->cfg);
                 pt = pref_mag_type(c, ev, &pref);
@@ -535,7 +549,8 @@ static void ring_run(MagCtx *c)
                     if (ev->calc[type] && ev->used[type] > 0)
                         mag_out_publish(&c->region, &logo, ev->event_id, g_imag[type],
                                         mag_magtype_name(g_imag[type]), ev->net[type],
-                                        ev->err[type], 1.0, 0.0, -1, ev->used[type]);
+                                        ev->err[type], 1.0, 0.0, -1, ev->used[type],
+                                        ev->mod);
                 }
             }
         } else {
@@ -576,7 +591,7 @@ int main(int argc, char **argv)
         n = fread(buf, 1, 524287, fp);
         buf[n] = '\0';
         fclose(fp);
-        if (parse_arc(&c, buf, &ev) && ev) {
+        if (parse_arc(&c, buf, 0, &ev) && ev) {
             for (type = 0; type < MT_N; type++) event_update_net(ev, type, &c.cfg);
             printf("ARC %s: ML=%.2f(%d) Mwp=%.2f(%d) Mb=%.2f(%d) Ms=%.2f(%d)\n",
                    ev->event_id, ev->net[MT_ML], ev->used[MT_ML],
@@ -593,6 +608,7 @@ int main(int argc, char **argv)
     if (argc != 2 && argc < 4) {
         fprintf(stderr, "Uso: csnmags <csnmags.d>\n");
         fprintf(stderr, "     csnmags <csnmags.d> <hypos.jsonl> <tank> [--out F]\n");
+        fprintf(stderr, "     csnmags <csnmags.d> <hypos.jsonl> --store <root> [--out F]\n");
         return 1;
     }
 
@@ -612,15 +628,21 @@ int main(int argc, char **argv)
 
     if (argc >= 4) {
         FILE *out = stdout;
-        int   i;
-        const char *tank = argv[3];
-        for (i = 4; i < argc; i++) {
+        int   i = 3;
+        const char *tank = NULL;
+        if (strcmp(argv[i], "--store") == 0 && i + 1 < argc) {
+            snprintf(c.cfg.store_root, sizeof(c.cfg.store_root), "%s", argv[i + 1]);
+            i += 2;
+        } else {
+            tank = argv[i++];
+        }
+        for (; i < argc; i++) {
             if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = fopen(argv[++i], "w");
         }
         c.offline = 1; c.off = out;
         WaveSource *w = &c.wave;
         if (wave_open(w, &c.cfg, tank) != 0) {
-            fprintf(stderr, "csnmags: no abro el tank %s\n", tank);
+            fprintf(stderr, "csnmags: no abro la fuente de onda\n");
             return 1;
         }
         offline_run(&c, argv[2], tank, out);
