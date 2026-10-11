@@ -1,0 +1,34 @@
+# PostgreSQL para información hipocentral de EW8_GUItools (dev).
+#
+# Las credenciales viven en ../run_working_v8/params/db.env
+# (copiar de run_working_v8/params/db.env.example). Ese archivo trae las claves
+# DB_* (conexión de los módulos) y POSTGRES_* (inicialización del contenedor).
+#
+#   docker compose -f db/docker-compose.yml up -d --wait   # arrancar
+#   docker compose -f db/docker-compose.yml down            # detener
+#   docker compose -f db/docker-compose.yml down -v         # reset (borra datos)
+#
+# El esquema se aplica SOLO al crear el volumen por primera vez
+# (docker-entrypoint-initdb.d). Para reaplicarlo tras cambios: `down -v` + `up`.
+name: ew8_hypodb
+
+services:
+  db:
+    image: postgres:16
+    container_name: ew8_hypodb
+    restart: unless-stopped
+    env_file:
+      - ../run_working_v8/params/db.env
+    ports:
+      - "5435:5432"
+    volumes:
+      - ew8_db_data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ew8_db_data:

@@ -1,6 +1,10 @@
 #include "csnhypodbp.h"
 #include "wstore.h"
 
+#include <math.h>
+
+#include "ewgui/db.h"
+
 void LoadStationsFromFile() {
     FILE *fp = fopen(StaFile, "r");
     if (!fp) { logit("e", "csnhypodbp: Error abriendo %s\n", StaFile); exit(-1); }
@@ -450,6 +454,209 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
     fclose(fp);
     if (nrec > 0) { rebuild_event_store(); reselect_event_by_qid(0); }
     logit("t", "csnhypodbp: recuperados %d eventos de %s\n", nrec, state_path);
+}
+
+/* ------------------------------------------------------------------------- */
+/* Historial desde la base hipocentral                                        */
+/* ------------------------------------------------------------------------- */
+
+static EwGuiDb *g_db = NULL;
+static int      g_db_hours = 24;
+
+int csnhypodbp_db_init(const char *envfile, int hours)
+{
+    EwGuiDbConfig cfg;
+
+    g_db_hours = (hours > 0) ? hours : 24;
+    if (!envfile || !*envfile)
+        return 0;
+    if (ewguidb_config_load(envfile, &cfg) != 0) {
+        logit("e", "csnhypodbp: no se pudo leer %s\n", envfile);
+        return -1;
+    }
+    if (ewguidb_open(&cfg, &g_db) != 0) {
+        logit("e", "csnhypodbp: BD: %s\n", ewguidb_last_error(g_db));
+        ewguidb_close(g_db);
+        g_db = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+static double iso_epoch(const char *s)
+{
+    int y, mo, d, h, mi;
+    double sec;
+    struct tm tm;
+
+    if (!s || sscanf(s, "%4d-%2d-%2d %2d:%2d:%lf",
+                     &y, &mo, &d, &h, &mi, &sec) != 6)
+        return 0.0;
+    memset(&tm, 0, sizeof tm);
+    tm.tm_year = y - 1900;
+    tm.tm_mon = mo - 1;
+    tm.tm_mday = d;
+    tm.tm_hour = h;
+    tm.tm_min = mi;
+    tm.tm_sec = (int)sec;
+    return (double)timegm(&tm) + (sec - (int)sec);
+}
+
+/* "NET.STA.LOC.CHAN" -> STA */
+static void nslco_sta(const char *ch, char *out, size_t n)
+{
+    char work[128], *p, *dot;
+    int nf = 0;
+
+    out[0] = '\0';
+    if (!ch)
+        return;
+    snprintf(work, sizeof work, "%s", ch);
+    p = work;
+    while (p && nf < 2) {
+        dot = strchr(p, '.');
+        if (nf == 1) {                       /* segundo campo = STA */
+            if (dot) *dot = '\0';
+            snprintf(out, n, "%s", p);
+            return;
+        }
+        if (!dot)
+            return;
+        *dot = '\0';
+        p = dot + 1;
+        nf++;
+    }
+}
+
+void cargar_sismos_db(void)
+{
+    EwGuiEventRow *evs = NULL;
+    int nev = 0, i, j, nrec = 0;
+
+    if (!g_db)
+        return;
+    if (ewguidb_query_recent_events(g_db, g_db_hours, &evs, &nev) < 0) {
+        ewguidb_rows_free(evs);
+        return;
+    }
+    ensure_groups();
+
+    for (i = 0; i < nev; i++) {
+        EwGuiOriginRow *ors = NULL;
+        int nor = 0, qid;
+        EventGroup *g;
+
+        qid = atoi(evs[i].event_id[0] == 'E' ? evs[i].event_id + 1
+                                             : evs[i].event_id);
+        if (ewguidb_query_origins(g_db, evs[i].event_id, &ors, &nor) <= 0) {
+            ewguidb_rows_free(ors);
+            continue;
+        }
+
+        g = event_group_new(qid);
+        for (j = 0; j < nor; j++) {
+            const char *colon = strrchr(ors[j].origin_id, ':');
+            int mod = colon ? atoi(colon + 1) : 0;
+            double otime = iso_epoch(ors[j].origin_time);
+            time_t rawtime = (time_t)otime;
+            struct tm *ptm = gmtime(&rawtime);
+            char fecha[32], hora[32], szLat[32], szLon[32], szDep[32];
+            char szRes[32], szAzm[32], szStn[32], szID[32], szMod[32], szVer[32];
+            char szMl[32] = "-", szMwp[32] = "-", szMb[32] = "-", szMs[32] = "-";
+            EwGuiMagRow *mgs = NULL;
+            EwGuiPickRow *pks = NULL;
+            int nm = 0, npk = 0, k;
+            CsnhypodbpRow *row;
+            EventSol *es;
+
+            if (ptm) {
+                snprintf(fecha, sizeof fecha, "%02d/%02d",
+                         ptm->tm_mon + 1, ptm->tm_mday);
+                snprintf(hora, sizeof hora, "%02d:%02d:%02d",
+                         ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
+            } else {
+                strcpy(fecha, "--/--");
+                strcpy(hora, "--:--:--");
+            }
+            snprintf(szLat, sizeof szLat, "%.2f%c",
+                     fabs(ors[j].latitude), ors[j].latitude < 0 ? 'S' : 'N');
+            snprintf(szLon, sizeof szLon, "%.2f%c",
+                     fabs(ors[j].longitude), ors[j].longitude < 0 ? 'W' : 'E');
+            snprintf(szDep, sizeof szDep, "%.0f", ors[j].depth);
+            snprintf(szRes, sizeof szRes, "%.1f",
+                     isnan(ors[j].standard_error) ? 0.0 : ors[j].standard_error);
+            snprintf(szAzm, sizeof szAzm, "%.0f",
+                     isnan(ors[j].azimuthal_gap) ? 0.0 : ors[j].azimuthal_gap);
+            snprintf(szStn, sizeof szStn, "%d",
+                     ors[j].station_count < 0 ? 0 : ors[j].station_count);
+            snprintf(szID, sizeof szID, "%010d", qid);
+            snprintf(szMod, sizeof szMod, "%s", ModLabel(mod));
+            snprintf(szVer, sizeof szVer, "0");
+
+            if (ewguidb_query_magnitudes(g_db, ors[j].origin_id, &mgs, &nm) > 0) {
+                for (k = 0; k < nm; k++) {
+                    char b[32];
+                    snprintf(b, sizeof b, "%.1f-%d", mgs[k].magnitude_value,
+                             mgs[k].station_count < 0 ? 0
+                                                      : mgs[k].station_count);
+                    if (strcmp(mgs[k].magnitude_type, "ML") == 0)
+                        snprintf(szMl, sizeof szMl, "%s", b);
+                    else if (strcmp(mgs[k].magnitude_type, "Mwp") == 0)
+                        snprintf(szMwp, sizeof szMwp, "%s", b);
+                    else if (strcmp(mgs[k].magnitude_type, "Mb") == 0)
+                        snprintf(szMb, sizeof szMb, "%s", b);
+                    else if (strcmp(mgs[k].magnitude_type, "Ms") == 0)
+                        snprintf(szMs, sizeof szMs, "%s", b);
+                }
+            }
+            ewguidb_rows_free(mgs);
+
+            row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes,
+                                     szAzm, szStn, szID, szMl, szMwp, szMb, szMs,
+                                     szMod, szVer, otime, 0, qid, ors[j].latitude,
+                                     ors[j].longitude, ors[j].depth, mod);
+            g_object_set(row, "estado",
+                         strcmp(ors[j].status, "REVIEWED") == 0 ? "M" : "A", NULL);
+            g_list_store_append(g_store_hypo, row);
+
+            es = g_new0(EventSol, 1);
+            es->row = row;
+            es->qid = qid;
+            es->manual = (strcmp(ors[j].status, "REVIEWED") == 0);
+            es->version = 0;
+            es->nph = ors[j].station_count;
+            es->rms = isnan(ors[j].standard_error) ? 0.0 : ors[j].standard_error;
+            es->otime = otime;
+            es->mod = mod;
+            g_ptr_array_add(g->sols, es);
+
+            g_object_set_data(G_OBJECT(row), "event-group", g);
+            g_object_unref(row);
+
+            if (ewguidb_query_picks(g_db, ors[j].origin_id, &pks, &npk) > 0) {
+                for (k = 0; k < npk; k++) {
+                    CsnhypodbpPick pk;
+                    memset(&pk, 0, sizeof pk);
+                    nslco_sta(pks[k].channel, pk.sta, sizeof pk.sta);
+                    pk.phase = (pks[k].phase[0] == 'S') ? 'S' : 'P';
+                    pk.t_pick = iso_epoch(pks[k].pick_time);
+                    event_group_add_picks(g, &pk, 1, g_group_pick_tol_sec);
+                }
+            }
+            ewguidb_rows_free(pks);
+            nrec++;
+        }
+        event_group_update_preferred(g);
+        g_ptr_array_add(g_groups, g);
+        ewguidb_rows_free(ors);
+    }
+    ewguidb_rows_free(evs);
+
+    if (nrec > 0) {
+        rebuild_event_store();
+        reselect_event_by_qid(0);
+    }
+    logit("t", "csnhypodbp: recuperados %d soluciones de la BD\n", nrec);
 }
 
 int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {

@@ -297,6 +297,7 @@ const char *mag_magtype_name(int imagtype);
 int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
                     int imagtype, const char *szmagtype, double mag,
                     double err, double qual, double mindist, int gap,
-                    int nsta, int origin_version);
+                    int nsta, int origin_version, const MAG_CHAN_INFO *chans,
+                    int nchan);
 
 #endif /* CSNMAGS_H */

@@ -98,6 +98,9 @@
  Process	  "csnmags csnmags_raw.d"
  Class/Priority    OTHER 0
 #
+ Process	  "hypodb_ingest hypodb.d"
+ Class/Priority    OTHER 0
+#
  Process	  "csntvp csntvp.d"
  Class/Priority    OTHER 0
 #

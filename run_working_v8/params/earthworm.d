@@ -231,6 +231,7 @@
  Module   MOD_MAGNITUDES        166
  Module   MOD_MAGNITUDES_RAW    167
  Module   MOD_CSNMAGS_RAW       168
+ Module   MOD_HYPODB            169
 #--------------------------------------------------------------------------
 #                          Message Types
 #

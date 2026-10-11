@@ -129,6 +129,14 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
     line[EWGUI_ARC_MANUAL_OFF] = manual ? EWGUI_ARC_MANUAL_CHAR
                                         : EWGUI_ARC_AUTO_CHAR;
 
+    /* Modelo de velocidades (linea 1, offsets 123..135). */
+    {
+        const char *m = cfg->TauModel;
+        int vm;
+        for (vm = 0; vm < EWGUI_ARC_VMODEL_LEN && m && m[vm]; vm++)
+            line[EWGUI_ARC_VMODEL_OFF + vm] = m[vm];
+    }
+
     if ((int)strlen(buf) + ARC_LINE1 + 2 >= buflen) return -1;
     strcat(buf, line);
 

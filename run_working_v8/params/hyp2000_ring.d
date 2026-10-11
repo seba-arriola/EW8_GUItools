@@ -20,6 +20,7 @@ WorkDir         ../../resources/hyp2000
 # Region opcional (mismo formato .grid que csnloc): solo se refinan eventos
 # dentro del bbox. Vacio = sin filtro.
 GridFile        grids/chile_regional.grid
+VelocityModel   CHILE_POTIN
 
 # Filtros de calidad (0 = sin filtro).
 MinPhases       4

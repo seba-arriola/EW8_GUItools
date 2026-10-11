@@ -21,6 +21,8 @@
 #include <earthworm.h>
 #include <transport.h>
 #include <kom.h>
+
+#include "ewgui/db.h"
 #include <rw_mag.h>
 
 #ifndef M_PI
@@ -38,6 +40,8 @@
 char MyModName[MAX_STR];
 char RingName[MAX_STR];
 char QuakeFile[MAX_STR];
+char DbEnvFile[MAX_STR];
+int  g_db_hours = 24;                /* ventana de historial de la BD (horas) */
 char MapImageFile[MAX_STR];
 int HeartBeatInt;
 int LogFile;
@@ -75,6 +79,7 @@ double g_origin_time = 0.0;
 double g_epicenter_lat = 0.0;
 double g_epicenter_lon = 0.0;
 GdkPixbuf *g_map_pixbuf = NULL;
+static EwGuiDb *g_db = NULL;          /* conexión a la base hipocentral */
 
 /* Variables de Control de Zoom y Paneo del Mapa */
 double g_map_zoom = ZOOM_DEFAULT;
@@ -135,6 +140,12 @@ int ReadConfig(char *configfile) {
             /* Clave OPCIONAL (obsoleta): el display viene del anillo. */
             str = k_str();
             if (str) strcpy(QuakeFile, str);
+        } else if (k_its("DbEnvFile")) {
+            /* Credenciales de la base hipocentral (historial al arrancar). */
+            str = k_str();
+            if (str) strcpy(DbEnvFile, str);
+        } else if (k_its("DbHistoryHours")) {
+            g_db_hours = k_int();
         } else if (k_its("MapImageFile")) {
             str = k_str();
             if (str) strcpy(MapImageFile, str);
@@ -815,6 +826,65 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_ui_ready = TRUE;
 }
 
+/* --- Historial desde la base hipocentral (seed al arrancar) --------------- */
+static double iso_epoch(const char *s)
+{
+    int y, mo, d, h, mi;
+    double sec;
+    struct tm tm;
+
+    if (!s || sscanf(s, "%4d-%2d-%2d %2d:%2d:%lf",
+                     &y, &mo, &d, &h, &mi, &sec) != 6)
+        return 0.0;
+    memset(&tm, 0, sizeof tm);
+    tm.tm_year = y - 1900;
+    tm.tm_mon = mo - 1;
+    tm.tm_mday = d;
+    tm.tm_hour = h;
+    tm.tm_min = mi;
+    tm.tm_sec = (int)sec;
+    return (double)timegm(&tm) + (sec - (int)sec);
+}
+
+static void load_history_from_db(void)
+{
+    EwGuiMapEvent *evs = NULL;
+    int n = 0;
+
+    if (!g_db)
+        return;
+    if (ewguidb_query_map_events(g_db, g_db_hours, &evs, &n) < 0 || n < 1) {
+        ewguidb_rows_free(evs);
+        return;
+    }
+
+    g_epicenter_lat = evs[0].latitude;
+    g_epicenter_lon = evs[0].longitude;
+    g_origin_time = iso_epoch(evs[0].origin_time);
+    g_mag.qid = atoi(evs[0].event_id[0] == 'E' ? evs[0].event_id + 1
+                                               : evs[0].event_id);
+
+    {
+        EwGuiMagRow *mgs = NULL;
+        int nm = 0, i;
+
+        if (ewguidb_query_magnitudes(g_db, evs[0].origin_id, &mgs, &nm) > 0) {
+            for (i = 0; i < nm; i++) {
+                double v = mgs[i].magnitude_value;
+                int st = mgs[i].station_count;
+                if (strcmp(mgs[i].magnitude_type, "ML") == 0) { g_mag.ml = v; g_mag.ml_stn = st; }
+                else if (strcmp(mgs[i].magnitude_type, "Mwp") == 0) { g_mag.mwp = v; g_mag.mwp_stn = st; }
+                else if (strcmp(mgs[i].magnitude_type, "Mb") == 0) { g_mag.mb = v; g_mag.mb_stn = st; }
+                else if (strcmp(mgs[i].magnitude_type, "Ms") == 0) { g_mag.ms = v; g_mag.ms_stn = st; }
+            }
+        }
+        ewguidb_rows_free(mgs);
+    }
+
+    has_valid_data = TRUE;
+    ewguidb_rows_free(evs);
+}
+
 int main(int argc, char *argv[]) {
     /* Modo headless para tests: ejercita el parseo de TYPE_MAGNITUDE y la
      * regla de magnitud preferida, sin GTK ni Earthworm. */
@@ -958,7 +1028,21 @@ int main(int argc, char *argv[]) {
     
     logit_init(argv[1], 0, 1024, LogFile);
     MyPid = getpid();
-    
+
+    /* Base hipocentral: seed del historial (si hay credenciales). */
+    if (DbEnvFile[0]) {
+        EwGuiDbConfig dbcfg;
+        if (ewguidb_config_load(DbEnvFile, &dbcfg) == 0) {
+            if (ewguidb_open(&dbcfg, &g_db) != 0) {
+                logit("e", "csnrv: BD: %s\n", ewguidb_last_error(g_db));
+                ewguidb_close(g_db);
+                g_db = NULL;
+            }
+        } else {
+            logit("e", "csnrv: no se pudo leer %s\n", DbEnvFile);
+        }
+    }
+
     Lookup();
 
     long RingKey = GetKey(RingName);
@@ -978,7 +1062,10 @@ int main(int argc, char *argv[]) {
     MagLogo.type    = TypeMagnitude;
 
     setlocale(LC_NUMERIC, "C");
-    
+
+    /* Historial de la BD: puebla el resumen hasta que llegue un evento vivo. */
+    load_history_from_db();
+
     GError *err = NULL;
     g_map_pixbuf = gdk_pixbuf_new_from_file(MapImageFile, &err);
     if (!g_map_pixbuf) {

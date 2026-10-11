@@ -30,8 +30,14 @@ fi
 echo "=== D1: copia inicial y estructura ==="
 bash "$DEPLOY" --dst "$DST" --no-resources >"$TESTTMP/d1.out" 2>&1
 check_exit "D1 copia inicial -> exit 0" 0 "$?"
-check_eq "D1 binarios en whitelist" "26" \
+check_eq "D1 binarios en whitelist" "27" \
     "$(ls "$DST/earthworm_8.0/bin" 2>/dev/null | wc -l | tr -d ' ')"
+check_eq "D1 params/hypodb.d presente" "1" \
+    "$([ -f "$DST/run_working_v8/params/hypodb.d" ] && echo 1 || echo 0)"
+check_eq "D1 params/db.env.example presente" "1" \
+    "$([ -f "$DST/run_working_v8/params/db.env.example" ] && echo 1 || echo 0)"
+check_eq "D1 db/schema.sql presente" "1" \
+    "$([ -f "$DST/db/schema.sql" ] && echo 1 || echo 0)"
 check_eq "D1 grids copiados" "13" \
     "$(ls "$DST/run_working_v8/params/grids"/*.grid 2>/dev/null | wc -l | tr -d ' ')"
 for f in earthworm.d startstop_unix.d csnloc.d csnmags.d pick_FP.sta \

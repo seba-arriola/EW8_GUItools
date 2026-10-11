@@ -190,6 +190,20 @@ Tras podar, mueve los `.tnk`/`.inx` huérfanos y reinicia EarthWorm:
 
 ---
 
+## 🗄️ Base de datos hipocentral
+
+La información hipocentral (eventos, orígenes, picks, magnitudes) se almacena en **PostgreSQL**
+(`db/schema.sql`): la escribe en vivo `hypodb_ingest` (desde los anillos) y la consultan
+`csnhypodbp`, `csnrv` y `csnstaevdisp` (historial). Los anillos siguen siendo el transporte vivo.
+
+```bash
+cp run_working_v8/params/db.env.example run_working_v8/params/db.env
+docker compose -f db/docker-compose.yml up -d --wait
+db/test_schema.sh
+```
+
+Ver `docs/HYPODB.md` y `db/README.md`.
+
 ## Notas / Solución de problemas
 
 - `timeout` puede estar ensombrecido por SeisComP (`~/seiscomp/bin/timeout`); **no** es el `timeout`

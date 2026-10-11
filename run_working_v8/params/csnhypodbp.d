@@ -50,6 +50,7 @@ WsTimeout       10000
 # Backend de ondas: store primero, wave_serverV como fallback (auto)
 WaveBackend     auto
 StoreRoot       ../wstore
+DbEnvFile       db.env
 
 # Archivo de estaciones a graficar (Podemos usar el mismo de csntvp)
 StaFile         estaciones_107.txt         # Archivo de estaciones con formato: Estacion Canal Red Loc Escala

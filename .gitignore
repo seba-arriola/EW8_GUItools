@@ -18,6 +18,7 @@ run_working_v8/tanks/
 run_working_v8/log/*.log
 run_working_v8/log/*.lock
 run_working_v8/log/.noexec_fifo.txt
+run_working_v8/params/db.env
 
 # ===========================================================================
 # Artefactos dentro de los directorios versionados

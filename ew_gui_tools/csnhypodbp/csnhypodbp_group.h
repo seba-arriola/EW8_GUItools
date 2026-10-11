@@ -23,6 +23,10 @@ typedef struct {
     char   phase;       /* 'P' | 'S' */
     double t_pick;      /* epoch (s) */
     int    manual;      /* reservado (origen por fase) */
+    /* Extensiones para hypodb (AL FINAL: no alteran los offsets previos). */
+    char   net[4];      /* red (ARC [5:7])                              */
+    char   loc[4];      /* localizacion (ARC [111:113]); "--" => ""     */
+    double weight;      /* 0.0-1.0 (LPWT P / LSWT S del ARC)            */
 } CsnhypodbpPick;
 
 typedef struct {

@@ -19,4 +19,16 @@
 #define EWGUI_ARC_MANUAL_CHAR  'M'
 #define EWGUI_ARC_AUTO_CHAR    'A'
 
+/*
+ * Modelo de velocidades / curvas de tiempos de llegada que uso el localizador
+ * para esa solucion. Viaja en la LINEA 1, offsets 123..135 (13 chars, el pad4[13]
+ * libre de read_arc.h:201). Mismo estilo que la marca manual.
+ *   csnloc       -> cfg->TauModel            (p.ej. "iasp91")
+ *   hyp2000_ring -> clave VelocityModel      (p.ej. "CHILE_POTIN")
+ *   nlloc_ring   -> banda ModelBand elegida  (p.ej. "N34-42_1.5k" / "CHILE_4k")
+ * Lo lee hypodb_ingest -> origin.velocity_model.
+ */
+#define EWGUI_ARC_VMODEL_OFF   123
+#define EWGUI_ARC_VMODEL_LEN   13
+
 #endif /* EWGUI_ARC_LAYOUT_H */

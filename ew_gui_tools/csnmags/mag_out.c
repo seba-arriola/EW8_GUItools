@@ -9,9 +9,9 @@
 int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
                     int imagtype, const char *szmagtype, double mag,
                     double err, double qual, double mindist, int gap, int nsta,
-                    int origin_version)
+                    int origin_version, const MAG_CHAN_INFO *chans, int nchan)
 {
-    char     buf[1024];
+    char     buf[65536];
     MAG_INFO m;
 
     if (!region || !logo || !event_id || !szmagtype) return -1;
@@ -31,7 +31,14 @@ int mag_out_publish(SHM_INFO *region, MSG_LOGO *logo, const char *event_id,
     /* Modulo origen del ARC (162/163/164): distingue soluciones del mismo qid. */
     m.origin_version = (unsigned int)origin_version;
 
-    if (wr_mag(&m, buf, sizeof(buf)) != 0) return -1;
+    /* Lineas por estacion (NSLCO + amplitud + magnitud) para station_magnitude. */
+    if (chans && nchan > 0) {
+        m.pMagAux   = (char *)chans;
+        m.size_aux  = (size_t)nchan * sizeof(MAG_CHAN_INFO);
+        m.nchannels = nchan;
+    }
+
+    if (wr_mag_scnl(&m, buf, sizeof(buf)) != 0) return -1;
     return tport_putmsg(region, logo, (long)strlen(buf), buf);
 }
 

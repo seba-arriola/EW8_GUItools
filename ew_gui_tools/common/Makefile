@@ -33,13 +33,16 @@ endif
 GUI_CFLAGS   = $(shell pkg-config --cflags $(GUI_PKG))
 GUI_LIBS     = $(shell pkg-config --libs $(GUI_PKG))
 
+LIBPQ_CFLAGS = $(shell pkg-config --cflags libpq)
+LIBPQ_LIBS   = $(shell pkg-config --libs libpq)
+
 CFLAGS     += -Wall -Wextra -O2 -g -Iinclude \
               -I$(EW_HOME)/$(EW_VERSION)/include -D_LINUX -D_REENTRANT \
-              $(shell pkg-config --cflags gio-2.0) $(GUI_CFLAGS)
+              $(shell pkg-config --cflags gio-2.0) $(GUI_CFLAGS) $(LIBPQ_CFLAGS)
 
 # kom/tport/logit/GetType viven en libew_mt.a (ver csnloc/pickS/csnrv).
 EW_LIB      = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
-LDLIBS     += -lm -lpthread $(shell pkg-config --libs gio-2.0) $(GUI_LIBS) $(EW_LIB)
+LDLIBS     += -lm -lpthread $(shell pkg-config --libs gio-2.0) $(GUI_LIBS) $(EW_LIB) $(LIBPQ_LIBS)
 
 ifeq ($(GUI_TOOLKIT),gtk4)
 LIB  = libewgui_gtk4.a

@@ -142,6 +142,19 @@ int csnhypodbp_parse_solution(const char *msg, size_t len, int mod,
                         pk->sta[i] = 0;
                         for (i = 0; i < 3 && p[9 + i] != ' '; i++) pk->chan[i] = p[9 + i];
                         pk->chan[i] = 0;
+                        for (i = 0; i < 2 && p[5 + i] != ' '; i++) pk->net[i] = p[5 + i];
+                        pk->net[i] = 0;
+                        for (i = 0; i < 2 && p[111 + i] != ' '; i++) pk->loc[i] = p[111 + i];
+                        pk->loc[i] = 0;
+                        if (strcmp(pk->loc, "--") == 0) pk->loc[0] = 0;
+                        {
+                            /* Peso: LPWT (P, offset 16) o LSWT (S, offset 49).
+                               Codigos 0..4 (0 = mejor); 1.0 - code/4. */
+                            char wc = (fam == 'S') ? p[49] : p[16];
+                            pk->weight = (wc >= '0' && wc <= '4')
+                                             ? 1.0 - (double)(wc - '0') / 4.0
+                                             : 1.0;
+                        }
                         pk->phase = fam;
                         pk->t_pick = t;
                         out->npicks++;

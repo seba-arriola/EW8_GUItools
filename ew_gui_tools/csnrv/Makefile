@@ -5,9 +5,9 @@ CC = gcc
 # Módulo migrado a GTK4 + libadwaita (Fase 6). Enlaza libewgui_gtk4.a.
 GUI_PKG = gtk4 libadwaita-1
 
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
 
-LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
+LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 
 OBJS = csnrv.o
 

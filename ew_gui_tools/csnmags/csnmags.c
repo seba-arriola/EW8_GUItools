@@ -31,7 +31,15 @@
 #define IMAG_MS   4
 #define IMAG_MWP  5
 
-typedef struct { char sta[8]; double mag; } MagStaMag;
+typedef struct {
+    char   sta[8];
+    char   net[8];
+    char   loc[8];
+    char   chan[8];
+    double mag;
+    double amp;
+    double per;
+} MagStaMag;
 
 typedef struct {
     int    active;
@@ -97,16 +105,28 @@ static MagEvent *event_get(MagCtx *c, const char *key)
     return &c->ev[slot];
 }
 
-static void event_register(MagCtx *c, MagEvent *ev, int type, const char *sta, double mag)
+static void event_register(MagCtx *c, MagEvent *ev, int type,
+                           const char *sta, const char *net, const char *loc,
+                           const char *chan, double mag, double amp, double per)
 {
     int i, *n = &ev->nsta[type];
+    MagStaMag *s;
     (void)c;
     for (i = 0; i < *n; i++) {
-        if (strcmp(ev->sm[type][i].sta, sta) == 0) { ev->sm[type][i].mag = mag; return; }
+        if (strcmp(ev->sm[type][i].sta, sta) == 0) {
+            s = &ev->sm[type][i];
+            s->mag = mag; s->amp = amp; s->per = per;
+            snprintf(s->chan, sizeof(s->chan), "%s", chan ? chan : "");
+            return;
+        }
     }
     if (*n >= MAG_MAX_STA) return;
-    snprintf(ev->sm[type][*n].sta, sizeof(ev->sm[type][*n].sta), "%s", sta);
-    ev->sm[type][*n].mag = mag;
+    s = &ev->sm[type][*n];
+    snprintf(s->sta, sizeof(s->sta), "%s", sta);
+    snprintf(s->net, sizeof(s->net), "%s", net ? net : "");
+    snprintf(s->loc, sizeof(s->loc), "%s", loc ? loc : "");
+    snprintf(s->chan, sizeof(s->chan), "%s", chan ? chan : "");
+    s->mag = mag; s->amp = amp; s->per = per;
     (*n)++;
 }
 
@@ -162,7 +182,9 @@ static int deconv(const MagConfig *cfg, const MagStation *st, const char *chan,
 /* ------------------------------ magnitudes ------------------------------ */
 
 static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
-                       double pick_t, const char *loc, int *ok, double *mag)
+                       double pick_t, const char *loc, int *ok, double *mag,
+                       double *amp_out, double *per_out, char *chan_out,
+                       size_t chan_n)
 {
     static const char *hz[]  = { "HHE", "BHE", "HNE", NULL };
     static const char *hz2[] = { "HHN", "BHN", "HNN", NULL };
@@ -173,8 +195,9 @@ static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
     double t0 = pick_t + c->cfg.ml_t_a - 2.0;
     double t1 = pick_t + c->cfg.ml_t_b;
     char chan[8];
+    char best_chan[8] = "";
 
-    *ok = 0; *mag = 0.0;
+    *ok = 0; *mag = 0.0; *amp_out = 0.0; *per_out = 0.0;
     dist_deg = mag_great_circle_deg(ev->lat, ev->lon, st->lat, st->lon);
     if (dist_deg > c->cfg.ml.max_delta) return;
     epi_km = mag_epi_km(dist_deg);
@@ -186,14 +209,14 @@ static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
     if (chan_try(&c->wave, st->sta, st->net, hz, loc, t0, t1, &tr, chan, sizeof(chan)) == 0) {
         if (deconv(&c->cfg, st, chan, tr.x, tr.n, tr.dt, &wa) == 0) {
             double a = mag_amp_peak2peak(tr.x, tr.n, 0, tr.n, tr.dt, c->cfg.ml_slide_len);
-            if (a > best) best = a;
+            if (a > best) { best = a; snprintf(best_chan, sizeof best_chan, "%s", chan); }
         }
         free(tr.x);
     }
     if (chan_try(&c->wave, st->sta, st->net, hz2, loc, t0, t1, &tr, chan, sizeof(chan)) == 0) {
         if (deconv(&c->cfg, st, chan, tr.x, tr.n, tr.dt, &wa) == 0) {
             double a = mag_amp_peak2peak(tr.x, tr.n, 0, tr.n, tr.dt, c->cfg.ml_slide_len);
-            if (a > best) best = a;
+            if (a > best) { best = a; snprintf(best_chan, sizeof best_chan, "%s", chan); }
         }
         free(tr.x);
     }
@@ -201,7 +224,7 @@ static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
         chan_try(&c->wave, st->sta, st->net, hz3, loc, t0, t1, &tr, chan, sizeof(chan)) == 0) {
         if (deconv(&c->cfg, st, chan, tr.x, tr.n, tr.dt, &wa) == 0) {
             double a = mag_amp_peak2peak(tr.x, tr.n, 0, tr.n, tr.dt, c->cfg.ml_slide_len);
-            if (a > best) best = a;
+            if (a > best) { best = a; snprintf(best_chan, sizeof best_chan, "%s", chan); }
         }
         free(tr.x);
     }
@@ -211,11 +234,15 @@ static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
         (*mag) = mag_ml(best / c->cfg.wa_gain, dist_km, loga0,
                         c->cfg.ml_c1, c->cfg.ml_c2, c->cfg.ml_c3) + st->corr_ml;
     }
+    *amp_out = best;
+    if (chan_out && chan_n) snprintf(chan_out, chan_n, "%s", best_chan);
     *ok = 1;
 }
 
 static void compute_mwp(MagCtx *c, MagEvent *ev, const MagStation *st,
-                        double pick_t, const char *loc, int *ok, double *mag)
+                        double pick_t, const char *loc, int *ok, double *mag,
+                        double *amp_out, double *per_out, char *chan_out,
+                        size_t chan_n)
 {
     static const char *hz[] = { "HHZ", "BHZ", "HNZ", NULL };
     MagTrace tr;
@@ -223,7 +250,7 @@ static void compute_mwp(MagCtx *c, MagEvent *ev, const MagStation *st,
     double dist_deg, epi_km, dist_km, t0, t1, cum = 0.0, mn = 0.0, mx = 0.0;
     long i, i0, i1;
 
-    *ok = 0; *mag = 0.0;
+    *ok = 0; *mag = 0.0; *amp_out = 0.0; *per_out = 0.0;
     dist_deg = mag_great_circle_deg(ev->lat, ev->lon, st->lat, st->lon);
     if (dist_deg < c->cfg.mwp.min_delta || dist_deg > c->cfg.mwp.max_delta) return;
     epi_km = mag_epi_km(dist_deg);
@@ -252,11 +279,17 @@ static void compute_mwp(MagCtx *c, MagEvent *ev, const MagStation *st,
     free(tr.x);
     *mag = mag_mwp(mx - mn, dist_km, dist_deg, c->cfg.mwp_rho, c->cfg.mwp_alpha,
                    c->cfg.mwp_fp) + 0.0;
-    if (*mag > 0.0) *ok = 1;
+    if (*mag > 0.0) {
+        *amp_out = mx - mn;
+        if (chan_out && chan_n) snprintf(chan_out, chan_n, "%s", chan);
+        *ok = 1;
+    }
 }
 
 static void compute_mb(MagCtx *c, MagEvent *ev, const MagStation *st,
-                       double pick_t, const char *loc, int *ok, double *mag)
+                       double pick_t, const char *loc, int *ok, double *mag,
+                       double *amp_out, double *per_out, char *chan_out,
+                       size_t chan_n)
 {
     static const char *hz[] = { "HHZ", "BHZ", "HNZ", NULL };
     MagTrace tr;
@@ -264,7 +297,7 @@ static void compute_mb(MagCtx *c, MagEvent *ev, const MagStation *st,
     double dist_deg, epi_km, dist_km, t0, t1, amp, per;
     long i0, i1;
 
-    *ok = 0; *mag = 0.0;
+    *ok = 0; *mag = 0.0; *amp_out = 0.0; *per_out = 0.0;
     dist_deg = mag_great_circle_deg(ev->lat, ev->lon, st->lat, st->lon);
     if (dist_deg < c->cfg.mb.min_delta || dist_deg > c->cfg.mb.max_delta) return;
     epi_km = mag_epi_km(dist_deg);
@@ -292,18 +325,24 @@ static void compute_mb(MagCtx *c, MagEvent *ev, const MagStation *st,
     free(tr.x);
     if (per <= 0.0 || per > 5.0) per = c->cfg.mb_period;
     *mag = mag_mb(amp, per, dist_deg, &c->calib.q_global) + st->corr_mb;
-    if (*mag > 0.0) *ok = 1;
+    if (*mag > 0.0) {
+        *amp_out = amp; *per_out = per;
+        if (chan_out && chan_n) snprintf(chan_out, chan_n, "%s", chan);
+        *ok = 1;
+    }
 }
 
 static void compute_ms(MagCtx *c, MagEvent *ev, const MagStation *st,
-                       double pick_t, const char *loc, int *ok, double *mag)
+                       double pick_t, const char *loc, int *ok, double *mag,
+                       double *amp_out, double *per_out, char *chan_out,
+                       size_t chan_n)
 {
     static const char *hz[] = { "HHZ", "BHZ", "HNZ", NULL };
     MagTrace tr;
     MagPZ disp;
     double dist_deg, epi_km, dist_km, t0, t1, amp, per;
 
-    *ok = 0; *mag = 0.0;
+    *ok = 0; *mag = 0.0; *amp_out = 0.0; *per_out = 0.0;
     dist_deg = mag_great_circle_deg(ev->lat, ev->lon, st->lat, st->lon);
     if (dist_deg < c->cfg.ms.min_delta || dist_deg > c->cfg.ms.max_delta) return;
     if (c->cfg.ms_deep_corr == 0 && ev->depth > 60.0) return;
@@ -326,13 +365,18 @@ static void compute_ms(MagCtx *c, MagEvent *ev, const MagStation *st,
     if (per <= 0.0) per = c->cfg.ms_t;
     *mag = mag_ms(amp, per, dist_deg, c->cfg.ms_variant, c->cfg.ms_k1, c->cfg.ms_k2)
            + st->corr_ms;
-    if (*mag > 0.0) *ok = 1;
+    if (*mag > 0.0) {
+        *amp_out = amp; *per_out = per;
+        if (chan_out && chan_n) snprintf(chan_out, chan_n, "%s", chan);
+        *ok = 1;
+    }
 }
 
 /* ------------------------------ pipeline ------------------------------ */
 
 typedef void (*ComputeFn)(MagCtx *, MagEvent *, const MagStation *, double,
-                          const char *, int *, double *);
+                          const char *, int *, double *, double *, double *,
+                          char *, size_t);
 
 static ComputeFn g_fn[MT_N] = { compute_ml, compute_mwp, compute_mb, compute_ms };
 /* Alineado con MT_*: MT_ML=0, MT_MWP=1, MT_MB=2, MT_MS=3 */
@@ -341,13 +385,16 @@ static const int g_imag[MT_N] = { IMAG_ML, IMAG_MWP, IMAG_MB, IMAG_MS };
 static void process_station_type(MagCtx *c, MagEvent *ev, const MagStation *st,
                                  int type, double pick_t, const char *loc)
 {
-    int ok = 0; double mag = 0.0;
+    int ok = 0; double mag = 0.0, amp = 0.0, per = 0.0;
+    char chan[8] = "";
     MagGate gate = (type == MT_ML) ? c->cfg.ml :
                    (type == MT_MWP) ? c->cfg.mwp :
                    (type == MT_MB) ? c->cfg.mb : c->cfg.ms;
     if (!gate.enabled) return;
-    g_fn[type](c, ev, st, pick_t, loc, &ok, &mag);
-    if (ok && mag > 0.0) event_register(c, ev, type, st->sta, mag);
+    g_fn[type](c, ev, st, pick_t, loc, &ok, &mag, &amp, &per, chan,
+               sizeof(chan));
+    if (ok && mag > 0.0)
+        event_register(c, ev, type, st->sta, st->net, loc, chan, mag, amp, per);
 }
 
 /* Devuelve la magnitud de un evento para el tipo dado (0 si no calculada). */
@@ -546,11 +593,32 @@ static void ring_run(MagCtx *c)
                       ev->net[MT_MWP], ev->used[MT_MWP], pt, pref);
                 logo.instid = c->MyInstId; logo.mod = c->MyModId; logo.type = c->TypeMagnitude;
                 for (type = 0; type < MT_N; type++) {
-                    if (ev->calc[type] && ev->used[type] > 0)
+                    if (ev->calc[type] && ev->used[type] > 0) {
+                        int i, n = ev->nsta[type];
+                        MAG_CHAN_INFO *ch = NULL;
+                        if (n > 0) {
+                            ch = calloc((size_t)n, sizeof(*ch));
+                            if (ch) {
+                                for (i = 0; i < n; i++) {
+                                    MagStaMag *s = &ev->sm[type][i];
+                                    snprintf(ch[i].sta, sizeof(ch[i].sta), "%s", s->sta);
+                                    snprintf(ch[i].comp, sizeof(ch[i].comp), "%s", s->chan);
+                                    snprintf(ch[i].net, sizeof(ch[i].net), "%s", s->net);
+                                    snprintf(ch[i].loc, sizeof(ch[i].loc), "%s", s->loc);
+                                    ch[i].mag = s->mag;
+                                    ch[i].Amp1 = (float)s->amp;
+                                    ch[i].Period1 = (float)s->per;
+                                }
+                            } else {
+                                n = 0;
+                            }
+                        }
                         mag_out_publish(&c->region, &logo, ev->event_id, g_imag[type],
                                         mag_magtype_name(g_imag[type]), ev->net[type],
                                         ev->err[type], 1.0, 0.0, -1, ev->used[type],
-                                        ev->mod);
+                                        ev->mod, ch, n);
+                        free(ch);
+                    }
                 }
             }
         } else {
@@ -563,7 +631,8 @@ static void ring_run(MagCtx *c)
 
 int main(int argc, char **argv)
 {
-    MagCtx c;
+    /* static: MagCtx es grande (eventos × estaciones); en la pila desbordaría. */
+    static MagCtx c;
 
     /* Los mensajes TYPE_MAGNITUDE usan sprintf/sscanf de EarthWorm, sensibles
      * al locale (separador decimal). Forzamos C para publicar siempre con

@@ -4,10 +4,10 @@ CC = gcc
 GUI_PKG = gtk4 libadwaita-1
 
 # Flags de compilacion para GTK4 y Earthworm
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -I../csnloc -I../wavestore -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -I../csnloc -I../wavestore -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
 
 # Librerias y enlazador
-LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
+LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 
 # Librerias nativas de Earthworm 8
 EWLIBS = ../common/libewgui_gtk4.a \

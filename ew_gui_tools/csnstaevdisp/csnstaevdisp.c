@@ -37,6 +37,8 @@
 #include <transport.h>
 #include <kom.h>
 
+#include "ewgui/db.h"
+
 #define MAX_STR 256
 #define MAX_QUAKES 1000
 #define MAX_ESTA 512
@@ -49,7 +51,8 @@
 char MyModName[MAX_STR] = "MOD_STAEVDISP";   /* Earthworm module name */
 char RingName[MAX_STR] = "HYPO_RING";        /* hypo solutions ring */
 char StaFile[MAX_STR] = "";                  /* station list file (con lat/lon/elev) */
-char QuakeFile[MAX_STR] = "";                /* quake history file */
+char DbEnvFile[MAX_STR] = "";                /* credenciales PostgreSQL (historial) */
+int  g_db_hours = 24;                        /* ventana de historial (horas) */
 char MapImageFile[MAX_STR] = "";             /* base map image file */
 int  HeartBeatInt = 30;                      /* heartbeat interval (seconds) */
 int  LogFile = 1;                            /* 1 = write log to disk */
@@ -81,8 +84,9 @@ typedef struct {
     int qid;
 } QUAKE_MARKER;
 
-QUAKE_MARKER QuakeList[MAX_QUAKES];          /* quakes read from the history file */
+QUAKE_MARKER QuakeList[MAX_QUAKES];          /* quakes read from the database */
 int NumQuakes = 0;                           /* number of loaded quakes */
+static EwGuiDb *g_db = NULL;                 /* conexión a la BD hipocentral */
 
 /* Estacion del visor: solo lo necesario para dibujar los triangulos. */
 typedef struct {
@@ -97,7 +101,7 @@ int NumEstaciones = 0;                       /* number of loaded stations */
 double g_min_elev = 99999.0;                 /* minimum elevation for the color gradient */
 double g_max_elev = -99999.0;                /* maximum elevation for the color gradient */
 
-time_t last_file_mod_time = 0;               /* mtime of the quake file on last check */
+time_t last_file_mod_time = 0;               /* (obsoleto: historial desde BD) */
 GdkPixbuf *g_map_pixbuf = NULL;              /* base map image */
 
 /* --- Map Zoom and Pan Control Variables --- */
@@ -129,7 +133,7 @@ static GApplication *g_app = NULL;   /* para salir desde el timer de Earthworm *
 
 int ReadConfig(char *configfile) {
     /* Parametros obligatorios: MyModuleId, RingName, HeartBeatInt, LogFile,
-       QuakeFile, MapImageFile, StaFile, StationSize. */
+       DbEnvFile, MapImageFile, StaFile, StationSize. */
     int ncommand = 8, nmiss = 0, i;
     char init[10] = {0};
     char *com, *str;
@@ -147,7 +151,8 @@ int ReadConfig(char *configfile) {
         else if (k_its("RingName")) { str = k_str(); if (str) strcpy(RingName, str); init[1] = 1; } 
         else if (k_its("HeartBeatInt")) { HeartBeatInt = k_int(); init[2] = 1; } 
         else if (k_its("LogFile")) { LogFile = k_int(); init[3] = 1; } 
-        else if (k_its("QuakeFile")) { str = k_str(); if (str) strcpy(QuakeFile, str); init[4] = 1; } 
+        else if (k_its("DbEnvFile")) { str = k_str(); if (str) strcpy(DbEnvFile, str); init[4] = 1; } 
+        else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
         else if (k_its("MapImageFile")) { str = k_str(); if (str) strcpy(MapImageFile, str); init[5] = 1; } 
         else if (k_its("StaFile")) { str = k_str(); if (str) strcpy(StaFile, str); init[6] = 1; }
         /* Now it is MANDATORY to ensure Earthworm does not ignore it */
@@ -340,54 +345,26 @@ void LoadStations() {
   ***********************************************************************/
 
 void LoadQuakeHistory() {
-    FILE *f = fopen(QuakeFile, "r");
-    if (!f) return;
-    
-    char line[512];
+    EwGuiMapEvent *evs = NULL;
+    int n = 0, i;
+
     NumQuakes = 0;
-    
-    while (fgets(line, sizeof(line), f) && NumQuakes < MAX_QUAKES) {
-        if (strlen(line) < 20) continue;
+    if (!g_db) return;
+    if (ewguidb_query_map_events(g_db, g_db_hours, &evs, &n) < 0) return;
 
-        /* Formato de csnhypodbp_hist.txt (17 campos separados por coma):
-           fecha,hora,lat,lon,depth,res,azm,stn,id,ml,mwp,otime,qver,qid,lat,lon,depth
-           El archivo viene con el mas reciente primero, y asi se conserva
-           QuakeList[0] = ultimo sismo. */
-        char fecha[32], hora[32], lat_s[32], lon_s[32], dep_s[32], res_s[32],
-             azm_s[32], stn_s[32], id_s[32], ml_s[32], mwp_s[32];
-        double otime = 0.0, lat = 0.0, lon = 0.0, depth = 0.0;
-        int qver = 0, qid = 0;
+    for (i = 0; i < n && NumQuakes < MAX_QUAKES; i++) {
+        double lon = evs[i].longitude;
+        if (lon > 180.0) lon -= 360.0;      /* -180..180 */
 
-        int parsed = sscanf(line,
-            "%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],%31[^,],"
-            "%31[^,],%31[^,],%31[^,],%lf,%d,%d,%lf,%lf,%lf",
-            fecha, hora, lat_s, lon_s, dep_s, res_s, azm_s, stn_s, id_s,
-            ml_s, mwp_s, &otime, &qver, &qid, &lat, &lon, &depth);
-
-        if (parsed != 17) continue;
-
-        /* Longitude adjustment (0 to 360 or -180 to 180) */
-        double dLon = lon;
-        if (dLon > 180.0) dLon -= 360.0;
-
-        /* Magnitud preferida: Mwp si es fuerte y con estaciones; si no Ml. */
-        double ml_mag = 0.0, mwp_mag = 0.0;
-        int ml_stn = 0, mwp_stn = 0;
-        if (strcmp(ml_s, "-") != 0)  sscanf(ml_s, "%lf-%d", &ml_mag, &ml_stn);
-        if (strcmp(mwp_s, "-") != 0) sscanf(mwp_s, "%lf-%d", &mwp_mag, &mwp_stn);
-
-        double pref_mag = 0.0;
-        if (mwp_mag >= 5.5 && mwp_stn >= 3) pref_mag = mwp_mag;
-        else if (ml_mag > 0.0)              pref_mag = ml_mag;
-        else if (mwp_mag > 0.0)             pref_mag = mwp_mag;
-
-        QuakeList[NumQuakes].lat = lat;
-        QuakeList[NumQuakes].lon = dLon;
-        QuakeList[NumQuakes].mag = pref_mag;
-        QuakeList[NumQuakes].qid = qid;
+        QuakeList[NumQuakes].lat = evs[i].latitude;
+        QuakeList[NumQuakes].lon = lon;
+        QuakeList[NumQuakes].mag = evs[i].magnitude;
+        QuakeList[NumQuakes].qid =
+            atoi(evs[i].event_id[0] == 'E' ? evs[i].event_id + 1
+                                           : evs[i].event_id);
         NumQuakes++;
     }
-    fclose(f);
+    ewguidb_rows_free(evs);
 }
 
 /* --------------------------------------------------------------------
@@ -477,20 +454,11 @@ static void on_map_motion(GtkEventControllerMotion *ctrl, double x, double y, gp
   ***********************************************************************/
 
 static gboolean check_history_file_loop(gpointer data) {
-    struct stat file_stat;
-    
-    if (stat(QuakeFile, &file_stat) == 0) {
-        if (file_stat.st_mtime != last_file_mod_time) {
-            last_file_mod_time = file_stat.st_mtime;
-            
-            LoadQuakeHistory();
-            
-            if (map_canvas) {
-                ewgui_canvas_queue_draw(map_canvas);
-            }
-        }
-    }
-    return TRUE; 
+    (void)data;
+
+    LoadQuakeHistory();
+    if (map_canvas) ewgui_canvas_queue_draw(map_canvas);
+    return TRUE;
 }
 
 /* --------------------------------------------------------------------
@@ -915,6 +883,21 @@ int main(int argc, char *argv[]) {
     }
     if (ReadConfig(argv[1]) != 0) exit(1);
 
+    /* Base de datos hipocentral: historial de eventos para el mapa. */
+    {
+        EwGuiDbConfig dbcfg;
+        if (ewguidb_config_load(DbEnvFile, &dbcfg) == 0) {
+            if (ewguidb_open(&dbcfg, &g_db) != 0) {
+                fprintf(stderr, "csnstaevdisp: BD: %s\n",
+                        ewguidb_last_error(g_db));
+                ewguidb_close(g_db);
+                g_db = NULL;
+            }
+        } else {
+            fprintf(stderr, "csnstaevdisp: no se pudo leer %s\n", DbEnvFile);
+        }
+    }
+
     setenv("TZ", "GMT", 1);
     tzset();
     logit_init(argv[1], 0, 1024, LogFile);
@@ -946,6 +929,7 @@ int main(int argc, char *argv[]) {
     int status = g_application_run(g_app, 0, NULL);
 
     tport_detach(&Region);
+    if (g_db) ewguidb_close(g_db);
     if (g_map_pixbuf) g_object_unref(g_map_pixbuf);
     ewgui_overlay_free(g_overlay);
     if (StaArray) free(StaArray);

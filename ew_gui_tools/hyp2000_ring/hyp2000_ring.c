@@ -54,6 +54,7 @@ static char  CommandFile[MAX_STR] = "";
 static char  WorkDir[MAX_STR]     = "";
 static char  GridFile[MAX_STR]    = "";
 static char  SourceCode[2]        = "W";
+static char  VelocityModel[16]    = "CHILE_POTIN";  /* -> origin.velocity_model */
 static int   HeartbeatInt = 30;
 static int   LogFile      = 1;
 static int   Debug        = 0;
@@ -109,6 +110,7 @@ static int read_config(const char *file)
         else if (k_its("CommandFile"))  { str = k_str(); if (str) strncpy(CommandFile, str, sizeof(CommandFile)-1); }
         else if (k_its("WorkDir"))      { str = k_str(); if (str) strncpy(WorkDir, str, sizeof(WorkDir)-1); }
         else if (k_its("GridFile"))     { str = k_str(); if (str) strncpy(GridFile, str, sizeof(GridFile)-1); }
+        else if (k_its("VelocityModel")){ str = k_str(); if (str) strncpy(VelocityModel, str, sizeof(VelocityModel)-1); }
         else if (k_its("MinPhases"))    MinPhases = k_int();
         else if (k_its("MaxRMS"))       MaxRMS = k_val();
         else continue;
@@ -261,6 +263,11 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
             tmp[tlen + 161] = v161;
             memcpy(tmp + tlen + 178, v178, 4);
             tmp[tlen + EWGUI_ARC_MANUAL_OFF] = manual;
+            {
+                int vi;
+                for (vi = 0; vi < EWGUI_ARC_VMODEL_LEN && VelocityModel[vi]; vi++)
+                    tmp[tlen + EWGUI_ARC_VMODEL_OFF + vi] = VelocityModel[vi];
+            }
             first = 0;
         } else if (l >= 34) {
             /* El estandar Y2K de la linea de fase pone el tiempo en centesimas

@@ -9,7 +9,7 @@ CC = gcc
 GUI_PKG = gtk4 libadwaita-1
 
 # Flags GTK4 + Earthworm
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -fcommon -D_LINUX -D_REENTRANT -D_INTEL -Wno-format
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -fcommon -D_LINUX -D_REENTRANT -D_INTEL -Wno-format
 
 # Librerias base de Earthworm necesarias (objetos ya compilados)
 EW_SRC_UTIL = $(EW_HOME)/$(EW_VERSION)/src/libsrc/util
@@ -25,7 +25,7 @@ EW_OBJS = $(EW_SRC_UNIX)/transport.o \
           $(EW_SRC_UNIX)/threads_ew.o \
           $(EW_SRC_UTIL)/swap.c
 
-LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) -lm -lpthread
+LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 
 all: $(MODULE)
 
@@ -45,7 +45,7 @@ clean:
 # Verifica los parsers de estaciones e historia sin abrir la GUI.
 PARAMS = ../../run_working_v8/params
 test-data: test/test_data
-	./test/test_data $(PARAMS)/estaciones_107.txt $(PARAMS)/csnhypodbp_hist.txt
+	./test/test_data $(PARAMS)/estaciones_107.txt
 
 # Verifica el parseo de config/overlays en modo headless (sin DISPLAY).
 test-config: $(MODULE)

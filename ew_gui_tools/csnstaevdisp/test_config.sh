@@ -23,7 +23,7 @@ write_cfg() {
         echo "HeartBeatInt    30"
         echo "LogFile         1"
         echo "StaFile         estaciones_107.txt"
-        echo "QuakeFile       csnhypodbp_hist.txt"
+        echo "DbEnvFile       db.env"
         echo "MapImageFile    world_map.jpg"
         echo "StationSize     15"
         for extra in "$@"; do echo "$extra"; done

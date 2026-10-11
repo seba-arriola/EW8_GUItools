@@ -103,6 +103,7 @@ static char       FallbackCtl[MAX_STR]    = "";
 /* TransOrigin/LocGrid son globales: solo se aplican si el modelo elegido NO es
    una banda (si lo fueran, pisarian el TRANS/LOCGRID propio de la banda). */
 static int        g_use_global_grid = 1;
+static char       g_sel_model[MAX_STR] = "";  /* banda/modelo -> velocity_model */
 
 static SHM_INFO      InRegion, OutRegion;
 static long          InKey = 0, OutKey = 0;
@@ -302,6 +303,11 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
             tmp[tlen + 161] = v161;
             memcpy(tmp + tlen + 178, v178, 4);
             tmp[tlen + EWGUI_ARC_MANUAL_OFF] = manual;
+            {
+                int vi;
+                for (vi = 0; vi < EWGUI_ARC_VMODEL_LEN && g_sel_model[vi]; vi++)
+                    tmp[tlen + EWGUI_ARC_VMODEL_OFF + vi] = g_sel_model[vi];
+            }
             /* NLLoc escribe 'E' para el este y BLANCO para el oeste
                (NLLocLib.c:12965); csnloc/csnhypodbp usan 'W'. Normalizamos. */
             if (tmp[tlen + 26] != 'E') tmp[tlen + 26] = 'W';
@@ -540,6 +546,7 @@ static int select_model(double lat, double lon, char stas[][6], int nsta,
         snprintf(ttroot, MAX_STR, "%s", bands[best].ttroot);
         snprintf(tmpl,   MAX_STR, "%s", bands[best].ctl);
         g_use_global_grid = 0;   /* la banda trae su propio TRANS/LOCGRID */
+        snprintf(g_sel_model, sizeof g_sel_model, "%s", bands[best].name);
         if (Debug >= 1)
             logit("t", "nlloc_ring: banda %s (cubre %d/%d estaciones)\n",
                   bands[best].name, bestc, nsta);
@@ -549,12 +556,14 @@ static int select_model(double lat, double lon, char stas[][6], int nsta,
         snprintf(ttroot, MAX_STR, "%s", TtimeRoot);
         snprintf(tmpl,   MAX_STR, "%s", ControlFile);
         g_use_global_grid = 1;
+        snprintf(g_sel_model, sizeof g_sel_model, "1D");
         return 0;
     }
     if (FallbackCtl[0] != '\0') {
         snprintf(ttroot, MAX_STR, "%s", FallbackTtRoot);
         snprintf(tmpl,   MAX_STR, "%s", FallbackCtl);
         g_use_global_grid = 1;
+        snprintf(g_sel_model, sizeof g_sel_model, "1D");
         if (Debug >= 1) logit("t", "nlloc_ring: fuera de banda -> fallback\n");
         return 0;
     }

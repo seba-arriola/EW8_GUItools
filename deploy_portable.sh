@@ -124,6 +124,7 @@ BINS=(
     csntvp csnhypodbp csnrv ew_controller csnstaevdisp
     hyp2000_ring nlloc_ring
     wstore_ingest tank2store store2tank wstore_query
+    hypodb_ingest
     sniffring sniffrings sniffwave tanksniff remux_tbuf
     tankplayer ms2tank tankcut
 )
@@ -133,7 +134,7 @@ PARAMS_FILES=(
     slink2ew_HHZ.d pick_FP.d pickS.d csnloc.d
     csnmags.d csnmags_raw.d
     csntvp.d csnhypodbp.d csnrv.d ew_controller.d csnstaevdisp.d
-    wavestore.d
+    wavestore.d hypodb.d db.env.example
     pick_FP.sta pickS.sta stations_to_view.sta estaciones_107.txt
     hyp2000_ring.hyp estaciones_hyp.sta ak135.crh chile_1d.crh
     N18-26_1.5k.crh N22-30_1.5k.crh N26-34_1.5k.crh
@@ -373,6 +374,16 @@ if [ "$WITH_RESOURCES" -eq 1 ]; then
     [ "$DRY" -eq 1 ] && RES_OPTS+=(-n)
     if ! rsync "${RES_OPTS[@]}" "$SRC_RESOURCES/" "$DST_RESOURCES/" >/dev/null 2>&1; then
         die 1 "rsync fallo: resources -> $DST_RESOURCES"
+    fi
+fi
+
+# db/: esquema SQL, compose y README de la base hipocentral (copia aditiva).
+if [ -d "$ROOT_DIR/db" ]; then
+    if [ "$DRY" -eq 0 ]; then mkdir -p "$DST_ABS/db"; fi
+    DB_OPTS=(-a)
+    [ "$DRY" -eq 1 ] && DB_OPTS+=(-n)
+    if ! rsync "${DB_OPTS[@]}" "$ROOT_DIR/db/" "$DST_ABS/db/" >/dev/null 2>&1; then
+        die 1 "rsync fallo: db -> $DST_ABS/db"
     fi
 fi
 

@@ -7,6 +7,8 @@ char InRingName[MAX_STR];
 char InRingRawName[MAX_STR];   /* 2.º anillo de entrada (csnloc crudo, opcional) */
 char OutRingName[MAX_STR];
 char InRingPickName[MAX_STR];  /* anillo de picks a leer (TYPE_PICK_SCNL) */
+char DbEnvFile[MAX_STR];       /* credenciales PostgreSQL (historial) */
+int  g_db_hours = 24;          /* ventana de historial de la BD (horas) */
 char TauModel[MAX_STR];        /* modelo de tiempos de viaje (default iasp91) */
 char StaFile[MAX_STR];
 char StateFile[MAX_STR];   /* archivo de estado de csnloc (recuperacion) */
@@ -186,6 +188,8 @@ int ReadConfig(char *configfile) {
         else if (k_its("GroupPickTolSec")) { g_group_pick_tol_sec = k_val(); }
         else if (k_its("GroupMinMatchPicks")) { g_group_min_match_picks = k_int(); }
         else if (k_its("GroupMaxSolutions")) { g_group_max_solutions = k_int(); }
+        else if (k_its("DbEnvFile")) { str = k_str(); if (str) strcpy(DbEnvFile, str); }
+        else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
         else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
         else if (k_its("WaveBackend")) {
             str = k_str();
@@ -773,6 +777,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(page_waves), hbox_bottom);
 
     cargar_sismos_iniciales(tree_global);
+    cargar_sismos_db();
     csnhypodbp_load_manual_state();
     rebuild_station_list();
     gtk_window_present(GTK_WINDOW(window_global));
@@ -785,6 +790,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
+    csnhypodbp_db_init(DbEnvFile, g_db_hours);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
     logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideEmptyStations=%d\n",
           g_channels_order, g_components_order, g_hide_empty);
