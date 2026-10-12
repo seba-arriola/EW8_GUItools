@@ -140,6 +140,37 @@ int g_filter_theo = 0;
 GtkWidget *g_chk_a = NULL, *g_chk_m = NULL, *g_chk_teo = NULL;
 GtkWidget *g_locator_label = NULL;
 
+/* --- Mapas: panel de planta (contrato de csnrv) y panel de perfil --- */
+char  MapImageFile[MAX_STR] = "";            /* mapa base equirectangular (2:1) */
+char  ProfileDataDir[MAX_STR] = "";          /* dir de slab<name>.tmp/topo<name>.tmp */
+char  ProfileFile[MAX_STR] = "";             /* archivo de declaraciones Profile */
+CsnhypodbpProfiles g_profiles;               /* perfiles de profundidad declarados */
+int    g_profile_lon_col = 3;                /* ProfileCols: columnas 1-based */
+int    g_profile_val_col = 7;
+double g_profile_depth_min_km = 200.0;       /* ProfileDepthMinKm */
+double g_map_min_span_deg = 5.0;             /* MapMinSpanDeg (auto-encuadre) */
+static char   g_overlay_files[EWGUI_OVERLAY_MAX_FILES][MAX_STR];
+static int    g_overlay_nfiles = 0;
+static char   g_overlay_color_layer[EWGUI_OVERLAY_MAX_FILES][EWGUI_OVERLAY_NAME_MAX];
+static char   g_overlay_color_hex[EWGUI_OVERLAY_MAX_FILES][8];
+static int    g_overlay_ncolors = 0;
+static double g_overlay_width = 0.0;         /* 0 = sin override */
+static char   g_overlay_hide_layer[EWGUI_OVERLAY_MAX_FILES][EWGUI_OVERLAY_NAME_MAX];
+static int    g_overlay_nhides = 0;
+
+/* Mapas: columna derecha (planta arriba, perfil abajo). */
+GtkWidget   *g_maps_col = NULL;
+EwGuiCanvas *g_map_plan = NULL;
+EwGuiCanvas *g_map_prof = NULL;
+GtkWidget   *g_map_plan_cap = NULL;
+GtkWidget   *g_map_prof_cap = NULL;
+GdkPixbuf   *g_map_pixbuf = NULL;
+EwOverlay   *g_map_overlay = NULL;
+CsnhypodbpMapPt g_map_pts[CSNHYPODBP_MAX_MAP_PTS];
+int          g_map_npts = 0;
+int          g_active_profile = -1;
+CsnhypodbpProfileLine g_prof_slab, g_prof_topo;
+
 int      g_filter_type = 0;      /* 0=Raw, 1=HP, 2=LP, 3=BP */
 double   g_filter_f1 = 0.7;      /* F1 (Hz) */
 double   g_filter_f2 = 2.0;      /* F2 (Hz) */
@@ -274,11 +305,198 @@ int ReadConfig(char *configfile) {
             if (str && csnhypodbp_view_parse_color(str, g_color_s) != 0)
                 logit("et", "csnhypodbp: sColor <%s> invalido, uso default\n", str);
         }
+        /* --- Mapas: panel de planta (mismo contrato que csnrv) --- */
+        else if (k_its("MapImageFile")) { str = k_str(); if (str) snprintf(MapImageFile, sizeof(MapImageFile), "%s", str); }
+        else if (k_its("MapMinSpanDeg")) {
+            double v = k_val();
+            if (v > 0.0) g_map_min_span_deg = v;
+        }
+        else if (k_its("OverlayFile")) {
+            str = k_str();
+            if (str && g_overlay_nfiles < EWGUI_OVERLAY_MAX_FILES)
+                snprintf(g_overlay_files[g_overlay_nfiles++], MAX_STR, "%s", str);
+        }
+        else if (k_its("OverlayColor")) {
+            char *lyr = k_str(), *hex = k_str();
+            if (lyr && hex && g_overlay_ncolors < EWGUI_OVERLAY_MAX_FILES) {
+                snprintf(g_overlay_color_layer[g_overlay_ncolors],
+                         EWGUI_OVERLAY_NAME_MAX, "%s", lyr);
+                snprintf(g_overlay_color_hex[g_overlay_ncolors], 8, "%s", hex);
+                g_overlay_ncolors++;
+            }
+        }
+        else if (k_its("OverlayWidth")) { g_overlay_width = k_val(); }
+        else if (k_its("OverlayHide")) {
+            /* OPCIONAL y repetible: <capa> que no se dibuja (el archivo se sigue
+               cargando; el resto se controla con OverlayColor/OverlayWidth). */
+            str = k_str();
+            if (str && g_overlay_nhides < EWGUI_OVERLAY_MAX_FILES)
+                snprintf(g_overlay_hide_layer[g_overlay_nhides++],
+                         EWGUI_OVERLAY_NAME_MAX, "%s", str);
+        }
+        /* --- Perfiles de profundidad (panel inferior) --- */
+        else if (k_its("ProfileDataDir")) { str = k_str(); if (str) snprintf(ProfileDataDir, sizeof(ProfileDataDir), "%s", str); }
+        else if (k_its("ProfileFile")) { str = k_str(); if (str) snprintf(ProfileFile, sizeof(ProfileFile), "%s", str); }
+        else if (k_its("ProfileCols")) {
+            int lc = k_int(), vc = k_int();
+            if (lc > 0 && vc > 0) { g_profile_lon_col = lc; g_profile_val_col = vc; }
+        }
+        else if (k_its("ProfileDepthMinKm")) {
+            double v = k_val();
+            if (v > 0.0) g_profile_depth_min_km = v;
+        }
+        else if (k_its("Profile")) {
+            /* Profile <name> <lon1> <lat1> <lon2> <lat2> [slab] [topo].
+               kom no tiene k_eol(): el resto de la linea se junta con
+               k_rest_join (que limpia el ierr de fin de linea) y lo parsea el
+               nucleo puro, el mismo que usa el archivo de declaraciones. */
+            char *nm = k_str();
+            char rest[512] = "", err[256] = "";
+            k_rest_join(rest, sizeof(rest));
+            if (!csnhypodbp_profile_add_tokens(nm, rest, &g_profiles, err, sizeof(err))) {
+                fprintf(stderr, "Error en la linea Profile: %s\n",
+                        err[0] ? err : "tokens invalidos");
+                return -1;
+            }
+        }
         else { continue; }
         if (k_err()) { fprintf(stderr, "Error parseando <%s>\n", com); return -1; }
     }
+    /* El archivo de declaraciones (si se usa) reemplaza a las claves Profile. */
+    if (ProfileFile[0]) {
+        char err[256] = "";
+        if (csnhypodbp_profiles_parse(ProfileFile, &g_profiles, err, sizeof(err)) < 0) {
+            fprintf(stderr, "Error leyendo ProfileFile <%s>: %s\n", ProfileFile, err);
+            k_close();
+            return -1;
+        }
+    }
+    csnhypodbp_profiles_default_files(&g_profiles, ProfileDataDir);
     for (i = 0; i < ncommand; i++) if (!init[i]) nmiss++;
     k_close(); return (nmiss > 0) ? -1 : 0;
+}
+
+/* --- Modos headless (patron de csnrv): no arrancan GTK ni se conectan a EW --- */
+
+static int maps_print_config(void) {
+    int i;
+    printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
+    printf("MapMinSpanDeg %.1f\n", g_map_min_span_deg);
+    printf("OverlayFiles %d\n", g_overlay_nfiles);
+    for (i = 0; i < g_overlay_nfiles; i++)
+        printf("OverlayFile %s\n", g_overlay_files[i]);
+    printf("OverlayColors %d\n", g_overlay_ncolors);
+    for (i = 0; i < g_overlay_ncolors; i++)
+        printf("OverlayColor %s %s\n", g_overlay_color_layer[i], g_overlay_color_hex[i]);
+    printf("OverlayWidth %.3f\n", g_overlay_width);
+    printf("OverlayHides %d\n", g_overlay_nhides);
+    for (i = 0; i < g_overlay_nhides; i++)
+        printf("OverlayHide %s\n", g_overlay_hide_layer[i]);
+    printf("ProfileDataDir %s\n", ProfileDataDir[0] ? ProfileDataDir : "(none)");
+    printf("ProfileFile %s\n", ProfileFile[0] ? ProfileFile : "(none)");
+    printf("ProfileCols %d %d\n", g_profile_lon_col, g_profile_val_col);
+    printf("ProfileDepthMinKm %.1f\n", g_profile_depth_min_km);
+    printf("Profiles %d\n", g_profiles.n);
+    for (i = 0; i < g_profiles.n; i++) {
+        const CsnhypodbpProfile *p = &g_profiles.p[i];
+        printf("Profile %s %.6f %.6f %.6f %.6f %s %s\n", p->name,
+               p->lon1, p->lat1, p->lon2, p->lat2, p->slab_file, p->topo_file);
+    }
+    return 0;
+}
+
+/* Valida los datos de cada perfil: los dos archivos legibles y la traza del slab
+ * (columnas 3/4 = lon/lat) pegada a la recta declarada. */
+static int maps_check_profiles(void) {
+    int i, bad = 0;
+    printf("profiles=%d\n", g_profiles.n);
+    for (i = 0; i < g_profiles.n; i++) {
+        const CsnhypodbpProfile *p = &g_profiles.p[i];
+        CsnhypodbpProfileLine slab, topo, traza;
+        char err[256];
+        double dev = 0.0, devmax = 0.0;
+        int k, nfin = 0;
+
+        if (csnhypodbp_profile_line_read(p->slab_file, g_profile_lon_col,
+                                         g_profile_val_col, &slab, err, sizeof(err)) != 0) {
+            printf("profile %s: slab FALLA (%s)\n", p->name, err);
+            bad++;
+            continue;
+        }
+        if (csnhypodbp_profile_line_read(p->topo_file, g_profile_lon_col,
+                                         g_profile_val_col, &topo, err, sizeof(err)) != 0) {
+            printf("profile %s: topo FALLA (%s)\n", p->name, err);
+            bad++;
+            csnhypodbp_profile_line_free(&slab);
+            continue;
+        }
+        if (csnhypodbp_profile_line_read(p->slab_file, 3, 4, &traza,
+                                         err, sizeof(err)) == 0) {
+            for (k = 0; k < traza.n; k++) {
+                double d = csnhypodbp_profile_dist(p, traza.val[k], traza.lon[k]);
+                if (d < 0.0) continue;
+                dev += d;
+                if (d > devmax) devmax = d;
+                nfin++;
+            }
+            csnhypodbp_profile_line_free(&traza);
+        }
+        dev = (nfin > 0) ? dev / (double)nfin : -1.0;
+        printf("profile %s slab=%d topo=%d traza=%d dev_media=%.4f dev_max=%.4f\n",
+               p->name, slab.n, topo.n, nfin, dev, devmax);
+        if (dev < 0.0 || dev > 0.05) {
+            printf("profile %s: la traza no sigue la recta declarada\n", p->name);
+            bad++;
+        }
+        csnhypodbp_profile_line_free(&slab);
+        csnhypodbp_profile_line_free(&topo);
+    }
+    printf("perfiles=%d fallas=%d\n", g_profiles.n, bad);
+    return bad ? 2 : 0;
+}
+
+/* Carga el mapa base y las capas .lines (una vez, tras ReadConfig). */
+void csnhypodbp_maps_load(void) {
+    int i;
+    if (MapImageFile[0]) {
+        GError *err = NULL;
+        g_map_pixbuf = gdk_pixbuf_new_from_file(MapImageFile, &err);
+        if (!g_map_pixbuf) {
+            logit("et", "csnhypodbp: no se pudo cargar MapImageFile <%s>: %s\n",
+                  MapImageFile, err ? err->message : "?");
+            if (err) g_error_free(err);
+        } else {
+            logit("t", "csnhypodbp: mapa base %s (%dx%d)\n", MapImageFile,
+                  gdk_pixbuf_get_width(g_map_pixbuf), gdk_pixbuf_get_height(g_map_pixbuf));
+        }
+    } else {
+        logit("et", "csnhypodbp: sin MapImageFile; el mapa de planta va sin fondo\n");
+    }
+    if (g_overlay_nfiles > 0) {
+        g_map_overlay = ewgui_overlay_new();
+        for (i = 0; g_map_overlay && i < g_overlay_nfiles; i++) {
+            if (ewgui_overlay_append(g_map_overlay, g_overlay_files[i]) != 0)
+                logit("et", "csnhypodbp: no se pudo cargar overlay %s\n", g_overlay_files[i]);
+        }
+        if (g_map_overlay && g_overlay_width > 0.0)
+            ewgui_overlay_set_global_width(g_map_overlay, g_overlay_width);
+        for (i = 0; g_map_overlay && i < g_overlay_ncolors; i++) {
+            double rgb[3];
+            if (ewgui_parse_hex_color(g_overlay_color_hex[i], rgb) == 0)
+                ewgui_overlay_set_color(g_map_overlay, g_overlay_color_layer[i], rgb);
+            else
+                logit("et", "csnhypodbp: OverlayColor %s: hex invalido '%s'\n",
+                      g_overlay_color_layer[i], g_overlay_color_hex[i]);
+        }
+        for (i = 0; g_map_overlay && i < g_overlay_nhides; i++) {
+            if (ewgui_overlay_set_visible(g_map_overlay, g_overlay_hide_layer[i], 0) == 0)
+                logit("et", "csnhypodbp: OverlayHide %s: no existe esa capa\n",
+                      g_overlay_hide_layer[i]);
+        }
+        logit("t", "csnhypodbp: overlays cargados=%d\n", g_overlay_nfiles);
+    }
+    logit("t", "csnhypodbp: perfiles declarados=%d datos=%s\n",
+          g_profiles.n, ProfileDataDir[0] ? ProfileDataDir : "(cwd)");
 }
 
 void Status(unsigned char type, short ierr, char *note) {
@@ -713,6 +931,103 @@ static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint num,
     else          ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
 }
 
+/* Un cuadro de mapa: caption (texto visible por AT-SPI) + canvas. */
+static GtkWidget *map_panel_new(EwGuiCanvas **cv, GtkWidget **cap, EwDrawFn draw,
+                                GtkWidget **widget, int minw, int minh)
+{
+    GtkWidget *frame = gtk_frame_new(NULL);
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_widget_add_css_class(frame, "detail-frame");
+    *cap = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(*cap), 0.0);
+    gtk_widget_add_css_class(*cap, "map-cap");
+    /* El titulo del cuadro no se muestra (el usuario lo pidio fuera): la etiqueta
+       queda oculta y solo sirve de asercion para el arnes GUI. */
+    gtk_widget_set_visible(*cap, FALSE);
+    *cv = ewgui_canvas_new();
+    ewgui_canvas_set_draw(*cv, draw, NULL);
+    *widget = ewgui_canvas_widget(*cv);
+    gtk_widget_set_size_request(*widget, minw, minh);
+    gtk_widget_set_vexpand(*widget, TRUE);
+    gtk_box_append(GTK_BOX(box), *cap);
+    gtk_box_append(GTK_BOX(box), *widget);
+    gtk_frame_set_child(GTK_FRAME(frame), box);
+    return frame;
+}
+
+/* Deja ~340 px para la columna de mapas cuando el paned ya tiene ancho. */
+static gboolean paned_maps_set_idle(gpointer data) {
+    GtkWidget *p = data;
+    int w = gtk_widget_get_width(p);
+    if (w > 0) gtk_paned_set_position(GTK_PANED(p), w - 340);
+    return G_SOURCE_REMOVE;
+}
+static void paned_maps_map(GtkWidget *paned, gpointer data) {
+    (void)data;
+    g_idle_add(paned_maps_set_idle, paned);
+}
+
+/* Reparte la columna de mapas 65% planta / 35% perfil en el primer mapeo. */
+static gboolean paned_vmaps_set_idle(gpointer data) {
+    GtkWidget *p = data;
+    int h = gtk_widget_get_height(p);
+    if (h > 0) gtk_paned_set_position(GTK_PANED(p), (int)(h * 0.65));
+    return G_SOURCE_REMOVE;
+}
+static void paned_vmaps_map(GtkWidget *paned, gpointer data) {
+    (void)data;
+    g_idle_add(paned_vmaps_set_idle, paned);
+}
+
+/* Los dos canvas de mapa se manejan igual: rueda = zoom, arrastre boton 1 =
+   paneo (el clic sin arrastre selecciona el origen, ver los handlers). */
+static void map_panel_connect(GtkWidget *w, GCallback scroll_cb, GCallback press_cb,
+                              GCallback release_cb, GCallback motion_cb)
+{
+    GtkEventController *sc = gtk_event_controller_scroll_new(GTK_EVENT_CONTROLLER_SCROLL_VERTICAL);
+    GtkGesture *ck = gtk_gesture_click_new();
+    GtkEventController *mo = gtk_event_controller_motion_new();
+
+    g_signal_connect(sc, "scroll", scroll_cb, NULL);
+    gtk_widget_add_controller(w, sc);
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(ck), 1);
+    g_signal_connect(ck, "pressed", press_cb, NULL);
+    g_signal_connect(ck, "released", release_cb, NULL);
+    gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(ck));
+    g_signal_connect(mo, "motion", motion_cb, NULL);
+    gtk_widget_add_controller(w, mo);
+}
+
+/* Columna derecha: planta arriba, perfil abajo (compartida por las pestañas). */
+static void build_maps_column(void)
+{
+    GtkWidget *plan_frame, *prof_frame, *plan_w, *prof_w;
+    GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+
+    plan_frame = map_panel_new(&g_map_plan, &g_map_plan_cap, on_draw_map_plan,
+                               &plan_w, 300, 240);
+    prof_frame = map_panel_new(&g_map_prof, &g_map_prof_cap, on_draw_map_profile,
+                               &prof_w, 300, 140);
+
+    /* Los dos cuadros se manejan igual: rueda = zoom, arrastre boton 1 = paneo. */
+    map_panel_connect(plan_w, G_CALLBACK(on_map_plan_scroll), G_CALLBACK(on_map_plan_press),
+                      G_CALLBACK(on_map_plan_release), G_CALLBACK(on_map_plan_motion));
+    map_panel_connect(prof_w, G_CALLBACK(on_map_prof_scroll), G_CALLBACK(on_map_prof_press),
+                      G_CALLBACK(on_map_prof_release), G_CALLBACK(on_map_prof_motion));
+
+    gtk_paned_set_start_child(GTK_PANED(paned), plan_frame);
+    gtk_paned_set_end_child(GTK_PANED(paned), prof_frame);
+    gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_position(GTK_PANED(paned), 320);
+    gtk_widget_set_vexpand(paned, TRUE);
+    g_signal_connect(paned, "map", G_CALLBACK(paned_vmaps_map), NULL);
+
+    g_maps_col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    gtk_box_append(GTK_BOX(g_maps_col), paned);
+    csnhypodbp_maps_refresh();   /* estado inicial (sin seleccion) */
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     static gboolean css_done = FALSE;
     (void)user_data;
@@ -754,6 +1069,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             ".preview-title { font-weight: bold; font-size: 0.9em; }\n"
             ".preview-hdr { font-size: 0.75em; color: alpha(@theme_fg_color, 0.7); }\n"
             ".preview-val { font-weight: bold; }\n"
+            /* Caption de los paneles de mapa (columna derecha). */
+            ".map-cap { font-size: 0.8em; font-weight: bold; padding: 1px 4px; }\n"
             /* Campos de fecha y hora del buscador: fuente un punto mas chica y
                ancho minimo para que "YYYY-MM-DD HH:MM:SS" entre completo. */
             ".time-entry { font-size: 0.95em; min-width: 11em; }");
@@ -810,7 +1127,20 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_notebook = gtk_notebook_new();
     gtk_widget_set_vexpand(g_notebook, TRUE);
     g_signal_connect(g_notebook, "switch-page", G_CALLBACK(on_notebook_switch_page), NULL);
-    gtk_box_append(GTK_BOX(vbox), g_notebook);
+
+    /* Columna derecha (planta + perfil), compartida por las dos pestañas. */
+    build_maps_column();
+    {
+        GtkWidget *paned_maps = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+        gtk_paned_set_start_child(GTK_PANED(paned_maps), g_notebook);
+        gtk_paned_set_end_child(GTK_PANED(paned_maps), g_maps_col);
+        gtk_paned_set_resize_start_child(GTK_PANED(paned_maps), TRUE);
+        gtk_paned_set_resize_end_child(GTK_PANED(paned_maps), TRUE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned_maps), FALSE);
+        gtk_widget_set_vexpand(paned_maps, TRUE);
+        g_signal_connect(paned_maps, "map", G_CALLBACK(paned_maps_map), NULL);
+        gtk_box_append(GTK_BOX(vbox), paned_maps);
+    }
 
     /* --- Pestaña "Eventos": maestro (eventos) + detalle (soluciones) --- */
     GtkWidget *page_list = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -1180,6 +1510,21 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 }
 
 int main(int argc, char *argv[]) {
+    /* Modos headless (patron de csnrv): no arrancan GTK ni Earthworm. */
+    if (argc == 3 && strcmp(argv[1], "--print-config") == 0) {
+        if (ReadConfig(argv[2]) != 0) {
+            fprintf(stderr, "Error leyendo configuracion de %s\n", argv[2]);
+            return 1;
+        }
+        return maps_print_config();
+    }
+    if (argc == 3 && strcmp(argv[1], "--check-profiles") == 0) {
+        if (ReadConfig(argv[2]) != 0) {
+            fprintf(stderr, "Error leyendo configuracion de %s\n", argv[2]);
+            return 1;
+        }
+        return maps_check_profiles();
+    }
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
@@ -1200,6 +1545,7 @@ int main(int argc, char *argv[]) {
     }
     csnhypodbp_log_colors();
     setlocale(LC_NUMERIC, "C");
+    csnhypodbp_maps_load();   /* mapa base + capas .lines (usa logit) */
 
     ConnectToEarthworm(); LoadStationsFromFile();
 

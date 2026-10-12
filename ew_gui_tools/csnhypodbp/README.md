@@ -247,6 +247,65 @@ El texto y el formato de los valores viven en la lógica pura `csnhypodbp_previe
 (`make test` → `test_preview`), y la capa GTK solo vuelca el resultado en las etiquetas desde
 `csnhypodbp_preview_update()`, el **único** punto que escribe la tablita.
 
+### Mapas: columna derecha (planta + perfil)
+
+La ventana tiene una **columna derecha** compartida por las dos pestañas (`GtkPaned` horizontal:
+`notebook` | columna), con dos paneles apilados:
+
+- **Planta** (`on_draw_map_plan`): mapa equirectangular con el **mismo contrato que `csnrv`** —
+  `MapImageFile` (imagen 2:1 de mundo completo, validable con `common/tools/check_map_image.py`),
+  capas `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`), grilla, zoom con
+  la rueda y paneo arrastrando con el botón 1. Encima dibuja las **rectas de los perfiles** (la activa
+  en azul) y las soluciones del evento. El auto-encuadre tiene un ancho mínimo de `MapMinSpanDeg`
+  grados (default 5), para que un grupo de soluciones apretado no deje la vista pegada.
+- **Perfil** (`on_draw_map_profile`): corte con **x = longitud** e **y = profundidad** (hacia abajo)
+  del perfil **más cercano a la solución preferida**, con la **subducción** (línea del slab, en km) y
+  la **topografía** (elevación/1000) del archivo de ese perfil. Arranca encuadrado **solo a los datos
+  del perfil** (slab ∪ topografía, recortados al marco, así nunca se salen del cuadro) y **no** se
+  estira para abarcar todas las soluciones; tiene el mismo zoom (rueda) y paneo (arrastre) que la
+  planta, para mirar una solución que quede fuera del rango.
+
+Ambos paneles dibujan la **solución preferida** (rojo, escalada por magnitud), **todas** las soluciones
+del evento en *Origins* (gris azulado), la **candidata** del `locate` (el mismo rojo claro de la
+tablita del preview) y la solución **elegida en *Origins***, que va **verde** (`#00C853`, con borde
+blanco) y se dibuja al final, encima de las demás: reemplaza al rojo de la preferida mientras sea la
+elegida. El puntero **no** resalta nada (ni color ni cursor al pasar por encima); **el clic sin
+arrastre sobre un marcador selecciona ese origen** en la tabla *Origins* (el arrastre sigue paneando) y
+la fila se busca **por identidad en la vista ordenada** del detalle, no por posición del store. Se
+actualizan al elegir evento/solución, al llegar un ARC nuevo y con cada `locate`/`Confirm`/`Discard`:
+`csnhypodbp_maps_refresh()` es el **único** punto que recalcula el estado (puntos, solución elegida,
+perfil activo, datos y el texto de estado) y repinta. Los dos cuadros **no muestran título**: la
+información de estado (evento, nº de soluciones, perfil activo y solución elegida) vive en etiquetas
+ocultas y en la descripción accesible de cada canvas; como GTK4 no expone el canvas en el árbol de
+accesibilidad, la verificación de estos paneles se hace por píxeles (ver `docs/GUI-TESTS.md`).
+
+Perfiles y datos: las líneas se declaran con claves `Profile <name> <lon1> <lat1> <lon2> <lat2>`
+(cantidad y geometría arbitrarias; `ProfileFile` permite declararlas en un archivo aparte) y los datos
+salen de `ProfileDataDir/slab<name>.tmp` y `topo<name>.tmp`, leídos con las columnas
+`ProfileCols <lon_col> <val_col>` (1-based; por defecto `3 7`, el formato de los `.tmp` del repo
+`test_db/scriptmapas`). Se importan una vez con:
+
+```bash
+./ew_gui_tools/common/tools/import_profiles.sh   # copia a resources/profiles/ + PROVENANCE.txt
+```
+
+Modos headless (no arrancan GTK ni EarthWorm; mismo patrón que `csnrv`):
+
+```bash
+csnhypodbp --print-config   run_working_v8/params/csnhypodbp.d   # claves y perfiles declarados
+csnhypodbp --check-profiles run_working_v8/params/csnhypodbp.d   # datos legibles y traza vs recta
+```
+
+`--check-profiles` exige que los dos archivos de cada perfil se lean y compara la traza del slab
+(columnas 3/4) contra la recta declarada; si la desviación media supera 0.05° avisa y sale con rc≠0
+(es la red que detecta una línea mal declarada). Los valores de las 13 líneas de `csnhypodbp.d` son el
+ajuste por mínimos cuadrados de cada traza: **las trazas de los scripts del repo `test_db` no son
+paralelas** (pendiente 0.2758 en P01 → 0.2444 en P013).
+
+La geometría vive en la lógica pura `csnhypodbp_profile.{h,c}` (recta, distancia perpendicular,
+perfil más cercano y lector de polilíneas) y `csnhypodbp_mapview.{h,c}` (bbox de puntos, auto-encuadre
+y marco del perfil), con `test_profile` y `test_mapview` en `make test`.
+
 La P teórica se calcula con el motor IASP91 de `csnloc` (librería `csnloc/libcsnloc_tt.a`), leyendo
 `iasp91.tbl`/`.hed` desde el cwd (`EW_PARAMS`, igual que `csnloc`). Si faltan las tablas, la teórica
 cae a la hora origen sin romper el arranque.
@@ -347,7 +406,14 @@ estado del zoom por dos clics, los mapeos tiempo↔x, los ticks del eje y la exa
 picada, color de traza y el filtro de picadas `csnhypodbp_locate_picks`/`csnhypodbp_pick_allowed` del
 localizador); `test_staitem` cubre el modelo de fila del `GtkColumnView` (una fila por (estación,
 fase), `stat` = M/A/Teo, `res` = `%+.3f`, `has-pick`); `test_preview` cubre la tablita del preview
-(título por estado, formato de los 7 valores y guion cuando falta el dato); `test_locate` cubre además la
+(título por estado, formato de los 7 valores y guion cuando falta el dato); `test_profile` cubre los
+perfiles (recta declarada, distancia perpendicular, perfil más cercano con N arbitrario, parser de
+declaraciones y lector de polilíneas de slab/topografía con huecos `NaN` y truncación);
+`test_mapview` cubre la geometría de los paneles (bbox de puntos, auto-encuadre del mapa de planta,
+marco del perfil, zoom/paneo, el acierto del clic y la búsqueda de la solución elegida por id);
+`test_config.sh` genera un `.d` y datos
+sintéticos y valida `--print-config` / `--check-profiles` (incluidos los errores: recta mal declarada,
+datos ausentes, clave obligatoria faltante); `test_locate` cubre además la
 escritura de picadas con **net/loc reales**, que `arc_extract` devuelva el **último** bloque y el
 salto del preámbulo del refinador;
 `test_ui_invariants.sh` (grep, sin GTK) comprueba las invariantes de UI (tabla, barra inferior,

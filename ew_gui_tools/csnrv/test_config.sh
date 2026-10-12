@@ -143,5 +143,30 @@ check_eq "retorno 0" "0" "$RC"
 check_contains "2 capas" "overlay_layers=2" "$OUT"
 check_contains "3 polilineas" "overlay_polylines=3" "$OUT"
 
+# --- T9: OverlayHide apaga una capa y el reporte lo dice ------------------
+echo "T9: OverlayHide + reporte por capa"
+{
+    echo "#layer name=visib color=FF0000 width=2"
+    echo "0 0"; echo "1 1"
+    echo "#layer name=oculta color=0000FF width=2"
+    echo "2 2"; echo "3 3"
+} > "$TMP/ov2.lines"
+write_cfg "$TMP/t9.d" "OverlayFile     $TMP/ov2.lines" "OverlayHide     oculta"
+OUT="$("$BIN" --check-overlays "$TMP/t9.d" 2>"$TMP/stderr")"
+RC=$?
+check_eq "retorno 0" "0" "$RC"
+check_contains "2 capas" "overlay_layers=2" "$OUT"
+check_contains "la otra sigue visible" \
+    "layer visib visible=1 color=FF0000 width=2.0 polylines=1 vertices=2" "$OUT"
+check_contains "la pedida queda apagada" \
+    "layer oculta visible=0 color=0000FF width=2.0 polylines=1 vertices=2" "$OUT"
+
+# capa que no existe: avisa por stderr y no aborta
+write_cfg "$TMP/t9b.d" "OverlayFile     $TMP/ov2.lines" "OverlayHide     no_existe"
+OUT="$("$BIN" --check-overlays "$TMP/t9b.d" 2>"$TMP/stderr")"
+RC=$?
+check_eq "retorno 0 con capa inexistente" "0" "$RC"
+check_contains "avisa de la capa inexistente" "no existe esa capa" "$(cat "$TMP/stderr")"
+
 echo "== Resultado: $PASS PASS / $FAIL FAIL =="
 [ "$FAIL" -eq 0 ]

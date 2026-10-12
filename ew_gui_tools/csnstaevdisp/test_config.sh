@@ -79,5 +79,24 @@ RC=$?
 if [ "$RC" -ne 0 ]; then echo "  PASS: retorno != 0"; PASS=$((PASS + 1));
 else echo "  FAIL: retorno esperado != 0, obtenido $RC"; FAIL=$((FAIL + 1)); fi
 
+# --- T4: OverlayHide apaga una capa (y el reporte lo dice) ----------------
+echo "T4: OverlayHide"
+{
+    echo "#layer name=visib color=FF0000 width=2"
+    echo "0 0"; echo "1 1"
+    echo "#layer name=oculta color=0000FF width=2"
+    echo "2 2"; echo "3 3"
+} > "$TMP/ov2.lines"
+write_cfg "$TMP/t4.d" "OverlayFile     $TMP/ov2.lines" "OverlayHide     oculta"
+OUT="$("$BIN" --check-overlays "$TMP/t4.d" 2>"$TMP/err")"
+RC=$?
+if [ "$RC" -eq 0 ]; then echo "  PASS: retorno 0"; PASS=$((PASS + 1));
+else echo "  FAIL: retorno $RC"; FAIL=$((FAIL + 1)); fi
+check_contains "2 capas" "overlay_layers=2" "$OUT"
+check_contains "la otra sigue visible" \
+    "layer visib visible=1 color=FF0000 width=2.0 polylines=1 vertices=2" "$OUT"
+check_contains "la pedida queda apagada" \
+    "layer oculta visible=0 color=0000FF width=2.0 polylines=1 vertices=2" "$OUT"
+
 echo "== Resultado: $PASS PASS / $FAIL FAIL =="
 [ "$FAIL" -eq 0 ]

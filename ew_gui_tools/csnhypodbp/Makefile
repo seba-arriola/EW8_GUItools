@@ -25,7 +25,8 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_group.o csnhypodbp_trace.o csnhypodbp_tt.o csnhypodbp_master.o \
        csnhypodbp_station.o csnhypodbp_locator.o csnhypodbp_manual.o csnhypodbp_locate.o \
        csnhypodbp_view.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
-       csnhypodbp_staitem.o csnhypodbp_preview.o
+       csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
+       csnhypodbp_mapview.o
 
 all: csnhypodbp
 
@@ -131,6 +132,20 @@ test_search: test_search.c csnhypodbp_search.o
 test_preview: test_preview.c csnhypodbp_preview.o
 	$(CC) $(CFLAGS) -o test_preview test_preview.c csnhypodbp_preview.o -lm
 
+# Perfiles de profundidad: recta, distancia perpendicular, mas cercano y
+# lector de polilineas de slab/topografia.
+test_profile: test_profile.c csnhypodbp_profile.o
+	$(CC) $(CFLAGS) -o test_profile test_profile.c csnhypodbp_profile.o -lm
+
+# Geometria de los paneles de mapa: bbox, auto-encuadre y marco del perfil.
+# Usa ewgui_geo_project (common, sin GTK).
+test_mapview: test_mapview.c csnhypodbp_mapview.o ../common/src/ewgui_geo.o
+	$(CC) $(CFLAGS) -o test_mapview test_mapview.c csnhypodbp_mapview.o \
+	      ../common/src/ewgui_geo.o -lm
+
+../common/src/ewgui_geo.o:
+	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_geo.o
+
 # Lector SDS (libmseed2): genera un miniSEED sintetico y lo lee de vuelta.
 test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
 	$(CC) $(CFLAGS) -o test_sds_read test_sds_read.c csnhypodbp_sds.o \
@@ -139,7 +154,7 @@ test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
       test_master_store test_mag_msg test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
-      test_preview
+      test_preview test_profile test_mapview
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -159,10 +174,14 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_statable
 	./test_staitem
 	./test_preview
+	./test_profile
+	./test_mapview
 	sh ./test_ui_invariants.sh
+	sh ./test_config.sh
 
 clean:
 	rm -f csnhypodbp test_filter test_group test_parse_solution test_magstore \
 	      test_trace test_tt test_master_store test_mag_msg test_station_order \
 	      test_locator test_manual test_locate test_fetch_span test_view test_search \
-	      test_sds_read test_statable test_staitem test_preview locate_chain *.o
+	      test_sds_read test_statable test_staitem test_preview test_profile \
+	      test_mapview locate_chain *.o

@@ -12,6 +12,8 @@ Acciones (se ejecutan en este orden si se combinan):
   --rows                 imprime una linea por fila de tabla con el texto de sus celdas
   --dump                 vuelca el arbol accesible (rol, nombre, rect)
   --assert-text TEXTO    falla si ningun objeto contiene TEXTO en su nombre
+  --assert-desc TEXTO    falla si ningun objeto lo lleva en su descripcion accesible
+  --descs                lista rol|nombre|descripcion de los objetos con descripcion
 
 Opciones: --under NAME (limita la busqueda al subarbol de ese objeto),
 --timeout S (espera maxima, 15 s), --limit N (filas o profundidad del volcado, 40).
@@ -62,6 +64,15 @@ def _text(obj):
 def _label(obj):
     """Como se identifica un objeto para la sonda: nombre y, si no hay, texto."""
     return _name(obj) or _text(obj)
+
+
+def _desc(obj):
+    """Descripción accesible (GtkAccessible). La usan los canvas de mapa, cuyas
+    etiquetas de estado están ocultas: GTK4 no las expone por nombre."""
+    try:
+        return obj.description or ""
+    except Exception:
+        return ""
 
 
 def _role(obj):
@@ -209,6 +220,26 @@ def wait_for(name, timeout, exact=True):
         time.sleep(0.2)
 
 
+def find_all_desc(text, root=None):
+    """Objetos cuya descripción accesible contiene `text`."""
+    out = []
+    for obj, _d, _x, _y in walk(root):
+        if text in _desc(obj):
+            out.append(obj)
+    return out
+
+
+def wait_for_desc(text, timeout):
+    t0 = time.time()
+    while True:
+        got = find_all_desc(text)
+        if got:
+            return got
+        if time.time() - t0 >= timeout:
+            return []
+        time.sleep(0.2)
+
+
 def rect_of(name, root=None):
     """(x, y, w, h) del primer objeto con ese nombre, o None."""
     for obj, _d, x, y in walk(root):
@@ -258,9 +289,12 @@ def main(argv):
     ap.add_argument("--rect", metavar="NAME")
     ap.add_argument("--click-by-name", metavar="NAME")
     ap.add_argument("--assert-text", metavar="TEXT")
+    ap.add_argument("--assert-desc", metavar="TEXT")
+    ap.add_argument("--descs", action="store_true")
     a = ap.parse_args(argv)
 
-    if not any([a.dump, a.headers, a.rows, a.rect, a.click_by_name, a.assert_text]):
+    if not any([a.dump, a.headers, a.rows, a.rect, a.click_by_name, a.assert_text,
+                a.assert_desc, a.descs]):
         ap.print_help()
         return 2
 
@@ -341,6 +375,20 @@ def main(argv):
             print("gui_probe: OK, %r presente (%d objeto(s))" % (a.assert_text, len(got)))
         else:
             print("gui_probe: FALLO, %r no aparece" % a.assert_text)
+            rc = 1
+
+    if a.descs:
+        for o, _d, x, y in walk(root):
+            d = _desc(o)
+            if d:
+                print("%s|%s|%s %d,%d" % (_role(o), _name(o), d, x, y))
+
+    if a.assert_desc:
+        got = wait_for_desc(a.assert_desc, a.timeout)
+        if got:
+            print("gui_probe: OK, %r presente en %d descripcion(es)" % (a.assert_desc, len(got)))
+        else:
+            print("gui_probe: FALLO, %r no aparece en ninguna descripcion" % a.assert_desc)
             rc = 1
 
     return rc

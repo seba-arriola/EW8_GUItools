@@ -694,6 +694,8 @@ void csnhypodbp_preview_update(void) {
         gtk_widget_set_sensitive(g_preview_btn_confirm, v.candidate);
     if (g_preview_btn_discard)
         gtk_widget_set_sensitive(g_preview_btn_discard, v.candidate);
+    /* La candidata del locate tambien se ve en los dos mapas. */
+    csnhypodbp_maps_refresh();
 }
 
 void on_preview_discard(GtkWidget *w, gpointer d) {
@@ -944,6 +946,658 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
     return FALSE;
 }
 
+/* ====================================================================
+ * Columna derecha: mapa de planta (contrato de csnrv) y panel de perfil
+ * ==================================================================== */
+
+/* Estado de vista del mapa de planta: transformacion de csnrv
+   screen = (imagen - centro) * zoom + canvas/2 + paneo. */
+static double g_map_zoom = 1.0;
+static double g_map_pan_x = 0.0, g_map_pan_y = 0.0;
+static double g_map_cx = 0.0, g_map_cy = 0.0;
+static int    g_map_fit_key = -1;              /* identidad del ultimo auto-encuadre */
+static int    g_map_need_fit = 1;
+static double g_map_fit_lon0 = 0, g_map_fit_lon1 = 0, g_map_fit_lat0 = 0, g_map_fit_lat1 = 0;
+static int    g_map_panning = 0;
+static double g_map_pan_last_x = 0.0, g_map_pan_last_y = 0.0;
+/* Puntero: posiciones ya proyectadas de cada punto (las llena el dibujo, las usa
+   el hit test del clic) y estado del clic-vs-arrastre. */
+#define MAP_HIT_RADIUS 7.0
+#define MAP_DRAG_PX    3.0
+static double g_map_plan_sx[CSNHYPODBP_MAX_MAP_PTS], g_map_plan_sy[CSNHYPODBP_MAX_MAP_PTS];
+static double g_prof_sx[CSNHYPODBP_MAX_MAP_PTS], g_prof_sy[CSNHYPODBP_MAX_MAP_PTS];
+static CsnhypodbpRow *g_map_row[CSNHYPODBP_MAX_MAP_PTS];   /* fila de cada punto */
+static char g_map_id[CSNHYPODBP_MAX_MAP_PTS][CSNHYPODBP_MAP_ID_LEN];  /* "qid/mod" de cada punto */
+static int  g_map_sel = -1;                    /* punto de la solucion elegida en Origins */
+static double g_map_press_x = 0.0, g_map_press_y = 0.0;
+static int    g_map_press_hit = -1;
+static int    g_map_moved = 0;
+static double g_prof_press_x = 0.0, g_prof_press_y = 0.0;
+static int    g_prof_press_hit = -1;
+static int    g_prof_moved = 0;
+static int    g_prof_loaded = -1;              /* perfil con datos ya cargados */
+static double g_prof_zoom = 1.0;               /* zoom del panel de perfil */
+static double g_prof_pan_x = 0.0, g_prof_pan_y = 0.0;   /* paneo en unidades de datos */
+static double g_prof_units_px_x = 1.0, g_prof_units_px_y = 1.0;  /* traduce el arrastre */
+static int    g_prof_fit_key = -1;             /* identidad del ultimo encuadre */
+static int    g_prof_panning = 0;
+static double g_prof_last_x = 0.0, g_prof_last_y = 0.0;
+
+static double row_mag(const CsnhypodbpRow *row)
+{
+    const char *ml = csnhypodbp_row_col((CsnhypodbpRow *)row, 9);
+    double m = (ml && ml[0]) ? atof(ml) : 0.0;
+    return (m > 0.0 && m < 10.0) ? m : 0.0;
+}
+
+static void row_id_str(CsnhypodbpRow *row, char *out, size_t n);
+
+static void map_pt_push(double lat, double lon, double depth, double mag, int kind,
+                        CsnhypodbpRow *row)
+{
+    CsnhypodbpMapPt *p;
+    if (g_map_npts >= CSNHYPODBP_MAX_MAP_PTS) return;
+    if (!isfinite(lat) || !isfinite(lon)) return;
+    if (lat == 0.0 && lon == 0.0) return;          /* solucion sin posicion */
+    p = &g_map_pts[g_map_npts];
+    g_map_row[g_map_npts] = row;
+    if (row) row_id_str(row, g_map_id[g_map_npts], CSNHYPODBP_MAP_ID_LEN);
+    else g_map_id[g_map_npts][0] = '\0';           /* la candidata no tiene fila */
+    g_map_npts++;
+    p->lat = lat; p->lon = lon; p->depth = depth; p->mag = mag; p->kind = kind;
+}
+
+/* "qid/mod" de una fila, o "-" si no hay. */
+static void row_id_str(CsnhypodbpRow *row, char *out, size_t n)
+{
+    int qid = 0, mod = 0;
+    if (!row) { snprintf(out, n, "-"); return; }
+    g_object_get(row, "qid", &qid, "mod", &mod, NULL);
+    snprintf(out, n, "%d/%d", qid, mod);
+}
+
+/* Radio del marcador en pixeles de pantalla: la preferida escala con la
+ * magnitud. `panel` = 0 planta, 1 perfil. */
+static double marker_radius(const CsnhypodbpMapPt *p, int panel)
+{
+    if (p->kind == 1) {
+        if (p->mag > 0.0) return panel ? (1.2 * p->mag + 2.5) : (2.2 * p->mag + 3.5);
+        return panel ? 4.0 : 6.0;
+    }
+    if (p->kind == 2) return panel ? 4.5 : 6.0;
+    return panel ? 3.0 : 4.0;
+}
+
+/* Posicion de una fila en la vista ORDENADA del detalle, o -1. La seleccion vive
+   sobre g_sort_detail, no sobre g_store_detail: buscar en el store daria la
+   posicion del store y select_item acabaria seleccionando OTRA fila. */
+static int detail_row_pos(CsnhypodbpRow *row)
+{
+    GListModel *m;
+    guint i, n;
+
+    if (!row || !g_selection_detail) return -1;
+    m = G_LIST_MODEL(g_selection_detail);
+    n = g_list_model_get_n_items(m);
+    for (i = 0; i < n; i++) {
+        gpointer it = g_list_model_get_item(m, i);
+        gboolean same = (it == (gpointer)row);
+        if (it) g_object_unref(it);
+        if (same) return (int)i;
+    }
+    return -1;
+}
+
+/* Selecciona en la tabla de Origins la fila de un marcador (clic sin arrastre). */
+static void map_select_row(CsnhypodbpRow *row)
+{
+    int pos = detail_row_pos(row);
+    if (pos < 0) return;
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_selection_detail),
+                                    (guint)pos, TRUE);
+}
+
+/* Carga (o recarga) las polilineas de slab/topografia del perfil activo. */
+static void map_load_profile_lines(void)
+{
+    const CsnhypodbpProfile *pr;
+    char err[256];
+
+    if (g_prof_loaded == g_active_profile) return;
+    csnhypodbp_profile_line_free(&g_prof_slab);
+    csnhypodbp_profile_line_free(&g_prof_topo);
+    g_prof_loaded = g_active_profile;
+    if (g_active_profile < 0 || g_active_profile >= g_profiles.n) return;
+    pr = &g_profiles.p[g_active_profile];
+    if (csnhypodbp_profile_line_read(pr->slab_file, g_profile_lon_col, g_profile_val_col,
+                                     &g_prof_slab, err, sizeof(err)) != 0)
+        logit("et", "csnhypodbp: perfil %s sin slab (%s)\n", pr->name, err);
+    if (csnhypodbp_profile_line_read(pr->topo_file, g_profile_lon_col, g_profile_val_col,
+                                     &g_prof_topo, err, sizeof(err)) != 0)
+        logit("et", "csnhypodbp: perfil %s sin topografia (%s)\n", pr->name, err);
+}
+
+/* Texto de estado de los dos paneles (etiquetas OCULTAS: no se ven, pero el
+   arnes GUI las lee). Incluye el origen seleccionado en Origins. */
+static void map_caption_update(void)
+{
+    char plan_txt[192], prof_txt[192], sel[48] = "-";
+    gpointer item = g_selection_detail
+                    ? gtk_single_selection_get_selected_item(g_selection_detail)
+                    : NULL;
+    int nsol = 0, i;
+
+    for (i = 0; i < g_map_npts; i++)
+        if (g_map_pts[i].kind != 2) nsol++;
+    if (item) row_id_str(CSNHYPODBP_ROW(item), sel, sizeof(sel));
+
+    if (item && nsol > 0)
+        snprintf(plan_txt, sizeof(plan_txt), "Event %s - %d sol%s sel=%s",
+                 selected_id, nsol, g_preview_valid ? " + candidate" : "", sel);
+    else
+        snprintf(plan_txt, sizeof(plan_txt), "No solution selected");
+
+    if (g_active_profile >= 0 && g_active_profile < g_profiles.n)
+        snprintf(prof_txt, sizeof(prof_txt), "Profile %s - %d slab + %d topo - %d pts",
+                 g_profiles.p[g_active_profile].name,
+                 g_prof_slab.n, g_prof_topo.n, g_map_npts);
+    else if (g_profiles.n == 0)
+        snprintf(prof_txt, sizeof(prof_txt), "No profiles declared");
+    else
+        snprintf(prof_txt, sizeof(prof_txt), "No profile (sin solucion preferida)");
+
+    if (g_map_plan_cap) gtk_label_set_text(GTK_LABEL(g_map_plan_cap), plan_txt);
+    if (g_map_prof_cap) gtk_label_set_text(GTK_LABEL(g_map_prof_cap), prof_txt);
+
+    /* Las etiquetas de arriba estan OCULTAS y GTK4 no las expone por AT-SPI, asi
+       que el estado va tambien como descripcion accesible de cada canvas (lo lee
+       gui_probe.py --assert-desc). */
+    if (g_map_plan) {
+        GtkWidget *w = ewgui_canvas_widget(g_map_plan);
+        if (w) gtk_accessible_update_property(GTK_ACCESSIBLE(w),
+                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, plan_txt, -1);
+    }
+    if (g_map_prof) {
+        GtkWidget *w = ewgui_canvas_widget(g_map_prof);
+        if (w) gtk_accessible_update_property(GTK_ACCESSIBLE(w),
+                   GTK_ACCESSIBLE_PROPERTY_DESCRIPTION, prof_txt, -1);
+    }
+}
+
+/* UNICO punto que recalcula el estado de los dos paneles: puntos a dibujar
+   (preferida + resto de soluciones de Origins + candidata del locate), perfil
+   activo (el mas cercano a la preferida), datos del perfil y captions. */
+void csnhypodbp_maps_refresh(void)
+{
+    gpointer item = g_selection_detail
+                    ? gtk_single_selection_get_selected_item(g_selection_detail)
+                    : NULL;
+    CsnhypodbpRow *pref = NULL;
+    double plat = 0.0, plon = 0.0;
+    int have_pref = 0, key, i;
+
+    g_map_npts = 0;
+    g_map_press_hit = g_prof_press_hit = -1;
+    if (item) {
+        EventGroup *g = csnhypodbp_event_group_of(CSNHYPODBP_ROW(item));
+        size_t k, ns;
+        pref = g ? csnhypodbp_event_group_preferred(g) : NULL;
+        if (pref) {
+            double lat = 0, lon = 0, depth = 0;
+            g_object_get(pref, "lat", &lat, "lon", &lon, "depth", &depth, NULL);
+            plat = lat; plon = lon;
+            have_pref = 1;
+            map_pt_push(lat, lon, depth, row_mag(pref), 1, pref);
+        }
+        ns = g ? csnhypodbp_event_group_nsol(g) : 0;
+        for (k = 0; k < ns; k++) {
+            CsnhypodbpRow *r = csnhypodbp_event_group_solution(g, k);
+            double lat = 0, lon = 0, depth = 0;
+            if (!r || r == pref) continue;
+            g_object_get(r, "lat", &lat, "lon", &lon, "depth", &depth, NULL);
+            map_pt_push(lat, lon, depth, row_mag(r), 0, r);
+        }
+    }
+    if (g_preview_valid) {
+        double mag = g_preview_mag.ml[0] ? atof(g_preview_mag.ml) : 0.0;
+        map_pt_push(g_preview_sol.lat, g_preview_sol.lon, g_preview_sol.depth, mag, 2, NULL);
+    }
+
+    /* Solucion elegida en Origins -> se dibuja verde. Se busca por id (el orden de
+       g_map_pts no es el de la tabla) y en la seleccion vigente, no en selected_id
+       (este refresco tambien corre antes de que la seleccion se recomponga). */
+    {
+        char sel_id[CSNHYPODBP_MAP_ID_LEN] = "";
+        if (item) row_id_str(CSNHYPODBP_ROW(item), sel_id, sizeof(sel_id));
+        g_map_sel = csnhypodbp_map_find_id(g_map_id, g_map_npts, sel_id);
+    }
+
+    /* Perfil activo: el mas cercano a la solucion preferida del evento. */
+    g_active_profile = have_pref ? csnhypodbp_profile_nearest(&g_profiles, plat, plon) : -1;
+    map_load_profile_lines();
+
+    /* Auto-encuadre del mapa de planta al cambiar de evento o de candidata. */
+    key = ((selected_qid * 31 + selected_mod) * 7 + selected_version) * 2
+          + (g_preview_valid ? 1 : 0);
+    if (key != g_map_fit_key) {
+        double lon0, lon1, lat0, lat1;
+        g_map_fit_key = key;
+        if (csnhypodbp_map_bbox(g_map_pts, g_map_npts, &lon0, &lon1, &lat0, &lat1) == 0) {
+            csnhypodbp_map_span_min(&lon0, &lon1, &lat0, &lat1, g_map_min_span_deg);
+            g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
+            g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
+            g_map_need_fit = 1;
+        }
+    }
+
+    /* El perfil tambien se re-encuadra (a sus propios datos) al cambiar de
+       evento o de candidata; el zoom/paneo manual se respeta hasta entonces. */
+    if (key != g_prof_fit_key) {
+        g_prof_fit_key = key;
+        g_prof_zoom = 1.0;
+        g_prof_pan_x = g_prof_pan_y = 0.0;
+    }
+
+    /* Captions ocultos: ademas de informar, son la asercion del arnes GUI
+       (evento, nº de soluciones, perfil activo, origen bajo el puntero y
+       seleccionado). Ver map_caption_update(). */
+    map_caption_update();
+
+    for (i = 0; i < 2; i++) {
+        EwGuiCanvas *cv = i ? g_map_prof : g_map_plan;
+        if (cv) ewgui_canvas_queue_draw(cv);
+    }
+}
+
+/* --- mapa de planta --- */
+
+static void plan_overlay_map(double lat, double lon, void *ud, double *sx, double *sy)
+{
+    double iw = 1.0, ih = 1.0;
+    (void)ud;
+    if (g_map_pixbuf) {
+        iw = gdk_pixbuf_get_width(g_map_pixbuf);
+        ih = gdk_pixbuf_get_height(g_map_pixbuf);
+    }
+    ewgui_geo_project(lat, lon, iw, ih, sx, sy);
+}
+
+/* Marcador: preferida (rojo con borde blanco), resto (gris azulado), candidata
+   del locate (mismos colores que la tablita del preview) y la solucion elegida en
+   Origins en verde, que reemplaza al color que le tocaria. */
+static void draw_marker(cairo_t *cr, double x, double y, double r, int kind, int selected)
+{
+    if (r < 1.0) r = 1.0;
+    if (selected) {
+        cairo_set_source_rgb(cr, 0.0, 0.78, 0.33);
+        cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_set_line_width(cr, r * 0.3);
+        cairo_stroke(cr);
+        return;
+    }
+    if (kind == 2) {
+        double dash[2];
+        cairo_set_source_rgb(cr, 0.99, 0.91, 0.91);
+        cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 0.91, 0.63, 0.63);
+        cairo_set_line_width(cr, r * 0.45);
+        dash[0] = r * 0.8; dash[1] = r * 0.6;
+        cairo_set_dash(cr, dash, 2, 0.0);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    } else if (kind == 1) {
+        cairo_set_source_rgb(cr, 0.83, 0.18, 0.18);
+        cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_set_line_width(cr, r * 0.3);
+        cairo_stroke(cr);
+    } else {
+        cairo_set_source_rgba(cr, 0.38, 0.49, 0.55, 0.55);
+        cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
+        cairo_fill_preserve(cr);
+        cairo_set_source_rgba(cr, 0.10, 0.10, 0.10, 0.6);
+        cairo_set_line_width(cr, r * 0.25);
+        cairo_stroke(cr);
+    }
+}
+
+/* Rejilla de meridianos/paralelos (paso segun el zoom, como csnrv). */
+static void draw_plan_grid(cairo_t *cr, double iw, double ih, double zoom)
+{
+    double step = ewgui_geo_grid_step(zoom);
+    double lon, lat, x1, y1, x2, y2;
+    if (!(step > 0.0)) return;
+    cairo_set_line_width(cr, 0.5 / zoom);
+    cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 0.22);
+    for (lon = -180.0; lon <= 180.0; lon += step) {
+        ewgui_geo_project(90.0, lon, iw, ih, &x1, &y1);
+        ewgui_geo_project(-90.0, lon, iw, ih, &x2, &y2);
+        cairo_move_to(cr, x1, y1);
+        cairo_line_to(cr, x2, y2);
+    }
+    for (lat = -90.0; lat <= 90.0; lat += step) {
+        ewgui_geo_project(lat, -180.0, iw, ih, &x1, &y1);
+        ewgui_geo_project(lat, 180.0, iw, ih, &x2, &y2);
+        cairo_move_to(cr, x1, y1);
+        cairo_line_to(cr, x2, y2);
+    }
+    cairo_stroke(cr);
+}
+
+void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
+{
+    double iw = 1.0, ih = 1.0, zoom;
+    int i;
+
+    (void)canvas; (void)data;
+    cairo_set_source_rgb(cr, 0.94, 0.95, 0.96);
+    cairo_paint(cr);
+    if (g_map_pixbuf) {
+        iw = gdk_pixbuf_get_width(g_map_pixbuf);
+        ih = gdk_pixbuf_get_height(g_map_pixbuf);
+    }
+    if (g_map_need_fit && g_map_pixbuf && width > 40 && height > 40) {
+        csnhypodbp_mapfit(g_map_fit_lon0, g_map_fit_lon1, g_map_fit_lat0, g_map_fit_lat1,
+                          iw, ih, width, height, 12.0,
+                          &g_map_zoom, &g_map_cx, &g_map_cy);
+        g_map_pan_x = g_map_pan_y = 0.0;
+        g_map_need_fit = 0;
+    }
+    zoom = (g_map_zoom > 0.0) ? g_map_zoom : 1.0;
+
+    cairo_save(cr);
+    cairo_translate(cr, width / 2.0 + g_map_pan_x, height / 2.0 + g_map_pan_y);
+    cairo_scale(cr, zoom, zoom);
+    cairo_translate(cr, -g_map_cx, -g_map_cy);
+
+    if (g_map_pixbuf) {
+        gdk_cairo_set_source_pixbuf(cr, g_map_pixbuf, 0, 0);
+        cairo_paint(cr);
+    }
+    draw_plan_grid(cr, iw, ih, zoom);
+
+    /* Rectas de los perfiles; la activa resaltada y recortada a sus datos. */
+    for (i = 0; i < g_profiles.n; i++) {
+        const CsnhypodbpProfile *pr = &g_profiles.p[i];
+        double lo0 = pr->lon1, lo1 = pr->lon2, x1, y1, x2, y2;
+        if (pr->lon1 == pr->lon2) continue;                 /* vertical */
+        if (i == g_active_profile && g_prof_slab.n > 0 &&
+            g_prof_slab.lon_min <= g_prof_slab.lon_max) {
+            lo0 = g_prof_slab.lon_min;
+            lo1 = g_prof_slab.lon_max;
+        }
+        ewgui_geo_project(pr->a * lo0 + pr->b, lo0, iw, ih, &x1, &y1);
+        ewgui_geo_project(pr->a * lo1 + pr->b, lo1, iw, ih, &x2, &y2);
+        if (i == g_active_profile) {
+            cairo_set_source_rgb(cr, 0.08, 0.40, 0.75);
+            cairo_set_line_width(cr, 2.0 / zoom);
+        } else {
+            cairo_set_source_rgba(cr, 0.45, 0.45, 0.45, 0.65);
+            cairo_set_line_width(cr, 1.0 / zoom);
+        }
+        cairo_move_to(cr, x1, y1);
+        cairo_line_to(cr, x2, y2);
+        cairo_stroke(cr);
+    }
+
+    /* Capas .lines (subduccion, fallas, limites de regiones). */
+    if (g_map_overlay)
+        ewgui_overlay_draw(cr, g_map_overlay, plan_overlay_map, NULL, 1.0 / zoom);
+
+    /* Soluciones del evento (preferida destacada) y candidata del locate.
+       Primero el resto y encima la preferida y la candidata: si no, los
+       marcadores superpuestos (mismo epicentro) tapan a la preferida. */
+    {
+        int k;
+        for (k = 0; k <= 2; k++) {
+            for (i = 0; i < g_map_npts; i++) {
+                const CsnhypodbpMapPt *p = &g_map_pts[i];
+                double x, y;
+                if (p->kind != k) continue;
+                ewgui_geo_project(p->lat, p->lon, iw, ih, &x, &y);
+                /* El hit test del clic trabaja en pixeles del widget: hay que
+                   deshacer la transformacion (imagen -> pantalla). */
+                g_map_plan_sx[i] = (x - g_map_cx) * zoom + width / 2.0 + g_map_pan_x;
+                g_map_plan_sy[i] = (y - g_map_cy) * zoom + height / 2.0 + g_map_pan_y;
+                draw_marker(cr, x, y, marker_radius(p, 0) / zoom, p->kind, 0);
+            }
+        }
+        /* La solucion elegida en Origins, al final y en verde. Dentro de la
+           transformacion van las coordenadas de IMAGEN (las _sx/_sy son de
+           pantalla, solo para el hit test del clic). */
+        if (g_map_sel >= 0 && g_map_sel < g_map_npts) {
+            const CsnhypodbpMapPt *sp = &g_map_pts[g_map_sel];
+            double sx2, sy2;
+            ewgui_geo_project(sp->lat, sp->lon, iw, ih, &sx2, &sy2);
+            draw_marker(cr, sx2, sy2, marker_radius(sp, 0) / zoom, sp->kind, 1);
+        }
+    }
+    cairo_restore(cr);
+}
+
+/* --- panel de perfil (x = longitud, y = -profundidad) --- */
+
+void on_draw_map_profile(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
+{
+    CsnhypodbpFrame f;
+    const double mx = 40.0, mt = 10.0, mb = 20.0;
+    double pw = width - mx - 8.0, ph = height - mt - mb;
+    double x0, x1, y0, y1;
+    int i;
+
+    (void)canvas; (void)data;
+    cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+    cairo_paint(cr);
+    if (pw < 20.0 || ph < 20.0) return;
+
+    /* Marco por defecto: SOLO los datos del perfil, asi el slab y la topografia
+       siempre quedan dentro. El zoom y el paneo del usuario se aplican encima;
+       una solucion que caiga fuera se ve acercando o arrastrando. */
+    csnhypodbp_profile_frame(&g_prof_slab, &g_prof_topo, g_profile_depth_min_km,
+                             &x0, &x1, &y0, &y1);
+    csnhypodbp_frame_set(&f, x0, x1, y0, y1, mx, mt, pw, ph);
+    csnhypodbp_frame_view(&f, g_prof_zoom, g_prof_pan_x, g_prof_pan_y);
+    /* Unidades de datos por pixel: traducen el arrastre del paneo. */
+    g_prof_units_px_x = (f.x1 - f.x0) / pw;
+    g_prof_units_px_y = (f.y1 - f.y0) / ph;
+
+    /* Marco, etiquetas de los ejes y rejilla punteada. */
+    cairo_set_source_rgb(cr, 0.35, 0.35, 0.35);
+    cairo_set_line_width(cr, 1.0);
+    cairo_rectangle(cr, mx, mt, pw, ph);
+    cairo_stroke(cr);
+
+    cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, 9.0);
+    cairo_set_source_rgb(cr, 0.25, 0.25, 0.25);
+    {
+        double v, sx, sy, span = f.x1 - f.x0;
+        const char *fmt = (span < 0.5) ? "%.3f" : (span < 5.0 ? "%.2f" : "%.1f");
+        int k;
+        for (k = 0; k <= 4; k++) {
+            char lbl[32];
+            v = f.x0 + k * span / 4.0;
+            csnhypodbp_frame_project(&f, v, f.y0, &sx, &sy);
+            snprintf(lbl, sizeof(lbl), fmt, v);
+            cairo_move_to(cr, sx - 10.0, mt + ph + 13.0);
+            cairo_show_text(cr, lbl);
+            v = f.y1 - k * (f.y1 - f.y0) / 4.0;
+            csnhypodbp_frame_project(&f, f.x0, v, &sx, &sy);
+            snprintf(lbl, sizeof(lbl), "%.0f", v);
+            cairo_move_to(cr, 4.0, sy + 3.0);
+            cairo_show_text(cr, lbl);
+        }
+    }
+
+    /* Todo lo que es dato va recortado al marco: nada puede salirse del cuadro
+       (el slab de un perfil del norte baja mas de 200 km). */
+    cairo_save(cr);
+    cairo_rectangle(cr, mx, mt, pw, ph);
+    cairo_clip(cr);
+    {
+        double dash[2] = { 3.0, 3.0 };
+        double v, sx, sy;
+        int k;
+        cairo_set_source_rgba(cr, 0.6, 0.6, 0.6, 0.5);
+        cairo_set_line_width(cr, 0.6);
+        cairo_set_dash(cr, dash, 2, 0.0);
+        for (k = 0; k <= 4; k++) {
+            v = f.x0 + k * (f.x1 - f.x0) / 4.0;
+            csnhypodbp_frame_project(&f, v, f.y0, &sx, &sy);
+            cairo_move_to(cr, sx, mt);
+            cairo_line_to(cr, sx, mt + ph);
+            v = f.y1 - k * (f.y1 - f.y0) / 4.0;
+            csnhypodbp_frame_project(&f, f.x0, v, &sx, &sy);
+            cairo_move_to(cr, mx, sy);
+            cairo_line_to(cr, mx + pw, sy);
+        }
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    }
+
+    /* Subduccion (slab, km) y topografia (m/1000), ambas lineas negras; NaN
+       rompe la polilinea (costa afuera en el slab). */
+    {
+        int k, started = 0;
+        cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+        cairo_set_line_width(cr, 1.0);
+        for (k = 0; k < g_prof_slab.n; k++) {
+            double sx, sy;
+            if (!isfinite(g_prof_slab.val[k])) { started = 0; continue; }
+            csnhypodbp_frame_project(&f, g_prof_slab.lon[k], g_prof_slab.val[k], &sx, &sy);
+            if (started) cairo_line_to(cr, sx, sy);
+            else { cairo_move_to(cr, sx, sy); started = 1; }
+        }
+        if (g_prof_slab.n > 0) cairo_stroke(cr);
+        started = 0;
+        for (k = 0; k < g_prof_topo.n; k++) {
+            double sx, sy;
+            if (!isfinite(g_prof_topo.val[k])) { started = 0; continue; }
+            csnhypodbp_frame_project(&f, g_prof_topo.lon[k],
+                                     g_prof_topo.val[k] / 1000.0, &sx, &sy);
+            if (started) cairo_line_to(cr, sx, sy);
+            else { cairo_move_to(cr, sx, sy); started = 1; }
+        }
+        if (g_prof_topo.n > 0) cairo_stroke(cr);
+    }
+
+    /* Soluciones del evento y candidata (mismo codigo de color que la planta;
+       la preferida y la candidata se dibujan al final, por encima del resto). */
+    {
+        int k;
+        for (k = 0; k <= 2; k++) {
+            for (i = 0; i < g_map_npts; i++) {
+                const CsnhypodbpMapPt *p = &g_map_pts[i];
+                double sx, sy;
+                if (p->kind != k) continue;
+                csnhypodbp_frame_project(&f, p->lon, -p->depth, &sx, &sy);
+                g_prof_sx[i] = sx;
+                g_prof_sy[i] = sy;
+                draw_marker(cr, sx, sy, marker_radius(p, 1), p->kind, 0);
+            }
+        }
+        /* La solucion elegida en Origins, al final y en verde (aqui las _sx/_sy
+           ya son pixeles de pantalla: no hay transformacion de cairo). */
+        if (g_map_sel >= 0 && g_map_sel < g_map_npts)
+            draw_marker(cr, g_prof_sx[g_map_sel], g_prof_sy[g_map_sel],
+                        marker_radius(&g_map_pts[g_map_sel], 1),
+                        g_map_pts[g_map_sel].kind, 1);
+    }
+    cairo_restore(cr);   /* fin del recorte al marco del perfil */
+}
+
+/* --- interaccion del mapa de planta (rueda = zoom, arrastre = paneo) --- */
+
+void on_map_plan_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data)
+{
+    (void)ctrl; (void)dx; (void)data;
+    g_map_zoom = ewgui_geo_zoom_step(g_map_zoom, dy < 0.0, 0.05, 200.0);
+    if (g_map_plan) ewgui_canvas_queue_draw(g_map_plan);
+}
+
+void on_map_plan_press(GtkGestureClick *g, int n_press, double x, double y, gpointer data)
+{
+    (void)g; (void)n_press; (void)data;
+    g_map_panning = 1;
+    g_map_moved = 0;
+    g_map_press_x = g_map_pan_last_x = x;
+    g_map_press_y = g_map_pan_last_y = y;
+    g_map_press_hit = csnhypodbp_map_hit(g_map_pts, g_map_plan_sx, g_map_plan_sy,
+                                         g_map_npts, x, y, MAP_HIT_RADIUS);
+}
+
+void on_map_plan_release(GtkGestureClick *g, int n_press, double x, double y, gpointer data)
+{
+    (void)g; (void)n_press; (void)x; (void)y; (void)data;
+    g_map_panning = 0;
+    /* Sin arrastre fue un clic: selecciona ese origen en la tabla de Origins. */
+    if (!g_map_moved && g_map_press_hit >= 0 && g_map_press_hit < g_map_npts)
+        map_select_row(g_map_row[g_map_press_hit]);
+    g_map_press_hit = -1;
+}
+
+void on_map_plan_motion(GtkEventControllerMotion *c, double x, double y, gpointer data)
+{
+    (void)c; (void)data;
+    if (csnhypodbp_map_drag_exceeded(x - g_map_press_x, y - g_map_press_y, MAP_DRAG_PX))
+        g_map_moved = 1;
+    if (g_map_panning) {
+        g_map_pan_x += x - g_map_pan_last_x;
+        g_map_pan_y += y - g_map_pan_last_y;
+        g_map_pan_last_x = x;
+        g_map_pan_last_y = y;
+        if (g_map_plan) ewgui_canvas_queue_draw(g_map_plan);
+    }
+}
+
+/* --- interaccion del panel de perfil (rueda = zoom, arrastre = paneo) --- */
+
+void on_map_prof_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data)
+{
+    (void)ctrl; (void)dx; (void)data;
+    g_prof_zoom = ewgui_geo_zoom_step(g_prof_zoom, dy < 0.0, 0.2, 50.0);
+    if (g_map_prof) ewgui_canvas_queue_draw(g_map_prof);
+}
+
+void on_map_prof_press(GtkGestureClick *g, int n_press, double x, double y, gpointer data)
+{
+    (void)g; (void)n_press; (void)data;
+    g_prof_panning = 1;
+    g_prof_moved = 0;
+    g_prof_press_x = g_prof_last_x = x;
+    g_prof_press_y = g_prof_last_y = y;
+    g_prof_press_hit = csnhypodbp_map_hit(g_map_pts, g_prof_sx, g_prof_sy,
+                                          g_map_npts, x, y, MAP_HIT_RADIUS);
+}
+
+void on_map_prof_release(GtkGestureClick *g, int n_press, double x, double y, gpointer data)
+{
+    (void)g; (void)n_press; (void)x; (void)y; (void)data;
+    g_prof_panning = 0;
+    if (!g_prof_moved && g_prof_press_hit >= 0 && g_prof_press_hit < g_map_npts)
+        map_select_row(g_map_row[g_prof_press_hit]);
+    g_prof_press_hit = -1;
+}
+
+void on_map_prof_motion(GtkEventControllerMotion *c, double x, double y, gpointer data)
+{
+    (void)c; (void)data;
+    if (csnhypodbp_map_drag_exceeded(x - g_prof_press_x, y - g_prof_press_y, MAP_DRAG_PX))
+        g_prof_moved = 1;
+    if (g_prof_panning) {
+        /* El paneo se guarda en unidades de datos (lon/km), no en pixeles. */
+        g_prof_pan_x -= (x - g_prof_last_x) * g_prof_units_px_x;
+        g_prof_pan_y += (y - g_prof_last_y) * g_prof_units_px_y;
+        g_prof_last_x = x;
+        g_prof_last_y = y;
+        if (g_map_prof) ewgui_canvas_queue_draw(g_map_prof);
+    }
+}
+
 void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) {
     (void)sel; (void)pspec; (void)data;
     /* Con GtkSortListModel la posicion de la seleccion es la de la vista
@@ -982,6 +1636,7 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
         }
     }
     csnhypodbp_preview_update();   /* la tablita sigue a la solucion elegida */
+    csnhypodbp_maps_refresh();     /* y los mapas, al evento elegido */
 }
 
 /* Al seleccionar un evento (lista maestra) se despliega abajo la lista de sus
@@ -1005,9 +1660,17 @@ void on_event_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data
             CsnhypodbpRow *s = csnhypodbp_event_group_solution(g, i);
             if (s && s != pref) g_list_store_append(g_store_detail, s);
         }
-        if (g_selection_detail)
-            gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_selection_detail), 0, TRUE);
+        if (g_selection_detail) {
+            /* La primera fila del store es la preferida: se selecciona por fila, no
+               por la posicion 0 (la vista del detalle esta ordenada). */
+            gpointer first = g_list_model_get_item(G_LIST_MODEL(g_store_detail), 0);
+            if (first) {
+                map_select_row(CSNHYPODBP_ROW(first));
+                g_object_unref(first);
+            }
+        }
     }
+    csnhypodbp_maps_refresh();     /* el evento cambio: perfil y planta nuevos */
 }
 
 void on_list_double_click(GtkGestureClick *g, int n_press, double x, double y, gpointer data) {

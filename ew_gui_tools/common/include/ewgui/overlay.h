@@ -66,6 +66,11 @@ int  ewgui_overlay_set_color(EwOverlay *ov, const char *layer, const double rgb[
 /* Sobrescribe el ancho de todas las capas (<=0 se ignora). */
 void ewgui_overlay_set_global_width(EwOverlay *ov, double width);
 
+/* Muestra (`visible` != 0) u oculta toda capa llamada `layer`; devuelve cuántas
+ * cambió (0 si no existe ninguna con ese nombre). Las capas ocultas se siguen
+ * cargando pero no se dibujan. */
+int  ewgui_overlay_set_visible(EwOverlay *ov, const char *layer, int visible);
+
 /* --- Dibujo -------------------------------------------------------------- */
 
 /* `map` proyecta (lat, lon) a la coordenada de dibujo (pantalla o mundo).

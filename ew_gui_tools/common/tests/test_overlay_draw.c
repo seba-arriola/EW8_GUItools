@@ -134,6 +134,52 @@ int main(void)
     ewgui_overlay_draw(NULL, ov, map_world, NULL, 1.0);
     ewgui_overlay_draw((cairo_t *)0, NULL, map_world, NULL, 1.0);
 
+    /* D5: ewgui_overlay_set_visible apaga la capa pedida y respeta las demás */
+    {
+        EwOverlay *ov2 = ewgui_overlay_new();
+        assert(ov2);
+        assert(ewgui_overlay_append(ov2, write_file("ov_vis.lines",
+            "#layer name=ecuador color=FF0000 width=2\n"
+            "-90 0\n"
+            "90 0\n"
+            ">\n"
+            "#layer name=sesenta color=0000FF width=2\n"
+            "-90 60\n"
+            "90 60\n")) == 0);
+        assert(ov2->nlayers == 2);
+        assert(ewgui_overlay_set_visible(ov2, "sesenta", 0) == 1);
+        assert(ov2->layers[1].visible == 0);
+        assert(ov2->layers[0].visible == 1);
+        assert(ewgui_overlay_set_visible(ov2, "no_existe", 0) == 0);
+        assert(ewgui_overlay_set_visible(NULL, "sesenta", 0) == 0);
+
+        s = new_surface();
+        {
+            cairo_t *cr = cairo_create(s);
+            ewgui_overlay_draw(cr, ov2, map_world, NULL, 1.0);
+            cairo_destroy(cr);
+        }
+        pixel(s, 50, 25, &r, &g, &b);          /* ecuador: se sigue pintando */
+        assert(r > 200 && g < 80 && b < 80);
+        pixel(s, 50, 8, &r, &g, &b);           /* lat 60 (y=8.3): apagada */
+        assert(r > 200 && g > 200 && b > 200);
+        cairo_surface_destroy(s);
+
+        /* Y se vuelve a encender. */
+        assert(ewgui_overlay_set_visible(ov2, "sesenta", 1) == 1);
+        assert(ov2->layers[1].visible == 1);
+        s = new_surface();
+        {
+            cairo_t *cr = cairo_create(s);
+            ewgui_overlay_draw(cr, ov2, map_world, NULL, 1.0);
+            cairo_destroy(cr);
+        }
+        pixel(s, 50, 8, &r, &g, &b);
+        assert(b > 200 && r < 80 && g < 80);
+        cairo_surface_destroy(s);
+        ewgui_overlay_free(ov2);
+    }
+
     /* D4: el export reutiliza el draw -> PNG válido y no vacío */
     {
         const char *out = OUTDIR "/overlay_export.png";

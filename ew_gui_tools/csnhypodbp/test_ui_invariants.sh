@@ -92,6 +92,52 @@ ck  "preview: refresco al llegar magnitudes" 'csnhypodbp_preview_update'        
 ck  "preview: titulos por estado"           'New solution|Selected solution'              csnhypodbp_preview.c
 ck  "preview: sin seleccion -> guiones"     'No solution selected'                        csnhypodbp_preview.c
 
+# --- Mapas (columna derecha): planta + perfil ---
+ck  "mapas: columna a nivel ventana"        'build_maps_column'                           csnhypodbp_main.c
+ck  "mapas: notebook + columna en un paned" 'gtk_paned_set_start_child\(GTK_PANED\(paned_maps\), g_notebook\)' csnhypodbp_main.c
+ck  "mapas: dos canvas via map_panel_new"   'map_panel_new\(&g_map_plan'                  csnhypodbp_main.c
+ck  "mapas: canvas de planta"               'on_draw_map_plan'                            csnhypodbp_main.c
+ck  "mapas: canvas de perfil"               'on_draw_map_profile'                         csnhypodbp_main.c
+ck  "mapas: planta usa la proyeccion de csnrv" 'ewgui_geo_project'                        csnhypodbp_gui.c
+ck  "mapas: planta dibuja las capas .lines" 'ewgui_overlay_draw'                          csnhypodbp_gui.c
+ck  "mapas: imagen base MapImageFile"       'gdk_pixbuf_new_from_file\(MapImageFile'      csnhypodbp_main.c
+ck  "mapas: perfil dibuja el slab"          'g_prof_slab'                                 csnhypodbp_gui.c
+ck  "mapas: perfil dibuja la topografia"    'g_prof_topo'                                 csnhypodbp_gui.c
+ck  "mapas: perfil elige el mas cercano"    'csnhypodbp_profile_nearest'                  csnhypodbp_gui.c
+ck  "mapas: un solo refresco"               'void csnhypodbp_maps_refresh'                csnhypodbp_gui.c
+ck  "mapas: refresco al elegir solucion"    'y los mapas, al evento elegido'              csnhypodbp_gui.c
+ck  "mapas: refresco al elegir evento"      'el evento cambio: perfil y planta nuevos'    csnhypodbp_gui.c
+ck  "mapas: refresco desde el preview"      'La candidata del locate tambien se ve'       csnhypodbp_gui.c
+ck  "mapas: refresco al llegar un ARC"      'csnhypodbp_maps_refresh'                     csnhypodbp_ws.c
+ck  "mapas: marcador de la candidata"       'kind == 2'                                   csnhypodbp_gui.c
+ck  "mapas: caption del perfil"             'slab \+ %d topo'                             csnhypodbp_gui.c
+ck  "mapas: perfil con x = lon e y = -depth" 'frame_project\(&f, p->lon, -p->depth'        csnhypodbp_gui.c
+nck "mapas: sin columna duplicada por pestaña" 'build_maps_column\(\);.*build_maps_column' csnhypodbp_main.c
+
+# --- Puntero (solo clic) y solucion seleccionada ---
+ck  "puntero: hit test puro"                 'csnhypodbp_map_hit'                         csnhypodbp_mapview.c
+ck  "puntero: umbral clic vs arrastre"       'csnhypodbp_map_drag_exceeded'               csnhypodbp_mapview.c
+ck  "puntero: hit test en pixeles de pantalla" 'g_map_plan_sx\[i\] = \(x - g_map_cx\) \* zoom' csnhypodbp_gui.c
+ck  "puntero: clic sin arrastre selecciona"  '!g_map_moved && g_map_press_hit'            csnhypodbp_gui.c
+ck  "puntero: selecciona en la tabla"        'map_select_row'                             csnhypodbp_gui.c
+ck  "puntero: fila nula (candidata) no rompe" 'if \(!row \|\| !g_selection_detail\)'       csnhypodbp_gui.c
+ck  "puntero: estado en la descripcion accesible" 'GTK_ACCESSIBLE_PROPERTY_DESCRIPTION'    csnhypodbp_gui.c
+nck "puntero: sin resaltado por el puntero"  'map_set_hover'                              csnhypodbp_gui.c
+nck "puntero: sin cursor de mano"            'set_cursor_from_name'                       csnhypodbp_gui.c
+nck "puntero: sin resaltado amarillo"        '0\.84, 0\.0'                                csnhypodbp_gui.c
+
+# --- Solucion elegida en Origins: verde en los dos mapas ---
+ck  "seleccion: helper puro por id"          'csnhypodbp_map_find_id'                     csnhypodbp_mapview.c
+ck  "seleccion: verde del seleccionado"      '0\.0, 0\.78, 0\.33'                         csnhypodbp_gui.c
+ck  "seleccion: indice por id en el refresco" 'csnhypodbp_map_find_id\(g_map_id'          csnhypodbp_gui.c
+ck  "seleccion: la candidata no lleva id"    'g_map_id\[g_map_npts\]\[0\]'                csnhypodbp_gui.c
+ck  "seleccion: elegida al final (planta)"   'draw_marker\(cr, sx2, sy2'                  csnhypodbp_gui.c
+ck  "seleccion: elegida al final (perfil)"   'draw_marker\(cr, g_prof_sx\[g_map_sel\]'    csnhypodbp_gui.c
+nck "seleccion: sin verde en el dibujo normal" 'marker_radius\(p, 0\) / zoom, p->kind, 1\)' csnhypodbp_gui.c
+ck  "seleccion: posicion en la vista ordenada" 'g_list_model_get_item\(m, i\)'            csnhypodbp_gui.c
+nck "seleccion: sin buscar la posicion en el store" 'g_list_store_find'                    csnhypodbp_gui.c
+ck  "seleccion: la preferida por fila, no por posicion 0" 'map_select_row\(CSNHYPODBP_ROW\(first\)\)' csnhypodbp_gui.c
+
 # --- Una P y una S por estacion (dibujo) ---
 ck  "dibujo: usa la fila P (sta_row.p)"     'sta_row\.p'                   csnhypodbp_gui.c
 ck  "dibujo: usa la fila S (sta_row.s)"     'sta_row\.s'                   csnhypodbp_gui.c

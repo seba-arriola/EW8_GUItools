@@ -79,6 +79,10 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_arc_layout.sh
 	@echo "== check_table_ui =="
 	@bash tests/test_table_ui.sh
+	@echo "== check_lines =="
+	@bash tests/test_check_lines.sh
+	@echo "== make_overlays =="
+	@python3 tests/test_make_overlays.py
 	@rc=0; for t in $(TESTS); do \
 	    echo "== $$t =="; \
 	    $$t || rc=1; \

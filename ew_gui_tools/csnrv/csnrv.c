@@ -54,6 +54,8 @@ typedef struct { char layer[EWGUI_OVERLAY_NAME_MAX]; char hex[8]; } OverlayColor
 static OverlayColorSpec g_overlay_colors[EWGUI_OVERLAY_MAX_FILES];
 static int      g_overlay_ncolors = 0;
 static double   g_overlay_width = 0.0;   /* 0 = sin override */
+static char     g_overlay_hides[EWGUI_OVERLAY_MAX_FILES][EWGUI_OVERLAY_NAME_MAX];
+static int      g_overlay_nhides = 0;
 static EwOverlay *g_overlay = NULL;
 
 /* --- Variables Globales Earthworm --- */
@@ -182,6 +184,12 @@ int ReadConfig(char *configfile) {
         } else if (k_its("OverlayWidth")) {
             /* OPCIONAL: ancho global en px (0 = sin override). */
             g_overlay_width = k_val();
+        } else if (k_its("OverlayHide")) {
+            /* OPCIONAL y repetible: <capa> que no se dibuja (el archivo se sigue
+               cargando; el resto de la capa se controla con OverlayColor/Width). */
+            str = k_str();
+            if (str && g_overlay_nhides < EWGUI_OVERLAY_MAX_FILES)
+                snprintf(g_overlay_hides[g_overlay_nhides++], EWGUI_OVERLAY_NAME_MAX, "%s", str);
         } else {
             continue;
         }
@@ -200,7 +208,7 @@ int ReadConfig(char *configfile) {
 }
 
 /* Carga/re-carga los overlays declarados en el .d y aplica los overrides de
- * color/ancho. Headless-safe (usa stderr, no logit). */
+ * color/ancho/visibilidad. Headless-safe (usa stderr, no logit). */
 static void LoadOverlays(void) {
     int i;
     if (g_overlay) { ewgui_overlay_free(g_overlay); g_overlay = NULL; }
@@ -220,6 +228,10 @@ static void LoadOverlays(void) {
         else
             fprintf(stderr, "csnrv: OverlayColor %s: hex invalido '%s'\n",
                     g_overlay_colors[i].layer, g_overlay_colors[i].hex);
+    }
+    for (i = 0; i < g_overlay_nhides; i++) {
+        if (ewgui_overlay_set_visible(g_overlay, g_overlay_hides[i], 0) == 0)
+            fprintf(stderr, "csnrv: OverlayHide %s: no existe esa capa\n", g_overlay_hides[i]);
     }
 }
 
@@ -988,6 +1000,12 @@ int main(int argc, char *argv[]) {
         printf("MapImageFile=%s\n", MapImageFile);
         printf("OverlayFiles=%d\n", g_overlay_nfiles);
         printf("OverlayColors=%d\n", g_overlay_ncolors);
+        printf("OverlayHides=%d\n", g_overlay_nhides);
+        {
+            int i;
+            for (i = 0; i < g_overlay_nhides; i++)
+                printf("OverlayHide=%s\n", g_overlay_hides[i]);
+        }
         return 0;
     }
 
@@ -1006,6 +1024,18 @@ int main(int argc, char *argv[]) {
                 np += (int)g_overlay->layers[i].nlines;
         }
         printf("overlay_layers=%d overlay_polylines=%d\n", nl, np);
+        if (g_overlay) {
+            for (i = 0; i < g_overlay->nlayers; i++) {
+                const EwOverlayLayer *L = &g_overlay->layers[i];
+                size_t k, npt = 0;
+                for (k = 0; k < L->nlines; k++) npt += L->lines[k].npts;
+                printf("layer %s visible=%d color=%02X%02X%02X width=%.1f polylines=%d vertices=%d\n",
+                       L->name, L->visible,
+                       (int)(L->color[0] * 255.0 + 0.5), (int)(L->color[1] * 255.0 + 0.5),
+                       (int)(L->color[2] * 255.0 + 0.5), L->width,
+                       (int)L->nlines, (int)npt);
+            }
+        }
         ewgui_overlay_free(g_overlay);
         g_overlay = NULL;
         return 0;

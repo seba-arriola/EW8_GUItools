@@ -79,6 +79,21 @@ void ewgui_overlay_set_global_width(EwOverlay *ov, double width)
         ov->layers[i].width = width;
 }
 
+int ewgui_overlay_set_visible(EwOverlay *ov, const char *layer, int visible)
+{
+    size_t i;
+    int n = 0;
+    if (!ov || !layer)
+        return 0;
+    for (i = 0; i < ov->nlayers; i++) {
+        if (strcmp(ov->layers[i].name, layer) == 0) {
+            ov->layers[i].visible = visible ? 1 : 0;
+            n++;
+        }
+    }
+    return n;
+}
+
 /* --- helpers de parseo --------------------------------------------------- */
 
 static EwOverlayLayer *ov_add_layer(EwOverlay *ov, const char *name)

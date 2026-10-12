@@ -982,6 +982,9 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     event_store_upsert(g);
     /* Magnitudes que llegaron antes de existir esta solucion (qid,mod). */
     solution_take_pending(row, sol.qid, mod);
+    /* La solucion (nueva o actualizada) puede cambiar lo que muestran los mapas
+       del evento vigente. */
+    csnhypodbp_maps_refresh();
 
     if (g->preferred == row) {
         sel_status = 1;

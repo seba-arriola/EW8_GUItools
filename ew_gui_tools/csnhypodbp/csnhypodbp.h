@@ -5,6 +5,8 @@
 #include <adwaita.h>
 #include "ewgui/ring.h"
 #include "ewgui/actions.h"
+#include "ewgui/config.h"
+#include "ewgui/geo.h"
 #include "ewgui/menu_ui.h"
 #include "ewgui/wave.h"
 #include "ewgui/view.h"
@@ -17,6 +19,9 @@
 #include "csnhypodbp_statable.h"
 #include "csnhypodbp_staitem.h"
 #include "csnhypodbp_preview.h"
+#include "csnhypodbp_profile.h"
+#include "csnhypodbp_mapview.h"
+#include "ewgui/overlay.h"
 #include "csnhypodbp_tt.h"
 #include "csnhypodbp_view.h"
 #include <stdlib.h>
@@ -213,6 +218,42 @@ extern GtkWidget *g_preview_btn_confirm, *g_preview_btn_discard;
 extern CsnhypodbpSolution g_preview_sol;
 extern CsnhypodbpMagOut g_preview_mag;
 extern gboolean g_preview_valid;
+
+/* --- Mapas: panel de planta (contrato de csnrv) y panel de perfil --- */
+extern char  MapImageFile[MAX_STR];
+extern char  ProfileDataDir[MAX_STR];
+extern char  ProfileFile[MAX_STR];
+extern CsnhypodbpProfiles g_profiles;
+extern int    g_profile_lon_col, g_profile_val_col;
+extern double g_profile_depth_min_km;
+extern double g_map_min_span_deg;        /* MapMinSpanDeg: ancho minimo del fit */
+
+/* --- Columna derecha: panel de planta (arriba) y de perfil (abajo) --- */
+#define CSNHYPODBP_MAX_MAP_PTS 256
+extern GtkWidget   *g_maps_col;          /* contenedor de los dos cuadros */
+extern EwGuiCanvas *g_map_plan;          /* mapa equirectangular (contrato csnrv) */
+extern EwGuiCanvas *g_map_prof;          /* corte longitud/profundidad */
+extern GtkWidget   *g_map_plan_cap;      /* caption (texto visible por AT-SPI) */
+extern GtkWidget   *g_map_prof_cap;
+extern GdkPixbuf   *g_map_pixbuf;        /* MapImageFile ya cargado */
+extern EwOverlay   *g_map_overlay;       /* capas .lines cargadas */
+extern CsnhypodbpMapPt g_map_pts[CSNHYPODBP_MAX_MAP_PTS];
+extern int          g_map_npts;          /* puntos vigentes (preferida/otras/candidata) */
+extern int          g_active_profile;    /* indice del perfil dibujado, -1 = ninguno */
+extern CsnhypodbpProfileLine g_prof_slab, g_prof_topo;   /* datos del perfil activo */
+
+void csnhypodbp_maps_load(void);         /* carga pixbuf + overlays (una vez) */
+void csnhypodbp_maps_refresh(void);      /* UNICO punto que recalcula estado y repinta */
+void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data);
+void on_draw_map_profile(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data);
+void on_map_plan_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data);
+void on_map_plan_press(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
+void on_map_plan_release(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
+void on_map_plan_motion(GtkEventControllerMotion *c, double x, double y, gpointer data);
+void on_map_prof_scroll(GtkEventControllerScroll *ctrl, double dx, double dy, gpointer data);
+void on_map_prof_press(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
+void on_map_prof_release(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
+void on_map_prof_motion(GtkEventControllerMotion *c, double x, double y, gpointer data);
 
 /* --- Barra inferior (pestaña Ondas): filtro de picadas + localizador activo --- */
 extern int g_filter_auto;      /* incluir picadas automaticas en el locate */
