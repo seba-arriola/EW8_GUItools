@@ -33,6 +33,25 @@ static int digits_at(const char *s, int n)
     return any;
 }
 
+/* Campo de 4 chars del ARC Y2K (residual por fase, entero escalado x100).
+ * Devuelve 1 y el valor en segundos si el campo tiene algun digito; 0 si esta
+ * en blanco (el ARC de csnloc no escribe residual). */
+static int arc_field4(const char *p, size_t l, int off, double *out)
+{
+    char b[5];
+    int i, seen = 0;
+
+    if ((size_t)off + 4 > l) return 0;
+    for (i = 0; i < 4; i++) {
+        b[i] = p[off + i];
+        if (b[i] != ' ') seen = 1;
+    }
+    b[4] = 0;
+    if (!seen) return 0;
+    *out = (double)atoi(b) / 100.0;
+    return 1;
+}
+
 /* Epoch UTC desde YYYYMMDDHHMMSS + fraccion. Devuelve 0 si invalido.
    Acepta la fraccion como decimal ("SS.ss") o como centesimas ("SSCC"). */
 static double ymdhms_to_epoch(const char *s)
@@ -157,6 +176,14 @@ int csnhypodbp_parse_solution(const char *msg, size_t len, int mod,
                         }
                         pk->phase = fam;
                         pk->t_pick = t;
+                        pk->residual = NAN;
+                        {
+                            /* Residual Y2K: P en [34,37], S en [50,53]. El ARC
+                               de csnloc lo deja en blanco -> NAN. */
+                            double rv;
+                            if (arc_field4(p, l, (fam == 'S') ? 50 : 34, &rv))
+                                pk->residual = rv;
+                        }
                         out->npicks++;
                     }
                 }

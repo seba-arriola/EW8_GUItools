@@ -263,6 +263,32 @@ static void arc_parse_id(const char *arc, int len,
     }
 }
 
+/* Busca en el ARC de ENTRADA la linea de fase de (sta, phase) y copia sus
+   columnas de SCNL. NLLoc escribe la RED en blanco y arma el canal como
+   comp(1 letra)+inst(3) tomados del OBS, asi que su ARC de salida salia SIN red
+   y SIN canal; csnhypodbp y HYPOINVERSE emparejan las fases por
+   STA+NET+COMP3+LOC (LET 5 2 3 0 0) y con "--"/blancos rechazan TODAS las
+   fases. Devuelve 1 si encontro la fase de entrada. */
+static int arc_in_scl(const char *in, int in_len, const char *sta, char phase,
+                      char *net, char *chan, char *loc)
+{
+    const char *p = in, *end = in + in_len;
+    while (p < end) {
+        const char *nl = memchr(p, '\n', (size_t)(end - p));
+        int l = nl ? (int)(nl - p) : (int)(end - p);
+        if (l >= 114 && p[0] != '$' && p[14] == phase &&
+            strncmp(p, sta, 5) == 0) {
+            memcpy(net,  p + 5,   2); net[2]  = '\0';
+            memcpy(chan, p + 9,   3); chan[3] = '\0';
+            memcpy(loc,  p + 111, 2); loc[2]  = '\0';
+            return 1;
+        }
+        if (!nl) break;
+        p = nl + 1;
+    }
+    return 0;
+}
+
 /* Reescribe el ARC de salida de NLLoc: copia qid/version del ARC de csnloc
    (para que csnhypodbp agrupe el refinado con el evento de csnloc) y normaliza
    longitudes (header -> 197, fases -> 114). Devuelve la nueva longitud. */
@@ -322,6 +348,17 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
                 snprintf(buf, sizeof(buf), "%05.2f", cs / 100.0);
                 memcpy(tmp + tlen + 29, buf, 5);
             }
+            /* Red / COMP3 / LOC del ARC de ENTRADA: NLLoc los deja en blanco. */
+            {
+                char sta[6], net[3], chan[4], loc[3];
+                memcpy(sta, tmp + tlen, 5); sta[5] = '\0';
+                if (arc_in_scl(arc_in, in_len, sta, tmp[tlen + 14],
+                               net, chan, loc)) {
+                    memcpy(tmp + tlen + 5,   net,  2);
+                    memcpy(tmp + tlen + 9,   chan, 3);
+                    memcpy(tmp + tlen + 111, loc,  2);
+                }
+            }
         }
         tmp[tlen + l] = '\n';
         tlen += l + 1;
@@ -365,13 +402,15 @@ static int write_obs(const char *msg, int len, const char *path)
         const char *nl = memchr(p, '\n', (size_t)(end - p));
         int l = nl ? (int)(nl - p) : (int)(end - p);
         if (l >= 114 && p[0] != '$' && (p[14] == 'P' || p[14] == 'S')) {
-            char sta[8], net[4], chan[8], phase[4];
+            char sta[8], chan[8], phase[4];
             char date[16], hhmm[8];
             double ss;
             /* linea de fase ARC: sta[0:5] net[5:7] chan[9:12] fase[14] time[17:34] */
             memcpy(sta, p, 5); sta[5] = '\0';
-            memcpy(net, p + 5, 2); net[2] = '\0';
             memcpy(chan, p + 9, 3); chan[3] = '\0';
+            /* Canal en blanco => la linea quedaria con 13 campos y NLLoc
+               descartaria el arribo (ReadArrival exige 14). */
+            if (chan[0] == ' ') snprintf(chan, sizeof(chan), "?");
             phase[0] = p[14]; phase[1] = '\0';
             memcpy(date, p + 17, 8); date[8] = '\0';
             memcpy(hhmm, p + 25, 4); hhmm[4] = '\0';
@@ -572,8 +611,13 @@ static int select_model(double lat, double lon, char stas[][6], int nsta,
 
 /* ------------------------------------------------------------------------- */
 /* Localiza un ARC. Devuelve 0 y llena arc_out si hubo refinamiento.         */
+/* `why` (opcional) recibe el motivo del fallo: el modo offline lo imprime en  */
+/* stderr, para no dejar un "sin localizacion" mudo.                          */
 /* ------------------------------------------------------------------------- */
-static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_len)
+#define ARC_WHY(...) do { if (why && whyn) snprintf(why, whyn, __VA_ARGS__); } while (0)
+
+static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_len,
+                      char *why, size_t whyn)
 {
     char obs[MAX_STR], ctl[MAX_STR], arcname[MAX_STR];
     char tmpl[MAX_STR], ttroot[MAX_STR];
@@ -585,16 +629,28 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     double lat, lon, rms;
     int    nhead;
 
-    if (arc_header(arc_in, in_len, &lat, &lon, NULL, &nhead, &rms, NULL) != 0) return -1;
-    if (MinPhases > 0 && nhead < MinPhases) return -1;
-    if (MaxRMS > 0.0 && rms > MaxRMS) return -1;
+    if (arc_header(arc_in, in_len, &lat, &lon, NULL, &nhead, &rms, NULL) != 0) {
+        ARC_WHY("header del ARC ilegible (%d bytes)", in_len);
+        return -1;
+    }
+    if (MinPhases > 0 && nhead < MinPhases) {
+        ARC_WHY("MinPhases: %d fases en el header < %d", nhead, MinPhases);
+        return -1;
+    }
+    if (MaxRMS > 0.0 && rms > MaxRMS) {
+        ARC_WHY("MaxRMS: rms %.2f s > %.2f", rms, MaxRMS);
+        return -1;
+    }
     if (HaveGrid && !(lat >= GLatMin && lat <= GLatMax &&
                       lon >= GLonMin && lon <= GLonMax)) {
+        ARC_WHY("fuera de GridFile: lat=%.3f lon=%.3f", lat, lon);
         if (Debug >= 1) logit("t", "nlloc_ring: fuera de region lat=%.3f lon=%.3f\n", lat, lon);
         return -1;
     }
     nsta = arc_stations(arc_in, in_len, stas, MAX_STA);
     if (select_model(lat, lon, stas, nsta, ttroot, tmpl) != 0) {
+        ARC_WHY("sin banda ni fallback para lat=%.3f lon=%.3f (%d estaciones)",
+                lat, lon, nsta);
         if (Debug >= 1) logit("t", "nlloc_ring: sin banda ni fallback lat=%.3f lon=%.3f\n", lat, lon);
         return -1;
     }
@@ -602,12 +658,14 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     snprintf(obs, sizeof(obs), "obs.nll");
     nph = write_obs(arc_in, in_len, obs);
     if (nph <= 0) {
+        ARC_WHY("0 fases utiles en el ARC");
         if (Debug >= 1) logit("t", "nlloc_ring: ARC sin lineas de fase utilizables\n");
         return -1;
     }
 
     snprintf(ctl, sizeof(ctl), "nll_ring.in");
     if (build_control(tmpl, ctl, obs, ttroot, OutRoot, lat, lon) != 0) {
+        ARC_WHY("la plantilla <%s> no tiene LOCFILES", tmpl);
         logit("et", "nlloc_ring: la plantilla <%s> no tiene LOCFILES\n", tmpl);
         return -1;
     }
@@ -620,16 +678,22 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     {
         pid_t pid = fork();
         int   status = 0;
-        if (pid < 0) { logit("et", "nlloc_ring: fork fallo\n"); return -1; }
+        if (pid < 0) { ARC_WHY("fork fallo"); logit("et", "nlloc_ring: fork fallo\n"); return -1; }
         if (pid == 0) {
+            /* NLLoc traza a stdout; el modo offline imprime el ARC refinado en
+               stdout, asi que la chachara del motor va a /dev/null. */
+            if (freopen("/dev/null", "w", stdout) == NULL)
+                fprintf(stderr, "nlloc_ring: no pude silenciar stdout\n");
             NLLoc("nlloc_ring", ctl, NULL, -1, NULL, -1, 0, 0, 0, NULL);
             _exit(0);
         }
         if (waitpid(pid, &status, 0) < 0) {
+            ARC_WHY("waitpid fallo");
             logit("et", "nlloc_ring: waitpid fallo\n");
             return -1;
         }
         if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+            ARC_WHY("NLLoc termino anormalmente (status=0x%x)", (unsigned)status);
             logit("et", "nlloc_ring: NLLoc termino anormalmente (status=0x%x); evento descartado\n",
                   (unsigned)status);
             return -1;
@@ -638,13 +702,18 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     if (Debug >= 1) logit("t", "nlloc_ring: NLLoc ok (%d fases)\n", nph);
 
     fp = fopen(arcname, "r");
-    if (!fp) { if (Debug >= 1) logit("t", "nlloc_ring: sin ARC de salida <%s>\n", arcname); return -1; }
+    if (!fp) {
+        ARC_WHY("NLLoc no escribio el ARC de salida <%s>", arcname);
+        if (Debug >= 1) logit("t", "nlloc_ring: sin ARC de salida <%s>\n", arcname);
+        return -1;
+    }
     nllarc = (char *)malloc(MAX_ARC);
-    if (!nllarc) { fclose(fp); return -1; }
+    if (!nllarc) { ARC_WHY("sin memoria"); fclose(fp); return -1; }
     n = fread(nllarc, 1, MAX_ARC - 1, fp);
     fclose(fp);
     nllarc[n] = '\0';
     if (n == 0) {
+        ARC_WHY("ARC de salida vacio <%s>", arcname);
         if (Debug >= 1) logit("t", "nlloc_ring: ARC de salida vacio <%s>\n", arcname);
         free(nllarc); return -1;
     }
@@ -715,7 +784,7 @@ static void process_now(const char *arc_in, int in_len)
     struct timespec ts0, ts1;
     long dt_ms;
     clock_gettime(CLOCK_MONOTONIC, &ts0);
-    if (locate_arc(arc_in, in_len, g_arc_out, &out_len) == 0 && out_len > 0) {
+    if (locate_arc(arc_in, in_len, g_arc_out, &out_len, NULL, 0) == 0 && out_len > 0) {
         out_len = arc_rewrite_id(g_arc_out, out_len, arc_in, in_len);
         clock_gettime(CLOCK_MONOTONIC, &ts1);
         dt_ms = (ts1.tv_sec - ts0.tv_sec) * 1000L
@@ -840,19 +909,20 @@ int main(int argc, char **argv)
     /* Modo offline: nlloc_ring <config.d> <arcfile> -> ARC refinado a stdout. */
     if (argc == 3) {
         FILE *fp = fopen(argv[2], "r");
-        char  in[MAX_ARC], out[MAX_ARC];
+        char  in[MAX_ARC], out[MAX_ARC], why[512] = "";
         int   n, on = 0;
         if (!fp) { fprintf(stderr, "nlloc_ring: no se pudo abrir %s\n", argv[2]); return 1; }
         n = (int)fread(in, 1, sizeof(in) - 1, fp);
         fclose(fp);
         in[n] = '\0';
-        if (locate_arc(in, n, out, &on) == 0 && on > 0) {
+        if (locate_arc(in, n, out, &on, why, sizeof(why)) == 0 && on > 0) {
             on = arc_rewrite_id(out, on, in, n);
             log_result("nlloc_ring", in, n, out, on, 0);
             fwrite(out, 1, (size_t)on, stdout);
             return 0;
         }
-        fprintf(stderr, "nlloc_ring: sin localizacion\n");
+        fprintf(stderr, "nlloc_ring: sin localizacion: %s\n",
+                why[0] ? why : "causa desconocida");
         return 2;
     }
 

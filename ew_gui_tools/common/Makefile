@@ -23,12 +23,14 @@ VIEW_SRC       = src/ewgui_view_gtk4.c
 EXPORT_UI_SRC  = src/ewgui_export_ui_gtk4.c
 OVERLAY_UI_SRC = src/ewgui_overlay_ui_gtk4.c
 MENU_UI_SRC    = src/ewgui_menu_ui_gtk4.c
+TABLE_UI_SRC   = src/ewgui_table_ui_gtk4.c
 else
 GUI_PKG        = gtk+-3.0
 VIEW_SRC       = src/ewgui_view_gtk3.c
 EXPORT_UI_SRC  =
 OVERLAY_UI_SRC =
 MENU_UI_SRC    =
+TABLE_UI_SRC   =
 endif
 GUI_CFLAGS   = $(shell pkg-config --cflags $(GUI_PKG))
 GUI_LIBS     = $(shell pkg-config --libs $(GUI_PKG))
@@ -49,7 +51,7 @@ LIB  = libewgui_gtk4.a
 else
 LIB  = libewgui.a
 endif
-SRC  = $(filter-out src/ewgui_view_gtk3.c src/ewgui_view_gtk4.c src/ewgui_export_ui_gtk4.c src/ewgui_overlay_ui_gtk4.c src/ewgui_menu_ui_gtk4.c,$(wildcard src/*.c)) $(VIEW_SRC) $(EXPORT_UI_SRC) $(OVERLAY_UI_SRC) $(MENU_UI_SRC)
+SRC  = $(filter-out src/ewgui_view_gtk3.c src/ewgui_view_gtk4.c src/ewgui_export_ui_gtk4.c src/ewgui_overlay_ui_gtk4.c src/ewgui_menu_ui_gtk4.c src/ewgui_table_ui_gtk4.c,$(wildcard src/*.c)) $(VIEW_SRC) $(EXPORT_UI_SRC) $(OVERLAY_UI_SRC) $(MENU_UI_SRC) $(TABLE_UI_SRC)
 OBJ  = $(SRC:.c=.o)
 
 # Cada tests/test_*.c es un binario headless independiente.
@@ -73,6 +75,10 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_check_map_image.sh
 	@echo "== check_menu_ui =="
 	@bash tests/test_menu_ui.sh
+	@echo "== check_arc_layout =="
+	@bash tests/test_arc_layout.sh
+	@echo "== check_table_ui =="
+	@bash tests/test_table_ui.sh
 	@rc=0; for t in $(TESTS); do \
 	    echo "== $$t =="; \
 	    $$t || rc=1; \

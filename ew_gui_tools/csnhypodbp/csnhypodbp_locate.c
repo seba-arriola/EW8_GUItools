@@ -1,5 +1,6 @@
 #include "csnhypodbp_locate.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -95,16 +96,34 @@ static int write_csnloc_cfg(const char *src, const char *dst)
     return 0;
 }
 
+/* 1 = conservar el directorio temporal (picks.txt, event.arc, csnloc.err,
+   ref.err) para poder diagnosticar un `locate` que falla. */
+static int g_keep_tmp = 0;
+
+void csnhypodbp_locate_keep_tmp(int on) { g_keep_tmp = on ? 1 : 0; }
+
 static void fmt_pick_time(char *out, size_t n, double t)
 {
     time_t sec = (time_t)t;
     double frac = t - (double)sec;
-    struct tm *tm = gmtime(&sec);
+    struct tm *tm;
+    int ms;
+
+    if (frac < 0.0) frac = 0.0;
+    ms = (int)(frac * 1000.0 + 0.5);
+    if (ms >= 1000) { ms -= 1000; sec += 1; }   /* redondeo de milisegundos */
+    tm = gmtime(&sec);
     if (!tm) { snprintf(out, n, "19700101000000.000"); return; }
-    snprintf(out, n, "%04d%02d%02d%02d%02d%06.3f",
-             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, (double)tm->tm_sec + frac);
-    for (char *c = out; *c; c++) if (*c == ',') *c = '.';
+    /* %02d.%03d y NO %06.3f: ese ancho mete un ESPACIO cuando los segundos son
+       < 10 (p.ej. " 7.000"), el token del tiempo se parte en dos y csnloc
+       descarta la picada (su sscanf de YYYYMMDDHHMMSS.sss falla). */
+    {
+        char b[32];
+        snprintf(b, sizeof(b), "%04d%02d%02d%02d%02d%02d.%03d",
+                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                 tm->tm_hour, tm->tm_min, tm->tm_sec, ms);
+        snprintf(out, n, "%s", b);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -121,16 +140,34 @@ int csnhypodbp_picks_write(const char *path, int type, int mod, int inst,
     if (!fp) return -1;
     if (base) {
         for (i = 0; i < base->npicks; i++) {
-            fmt_pick_time(ts, sizeof(ts), base->picks[i].t_pick);
-            fprintf(fp, "%d %d %d %d %s.%s.--.-- ?0 %s 0 0 0 %c %c\n",
-                    type, mod, inst, seq++, base->picks[i].sta, base->picks[i].chan,
-                    ts, base->picks[i].phase, base->picks[i].manual ? 'M' : 'A');
+            const CsnhypodbpPick *pk = &base->picks[i];
+            fmt_pick_time(ts, sizeof(ts), pk->t_pick);
+            /* net/loc REALES del ARC, no "--": HYPOINVERSE empareja por
+               STA+NET+COMP3+LOC contra estaciones_hyp.sta (LET 5 2 3 0 0) y con
+               "--" rechaza TODAS las fases; LOC abandona el evento y el
+               refinador devuelve "sin localizacion". */
+            fprintf(fp, "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c %c\n",
+                    type, mod, inst, seq++, pk->sta, pk->chan,
+                    pk->net[0] ? pk->net : "--", pk->loc[0] ? pk->loc : "--",
+                    ts, pk->phase, pk->manual ? 'M' : 'A');
         }
     }
     for (i = 0; i < nmp; i++) {
+        /* El overlay manual no guarda net/loc: se heredan de la solucion base
+           por estacion (si la tiene); si no, "--". */
+        const char *mnet = "--", *mloc = "--";
+        int k;
+        for (k = 0; base && k < base->npicks; k++) {
+            if (strcmp(base->picks[k].sta, mp[i].sta) == 0) {
+                if (base->picks[k].net[0]) mnet = base->picks[k].net;
+                if (base->picks[k].loc[0]) mloc = base->picks[k].loc;
+                break;
+            }
+        }
         fmt_pick_time(ts, sizeof(ts), mp[i].t);
-        fprintf(fp, "%d %d %d %d %s.%s.--.-- ?0 %s 0 0 0 %c M\n",
-                type, mod, inst, seq++, mp[i].sta, mp[i].chan, ts, mp[i].phase);
+        fprintf(fp, "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c M\n",
+                type, mod, inst, seq++, mp[i].sta, mp[i].chan, mnet, mloc,
+                ts, mp[i].phase);
     }
     fclose(fp);
     return (base ? base->npicks : 0) + nmp;
@@ -198,10 +235,33 @@ int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n
     return 0;
 }
 
+/* Salta el preambulo que algunos refinadores escriben en stdout antes del ARC
+   (HYPOINVERSE imprime "NNN STATIONS READ IN." al leer el .sta). Devuelve el
+   puntero a la linea que parece cabecera de ARC (>=190 chars y 14 digitos
+   iniciales = YYYYMMDDHHMMSS), o NULL si no hay ninguna. */
+char *csnhypodbp_arc_skip_preamble(char *buf)
+{
+    char *p = buf;
+    while (p && *p) {
+        char *eol = strchr(p, '\n');
+        size_t l = eol ? (size_t)(eol - p) : strlen(p);
+        if (l >= 190) {
+            int i, ok = 1;
+            for (i = 0; i < 14; i++) {
+                if (p[i] < '0' || p[i] > '9') { ok = 0; break; }
+            }
+            if (ok) return p;
+        }
+        if (!eol) break;
+        p = eol + 1;
+    }
+    return NULL;
+}
+
 int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn)
 {
     const char *p = logtext;
-    int in = 0;
+    int in = 0, have = 0;
     size_t n = 0;
     if (outn) out[0] = '\0';
     while (p && *p) {
@@ -211,10 +271,18 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn)
         if (len >= sizeof(line)) len = sizeof(line) - 1;
         memcpy(line, p, len);
         line[len] = '\0';
-        if (!in && strstr(line, "--- HYP2000ARC evento")) {
+        if (strstr(line, "--- HYP2000ARC evento")) {
+            /* Bloque NUEVO: se descarta el anterior. La ventana deslizante emite
+               una solucion por pasada y el representante es la ULTIMA (mismo
+               criterio que offline_report.py y que el JSONL de csnloc), no la
+               primera: la primera suele ser una solucion parcial y con ella los
+               refinadores se quedan sin fases utiles. */
             in = 1;
+            n = 0;
+            if (outn) out[0] = '\0';
         } else if (in && strstr(line, "--- fin HYP2000ARC evento")) {
-            break;
+            in = 0;
+            have = (n > 0);
         } else if (in) {
             if (n + len + 1 < outn) {
                 memcpy(out + n, line, len);
@@ -226,7 +294,7 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn)
         if (!eol) break;
         p = eol + 1;
     }
-    return (n > 0) ? 0 : -1;
+    return have ? 0 : -1;
 }
 
 static void put_at(char *dst, const char *s, size_t n)
@@ -286,17 +354,120 @@ int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, s
         if (!ptm) continue;
         memset(pl, ' ', sizeof(pl));
         put_at(pl + 0, sol->picks[i].sta, 5);
+        put_at(pl + 5, sol->picks[i].net[0] ? sol->picks[i].net : "--", 2);
         put_at(pl + 9, sol->picks[i].chan, 3);
         pl[14] = sol->picks[i].phase;
         snprintf(t, sizeof(t), "%04d%02d%02d%02d%02d%02d%03d",
                  ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday,
                  ptm->tm_hour, ptm->tm_min, (int)ptm->tm_sec, (int)(pf * 1000.0 + 0.5));
         memcpy(pl + 17, t, 17);
+        if (!isnan(sol->picks[i].residual)) {
+            /* Residual Y2K: P en [34,37], S en [50,53] (entero x100). */
+            int off = (sol->picks[i].phase == 'S') ? 50 : 34;
+            snprintf(t, sizeof(t), "%4ld", lround(sol->picks[i].residual * 100.0));
+            put_at(pl + off, t, 4);
+        }
         if (n + 115 >= outn) break;
+        put_at(pl + 111, sol->picks[i].loc[0] ? sol->picks[i].loc : "--", 2);
         memcpy(out + n, pl, 114); n += 114; out[n++] = '\n';
     }
     out[n] = '\0';
     return 0;
+}
+
+/* Valor de "key" dentro del objeto JSON [obj,end): copia el contenido de un
+ * string o el token de un numero/booleano. Devuelve 1 si lo encontro. */
+static int json_get(const char *obj, const char *end, const char *key,
+                    char *out, size_t outn)
+{
+    size_t klen = strlen(key);
+    const char *p = obj;
+
+    if (!outn) return 0;
+    out[0] = '\0';
+    while (p < end) {
+        const char *c, *q;
+        size_t n;
+
+        p = memchr(p, '"', (size_t)(end - p));
+        if (!p) return 0;
+        if ((size_t)(end - p) < klen + 3 ||
+            strncmp(p + 1, key, klen) != 0 || p[1 + klen] != '"') {
+            p++;
+            continue;
+        }
+        c = p + klen + 2;
+        while (c < end && (*c == ' ' || *c == '\t')) c++;
+        if (c >= end || *c != ':') { p++; continue; }
+        c++;
+        while (c < end && (*c == ' ' || *c == '\t')) c++;
+        if (c < end && *c == '"') {
+            q = memchr(c + 1, '"', (size_t)(end - (c + 1)));
+            if (!q) return 0;
+            n = (size_t)(q - (c + 1));
+            if (n >= outn) n = outn - 1;
+            memcpy(out, c + 1, n);
+            out[n] = '\0';
+            return 1;
+        }
+        for (q = c; q < end && *q != ',' && *q != '}' && *q != ']' &&
+                    *q != '\n' && *q != '\r' && *q != ' '; q++)
+            ;
+        n = (size_t)(q - c);
+        if (n >= outn) n = outn - 1;
+        memcpy(out, c, n);
+        out[n] = '\0';
+        return 1;
+    }
+    return 0;
+}
+
+int csnhypodbp_sol_apply_jsonl(CsnhypodbpSolution *sol, const char *jsonl)
+{
+    const char *p, *end;
+    int applied = 0;
+
+    if (!sol || !jsonl) return 0;
+    end = jsonl + strlen(jsonl);
+
+    /* Primer array "phases" (csnloc emite un evento por linea; el ARC que se
+       extrae del log es el del primero). */
+    p = strstr(jsonl, "\"phases\"");
+    if (!p) return 0;
+    p = strchr(p, '[');
+    if (!p) return 0;
+
+    for (p++; p < end; ) {
+        const char *ob = memchr(p, '{', (size_t)(end - p));
+        const char *oe, *nx;
+        char sta[16], chan[16], ph[8], rs[32];
+        int i;
+
+        if (!ob) break;
+        nx = memchr(ob, ']', (size_t)(end - ob));
+        oe = memchr(ob, '}', (size_t)(end - ob));
+        if (!oe || (nx && nx < oe)) break;
+
+        if (json_get(ob, oe, "sta", sta, sizeof(sta)) &&
+            json_get(ob, oe, "phase", ph, sizeof(ph)) &&
+            json_get(ob, oe, "residual", rs, sizeof(rs)) &&
+            rs[0] && strncmp(rs, "null", 4) != 0) {
+            json_get(ob, oe, "chan", chan, sizeof(chan));
+            for (i = 0; i < sol->npicks; i++) {
+                CsnhypodbpPick *pk = &sol->picks[i];
+                if (strcmp(pk->sta, sta) != 0) continue;
+                if (pk->phase != ph[0]) continue;
+                if (chan[0] && pk->chan[0] && strcmp(pk->chan, chan) != 0) continue;
+                /* El JSONL es el residual de ESTA corrida: manda siempre (las
+                   picadas que se envian al localizador van sin residual). */
+                pk->residual = strtod(rs, NULL);
+                applied++;
+                break;
+            }
+        }
+        p = oe + 1;
+    }
+    return applied;
 }
 
 static double json_num(const char *json, const char *key, int *found){
@@ -360,11 +531,52 @@ int csnhypodbp_manual_state_save(const char *path, const CsnhypodbpSolution *sol
             sol->nph, mag ? mag->ml : "", mag ? mag->mwp : "", mag ? mag->mb : "",
             mag ? mag->ms : "", sol->npicks);
     for (i = 0; i < sol->npicks; i++)
-        fprintf(fp, "|%s:%s:%c:%.3f", sol->picks[i].sta, sol->picks[i].chan,
+        fprintf(fp, "|%s:%s:%s:%s:%c:%.3f", sol->picks[i].sta, sol->picks[i].chan,
+                sol->picks[i].net, sol->picks[i].loc,
                 sol->picks[i].phase, sol->picks[i].t_pick);
     fprintf(fp, "\n");
     fclose(fp);
     return 0;
+}
+
+/* Separa un token de picada persistido. Formato nuevo
+ * "sta:chan:net:loc:phase:t"; formato viejo "sta:chan:phase:t" (net/loc quedan
+ * vacios y los completa la metadata de la estacion al armar la tabla).
+ * Devuelve 1 si pudo parsearlo. */
+static int parse_pick_tok(const char *tok, CsnhypodbpPick *pk)
+{
+    char buf[128];
+    char *f[6];
+    int nf = 0;
+    char *p;
+
+    snprintf(buf, sizeof(buf), "%s", tok);
+    p = buf;
+    while (nf < 6) {
+        char *c;
+        f[nf++] = p;
+        c = strchr(p, ':');
+        if (!c) break;
+        *c = '\0';
+        p = c + 1;
+    }
+    memset(pk, 0, sizeof(*pk));
+    if (nf == 6) {
+        snprintf(pk->sta,  sizeof(pk->sta),  "%s", f[0]);
+        snprintf(pk->chan, sizeof(pk->chan), "%s", f[1]);
+        snprintf(pk->net,  sizeof(pk->net),  "%s", f[2]);
+        snprintf(pk->loc,  sizeof(pk->loc),  "%s", f[3]);
+        pk->phase  = f[4][0];
+        pk->t_pick = atof(f[5]);
+    } else if (nf == 4) {
+        snprintf(pk->sta,  sizeof(pk->sta),  "%s", f[0]);
+        snprintf(pk->chan, sizeof(pk->chan), "%s", f[1]);
+        pk->phase  = f[2][0];
+        pk->t_pick = atof(f[3]);
+    } else {
+        return 0;
+    }
+    return (pk->phase == 'P' || pk->phase == 'S') ? 1 : 0;
 }
 
 int csnhypodbp_manual_state_load(const char *path, CsnhypodbpSolution *out,
@@ -412,10 +624,7 @@ int csnhypodbp_manual_state_load(const char *path, CsnhypodbpSolution *out,
             case 12: break;   /* npicks declarado: se recuenta al parsear */
             default:
                 if (i >= 13 && np < CSNHYPODBP_MAX_PICKS) {
-                    CsnhypodbpPick *pk = &s->picks[np];
-                    if (sscanf(tok, "%7[^:]:%7[^:]:%c:%lf", pk->sta, pk->chan,
-                               &pk->phase, &pk->t_pick) == 4)
-                        np++;
+                    if (parse_pick_tok(tok, &s->picks[np])) np++;
                 }
                 break;
             }
@@ -443,9 +652,11 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
 {
     char tmp[512], picks[600], csnlocd[600], arcf[600], hypos[600], tankf[600], magf[600];
     char cmd[8192], buf[262144], logbuf[524288], errbuf[4096], errpath[600];
+    char jsonl[65536];
     const CsnhypodbpLocator *csn, *sel;
     char csn_bin[512], csn_cfg[512], sel_bin[512], sel_cfg[512], mags_bin[512];
     int rc;
+    char *arcp;
 
     if (err && errlen) err[0] = '\0';
     if (!out || !base) { if (err) snprintf(err, errlen, "argumentos invalidos"); return -1; }
@@ -474,7 +685,21 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     snprintf(mags_bin, sizeof(mags_bin), "%s/%s/bin/csnmags",
              ew_home ? ew_home : "", ew_version ? ew_version : "");
 
-    /* 1) picks */
+    /* 1) picks (con SCNL completo: sin canal NI red HYPOINVERSE rechaza TODAS
+       las fases por STA+NET+COMP3+LOC y el OBS de NLLoc queda con 13 campos) */
+    {
+        int i, malos = 0;
+        for (i = 0; i < base->npicks; i++) {
+            if (!base->picks[i].sta[0] || !base->picks[i].chan[0] ||
+                !base->picks[i].net[0]) malos++;
+        }
+        if (malos) {
+            if (err) snprintf(err, errlen,
+                              "%d de %d picadas sin canal o sin red: el ARC de la solucion base los perdio",
+                              malos, base->npicks);
+            goto fail;
+        }
+    }
     csnhypodbp_picks_write(picks, 8, 0, 0, base, mp, nmp);
 
     /* 2) temp csnloc.d con DumpHypo 1 + 3) csnloc offline */
@@ -492,6 +717,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         if (err) snprintf(err, errlen, "csnloc offline fallo: %s", errbuf);
         goto fail;
     }
+    /* El stdout de csnloc es su JSONL (residual por fase); el ARC del log no
+       lo trae. Se guarda antes de reutilizar `buf` para el ARC. */
+    snprintf(jsonl, sizeof(jsonl), "%s", buf);
 
     /* ARC del log */
     read_logs(tmp, logbuf, sizeof(logbuf));
@@ -503,6 +731,8 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         if (err) snprintf(err, errlen, "no parseo el ARC de csnloc");
         goto fail;
     }
+    /* Residuales de csnloc: solo su JSONL los trae (el ARC va en blanco). */
+    csnhypodbp_sol_apply_jsonl(out, jsonl);
 
     /* 4) refinador (si el elegido no es csnloc) */
     if (strcmp(sel->name, "csnloc") != 0) {
@@ -519,7 +749,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
             if (err) snprintf(err, errlen, "%s fallo: %s", sel->name, errbuf);
             goto fail;
         }
-        if (csnhypodbp_parse_solution(buf, strlen(buf), 0, out) != 0) {
+        /* Algunos refinadores escriben su chachara antes del ARC en stdout. */
+        arcp = csnhypodbp_arc_skip_preamble(buf);
+        if (!arcp || csnhypodbp_parse_solution(arcp, strlen(arcp), 0, out) != 0) {
             if (err) snprintf(err, errlen, "no parseo el ARC de %s", sel->name);
             goto fail;
         }
@@ -537,12 +769,22 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
             csnhypodbp_mag_parse(buf, mag);
     }
 
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
-    system(cmd);
+    if (!g_keep_tmp) {
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
+        system(cmd);
+    }
     return 0;
 
 fail:
-    snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
-    system(cmd);
+    if (g_keep_tmp) {
+        /* La ruta viaja en el mensaje: la GUI la loguea con logit. */
+        if (err && errlen > 0) {
+            size_t l = strlen(err);
+            if (l < errlen - 1) snprintf(err + l, errlen - l, " [tmp=%s]", tmp);
+        }
+    } else {
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
+        system(cmd);
+    }
     return -1;
 }

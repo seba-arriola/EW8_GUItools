@@ -51,12 +51,19 @@ int csnhypodbp_cap_find_all(const CsnhypodbpPickCap *cap, const char *sta,
                             char phase, double t0, double window_sec,
                             CsnhypodbpTracePick *out, int max_out);
 
+/* Copia hasta `max_out` picadas de `sta` (CUALQUIER fase) dentro de
+ * `window_sec` de `t0` (|t - t0| <= window). Devuelve cuantas copio. */
+int csnhypodbp_cap_window(const CsnhypodbpPickCap *cap, const char *sta,
+                          double t0, double window_sec,
+                          CsnhypodbpTracePick *out, int max_out);
+
 /* Referencia P: primer pick de fase P en `p` (n) si existe (devuelve 1 y
  * *ref_t = su tiempo); si no, devuelve 0 y *ref_t = theo_p. */
 int csnhypodbp_ref_pick(const CsnhypodbpTracePick *p, int n,
                         double theo_p, double *ref_t);
 
-/* Color de traza: negra (0,0,0) si hay P picada, gris (0.7,0.7,0.7) si no. */
+/* Color de traza: negra (0,0,0) si hay P leida (real o manual), gris MAS
+ * OSCURO (0.55) si no (solo teorica o sin P). */
 void csnhypodbp_trace_rgb(int has_p_pick, double rgb[3]);
 
 /* Fase elegida por tecla: 'S'/'s' => 'S', resto => 'P'. */

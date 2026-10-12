@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_sds.h"
 #include "wstore.h"
 
 #include <math.h>
@@ -130,6 +131,11 @@ typedef struct {
     double   rms;
     double   otime;
     int      mod;
+    /* Picadas de ESTA solucion, con su residual. El grupo guarda ademas la
+       union, pero la tabla de Ondas muestra los residuales de la solucion
+       elegida en el detalle, no los de la union. */
+    int      npicks;
+    CsnhypodbpPick *picks;
 } EventSol;
 
 struct EventGroup {
@@ -143,13 +149,41 @@ struct EventGroup {
 static GPtrArray *g_groups = NULL;
 static CsnhypodbpMagStore g_pending_mags;  /* magnitudes llegadas antes del grupo */
 
+/* Agrega una picada a la solucion (copia exacta, con su residual). */
+static void event_sol_add_pick(EventSol *es, const CsnhypodbpPick *pk)
+{
+    if (!es || !pk || es->npicks >= CSNHYPODBP_MAX_PICKS) return;
+    es->picks = g_renew(CsnhypodbpPick, es->picks, es->npicks + 1);
+    es->picks[es->npicks++] = *pk;
+}
+
+/* Reemplaza las picadas de la solucion (una misma solucion puede re-emitirse). */
+static void event_sol_set_picks(EventSol *es, const CsnhypodbpPick *picks, int n)
+{
+    int i;
+    if (!es) return;
+    g_free(es->picks);
+    es->picks = NULL;
+    es->npicks = 0;
+    for (i = 0; i < n && i < CSNHYPODBP_MAX_PICKS; i++)
+        event_sol_add_pick(es, &picks[i]);
+}
+
+static void event_sol_free(gpointer p)
+{
+    EventSol *es = p;
+    if (!es) return;
+    g_free(es->picks);
+    g_free(es);
+}
+
 static void event_group_free(gpointer p)
 {
     EventGroup *g = p;
     if (!g) return;
     if (g->sols) {
         guint i;
-        for (i = 0; i < g->sols->len; i++) g_free(g_ptr_array_index(g->sols, i));
+        for (i = 0; i < g->sols->len; i++) event_sol_free(g_ptr_array_index(g->sols, i));
         g_ptr_array_free(g->sols, TRUE);
         g->sols = NULL;
     }
@@ -176,6 +210,17 @@ static const char *mag_col(int slot)
     return (slot >= 0 && slot < CSNHYPODBP_MAG_SLOTS) ? cols[slot] : NULL;
 }
 
+/* Escribe una magnitud: el texto de la columna ("mag-nst") y su valor numerico
+   (`nmag<slot>`), que es por donde ordena la cabecera (el texto no es numero). */
+static void row_set_mag(CsnhypodbpRow *row, int slot, const char *mag)
+{
+    char prop[16];
+    if (!row || !mag_col(slot)) return;
+    g_object_set(row, mag_col(slot), mag, NULL);
+    snprintf(prop, sizeof(prop), "nmag%d", slot);
+    g_object_set(row, prop, (mag && mag[0] && mag[0] != '-') ? atof(mag) : -1.0, NULL);
+}
+
 /* Aplica una magnitud a la(s) fila(s) de la solucion (qid,mod). Una magnitud
    con mod==0 (csnmags viejo, sin modulo) coincide con todas las del qid. */
 static int apply_mag_to_solutions(int qid, int mod, int slot, const char *mag)
@@ -189,7 +234,7 @@ static int apply_mag_to_solutions(int qid, int mod, int slot, const char *mag)
         for (si = 0; si < g->sols->len; si++) {
             EventSol *es = g_ptr_array_index(g->sols, si);
             if (es->row && csnhypodbp_mag_match(qid, mod, es->qid, es->mod)) {
-                g_object_set(es->row, col, mag, NULL);
+                row_set_mag(es->row, slot, mag);
                 applied++;
             }
         }
@@ -206,7 +251,7 @@ static void solution_take_pending(CsnhypodbpRow *row, int qid, int mod)
     if (!row) return;
     if (csnhypodbp_mag_store_take(&g_pending_mags, qid, mod, pending)) {
         for (i = 0; i < CSNHYPODBP_MAG_SLOTS; i++)
-            if (pending[i][0]) g_object_set(row, mag_col(i), pending[i], NULL);
+            if (pending[i][0]) row_set_mag(row, i, pending[i]);
     }
 }
 
@@ -298,6 +343,10 @@ static void event_store_upsert(EventGroup *g)
     if (!g_store_events || !g->preferred) return;
     snprintf(nb, sizeof(nb), "%u", g->sols->len);
     g_object_set(g->preferred, "nsol", nb, NULL);
+
+    /* Durante una busqueda la maestra muestra el resultado consultado: los
+       eventos vivos se siguen agrupando en memoria, pero no entran a la tabla. */
+    if (g_search_active) return;
 
     idx = csnhypodbp_master_find(g_store_events, g);
     if (idx >= 0) {
@@ -402,9 +451,11 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
                 continue;
 
             char fecha[32], hora[32], szLat[32], szLon[32], szDep[32], szRes[32], szAzm[32], szStn[32], szID[32];
-            time_t rawtime = (time_t)t0; struct tm *ptm = gmtime(&rawtime);
-            if (ptm) { snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); }
-            else { strcpy(fecha, "--/--"); strcpy(hora, "--:--:--"); }
+            /* Fecha y hora juntas (ISO UTC): ordenan solas. `hora` (c1) se
+               mantiene por compatibilidad del archivo de estado. */
+            csnhypodbp_search_fmt_utc((time_t)t0, fecha, sizeof(fecha));
+            snprintf(hora, sizeof(hora), "%s",
+                     strlen(fecha) >= 19 ? fecha + 11 : "--:--:--");
             snprintf(szLat, sizeof(szLat), "%.2f%c", fabs(lat), lat < 0 ? 'S' : 'N');
             snprintf(szLon, sizeof(szLon), "%.2f%c", fabs(lon), lon < 0 ? 'W' : 'E');
             snprintf(szDep, sizeof(szDep), "%.0f", depth);
@@ -418,6 +469,13 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
                 szAzm, szStn, szID, "-", "-", "-", "-", "csnloc", szVer, t0, (int)version, (int)id,
                 lat, lon, depth, 0);
             g_object_set(row, "estado", "A", NULL);
+            {
+                /* El archivo de estado no trae hora de creacion: se usa la de
+                   llegada a este modulo. */
+                char created[32];
+                csnhypodbp_search_fmt_utc(time(NULL), created, sizeof(created));
+                g_object_set(row, "created", created, NULL);
+            }
             g_list_store_append(g_store_hypo, row);
             g_object_unref(row);
 
@@ -436,18 +494,25 @@ void cargar_sismos_iniciales(GtkWidget *tree) {
         } else if ((line[0] == 'P' || line[0] == 'X') && cur_g && cur_row) {
             char sta[8] = "", net[4] = "", chan[8] = "", loc[4] = "";
             int phase = 0, weight = 0, manual = 0; double t_epoch = 0.0, resid = 0.0;
-            if (sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d %lf %d",
-                       sta, net, chan, loc, &phase, &t_epoch, &weight, &resid, &manual) >= 7) {
+            int nf = sscanf(line + 2, "%7s %3s %7s %3s %d %lf %d %lf %d",
+                            sta, net, chan, loc, &phase, &t_epoch, &weight, &resid, &manual);
+            if (nf >= 7) {
+                EventSol *es = event_group_find_sol(cur_g, cur_row);
                 CsnhypodbpPick pk; memset(&pk, 0, sizeof(pk));
                 strncpy(pk.sta, sta, sizeof(pk.sta) - 1);
+                strncpy(pk.net, net, sizeof(pk.net) - 1);
+                strncpy(pk.chan, chan, sizeof(pk.chan) - 1);
+                strncpy(pk.loc, loc, sizeof(pk.loc) - 1);
                 pk.phase = (phase == 1) ? 'S' : 'P';
                 pk.t_pick = t_epoch;
+                if (nf >= 8) pk.residual = resid;
+                if (nf >= 9) pk.manual = manual;
                 event_group_add_picks(cur_g, &pk, 1, g_group_pick_tol_sec);
-                if (manual) {
-                    EventSol *es = event_group_find_sol(cur_g, cur_row);
-                    if (es) es->manual = 1;
-                    g_object_set(cur_row, "estado", "M", NULL);
+                if (es) {
+                    event_sol_add_pick(es, &pk);
+                    if (manual) es->manual = 1;
                 }
+                if (manual) g_object_set(cur_row, "estado", "M", NULL);
             }
         }
     }
@@ -481,6 +546,23 @@ int csnhypodbp_db_init(const char *envfile, int hours)
         return -1;
     }
     return 0;
+}
+
+/* 1 si la conexion a la BD esta disponible (historial y busqueda). */
+int csnhypodbp_db_ready(void)
+{
+    return g_db != NULL;
+}
+
+/* Reabre la conexion (p. ej. tras reiniciar el contenedor de la BD). */
+void csnhypodbp_db_reconnect(void)
+{
+    if (g_db) {
+        ewguidb_close(g_db);
+        g_db = NULL;
+    }
+    if (DbEnvFile[0])
+        csnhypodbp_db_init(DbEnvFile, g_db_hours);
 }
 
 static double iso_epoch(const char *s)
@@ -528,17 +610,12 @@ static void nslco_sta(const char *ch, char *out, size_t n)
     }
 }
 
-void cargar_sismos_db(void)
+/* Carga en grupos las soluciones de los eventos `ids` (cada id con su origen
+   preferido en la BD). Devuelve el nº de soluciones incorporadas. */
+static int cargar_grupos_db(const char *const *ids, int nev)
 {
-    EwGuiEventRow *evs = NULL;
-    int nev = 0, i, j, nrec = 0;
+    int i, j, nrec = 0;
 
-    if (!g_db)
-        return;
-    if (ewguidb_query_recent_events(g_db, g_db_hours, &evs, &nev) < 0) {
-        ewguidb_rows_free(evs);
-        return;
-    }
     ensure_groups();
 
     for (i = 0; i < nev; i++) {
@@ -546,9 +623,8 @@ void cargar_sismos_db(void)
         int nor = 0, qid;
         EventGroup *g;
 
-        qid = atoi(evs[i].event_id[0] == 'E' ? evs[i].event_id + 1
-                                             : evs[i].event_id);
-        if (ewguidb_query_origins(g_db, evs[i].event_id, &ors, &nor) <= 0) {
+        qid = atoi(ids[i][0] == 'E' ? ids[i] + 1 : ids[i]);
+        if (ewguidb_query_origins(g_db, ids[i], &ors, &nor) <= 0) {
             ewguidb_rows_free(ors);
             continue;
         }
@@ -558,9 +634,7 @@ void cargar_sismos_db(void)
             const char *colon = strrchr(ors[j].origin_id, ':');
             int mod = colon ? atoi(colon + 1) : 0;
             double otime = iso_epoch(ors[j].origin_time);
-            time_t rawtime = (time_t)otime;
-            struct tm *ptm = gmtime(&rawtime);
-            char fecha[32], hora[32], szLat[32], szLon[32], szDep[32];
+            char fecha[32], hora[32], created[32], szLat[32], szLon[32], szDep[32];
             char szRes[32], szAzm[32], szStn[32], szID[32], szMod[32], szVer[32];
             char szMl[32] = "-", szMwp[32] = "-", szMb[32] = "-", szMs[32] = "-";
             EwGuiMagRow *mgs = NULL;
@@ -569,15 +643,13 @@ void cargar_sismos_db(void)
             CsnhypodbpRow *row;
             EventSol *es;
 
-            if (ptm) {
-                snprintf(fecha, sizeof fecha, "%02d/%02d",
-                         ptm->tm_mon + 1, ptm->tm_mday);
-                snprintf(hora, sizeof hora, "%02d:%02d:%02d",
-                         ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
-            } else {
-                strcpy(fecha, "--/--");
-                strcpy(hora, "--:--:--");
-            }
+            /* Fecha y hora juntas (ISO UTC) y hora de creacion en la BD (es el
+               orden por defecto del detalle). */
+            csnhypodbp_search_fmt_utc((time_t)otime, fecha, sizeof(fecha));
+            snprintf(hora, sizeof(hora), "%s",
+                     strlen(fecha) >= 19 ? fecha + 11 : "--:--:--");
+            csnhypodbp_search_fmt_utc(iso_epoch(ors[j].creation_time), created,
+                                      sizeof(created));
             snprintf(szLat, sizeof szLat, "%.2f%c",
                      fabs(ors[j].latitude), ors[j].latitude < 0 ? 'S' : 'N');
             snprintf(szLon, sizeof szLon, "%.2f%c",
@@ -617,6 +689,9 @@ void cargar_sismos_db(void)
                                      ors[j].longitude, ors[j].depth, mod);
             g_object_set(row, "estado",
                          strcmp(ors[j].status, "REVIEWED") == 0 ? "M" : "A", NULL);
+            g_object_set(row, "created", created, NULL);
+            row_set_mag(row, 0, szMl); row_set_mag(row, 1, szMwp);
+            row_set_mag(row, 2, szMb); row_set_mag(row, 3, szMs);
             g_list_store_append(g_store_hypo, row);
 
             es = g_new0(EventSol, 1);
@@ -640,7 +715,9 @@ void cargar_sismos_db(void)
                     nslco_sta(pks[k].channel, pk.sta, sizeof pk.sta);
                     pk.phase = (pks[k].phase[0] == 'S') ? 'S' : 'P';
                     pk.t_pick = iso_epoch(pks[k].pick_time);
+                    pk.residual = pks[k].residual;   /* columna uncertainty */
                     event_group_add_picks(g, &pk, 1, g_group_pick_tol_sec);
+                    event_sol_add_pick(es, &pk);
                 }
             }
             ewguidb_rows_free(pks);
@@ -650,6 +727,28 @@ void cargar_sismos_db(void)
         g_ptr_array_add(g_groups, g);
         ewguidb_rows_free(ors);
     }
+    return nrec;
+}
+
+void cargar_sismos_db(void)
+{
+    EwGuiEventRow *evs = NULL;
+    const char **ids = NULL;
+    int nev = 0, i, nrec = 0;
+
+    if (!g_db)
+        return;
+    if (ewguidb_query_recent_events(g_db, g_db_hours, &evs, &nev) < 0) {
+        ewguidb_rows_free(evs);
+        return;
+    }
+    if (nev > 0) {
+        ids = g_new(const char *, nev);
+        for (i = 0; i < nev; i++)
+            ids[i] = evs[i].event_id;
+        nrec = cargar_grupos_db(ids, nev);
+        g_free(ids);
+    }
     ewguidb_rows_free(evs);
 
     if (nrec > 0) {
@@ -657,6 +756,88 @@ void cargar_sismos_db(void)
         reselect_event_by_qid(0);
     }
     logit("t", "csnhypodbp: recuperados %d soluciones de la BD\n", nrec);
+}
+
+/* Reemplaza el contenido de la vista (grupos + stores) sin tocar la seleccion
+   previa: se usa al aplicar una busqueda o al limpiarla. */
+static void search_reset_views(void)
+{
+    if (g_store_detail) g_list_store_remove_all(g_store_detail);
+    if (g_store_events) g_list_store_remove_all(g_store_events);
+    if (g_store_hypo)   g_list_store_remove_all(g_store_hypo);
+    if (g_groups)       g_ptr_array_set_size(g_groups, 0);
+    selected_qid = 0; selected_mod = 0; selected_version = 0;
+    selected_otime = 0.0; selected_depth = 0.0;
+    selected_lat = 0.0; selected_lon = 0.0;
+    selected_id[0] = '\0';
+}
+
+/* Consulta la BD por rangos y repuebla la vista. Devuelve el nº de eventos
+   (>=0) o -1 si error. Con 0 resultados no se toca la vista actual. */
+int search_apply(const CsnhypodbpSearch *s)
+{
+    EwGuiSearchFilter f;
+    EwGuiMapEvent *rows = NULL;
+    const char **ids = NULL;
+    int n = 0, i, nrec = 0;
+
+    if (!g_db || !s)
+        return -1;
+
+    memset(&f, 0, sizeof f);
+    f.time_min = s->time_min;
+    f.time_max = s->time_max;
+    f.have_lat = s->have_lat; f.lat_min = s->lat_min; f.lat_max = s->lat_max;
+    f.have_lon = s->have_lon; f.lon_min = s->lon_min; f.lon_max = s->lon_max;
+    f.have_depth = s->have_depth;
+    f.depth_min = s->depth_min; f.depth_max = s->depth_max;
+    f.have_mag = s->have_mag; f.mag_min = s->mag_min; f.mag_max = s->mag_max;
+    f.limit = s->limit;
+
+    if (ewguidb_search_events(g_db, &f, &rows, &n) < 0) {
+        /* La conexion pudo caer (p. ej. la BD se reinicio): reabrir y reintentar. */
+        logit("e", "csnhypodbp: busqueda: %s (reintento de conexion)\n", ewguidb_last_error(g_db));
+        csnhypodbp_db_reconnect();
+        if (!g_db || ewguidb_search_events(g_db, &f, &rows, &n) < 0) {
+            logit("e", "csnhypodbp: busqueda: %s\n",
+                  g_db ? ewguidb_last_error(g_db) : "sin conexion a la BD");
+            ewguidb_rows_free(rows);
+            return -1;
+        }
+    }
+    if (n == 0) {            /* sin resultados: no se toca la vista actual */
+        ewguidb_rows_free(rows);
+        return 0;
+    }
+
+    search_reset_views();
+    ids = g_new(const char *, n);
+    for (i = 0; i < n; i++)
+        ids[i] = rows[i].event_id;
+    nrec = cargar_grupos_db(ids, n);
+    g_free(ids);
+    ewguidb_rows_free(rows);
+
+    g_search_active = 1;
+    rebuild_event_store();
+    if (nrec > 0)
+        reselect_event_by_qid(0);
+    csnhypodbp_update_search_ui();
+    logit("t", "csnhypodbp: busqueda -> %d eventos (%d soluciones)\n", n, nrec);
+    return n;
+}
+
+/* Vuelve a la vista en vivo+historial (boton/ítem "Clear search"). */
+void search_clear(void)
+{
+    if (!g_search_active)
+        return;
+    g_search_active = 0;
+    search_reset_views();
+    cargar_sismos_iniciales(tree_global);
+    cargar_sismos_db();
+    csnhypodbp_update_search_ui();
+    logit("t", "csnhypodbp: busqueda limpiada -> vista vivo+historial\n");
 }
 
 int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
@@ -675,9 +856,9 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     if (csnhypodbp_parse_solution(payload, strlen(payload), mod, &sol) < 0) return 0;
 
     {
-        time_t rawtime = (time_t)(sol.otime); struct tm *ptm = gmtime(&rawtime);
-        if (ptm) { snprintf(fecha, sizeof(fecha), "%02d/%02d", ptm->tm_mon + 1, ptm->tm_mday); snprintf(hora, sizeof(hora), "%02d:%02d:%02d", ptm->tm_hour, ptm->tm_min, ptm->tm_sec); }
-        else { strcpy(fecha, "--/--"); strcpy(hora, "--:--:--"); }
+        csnhypodbp_search_fmt_utc((time_t)(sol.otime), fecha, sizeof(fecha));
+        snprintf(hora, sizeof(hora), "%s",
+                 strlen(fecha) >= 19 ? fecha + 11 : "--:--:--");
     }
     snprintf(szLat, sizeof(szLat), "%.2f%c", fabs(sol.lat), sol.lat < 0 ? 'S' : 'N');
     snprintf(szLon, sizeof(szLon), "%.2f%c", fabs(sol.lon), sol.lon < 0 ? 'W' : 'E');
@@ -716,11 +897,19 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
                      "c11",szMb,"c12",szMs,"c13",szMod,"c14",szVer,
                      "otime",sol.otime,"qver",(int)sol.version,"qid",sol.qid,"lat",sol.lat,
                      "lon",sol.lon,"depth",sol.depth,"mod",mod,"estado",szEstado,NULL);
+        row_set_mag(row, 0, szMl); row_set_mag(row, 1, szMwp);
+        row_set_mag(row, 2, szMb); row_set_mag(row, 3, szMs);
     } else {
         row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes, szAzm,
             szStn, szID, "-", "-", "-", "-", szMod, szVer, sol.otime,
             (int)sol.version, sol.qid, sol.lat, sol.lon, sol.depth, mod);
         g_object_set(row, "estado", szEstado, NULL);
+        {
+            /* La solucion acaba de llegar al modulo: es su hora de creacion. */
+            char created[32];
+            csnhypodbp_search_fmt_utc(time(NULL), created, sizeof(created));
+            g_object_set(row, "created", created, NULL);
+        }
         g_list_store_append(g_store_hypo, row);
         g_object_unref(row);
         new_row = TRUE;
@@ -785,6 +974,9 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     es->qid = sol.qid; es->manual = sol.manual; es->version = sol.version; es->nph = sol.nph;
     es->rms = sol.rms; es->otime = sol.otime; es->mod = mod;
     event_group_add_picks(g, sol.picks, sol.npicks, g_group_pick_tol_sec);
+    /* Picadas de ESTA solucion, con su residual (misma solucion re-emitida: se
+       reemplazan, no se acumulan). */
+    event_sol_set_picks(es, sol.picks, sol.npicks);
     g_object_set_data(G_OBJECT(row), "event-group", g);
     event_group_update_preferred(g);
     event_store_upsert(g);
@@ -799,7 +991,7 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
         /* No robar la seleccion: el evento nuevo se añade a la lista, pero no
            cambia lo que el usuario mira (evento/trazas/zoom). Solo se
            auto-selecciona si aun no hay ninguna. */
-        if (csnhypodbp_should_autoselect(selected_qid != 0))
+        if (!g_search_active && csnhypodbp_should_autoselect(selected_qid != 0))
             reselect_event_by_qid(sol.qid);
         return 2;
     }
@@ -834,6 +1026,9 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
     if (apply_mag_to_solutions(qid, mod, slot, mag_str)) {
         logit("t", "csnhypodbp: Mag ID %d mod %d slot %d: %s\n", qid, mod, slot, mag_str);
         g_history_needs_saving = TRUE;
+        /* La tablita del preview muestra ML/Mwp de la solucion elegida: si la
+           magnitud llega despues de seleccionarla, hay que repintarla. */
+        csnhypodbp_preview_update();
         return 1;
     }
     /* Sin solucion todavia: guardar para aplicarla cuando exista. */
@@ -862,6 +1057,7 @@ typedef struct {
     int           mod;
     int           version;
     double        eq_lat, eq_lon;
+    double        event_otime;      /* hora origen del evento (para la edad) */
     double        req_start, req_end;
     double        max_dist_km;
     int           nsta;
@@ -954,13 +1150,34 @@ static gpointer ws_fetch_thread(gpointer data)
         req.pBuf = trace_buffer; req.bufLen = max_trace_buf; req.timeout = WsTimeout; req.fill = 0;
 
         int got = 0;
+        /* Edad del evento: por encima de SdsFallbackHours la retencion local ya
+           no lo tiene, asi que se consulta el SDS primero (evita el timeout de
+           wave_serverV en eventos viejos). */
+        double age_hours = job->event_otime > 0.0
+                         ? (double)(time(NULL) - (time_t)job->event_otime) / 3600.0
+                         : 0.0;
+        int prefer_sds = csnhypodbp_sds_prefer(age_hours, g_sds_enabled,
+                                               g_sds_root, g_sds_fallback_hours);
+
+        if (prefer_sds) {
+            got = csnhypodbp_sds_fetch(req.sta, req.net, req.chan, req.loc,
+                                       job->req_start, job->req_end,
+                                       &f->raw, &f->act_len);
+            logit("t", "csnhypodbp: fetch sds %s.%s.%s.%s res=%d len=%ld\n",
+                  req.sta, req.chan, req.net, req.loc, got,
+                  got ? f->act_len : 0L);
+            if (got) f->has_data = 1;
+        }
         /* Backend store: lectura indexada directa (rapida, sin TCP). */
-        if (g_wave_backend != 0 && g_wstore != NULL) {
+        if (!got && g_wave_backend != 0 && g_wstore != NULL) {
             got = store_fetch_sta(req.sta, req.net, req.chan, req.loc,
                                   job->req_start, job->req_end, &f->raw, &f->act_len);
             if (got) f->has_data = 1;
         }
-        if (!got && g_wave_backend != 1 && trace_buffer) {
+        /* Evento antiguo (prefer_sds): wave_serverV ya no lo retiene (misma
+           ventana que el store); no se le pregunta para no romper la conexion
+           ni ensuciar el log. Aqui solo se llega si SDS y store no dieron nada. */
+        if (!got && !prefer_sds && g_wave_backend != 1 && trace_buffer) {
             int ws_res = wsGetTraceBinL(&req, &ws_menu, WsTimeout);
             logit("t", "csnhypodbp: fetch %s.%s.%s.%s res=%d actLen=%ld\n",
                   req.sta, req.chan, req.net, req.loc, ws_res, (long)req.actLen);
@@ -972,6 +1189,16 @@ static gpointer ws_fetch_thread(gpointer data)
                 wsKillMenu(&ws_menu); ws_menu.head = NULL;
                 if (g_wave_backend == 0) break;
             }
+        }
+        /* Ultimo recurso: SDS cuando el evento es reciente pero store/ws no dieron datos. */
+        if (!got && !prefer_sds && g_sds_enabled && g_sds_root[0]) {
+            got = csnhypodbp_sds_fetch(req.sta, req.net, req.chan, req.loc,
+                                       job->req_start, job->req_end,
+                                       &f->raw, &f->act_len);
+            logit("t", "csnhypodbp: fetch sds %s.%s.%s.%s res=%d len=%ld\n",
+                  req.sta, req.chan, req.net, req.loc, got,
+                  got ? f->act_len : 0L);
+            if (got) f->has_data = 1;
         }
     }
     free(trace_buffer);
@@ -1105,6 +1332,7 @@ static void start_fetch(const char *only_sta, double otime, double eq_lat, doubl
     if (!job) return;
     job->qid = qid; job->mod = mod; job->version = version;
     job->eq_lat = eq_lat; job->eq_lon = eq_lon;
+    job->event_otime = otime;
     job->req_start = otime - 30.0;
     job->req_end   = otime + g_dScreenTime + g_max_dist_km / 5.5 + g_align_lead;
     job->max_dist_km = g_max_dist_km;
@@ -1197,22 +1425,48 @@ int csnhypodbp_event_group_picks(const EventGroup *g, CsnhypodbpPick *out, int m
     return n;
 }
 
-static void emit_pick_scnl(const char *sta, const char *chan, char phase, double t)
+/* Picadas de LA solucion de esa fila (con su residual): la tabla de Ondas las usa
+   para el `res` cuando no hay candidata de locate. Devuelve el numero copiado. */
+int csnhypodbp_event_sol_picks(const CsnhypodbpRow *row, CsnhypodbpPick *out, int max)
+{
+    EventGroup *g;
+    EventSol *es;
+    int n;
+
+    if (!row || !out || max <= 0) return 0;
+    g = csnhypodbp_event_group_of(row);
+    if (!g) return 0;
+    es = event_group_find_sol(g, row);
+    if (!es || !es->picks || es->npicks <= 0) return 0;
+    n = (es->npicks < max) ? es->npicks : max;
+    memcpy(out, es->picks, (size_t)n * sizeof(*out));
+    return n;
+}
+
+static void emit_pick_scnl(const char *sta, const char *chan, const char *net,
+                           const char *loc, char phase, double t)
 {
     char out_msg[256], ts[32];
     static unsigned char seq = 0;
     time_t sec = (time_t)t;
     double frac = t - (double)sec;
     struct tm *tm = gmtime(&sec);
+    int ms;
     MSG_LOGO logo;
-    char *c;
     if (!tm) return;
-    snprintf(ts, sizeof(ts), "%04d%02d%02d%02d%02d%06.3f",
+    if (frac < 0.0) frac = 0.0;
+    ms = (int)(frac * 1000.0 + 0.5);
+    if (ms >= 1000) { ms -= 1000; sec += 1; tm = gmtime(&sec); }
+    if (!tm) return;
+    /* %02d.%03d y no %06.3f: ese ancho mete un ESPACIO si los segundos son < 10
+       y csnloc descarta la picada. */
+    snprintf(ts, sizeof(ts), "%04d%02d%02d%02d%02d%02d.%03d",
              tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, (double)tm->tm_sec + frac);
-    for (c = ts; *c; c++) if (*c == ',') *c = '.';
-    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.--.-- ?0 %s 0 0 0 %c M\n",
-             TypePickSCNL, MyModId, MyInstId, seq++, sta, chan, ts, phase);
+             tm->tm_hour, tm->tm_min, tm->tm_sec, ms);
+    /* net/loc reales: con "--" HYPOINVERSE no empareja la estacion. */
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c M\n",
+             TypePickSCNL, MyModId, MyInstId, seq++, sta, chan,
+             (net && net[0]) ? net : "--", (loc && loc[0]) ? loc : "--", ts, phase);
     logo.instid = MyInstId; logo.mod = MyModId; logo.type = TypePickSCNL;
     if (tport_putmsg(&PRegion, &logo, strlen(out_msg), out_msg) != PUT_OK)
         logit("e", "csnhypodbp: error emitiendo pick manual\n");
@@ -1236,7 +1490,8 @@ int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMag
         if (mag->ms[0])  apply_mag_to_solutions(s.qid, s.mod, 3, mag->ms);
     }
     for (i = 0; i < s.npicks; i++)
-        emit_pick_scnl(s.picks[i].sta, s.picks[i].chan, s.picks[i].phase, s.picks[i].t_pick);
+        emit_pick_scnl(s.picks[i].sta, s.picks[i].chan, s.picks[i].net,
+                       s.picks[i].loc, s.picks[i].phase, s.picks[i].t_pick);
     csnhypodbp_manual_state_save(g_manual_state_file, &s, mag);
     logit("t", "csnhypodbp: solucion manual confirmada qid=%d nph=%d (%d picks emitidos)\n",
           s.qid, s.nph, s.npicks);

@@ -72,6 +72,7 @@ typedef struct {
     int    station_count;
     double standard_error;
     char   status[32];
+    char   creation_time[40];    /* ISO-8601 UTC: cuando se creo la solucion en la BD */
 } EwGuiOriginRow;
 
 typedef struct {
@@ -82,6 +83,7 @@ typedef struct {
     char   phase[16];
     double weight;
     char   pick_status[16];
+    double residual;             /* columna `uncertainty`: residual del localizador */
 } EwGuiPickRow;
 
 typedef struct {
@@ -143,6 +145,26 @@ typedef struct {
 
 int ewguidb_query_map_events(EwGuiDb *db, int hours,
                              EwGuiMapEvent **out, int *n);
+
+/*
+ * Búsqueda hipocentral por rangos. `time_min`/`time_max` (ISO-8601 UTC) son
+ * obligatorios; el resto de rangos son opcionales y se activan con `have_*`.
+ * El filtro se aplica sobre el origen/magnitud PREFERIDOS del evento; un
+ * evento sin magnitud preferida no entra en un rango de magnitud.
+ * `limit <= 0` usa el default interno (1000). Devuelve filas o -1.
+ */
+typedef struct {
+    const char *time_min;   /* ISO-8601 UTC, obligatorio */
+    const char *time_max;   /* ISO-8601 UTC, obligatorio */
+    int    have_lat;   double lat_min,   lat_max;
+    int    have_lon;   double lon_min,   lon_max;
+    int    have_depth; double depth_min, depth_max;
+    int    have_mag;   double mag_min,   mag_max;
+    int    limit;
+} EwGuiSearchFilter;
+
+int ewguidb_search_events(EwGuiDb *db, const EwGuiSearchFilter *f,
+                          EwGuiMapEvent **out, int *n);
 int ewguidb_query_origins(EwGuiDb *db, const char *event_id,
                           EwGuiOriginRow **out, int *n);
 int ewguidb_query_picks(EwGuiDb *db, const char *origin_id,

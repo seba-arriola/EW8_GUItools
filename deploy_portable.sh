@@ -135,6 +135,9 @@ PARAMS_FILES=(
     csnmags.d csnmags_raw.d
     csntvp.d csnhypodbp.d csnrv.d ew_controller.d csnstaevdisp.d
     wavestore.d hypodb.d db.env.example
+    # Credenciales reales de PostgreSQL (gitignored). Sin db.env el portable no
+    # conecta la BD (hypodb_ingest / csnhypodbp / csnrv / csnstaevdisp).
+    db.env
     pick_FP.sta pickS.sta stations_to_view.sta estaciones_107.txt
     hyp2000_ring.hyp estaciones_hyp.sta ak135.crh chile_1d.crh
     N18-26_1.5k.crh N22-30_1.5k.crh N26-34_1.5k.crh

@@ -1,5 +1,6 @@
 #include "csnhypodbp.h"
 #include "csnhypodbp_locator.h"
+#include "ewgui/table_ui.h"
 
 /* Definicion de Variables Globales */
 char MyModName[MAX_STR];
@@ -101,13 +102,25 @@ gboolean g_history_needs_saving = FALSE;
 
 /* Lista de estaciones (pestaña Ondas). */
 char g_selected_station[16] = "";
-GtkWidget *g_list_stations = NULL;
+int g_pick_on[MAX_ESTA][2];
+CsnhypodbpStaRow g_sta_rows[MAX_ESTA];
+int g_sta_rows_n = 0;
+CsnhypodbpPick g_base_picks[CSNHYPODBP_MAX_PICKS];
+int g_base_npicks = 0;
+CsnhypodbpSolution g_base_sol;
+GtkWidget *g_sta_view = NULL;
+GListStore *g_sta_store = NULL;
+GtkSingleSelection *g_sta_sel = NULL;
+/* Modelos ordenados: GtkColumnView solo ordena si el sorter de la vista
+   (gtk_column_view_get_sorter) esta puesto en un GtkSortListModel. */
+GtkSortListModel *g_sort_events = NULL;
+GtkSortListModel *g_sort_detail = NULL;
+GtkSortListModel *g_sort_sta = NULL;
 int  g_rebuilding_stations = 0;   /* 1 mientras rebuild_station_list repuebla */
 
 /* Vista de ondas: zoom por dos clics, modo de clic y eje de tiempo UTC. */
 CsnhypodbpView      g_view;
 CsnhypodbpClickMode g_click_mode = CSNHYPODBP_CLICK_ZOOM;
-GtkWidget          *g_help_label = NULL;
 EwGuiCanvas        *g_axis_canvas = NULL;
 double              g_win_start_cur = 0.0;
 double              g_cursor_x = 0.0, g_cursor_y = 0.0;  /* puntero en el canvas */
@@ -115,10 +128,17 @@ int                 g_cursor_valid = 0;                  /* 1 = sobre el canvas 
 
 /* Preview de locate (solucion candidata). */
 GtkWidget *g_preview_box = NULL;
-GtkWidget *g_preview_label = NULL;
+GtkWidget *g_preview_title = NULL;
+GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS];
+GtkWidget *g_preview_btn_confirm = NULL, *g_preview_btn_discard = NULL;
 CsnhypodbpSolution g_preview_sol;
 CsnhypodbpMagOut g_preview_mag;
 gboolean g_preview_valid = FALSE;
+int g_filter_auto = 0;
+int g_filter_manual = 1;
+int g_filter_theo = 0;
+GtkWidget *g_chk_a = NULL, *g_chk_m = NULL, *g_chk_teo = NULL;
+GtkWidget *g_locator_label = NULL;
 
 int      g_filter_type = 0;      /* 0=Raw, 1=HP, 2=LP, 3=BP */
 double   g_filter_f1 = 0.7;      /* F1 (Hz) */
@@ -129,6 +149,16 @@ double   g_align_lead = 20.0;    /* segundos antes de la onda P */
 gboolean pending_waveform_reload = FALSE;
 double   selected_lat = 0.0;
 double   selected_lon = 0.0;
+
+/* Busqueda hipocentral (pestaña Eventos): la maestra muestra el resultado. */
+int g_search_active = 0;
+int g_search_max_events = CSNHYPODBP_SEARCH_DEFAULT_LIMIT;
+static GtkWidget *g_btn_clear_search = NULL;
+
+/* Backend SDS (archivo SeisComP) para eventos mas antiguos que la retencion. */
+int  g_sds_enabled = 1;
+char g_sds_root[512] = "/mnt/sds/archive";
+int  g_sds_fallback_hours = 168;
 
 /* Etiquetas de modulo origen: config "ModuleLabel <id> <nombre>". */
 #define MAX_MODLABELS 16
@@ -185,6 +215,8 @@ int ReadConfig(char *configfile) {
         else if (k_its("InRingPick")) { str = k_str(); if (str) strcpy(InRingPickName, str); }
         else if (k_its("TauModel")) { str = k_str(); if (str) strcpy(TauModel, str); }
         else if (k_its("PickCaptureWindowSec")) { g_pick_window_sec = k_val(); }
+        else if (k_its("MaxDistKm")) { double v = k_val(); if (v > 0.0) g_max_dist_km = v; }
+        else if (k_its("LocateKeepTmp")) { csnhypodbp_locate_keep_tmp(k_int()); }
         else if (k_its("GroupPickTolSec")) { g_group_pick_tol_sec = k_val(); }
         else if (k_its("GroupMinMatchPicks")) { g_group_min_match_picks = k_int(); }
         else if (k_its("GroupMaxSolutions")) { g_group_max_solutions = k_int(); }
@@ -225,6 +257,13 @@ int ReadConfig(char *configfile) {
         else if (k_its("LocatorTimeoutSec")) { g_locator_timeout_sec = k_int(); }
         else if (k_its("PrefetchNeighbors")) { g_prefetch_neighbors = k_int(); }
         else if (k_its("HideEmptyStations")) { g_hide_empty = k_int() ? 1 : 0; }
+        else if (k_its("SearchMaxEvents")) {
+            g_search_max_events = k_int();
+            if (g_search_max_events <= 0) g_search_max_events = CSNHYPODBP_SEARCH_DEFAULT_LIMIT;
+        }
+        else if (k_its("SdsEnabled")) { g_sds_enabled = k_int() ? 1 : 0; }
+        else if (k_its("SdsRoot")) { str = k_str(); if (str) snprintf(g_sds_root, sizeof(g_sds_root), "%s", str); }
+        else if (k_its("SdsFallbackHours")) { g_sds_fallback_hours = k_int(); if (g_sds_fallback_hours < 0) g_sds_fallback_hours = 0; }
         else if (k_its("pColor")) {
             str = k_str();
             if (str && csnhypodbp_view_parse_color(str, g_color_p) != 0)
@@ -374,6 +413,196 @@ static void add_text_column(GtkWidget *view, const char *title, const char *prop
     gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
 }
 
+/* Columna i-esima de la vista (0 = la primera). Devuelve una referencia nueva:
+   el llamante la libera. */
+static GtkColumnViewColumn *column_at(GtkWidget *view, guint i) {
+    GListModel *cols = gtk_column_view_get_columns(GTK_COLUMN_VIEW(view));
+    return cols ? g_list_model_get_item(cols, i) : NULL;
+}
+
+/* Como add_text_column, pero ademas ordenable: ordena por `sort_prop` (si es ""
+ * usa el propio texto de la celda) y desempata por `tie` (puede ser NULL). */
+static void add_text_column_sort(GtkWidget *view, const char *title, const char *prop,
+                                 const char *sort_prop, const char *tie, int first_dir) {
+    GtkColumnViewColumn *col;
+    add_text_column(view, title, prop);
+    col = column_at(view, g_list_model_get_n_items(
+                                gtk_column_view_get_columns(GTK_COLUMN_VIEW(view))) - 1);
+    if (col) {
+        ewgui_table_column_sortable(col, sort_prop, tie, first_dir);
+        g_object_unref(col);
+    }
+}
+
+/* -------------------------------------------------------------------------
+ * Tabla de estaciones (pestaña Ondas): GtkColumnView con separadores de fila y
+ * columna, igual que la tabla de Eventos. Una fila por (estacion, fase) = 2 por
+ * estacion: las dos llevan nombre, distancia y casilla. La casilla va junto al
+ * NOMBRE y es la del pick de esa fila (cada fila es una fase suelta, asi que
+ * desmarcarla desactiva esa fase, no la estacion); la columna `pick` es solo el
+ * texto P|S.
+ *
+ * El estado de las casillas NO esta en el modelo: vive en g_pick_on[] (la fuente
+ * que usa el localizador) y cada bind lo relee, porque las celdas se reciclan al
+ * hacer scroll y guardarlo en el modelo revertiria el toggle.
+ * ------------------------------------------------------------------------- */
+
+#define STA_CELL_CHK "sta-cell-chk"
+#define STA_CELL_LBL "sta-cell-lbl"
+#define STA_CELL_STA "sta-cell-name"
+
+static CsnhypodbpStaItem *sta_item_of(GtkListItem *item)
+{
+    gpointer it = gtk_list_item_get_item(item);
+    return (it && CSNHYPODBP_IS_STA_ITEM(it)) ? CSNHYPODBP_STA_ITEM(it) : NULL;
+}
+
+/* Clic derecho sobre una celda: quita las picadas manuales de esa estacion. */
+static void on_sta_cell_right_click(GtkGestureClick *g, int n_press, double x, double y,
+                                    gpointer data)
+{
+    GtkWidget *w;
+    const char *sta;
+    int r;
+    (void)n_press; (void)x; (void)y; (void)data;
+    w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
+    sta = w ? g_object_get_data(G_OBJECT(w), STA_CELL_STA) : NULL;
+    if (!sta || !sta[0]) return;
+    r = csnhypodbp_manual_remove_station(sta);
+    logit("t", "csnhypodbp: clic der: -%d picks de la estacion %s\n", r, sta);
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+}
+
+static void sta_cell_ctx(GtkWidget *w)
+{
+    GtkGesture *g = gtk_gesture_click_new();
+    gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(g), 3);
+    g_signal_connect(g, "pressed", G_CALLBACK(on_sta_cell_right_click), NULL);
+    gtk_widget_add_controller(w, GTK_EVENT_CONTROLLER(g));
+}
+
+/* Columna `station`: [casilla del pick] nombre, en las dos filas. */
+static void sta_col_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    GtkWidget *box, *chk, *lbl;
+    (void)f; (void)data;
+    box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    chk = gtk_check_button_new();
+    lbl = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    g_signal_connect(chk, "toggled", G_CALLBACK(on_pick_check_toggled), NULL);
+    gtk_box_append(GTK_BOX(box), chk);
+    gtk_box_append(GTK_BOX(box), lbl);
+    sta_cell_ctx(box);
+    g_object_set_data(G_OBJECT(box), STA_CELL_CHK, chk);
+    g_object_set_data(G_OBJECT(box), STA_CELL_LBL, lbl);
+    gtk_list_item_set_child(item, box);
+}
+
+static void sta_col_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    CsnhypodbpStaItem *it;
+    GtkWidget *box, *chk, *lbl;
+    char *name = NULL;
+    gboolean has = FALSE;
+    GBinding *b;
+    int idx, ph;
+    (void)f; (void)data;
+    it = sta_item_of(item);
+    if (!it) return;
+    box = gtk_list_item_get_child(item);
+    chk = g_object_get_data(G_OBJECT(box), STA_CELL_CHK);
+    lbl = g_object_get_data(G_OBJECT(box), STA_CELL_LBL);
+    idx = csnhypodbp_sta_item_idx(it);
+    ph  = csnhypodbp_sta_item_phase(it);
+    g_object_get(it, "sta", &name, "has-pick", &has, NULL);
+
+    /* Las DOS filas (P y S) muestran estacion, distancia y su casilla: cada fila
+       se lee sola. La casilla es la del PICK de esa fase (no la de la estacion):
+       el estado vive en g_pick_on[] y se relee en cada bind. */
+    gtk_widget_set_visible(chk, TRUE);
+    gtk_widget_set_visible(lbl, TRUE);
+    b = g_object_bind_property(it, "sta", lbl, "label", G_BINDING_SYNC_CREATE);
+    g_object_set_data_full(G_OBJECT(item), "cell-binding", b, g_object_unref);
+
+    g_object_set_data(G_OBJECT(chk), "sta_idx", GINT_TO_POINTER(idx));
+    g_object_set_data(G_OBJECT(chk), "phase",   GINT_TO_POINTER(ph));
+    g_signal_handlers_block_by_func(chk, G_CALLBACK(on_pick_check_toggled), NULL);
+    /* Fase ausente: casilla VACIA y no sensible (marcada pero inerte confundia). */
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(chk),
+        (has && idx >= 0 && idx < MAX_ESTA && g_pick_on[idx][ph]) ? TRUE : FALSE);
+    g_signal_handlers_unblock_by_func(chk, G_CALLBACK(on_pick_check_toggled), NULL);
+    gtk_widget_set_sensitive(chk, has ? TRUE : FALSE);
+
+    g_object_set_data_full(G_OBJECT(box), STA_CELL_STA, g_strdup(name ? name : ""), g_free);
+    g_free(name);
+}
+
+/* Columnas de texto (dist/pick/stat/res): bind por nombre de propiedad. */
+static void sta_txt_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    GtkWidget *lbl;
+    (void)f; (void)data;
+    lbl = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    sta_cell_ctx(lbl);
+    gtk_list_item_set_child(item, lbl);
+}
+
+static void sta_txt_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    const char *prop = (const char *)data;
+    GtkWidget *lbl;
+    CsnhypodbpStaItem *it;
+    char *name = NULL;
+    GBinding *b;
+    (void)f;
+    it = sta_item_of(item);
+    lbl = gtk_list_item_get_child(item);
+    if (!it || !lbl || !prop) return;
+    b = g_object_bind_property(it, prop, lbl, "label", G_BINDING_SYNC_CREATE);
+    g_object_set_data_full(G_OBJECT(item), "cell-binding", b, g_object_unref);
+    g_object_get(it, "sta", &name, NULL);
+    g_object_set_data_full(G_OBJECT(lbl), STA_CELL_STA, g_strdup(name ? name : ""), g_free);
+    g_free(name);
+}
+
+static void sta_txt_unbind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    (void)f; (void)data;
+    g_object_set_data(G_OBJECT(item), "cell-binding", NULL);
+    g_object_set_data(G_OBJECT(item), "cell-binding-chk", NULL);
+}
+
+static void add_sta_station_column(GtkWidget *view, const char *title)
+{
+    GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+    GtkColumnViewColumn *col;
+    g_signal_connect(f, "setup", G_CALLBACK(sta_col_setup), NULL);
+    g_signal_connect(f, "bind",  G_CALLBACK(sta_col_bind), NULL);
+    g_signal_connect(f, "unbind", G_CALLBACK(sta_txt_unbind), NULL);
+    col = gtk_column_view_column_new(title, f);
+    gtk_column_view_column_set_expand(col, TRUE);
+    gtk_column_view_column_set_resizable(col, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
+}
+
+static void add_sta_text_column(GtkWidget *view, const char *title, const char *prop,
+                                int width)
+{
+    GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+    GtkColumnViewColumn *col;
+    g_signal_connect(f, "setup",  G_CALLBACK(sta_txt_setup), NULL);
+    g_signal_connect(f, "bind",   G_CALLBACK(sta_txt_bind), (gpointer)prop);
+    g_signal_connect(f, "unbind", G_CALLBACK(sta_txt_unbind), NULL);
+    col = gtk_column_view_column_new(title, f);
+    gtk_column_view_column_set_fixed_width(col, width);
+    gtk_column_view_column_set_resizable(col, TRUE);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
+}
+
 /* Exporta la vista de trazas a SVG/PDF/PNG (diálogo Guardar). */
 static void act_export(GSimpleAction *a, GVariant *p, gpointer ud) {
     (void)a; (void)p; (void)ud;
@@ -439,12 +668,23 @@ static const EwMenuItem colour_items[] = {
     { "P phase", "win.colour", "i", 1 },
     { "S phase", "win.colour", "i", 2 },
 };
+static const EwMenuItem help_items[] = {
+    { "Commands...", "win.help", NULL, 0 },
+};
 static const EwMenuGroup wave_groups[] = {
     { "Waveforms", wave_items, 4 },
     { "Colours", colour_items, 2 },
     { "View", view_items, 2 },
+    { "Help", help_items, 1 },
 };
-static const EwMenuGroup base_groups[] = { { "View", view_items, 2 } };
+static const EwMenuItem search_items[] = {
+    { "Search events...", "win.search", NULL, 0 },
+    { "Clear search", "win.clear-search", NULL, 0 },
+};
+static const EwMenuGroup base_groups[] = {
+    { "Search", search_items, 2 },
+    { "View", view_items, 2 },
+};
 
 static GtkWidget *g_menu_btn = NULL;
 
@@ -453,13 +693,24 @@ static GtkWidget *g_menu_btn = NULL;
 static void act_filters(GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; (void)ud; on_btn_filters_clicked(NULL, NULL); }
 static void act_fetch(GSimpleAction *a, GVariant *p, gpointer ud)   { (void)a; (void)p; (void)ud; on_btn_fetch_clicked(NULL, NULL); }
 static void act_timewin(GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; (void)ud; on_btn_timewin_clicked(NULL, NULL); }
+static void act_search(GSimpleAction *a, GVariant *p, gpointer ud)  { (void)a; (void)p; (void)ud; on_btn_search_clicked(NULL, NULL); }
+static void act_clear_search(GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; (void)ud; search_clear(); }
+static void act_help(GSimpleAction *a, GVariant *p, gpointer ud) { (void)a; (void)p; (void)ud; csnhypodbp_help_dialog_run(window_global ? GTK_WINDOW(window_global) : NULL); }
+
+/* El boton "Clear search" (junto al titulo "Events") solo tiene sentido cuando
+   la maestra muestra un resultado de busqueda. */
+void csnhypodbp_update_search_ui(void)
+{
+    if (g_btn_clear_search)
+        gtk_widget_set_sensitive(g_btn_clear_search, g_search_active ? TRUE : FALSE);
+}
 
 /* En la pestaña Ondas (página 1) el ☰ muestra el grupo Waveforms. */
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint num, gpointer ud) {
     (void)nb; (void)page; (void)ud;
     if (!g_menu_btn) return;
-    if (num == 1) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 3);
-    else          ewgui_menu_button_set_groups(g_menu_btn, base_groups, 1);
+    if (num == 1) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 4);
+    else          ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
 }
 
 static void on_activate(GtkApplication *app, gpointer user_data) {
@@ -485,7 +736,27 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             ".master-events row:selected { background-image: none; background-color: #ffd54f; color: #000000; }\n"
             ".detail-solutions { font-size: 0.82em; }\n"
             ".detail-solutions row { background-image: none; background-color: #fff8e1; }\n"
-            ".detail-solutions row:selected { background-image: none; background-color: #ffd54f; color: #000000; }");
+            ".detail-solutions row:selected { background-image: none; background-color: #ffd54f; color: #000000; }\n"
+            ".sta-table { font-size: 0.75em; }\n"
+            ".sta-table row { background-image: none; min-height: 0; }\n"
+            ".sta-table cell { padding: 1px 2px; }\n"
+            /* Cabeceras: el relleno del tema (boton) + el hueco del indicador de
+               orden son ~20 px por columna; sin recortarlos, "dist[km]" no cabe
+               en una columna estrecha. Si el selector no existe, GTK lo ignora. */
+            ".sta-table header { min-height: 0; }\n"
+            ".sta-table header button, .sta-table > header > button {\n"
+            "    padding: 0 4px; min-height: 0; }\n"
+            ".detail-frame { border: 1px solid alpha(@theme_fg_color, 0.45); border-radius: 4px; }\n"
+            /* Preview de la solucion: ambar suave para la elegida y ROJO MUY
+               LEVE para la candidata del locate (la que hay que mirar). */
+            ".preview-box { background-image: none; background-color: #fff8e1; border: 1px solid alpha(@theme_fg_color, 0.35); border-radius: 4px; padding: 2px 8px; }\n"
+            ".preview-box.candidate { background-color: #fde7e7; border-color: #e8a0a0; }\n"
+            ".preview-title { font-weight: bold; font-size: 0.9em; }\n"
+            ".preview-hdr { font-size: 0.75em; color: alpha(@theme_fg_color, 0.7); }\n"
+            ".preview-val { font-weight: bold; }\n"
+            /* Campos de fecha y hora del buscador: fuente un punto mas chica y
+               ancho minimo para que "YYYY-MM-DD HH:MM:SS" entre completo. */
+            ".time-entry { font-size: 0.95em; min-width: 11em; }");
         gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
         css_done = TRUE;
     }
@@ -518,10 +789,13 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     ewgui_action_add(G_ACTION_MAP(actions), "fetch", NULL, act_fetch, window_global);
     ewgui_action_add(G_ACTION_MAP(actions), "timewin", NULL, act_timewin, window_global);
     ewgui_action_add(G_ACTION_MAP(actions), "colour", "i", act_colour, window_global);
+    ewgui_action_add(G_ACTION_MAP(actions), "search", NULL, act_search, window_global);
+    ewgui_action_add(G_ACTION_MAP(actions), "clear-search", NULL, act_clear_search, window_global);
+    ewgui_action_add(G_ACTION_MAP(actions), "help", NULL, act_help, window_global);
     gtk_widget_insert_action_group(window_global, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
-    g_menu_btn = ewgui_menu_button_new(base_groups, 1);
+    g_menu_btn = ewgui_menu_button_new(base_groups, 2);
 
     GtkWidget *header = adw_header_bar_new();
     adw_header_bar_pack_end(ADW_HEADER_BAR(header), g_menu_btn);
@@ -545,19 +819,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_store_events = g_list_store_new(CSNHYPODBP_TYPE_ROW);
     g_store_detail = g_list_store_new(CSNHYPODBP_TYPE_ROW);
 
-    /* Nombres de propiedad persistentes (los data de los bindings). */
-    static const char *cprop[15] = {"c0","c1","c2","c3","c4","c5","c6","c7",
-                                    "c8","c9","c10","c11","c12","c13","c14"};
-
-    /* ---- Maestro: una fila por evento, ordenada por hora origen DESC ---- */
-    {
-        GtkNumericSorter *sorter = gtk_numeric_sorter_new(
-            gtk_property_expression_new(CSNHYPODBP_TYPE_ROW, NULL, "otime"));
-        GtkSortListModel *sorted;
-        gtk_numeric_sorter_set_sort_order(sorter, GTK_SORT_DESCENDING);
-        sorted = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_store_events)), GTK_SORTER(sorter));
-        g_selection_events = gtk_single_selection_new(G_LIST_MODEL(sorted));
-    }
+    /* ---- Maestro: una fila por evento. El orden lo elige el usuario pulsando
+       las cabeceras; por defecto por hora de origen DESC (la columna Date
+       ordena por la propiedad numerica `otime`). ---- */
+    g_sort_events = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_store_events)), NULL);
+    g_selection_events = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(g_sort_events)));
     gtk_single_selection_set_autoselect(g_selection_events, FALSE);
     gtk_single_selection_set_can_unselect(g_selection_events, TRUE);
 
@@ -567,14 +833,33 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(tree_global), TRUE);
     g_signal_connect(g_selection_events, "notify::selected", G_CALLBACK(on_event_selected), NULL);
     {
-        const char *mheaders[15] = {"Date", "O-time", "Lat.", "Lon.", "Dep", "Res", "Azm", "#Stn", "ID", "Ml", "Mwp", "Mb", "Ms", "Mod", "Ver"};
-        for (int i = 0; i < 15; i++) add_text_column(tree_global, mheaders[i], cprop[i]);
-        add_text_column(tree_global, "N", "nsol");
-        add_text_column(tree_global, "Est.", "estado");
+        const char *mheaders[14] = {"Date", "Lat.", "Lon.", "Dep", "Res", "Azm", "#Stn", "ID", "Ml", "Mwp", "Mb", "Ms", "Mod", "Ver"};
+        const char *mprops[14]   = {"c0", "c2", "c3", "c4", "c5", "c6", "c7", "c8",
+                                    "c9", "c10", "c11", "c12", "c13", "c14"};
+        /* Propiedad de orden de cada columna ("" = su propio texto) y direccion
+           del primer clic: numeros y fechas descendente, texto alfabetico. */
+        static const char *msort[14] = {"otime", "lat", "lon", "depth",
+                                        "", "", "", "", "nmag0", "nmag1", "nmag2", "nmag3", "", ""};
+        static const int   mdir[14]  = {EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                        EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                        EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                        EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                        EWGUI_TABLE_ASC, EWGUI_TABLE_DESC};
+        GtkColumnViewColumn *cdate;
+        for (int i = 0; i < 14; i++)
+            add_text_column_sort(tree_global, mheaders[i], mprops[i],
+                                 msort[i][0] ? msort[i] : mprops[i], NULL, mdir[i]);
+        add_text_column_sort(tree_global, "N", "nsol", "nsol", NULL, EWGUI_TABLE_DESC);
+        add_text_column_sort(tree_global, "Est.", "estado", "estado", NULL, EWGUI_TABLE_ASC);
+        cdate = column_at(tree_global, 0);
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(tree_global), g_sort_events, cdate,
+                                   EWGUI_TABLE_DESC);
+        g_object_unref(cdate);
     }
 
     /* ---- Detalle: soluciones del evento seleccionado ---- */
-    g_selection_detail = gtk_single_selection_new(G_LIST_MODEL(g_store_detail));
+    g_sort_detail = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_store_detail)), NULL);
+    g_selection_detail = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(g_sort_detail)));
     gtk_single_selection_set_autoselect(g_selection_detail, FALSE);
     gtk_single_selection_set_can_unselect(g_selection_detail, TRUE);
     g_selection_hypo = g_selection_detail;   /* compat */
@@ -591,9 +876,24 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_widget_add_controller(tree_detail, GTK_EVENT_CONTROLLER(dclick));
     }
     {
-        const char *dheaders[] = {"Mod", "Ver", "Est.", "Date", "O-time", "Lat.", "Lon.", "Dep", "Res", "#Stn", "ID", "Ml", "Mwp", "Mb", "Ms"};
-        const char *dprops[]   = {"c13", "c14", "estado", "c0", "c1", "c2", "c3", "c4", "c5", "c7", "c8", "c9", "c10", "c11", "c12"};
-        for (int i = 0; i < 15; i++) add_text_column(tree_detail, dheaders[i], dprops[i]);
+        const char *dheaders[] = {"Mod", "Ver", "Est.", "Created", "Date", "Lat.", "Lon.", "Dep", "Res", "#Stn", "ID", "Ml", "Mwp", "Mb", "Ms"};
+        const char *dprops[]   = {"c13", "c14", "estado", "created", "c0", "c2", "c3", "c4", "c5", "c7", "c8", "c9", "c10", "c11", "c12"};
+        static const char *dsort[] = {"", "", "", "", "otime", "lat", "lon", "depth",
+                                      "", "", "", "nmag0", "nmag1", "nmag2", "nmag3"};
+        static const int   ddir[]  = {EWGUI_TABLE_ASC, EWGUI_TABLE_DESC, EWGUI_TABLE_ASC,
+                                      EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                      EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                      EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC,
+                                      EWGUI_TABLE_DESC, EWGUI_TABLE_DESC, EWGUI_TABLE_DESC};
+        GtkColumnViewColumn *ccreated;
+        for (int i = 0; i < 15; i++)
+            add_text_column_sort(tree_detail, dheaders[i], dprops[i],
+                                 dsort[i][0] ? dsort[i] : dprops[i], NULL, ddir[i]);
+        /* Orden por defecto del detalle: la solucion mas reciente arriba. */
+        ccreated = column_at(tree_detail, 3);   /* Created */
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(tree_detail), g_sort_detail, ccreated,
+                                   EWGUI_TABLE_DESC);
+        g_object_unref(ccreated);
     }
 
     GtkWidget *sw_master = gtk_scrolled_window_new();
@@ -607,16 +907,27 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_detail), tree_detail);
 
     /* Titulos de seccion + separador evidente entre eventos y soluciones. */
-    GtkWidget *lbl_master = gtk_label_new("Preferred solutions");
+    GtkWidget *lbl_master = gtk_label_new("Events");
     gtk_widget_add_css_class(lbl_master, "section-title");
     gtk_widget_set_halign(lbl_master, GTK_ALIGN_START);
     gtk_widget_set_margin_start(lbl_master, 6);
+    gtk_widget_set_hexpand(lbl_master, TRUE);
+    /* Fila de encabezado: titulo + boton "Clear search" (volver a vivo+historial). */
+    GtkWidget *master_header = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_margin_end(master_header, 6);
+    gtk_box_append(GTK_BOX(master_header), lbl_master);
+    g_btn_clear_search = gtk_button_new_with_label("Clear search");
+    gtk_widget_add_css_class(g_btn_clear_search, "flat");
+    g_signal_connect(g_btn_clear_search, "clicked",
+                     G_CALLBACK(on_btn_clear_search_clicked), NULL);
+    gtk_widget_set_sensitive(g_btn_clear_search, FALSE);
+    gtk_box_append(GTK_BOX(master_header), g_btn_clear_search);
     GtkWidget *master_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_widget_set_vexpand(master_box, TRUE);
-    gtk_box_append(GTK_BOX(master_box), lbl_master);
+    gtk_box_append(GTK_BOX(master_box), master_header);
     gtk_box_append(GTK_BOX(master_box), sw_master);
 
-    GtkWidget *lbl_detail = gtk_label_new("Historical solutions");
+    GtkWidget *lbl_detail = gtk_label_new("Origins");
     gtk_widget_add_css_class(lbl_detail, "section-title");
     gtk_widget_set_halign(lbl_detail, GTK_ALIGN_START);
     gtk_widget_set_margin_start(lbl_detail, 6);
@@ -675,25 +986,57 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_box_append(GTK_BOX(waves_right), axis_widget);
     }
 
-    /* Panel izquierdo: lista de estaciones encajonada con scroll propio
-       (mismo estilo que la tabla historica de Eventos). */
+    /* Panel izquierdo: TABLA de estaciones (GtkColumnView con separadores de
+       fila y columna, igual que la tabla de Eventos). Una fila por (estacion,
+       fase) = 2 por estacion; columnas station | dist[km] | pick | stat | res. */
     GtkWidget *list_frame = gtk_frame_new(NULL);
     gtk_widget_add_css_class(list_frame, "detail-frame");
-    gtk_widget_set_size_request(list_frame, 190, -1);
+    /* Ancho: el marco se dimensiona a lo que pide la tabla y el lienzo se queda
+       el resto. Con GTK_POLICY_NEVER abajo no hay barra horizontal; y como los
+       anchos de columna son un SUELO (si la cabecera pide mas, manda ella), la
+       tabla nunca recorta sus titulos. */
     gtk_widget_set_vexpand(list_frame, TRUE);
     GtkWidget *sw_list = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_list), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
     gtk_widget_set_vexpand(sw_list, TRUE);
-    g_list_stations = gtk_list_box_new();
-    gtk_list_box_set_selection_mode(GTK_LIST_BOX(g_list_stations), GTK_SELECTION_SINGLE);
-    g_signal_connect(g_list_stations, "row-selected", G_CALLBACK(on_station_selected), NULL);
+    g_sta_store = g_list_store_new(CSNHYPODBP_TYPE_STA_ITEM);
+    g_sort_sta = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_sta_store)), NULL);
+    g_sta_sel = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(g_sort_sta)));
+    gtk_single_selection_set_autoselect(g_sta_sel, FALSE);
+    gtk_single_selection_set_can_unselect(g_sta_sel, TRUE);
+    g_signal_connect(g_sta_sel, "notify::selected", G_CALLBACK(on_station_selected), NULL);
+    g_sta_view = gtk_column_view_new(GTK_SELECTION_MODEL(g_sta_sel));
+    gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(g_sta_view), TRUE);
+    gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(g_sta_view), TRUE);
+    gtk_widget_add_css_class(g_sta_view, "sta-table");
+    /* Anchos AJUSTADOS a la cabecera con la fuente a 0.75em: si se bajan, GTK
+       recorta el titulo ("dist[k…", "pic…"). El marco mide la suma de columnas
+       (la `station` se estira); comprobado con capturas bajo el arnes GUI. */
+    add_sta_station_column(g_sta_view, "station");
+    add_sta_text_column(g_sta_view, "dist[km]", "dist", 56);
+    add_sta_text_column(g_sta_view, "pick", "pick", 36);
+    add_sta_text_column(g_sta_view, "stat", "stat", 28);
+    add_sta_text_column(g_sta_view, "res", "res", 42);
+    /* Orden por cabecera: texto alfabetico primero, numeros descendente. La
+       estacion desempata por fase para que P y S salgan siempre en el mismo
+       orden (el orden de un sorter no es estable). Sin orden inicial: se
+       conserva el orden por distancia. */
     {
-        GtkGesture *lclick = gtk_gesture_click_new();
-        gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(lclick), 3);
-        g_signal_connect(lclick, "pressed", G_CALLBACK(on_station_right_click), NULL);
-        gtk_widget_add_controller(g_list_stations, GTK_EVENT_CONTROLLER(lclick));
+        static const char *sprop[5] = {"sta", "dist", "pick", "stat", "res"};
+        static const char *stie[5]  = {"phase", NULL, NULL, NULL, NULL};
+        static const int   sdir[5]  = {EWGUI_TABLE_ASC, EWGUI_TABLE_DESC,
+                                       EWGUI_TABLE_ASC, EWGUI_TABLE_ASC,
+                                       EWGUI_TABLE_DESC};
+        for (int i = 0; i < 5; i++) {
+            GtkColumnViewColumn *c = column_at(g_sta_view, (guint)i);
+            if (c) {
+                ewgui_table_column_sortable(c, sprop[i], stie[i], sdir[i]);
+                g_object_unref(c);
+            }
+        }
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(g_sta_view), g_sort_sta, NULL, 0);
     }
-    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_list), g_list_stations);
+    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_list), g_sta_view);
     gtk_frame_set_child(GTK_FRAME(list_frame), sw_list);
 
     GtkWidget *waves_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
@@ -701,26 +1044,59 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(waves_hbox), waves_right);
     gtk_widget_set_vexpand(waves_hbox, TRUE);
 
-    /* Preview de la solucion candidata (locate): oculto hasta que hay resultado. */
-    g_preview_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    /* Preview de la solucion: tablita de 2 filas (cabecera de parametros +
+       valores) con Confirm/Discard a la derecha. Muestra la solucion elegida en
+       el detalle y, tras `locate`, la candidata (fondo rojo leve). SIEMPRE
+       visible: sin seleccion muestra guiones, asi no salta el layout. */
+    g_preview_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+    gtk_widget_add_css_class(g_preview_box, "preview-box");
     gtk_widget_set_margin_start(g_preview_box, 8);
     gtk_widget_set_margin_end(g_preview_box, 8);
     gtk_widget_set_margin_top(g_preview_box, 4);
-    g_preview_label = gtk_label_new("");
-    gtk_label_set_xalign(GTK_LABEL(g_preview_label), 0.0);
-    gtk_widget_set_hexpand(g_preview_label, TRUE);
+    gtk_widget_set_margin_bottom(g_preview_box, 2);
     {
+        GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+        GtkWidget *grid = gtk_grid_new();
         GtkWidget *pc = gtk_button_new_with_label("Confirm");
         GtkWidget *pd = gtk_button_new_with_label("Discard");
+        int i;
+        gtk_widget_set_hexpand(inner, TRUE);
+        g_preview_title = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(g_preview_title), 0.0);
+        gtk_widget_add_css_class(g_preview_title, "preview-title");
+        gtk_box_append(GTK_BOX(inner), g_preview_title);
+        gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
+        gtk_grid_set_row_spacing(GTK_GRID(grid), 0);
+        /* Fila 0 = cabeceras, fila 1 = valores (mismo indice en las dos). */
+        for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++) {
+            GtkWidget *h = gtk_label_new(csnhypodbp_preview_headers[i]);
+            gtk_label_set_xalign(GTK_LABEL(h), 0.0);
+            gtk_widget_add_css_class(h, "preview-hdr");
+            g_preview_val[i] = gtk_label_new("-");
+            gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
+            gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
+            gtk_widget_add_css_class(g_preview_val[i], "preview-val");
+            gtk_grid_attach(GTK_GRID(grid), h, i, 0, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 1, 1, 1);
+        }
+        gtk_box_append(GTK_BOX(inner), grid);
+        gtk_box_append(GTK_BOX(g_preview_box), inner);
         gtk_widget_add_css_class(pc, "suggested-action");
+        gtk_widget_set_valign(pc, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(pd, GTK_ALIGN_CENTER);
+        /* Sin candidata no hay nada que confirmar ni descartar. */
+        gtk_widget_set_sensitive(pc, FALSE);
+        gtk_widget_set_sensitive(pd, FALSE);
         g_signal_connect(pc, "clicked", G_CALLBACK(on_preview_confirm), NULL);
         g_signal_connect(pd, "clicked", G_CALLBACK(on_preview_discard), NULL);
-        gtk_box_append(GTK_BOX(g_preview_box), g_preview_label);
         gtk_box_append(GTK_BOX(g_preview_box), pc);
         gtk_box_append(GTK_BOX(g_preview_box), pd);
+        g_preview_btn_confirm = pc;
+        g_preview_btn_discard = pd;
     }
-    gtk_widget_set_visible(g_preview_box, FALSE);
+    gtk_widget_set_visible(g_preview_box, TRUE);
     gtk_box_append(GTK_BOX(page_waves), g_preview_box);
+    csnhypodbp_preview_update();   /* estado inicial (sin seleccion: guiones) */
 
     gtk_box_append(GTK_BOX(page_waves), waves_hbox);
 
@@ -750,35 +1126,51 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     GtkWidget *hbox_bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_margin_start(hbox_bottom, 10); gtk_widget_set_margin_end(hbox_bottom, 10); gtk_widget_set_margin_bottom(hbox_bottom, 5);
-    GtkWidget *hbox_center = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 15);
 
-    /* Barra inferior (Ondas): Cancel | locators + locate. Filters / Fetch
-       waveforms / Time window / Hide-empty viven en el menú ☰ de la vista. */
+    /* Barra inferior (Ondas): Cancel a la izquierda; a la DERECHA el filtro de
+       picadas (A/M/Teo), el localizador activo y los botones locators/locate.
+       Filters / Fetch waveforms / Time window / Hide-empty viven en el ☰. */
     {
         GtkWidget *btn_cancel = gtk_button_new_with_label("Cancel");
-        g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_btn_cancel_clicked), NULL);
-
+        GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         GtkWidget *btn_locators = gtk_button_new_with_label("locators");
-        g_signal_connect(btn_locators, "clicked", G_CALLBACK(on_btn_locators_clicked), NULL);
-
         GtkWidget *btn_locate = gtk_button_new_with_label("locate");
+
+        g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_btn_cancel_clicked), NULL);
+        g_signal_connect(btn_locators, "clicked", G_CALLBACK(on_btn_locators_clicked), NULL);
         gtk_widget_add_css_class(btn_locate, "suggested-action");
         g_signal_connect(btn_locate, "clicked", G_CALLBACK(on_btn_locate_clicked), NULL);
 
-        gtk_box_append(GTK_BOX(hbox_center), btn_cancel);
-        gtk_box_append(GTK_BOX(hbox_center), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
-        gtk_box_append(GTK_BOX(hbox_center), btn_locators);
-        gtk_box_append(GTK_BOX(hbox_center), btn_locate);
-        g_help_label = gtk_label_new("");
-        gtk_box_append(GTK_BOX(hbox_center), g_help_label);
-        csnhypodbp_update_help();
+        gtk_box_append(GTK_BOX(hbox_bottom), btn_cancel);
+        gtk_widget_set_hexpand(spacer, TRUE);
+        gtk_box_append(GTK_BOX(hbox_bottom), spacer);
+
+        g_chk_a = gtk_check_button_new_with_label("A");
+        g_chk_m = gtk_check_button_new_with_label("M");
+        g_chk_teo = gtk_check_button_new_with_label("Teo");
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(g_chk_a), g_filter_auto ? TRUE : FALSE);
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(g_chk_m), g_filter_manual ? TRUE : FALSE);
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(g_chk_teo), g_filter_theo ? TRUE : FALSE);
+        g_signal_connect(g_chk_a, "toggled", G_CALLBACK(on_filter_toggled), GINT_TO_POINTER(0));
+        g_signal_connect(g_chk_m, "toggled", G_CALLBACK(on_filter_toggled), GINT_TO_POINTER(1));
+        g_signal_connect(g_chk_teo, "toggled", G_CALLBACK(on_filter_toggled), GINT_TO_POINTER(2));
+        gtk_box_append(GTK_BOX(hbox_bottom), g_chk_a);
+        gtk_box_append(GTK_BOX(hbox_bottom), g_chk_m);
+        gtk_box_append(GTK_BOX(hbox_bottom), g_chk_teo);
+
+        g_locator_label = gtk_label_new("");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_locator_label);
+        csnhypodbp_update_locator_label();
+
+        gtk_box_append(GTK_BOX(hbox_bottom), btn_locators);
+        gtk_box_append(GTK_BOX(hbox_bottom), btn_locate);
     }
-    gtk_box_append(GTK_BOX(hbox_bottom), hbox_center);
     gtk_box_append(GTK_BOX(page_waves), hbox_bottom);
 
     cargar_sismos_iniciales(tree_global);
     cargar_sismos_db();
     csnhypodbp_load_manual_state();
+    csnhypodbp_sta_sel_reset();
     rebuild_station_list();
     gtk_window_present(GTK_WINDOW(window_global));
 
@@ -790,10 +1182,22 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
-    csnhypodbp_db_init(DbEnvFile, g_db_hours);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
     logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideEmptyStations=%d\n",
           g_channels_order, g_components_order, g_hide_empty);
+    logit("t", "csnhypodbp: busqueda SearchMaxEvents=%d  SDS enabled=%d root=%s fallbackHours=%d\n",
+          g_search_max_events, g_sds_enabled, g_sds_root, g_sds_fallback_hours);
+    /* La BD se abre DESPUES de logit_init: si falla (p. ej. falta db.env), el
+       motivo queda en el log y no en un stderr silencioso. */
+    if (DbEnvFile[0]) {
+        if (csnhypodbp_db_init(DbEnvFile, g_db_hours) == 0)
+            logit("t", "csnhypodbp: BD conectada (%s)\n", DbEnvFile);
+        else
+            logit("e", "csnhypodbp: BD NO disponible (%s): historial y busqueda deshabilitados\n",
+                  DbEnvFile);
+    } else {
+        logit("e", "csnhypodbp: sin DbEnvFile: historial y busqueda deshabilitados\n");
+    }
     csnhypodbp_log_colors();
     setlocale(LC_NUMERIC, "C");
 

@@ -556,6 +556,8 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
                      sizeof rows[nrows].pick_time);
         snprintf(rows[nrows].phase, sizeof rows[nrows].phase, "%s", ph);
         rows[nrows].weight = pk->weight;
+        /* El residual del localizador viaja en `uncertainty`. */
+        rows[nrows].residual = pk->residual;
         snprintf(rows[nrows].pick_status, sizeof rows[nrows].pick_status, "%s",
                  is_manual_pick(st, pk) ? "manual" : "automatic");
         nrows++;

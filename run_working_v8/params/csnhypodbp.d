@@ -52,6 +52,16 @@ WaveBackend     auto
 StoreRoot       ../wstore
 DbEnvFile       db.env
 
+# Busqueda hipocentral (pestaña Eventos): tope de eventos a entregar.
+SearchMaxEvents  1000
+
+# Backend SDS (archivo SeisComP). Los eventos mas antiguos que SdsFallbackHours
+# se consultan en SdsRoot (layout <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/...) en vez
+# de la retencion local (store/wave_serverV).
+SdsEnabled        1
+SdsRoot           /mnt/sds/archive
+SdsFallbackHours  168
+
 # Archivo de estaciones a graficar (Podemos usar el mismo de csntvp)
 StaFile         estaciones_107.txt         # Archivo de estaciones con formato: Estacion Canal Red Loc Escala
 StateFile       csnloc.events             # Estado de eventos de csnloc (solo recuperacion al arrancar)

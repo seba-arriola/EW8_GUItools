@@ -354,16 +354,18 @@ int ewguidb_replace_picks(EwGuiDb *db, const char *origin_id,
 
     static const char *sql =
         "INSERT INTO pick (pick_id,origin_id,channel,pick_time,phase,weight,"
-        "pick_status) VALUES ($1,$2,$3,$4,$5,$6,$7)";
+        "pick_status,uncertainty) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)";
     for (int i = 0; i < n; i++) {
-        char w[32];
-        const char *v[7] = {
+        char w[32], u[32];
+        const char *v[8] = {
             rows[i].pick_id, origin_id, nn(rows[i].channel),
             rows[i].pick_time, nn(rows[i].phase),
             dbl_fmt(rows[i].weight, w, sizeof w),
             rows[i].pick_status[0] ? rows[i].pick_status : "automatic",
+            /* `uncertainty` guarda el residual del localizador (NULL si no hay). */
+            dbl_or_null(rows[i].residual, u, sizeof u),
         };
-        if (run_params(db, sql, 7, v) != 0)
+        if (run_params(db, sql, 8, v) != 0)
             goto fail;
     }
     return ewguidb_exec(db, "COMMIT");
@@ -523,6 +525,118 @@ int ewguidb_query_map_events(EwGuiDb *db, int hours,
     return rows;
 }
 
+int ewguidb_search_events(EwGuiDb *db, const EwGuiSearchFilter *f,
+                          EwGuiMapEvent **out, int *n)
+{
+    if (!db || !db->conn || !f || !out || !n)
+        return -1;
+    *out = NULL;
+    *n = 0;
+
+    if (!f->time_min || !*f->time_min || !f->time_max || !*f->time_max)
+        return -1;  /* las fechas son obligatorias */
+
+    if ((f->have_lat   && f->lat_min   > f->lat_max) ||
+        (f->have_lon   && f->lon_min   > f->lon_max) ||
+        (f->have_depth && f->depth_min > f->depth_max) ||
+        (f->have_mag   && f->mag_min   > f->mag_max))
+        return -1;
+
+    int limit = f->limit > 0 ? f->limit : 1000;
+
+    const char *v[11];
+    char vbuf[10][40];
+    int np = 0, nbuf = 0;
+
+    char sql[1024];
+    int off = snprintf(sql, sizeof sql,
+        "SELECT e.event_id,e.preferred_origin_id,o.origin_time,o.latitude,"
+        "o.longitude,o.depth,COALESCE(m.magnitude_value,0.0),"
+        "COALESCE(m.magnitude_type,'') "
+        "FROM event e JOIN origin o ON o.origin_id=e.preferred_origin_id "
+        "LEFT JOIN magnitude m ON m.magnitude_id=e.preferred_magnitude_id "
+        "WHERE o.origin_time >= $1::timestamptz "
+        "AND o.origin_time <= $2::timestamptz");
+
+    v[0] = f->time_min;
+    v[1] = f->time_max;
+    np = 2;
+
+    if (f->have_lat) {
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->lat_min);
+        v[np++] = vbuf[nbuf++];
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->lat_max);
+        v[np++] = vbuf[nbuf++];
+        off += snprintf(sql + off, sizeof sql - off,
+                        " AND o.latitude >= $%d AND o.latitude <= $%d",
+                        np - 1, np);
+    }
+    if (f->have_lon) {
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->lon_min);
+        v[np++] = vbuf[nbuf++];
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->lon_max);
+        v[np++] = vbuf[nbuf++];
+        off += snprintf(sql + off, sizeof sql - off,
+                        " AND o.longitude >= $%d AND o.longitude <= $%d",
+                        np - 1, np);
+    }
+    if (f->have_depth) {
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->depth_min);
+        v[np++] = vbuf[nbuf++];
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->depth_max);
+        v[np++] = vbuf[nbuf++];
+        off += snprintf(sql + off, sizeof sql - off,
+                        " AND o.depth >= $%d AND o.depth <= $%d",
+                        np - 1, np);
+    }
+    if (f->have_mag) {
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->mag_min);
+        v[np++] = vbuf[nbuf++];
+        snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%.6f", f->mag_max);
+        v[np++] = vbuf[nbuf++];
+        off += snprintf(sql + off, sizeof sql - off,
+                        " AND m.magnitude_value >= $%d AND m.magnitude_value <= $%d",
+                        np - 1, np);
+    }
+
+    snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%d", limit);
+    v[np++] = vbuf[nbuf++];
+    snprintf(sql + off, sizeof sql - off,
+             " ORDER BY o.origin_time DESC LIMIT $%d", np);
+
+    PGresult *res = PQexecParams(db->conn, sql, np, NULL, v, NULL, NULL, 0);
+    if (PQresultStatus(res) != PGRES_TUPLES_OK) {
+        snprintf(db->err, sizeof(db->err), "%s", PQerrorMessage(db->conn));
+        PQclear(res);
+        return -1;
+    }
+
+    int rows = PQntuples(res);
+    EwGuiMapEvent *arr = NULL;
+    if (rows > 0) {
+        arr = calloc((size_t)rows, sizeof *arr);
+        if (!arr) {
+            PQclear(res);
+            return -1;
+        }
+        for (int i = 0; i < rows; i++) {
+            get_str(res, i, 0, arr[i].event_id, sizeof arr[i].event_id);
+            get_str(res, i, 1, arr[i].origin_id, sizeof arr[i].origin_id);
+            get_str(res, i, 2, arr[i].origin_time, sizeof arr[i].origin_time);
+            arr[i].latitude = get_dbl(res, i, 3);
+            arr[i].longitude = get_dbl(res, i, 4);
+            arr[i].depth = get_dbl(res, i, 5);
+            arr[i].magnitude = get_dbl(res, i, 6);
+            get_str(res, i, 7, arr[i].magnitude_type,
+                    sizeof arr[i].magnitude_type);
+        }
+    }
+    PQclear(res);
+    *out = arr;
+    *n = rows;
+    return rows;
+}
+
 int ewguidb_query_origins(EwGuiDb *db, const char *event_id,
                           EwGuiOriginRow **out, int *n)
 {
@@ -535,7 +649,7 @@ int ewguidb_query_origins(EwGuiDb *db, const char *event_id,
     PGresult *res = PQexecParams(db->conn,
         "SELECT origin_id,event_id,origin_time,latitude,longitude,depth,"
         "author,software,location_algorithm,velocity_model,azimuthal_gap,"
-        "station_count,standard_error,status FROM origin "
+        "station_count,standard_error,status,creation_time FROM origin "
         "WHERE event_id=$1 ORDER BY origin_time, origin_id", 1, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
         snprintf(db->err, sizeof(db->err), "%s", PQerrorMessage(db->conn));
@@ -568,6 +682,7 @@ int ewguidb_query_origins(EwGuiDb *db, const char *event_id,
             arr[i].station_count = get_int(res, i, 11);
             arr[i].standard_error = get_dbl(res, i, 12);
             get_str(res, i, 13, arr[i].status, sizeof arr[i].status);
+            get_str(res, i, 14, arr[i].creation_time, sizeof arr[i].creation_time);
         }
     }
     PQclear(res);
@@ -586,7 +701,8 @@ int ewguidb_query_picks(EwGuiDb *db, const char *origin_id,
 
     const char *v[1] = { origin_id };
     PGresult *res = PQexecParams(db->conn,
-        "SELECT pick_id,origin_id,channel,pick_time,phase,weight,pick_status "
+        "SELECT pick_id,origin_id,channel,pick_time,phase,weight,pick_status,"
+        "uncertainty "
         "FROM pick WHERE origin_id=$1 ORDER BY pick_time, pick_id",
         1, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -611,6 +727,7 @@ int ewguidb_query_picks(EwGuiDb *db, const char *origin_id,
             get_str(res, i, 4, arr[i].phase, sizeof arr[i].phase);
             arr[i].weight = get_dbl(res, i, 5);
             get_str(res, i, 6, arr[i].pick_status, sizeof arr[i].pick_status);
+            arr[i].residual = get_dbl(res, i, 7);   /* uncertainty; NULL -> NAN */
         }
     }
     PQclear(res);

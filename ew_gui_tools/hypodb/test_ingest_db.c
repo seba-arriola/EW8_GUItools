@@ -15,6 +15,7 @@
 #include <rw_mag.h>
 
 #include "ewgui/db.h"
+#include "ewgui/arc_layout.h"
 #include "hypodb_config.h"
 #include "hypodb_ingest.h"
 
@@ -83,7 +84,7 @@ static void build_arc(char *out, int qid, int version, int manual)
     snprintf(v, sizeof v, "%04d", version);
     memcpy(line + 178, v, 4);
     line[174] = manual ? 'M' : 'A';
-    memcpy(line + 123, "CHILE_POTIN", 11);
+    memcpy(line + EWGUI_ARC_VMODEL_OFF, "CHILE_POTIN", 11);
     strcat(out, line);
 
     {

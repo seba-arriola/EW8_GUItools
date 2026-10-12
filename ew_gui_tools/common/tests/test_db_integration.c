@@ -85,6 +85,7 @@ int main(void)
              "2026-10-10 12:00:05.120+00");
     snprintf(pk[0].phase, sizeof pk[0].phase, "P");
     pk[0].weight = 1.0;
+    pk[0].residual = 0.25;      /* columna uncertainty */
     snprintf(pk[0].pick_status, sizeof pk[0].pick_status, "automatic");
 
     snprintf(pk[1].pick_id, sizeof pk[1].pick_id, "%s/pick/GO01.S", O1);
@@ -93,6 +94,7 @@ int main(void)
              "2026-10-10 12:00:09.900+00");
     snprintf(pk[1].phase, sizeof pk[1].phase, "S");
     pk[1].weight = 0.8;
+    pk[1].residual = -0.30;
     snprintf(pk[1].pick_status, sizeof pk[1].pick_status, "manual");
     assert(ewguidb_replace_picks(db, O1, pk, 2) == 0);
 
@@ -162,6 +164,9 @@ int main(void)
     assert(strcmp(pks[0].pick_status, "automatic") == 0);
     assert(strcmp(pks[1].phase, "S") == 0);
     assert(strcmp(pks[1].pick_status, "manual") == 0);
+    /* El residual viaja en `uncertainty`. */
+    assert(fabs(pks[0].residual - 0.25) < 1e-6);
+    assert(fabs(pks[1].residual - (-0.30)) < 1e-6);
     ewguidb_rows_free(pks);
 
     EwGuiMagRow *mgs = NULL;
@@ -178,8 +183,10 @@ int main(void)
     ewguidb_rows_free(sms);
 
     /* --- replace_picks es idempotente (reemplaza) --- */
+    pk[0].residual = NAN;       /* NaN -> SQL NULL */
     assert(ewguidb_replace_picks(db, O1, pk, 1) == 0);
     assert(ewguidb_query_picks(db, O1, &pks, &npk) == 1);
+    assert(isnan(pks[0].residual));   /* NULL -> NaN */
     ewguidb_rows_free(pks);
 
     /* --- re-upsert de origin actualiza (no duplica) --- */
@@ -188,6 +195,7 @@ int main(void)
     assert(ewguidb_upsert_origin(db, &o) == 0);
     assert(ewguidb_query_origins(db, EID, &ors, &nor) == 2);
     assert(fabs(ors[0].depth - 15.0) < 1e-6);
+    assert(ors[0].creation_time[0] != '\0');   /* default de la BD */
     ewguidb_rows_free(ors);
 
     cleanup(db);

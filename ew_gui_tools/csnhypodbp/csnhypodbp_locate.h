@@ -52,6 +52,12 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn);
    normal de procesar_mensaje_sismo). Devuelve 0 si OK. */
 int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, size_t outn);
 
+/* Rellena sol->picks[].residual desde el JSONL que csnloc offline emite a
+   stdout: el ARC del log no trae residual, pero el JSONL si ("residual" por
+   fase). Solo toca picks con residual NAN, para no pisar el residual que ya
+   venga en el ARC de un refinador. Devuelve cuantas picadas actualizo. */
+int csnhypodbp_sol_apply_jsonl(CsnhypodbpSolution *sol, const char *jsonl);
+
 /* Parsea una linea JSON de csnmags a "%.1f-%d" por tipo ("" si null). */
 int csnhypodbp_mag_parse(const char *json, CsnhypodbpMagOut *mag);
 
@@ -60,6 +66,15 @@ int csnhypodbp_manual_state_save(const char *path, const CsnhypodbpSolution *sol
                                  const CsnhypodbpMagOut *mag);
 int csnhypodbp_manual_state_load(const char *path, CsnhypodbpSolution *out,
                                  CsnhypodbpMagOut *magout, int max);
+
+/* 1 = NO borrar el directorio temporal al terminar y anexar su ruta al motivo
+   de error. Para diagnosticar el boton `locate` (clave LocateKeepTmp del .d). */
+void csnhypodbp_locate_keep_tmp(int on);
+
+/* Salta el preambulo que algunos refinadores escriben en stdout antes del ARC
+   (HYPOINVERSE imprime "NNN STATIONS READ IN."). Devuelve el puntero a la linea
+   que parece cabecera de ARC (>=190 chars y 14 digitos iniciales) o NULL. */
+char *csnhypodbp_arc_skip_preamble(char *buf);
 
 /* Orquesta la cadena. Devuelve 0 si localiza; `out` = solucion, `mag` =
    magnitudes. `err` recibe el motivo si falla. */

@@ -83,6 +83,18 @@ must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.dark-mode' "csnhypodbp pier
 
 must_have "$root/ew_controller/ew_controller_main.c" 'win\.dark-mode' "ew_controller pierde win.dark-mode"
 
+# 5) csnhypodbp: busqueda hipocentral (solo Eventos) + backend SDS
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.search' "csnhypodbp pierde win.search"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.clear-search' "csnhypodbp pierde win.clear-search"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" '"Search", search_items' "csnhypodbp pierde el grupo Search (pestaña Eventos)"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'base_groups, 2' "csnhypodbp debe montar los 2 grupos base (Search+View)"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'gtk_label_new\("Events"\)' "el titulo maestro debe ser Events"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'gtk_label_new\("Origins"\)' "el titulo detalle debe ser Origins"
+must_have "$root/csnhypodbp/csnhypodbp_main.c" 'g_btn_clear_search' "falta el boton Clear search junto al titulo"
+must_have "$root/csnhypodbp/csnhypodbp_gui.c" 'on_btn_search_clicked' "falta el dialogo de busqueda"
+must_have "$root/csnhypodbp/csnhypodbp_ws.c" 'ewguidb_search_events' "la busqueda no consulta la BD"
+must_have "$root/csnhypodbp/csnhypodbp_ws.c" 'csnhypodbp_sds_fetch' "el fetch no integra el backend SDS"
+
 if [ "$fail" -eq 0 ]; then
     echo "OK: menú propio (helper + 5 módulos) consistente"
 fi

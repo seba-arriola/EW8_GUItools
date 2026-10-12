@@ -1,8 +1,6 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_statable.h"
 #include <adwaita.h>
-
-/* Forward declaration del helper estatico de alineacion por P */
-static double station_pick_time(int i, int *is_real);
 
 /* F3: buffers reutilizables para el binning por columna (evita una segunda
    pasada sobre las muestras solo para el auto-escalado). */
@@ -51,28 +49,98 @@ void actualizar_altura_canvas() {
     else gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, 600);
 }
 
-/* --- Lista de estaciones (panel izquierdo) -------------------------------
- * Una fila por estacion (dedup por nombre), ordenada por distancia. La
- * distancia es 0 hasta que llegan datos (se re-ordenan en ws_fetch_finish).
+/* --- Tabla de estaciones (panel izquierdo) -------------------------------
+ * Una fila por (estacion, fase) en un GtkColumnView (ver csnhypodbp_main.c),
+ * ordenada por distancia. El dedup M>A>T y el residual los arma
+ * `csnhypodbp_statable_build`; aqui solo se calculan las filas, se llena el
+ * modelo y se guarda `g_sta_rows` (la entrada del localizador).
+ * La distancia es 0 hasta que llegan datos (se re-ordenan en ws_fetch_finish).
  * ------------------------------------------------------------------------ */
-typedef struct { char name[16]; double dist_km; } STA_LIST_ITEM;
+typedef struct { char name[16]; double dist_km; int idx; } STA_LIST_ITEM;
+
+void csnhypodbp_sta_sel_reset(void) {
+    int i;
+    for (i = 0; i < MAX_ESTA; i++) {
+        g_pick_on[i][0] = 1;
+        g_pick_on[i][1] = 1;
+    }
+}
+
+/* Casilla del pick (una por fila = por (estacion, fase)): escribe g_pick_on[],
+ * que es la unica fuente de verdad (la que lee el localizador). La celda la
+ * relee en cada bind, porque GtkColumnView recicla las celdas al hacer scroll. */
+void on_pick_check_toggled(GtkCheckButton *b, gpointer data) {
+    int i = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "sta_idx"));
+    int ph = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "phase"));
+    (void)data;
+    if (i >= 0 && i < MAX_ESTA && ph >= 0 && ph < 2)
+        g_pick_on[i][ph] = gtk_check_button_get_active(b) ? 1 : 0;
+}
+
+/* Reune las picadas de `sta` en TODOS sus canales (el dedup es por estacion),
+ * dentro de la ventana del evento. Devuelve cuantas. */
+static int station_caps(const char *sta, CsnhypodbpTracePick *out, int max_out) {
+    int count = 0;
+    for (int i = 0; i < NumEstaciones && count < max_out; i++) {
+        if (strcmp(StaArray[i].szStation, sta) != 0) continue;
+        count += csnhypodbp_cap_window(&StaArray[i].pickcap, sta,
+                                       selected_otime, g_pick_window_sec,
+                                       out + count, max_out - count);
+    }
+    return count;
+}
+
+/* Solucion que aporta los residuales a la tabla de Ondas: la candidata de
+   `locate` si esta vigente, si no la solucion elegida en el detalle (pestaña
+   Eventos), que trae los residuales que el localizador ya calculo. */
+static const CsnhypodbpSolution *resid_source(void)
+{
+    return csnhypodbp_resid_source(&g_preview_sol, g_preview_valid, &g_base_sol);
+}
+
+/* Fila de la tabla a partir de la estacion `i` (canal representativo). */
+static CsnhypodbpStaRow build_row_for(int i, const char *name) {
+    CsnhypodbpTracePick caps[CSNHYPODBP_CAP_MAX];
+    CsnhypodbpManualPick man[CSNHYPODBP_MANUAL_MAX];
+    CsnhypodbpStaInput si;
+    CsnhypodbpStaRow row;
+    int ncap, nman;
+
+    memset(&row, 0, sizeof(row));
+    memset(&si, 0, sizeof(si));
+    ncap = station_caps(name, caps, CSNHYPODBP_CAP_MAX);
+    nman = csnhypodbp_manual_list(man, CSNHYPODBP_MANUAL_MAX);
+    snprintf(si.sta, sizeof(si.sta), "%s", name);
+    si.idx = i;
+    si.dist_deg = g_StaDist[i];
+    si.has_data = (bHasData[i] == 1);
+    si.caps = caps; si.ncap = ncap;
+    si.sol = g_base_picks; si.nsol = g_base_npicks;
+    si.theo_p = (g_StaTheoP[i] > 1.0) ? g_StaTheoP[i] : 0.0;
+    /* SCNL de la estacion (metadata de StaFile): respaldo para las picadas que no
+       traigan canal/red/loc (p.ej. las de una solucion cuyo ARC los perdio). */
+    if (i >= 0 && i < NumEstaciones) {
+        snprintf(si.chan, sizeof(si.chan), "%s", StaArray[i].szChannel);
+        snprintf(si.net,  sizeof(si.net),  "%s", StaArray[i].szNetID);
+        snprintf(si.loc,  sizeof(si.loc),  "%s", StaArray[i].szLocation);
+    }
+    csnhypodbp_statable_build(&row, 1, &si, 1, man, nman, resid_source());
+    return row;
+}
 
 void rebuild_station_list(void) {
-    if (!g_list_stations) return;
-    GtkWidget *child;
+    if (!g_sta_store) return;
     char sel[16];
-    /* Guarda la seleccion ANTES de vaciar: gtk_list_box_remove emite
-       row-selected(NULL) al quitar la fila seleccionada (GTK4) y
-       on_station_selected borraria g_selected_station; como el canvas dibuja
-       solo la estacion seleccionada, perderla dejaria el canvas vacio. */
+    /* Guarda la seleccion ANTES de vaciar: g_list_store_remove_all invalida la
+       posicion seleccionada y emite notify::selected, y on_station_selected
+       borraria g_selected_station; como el canvas dibuja solo la estacion
+       seleccionada, perderla dejaria el canvas vacio. */
     snprintf(sel, sizeof(sel), "%s", g_selected_station);
     g_rebuilding_stations = 1;
-    while ((child = gtk_widget_get_first_child(g_list_stations)))
-        gtk_list_box_remove(GTK_LIST_BOX(g_list_stations), child);
+    g_list_store_remove_all(g_sta_store);
 
     static STA_LIST_ITEM items[MAX_ESTA];
-    int n = 0, a, b;
-    GtkWidget *to_select = NULL;
+    int n = 0, a, b, to_select = -1;
 
     for (int i = 0; i < NumEstaciones; i++) {
         double dkm = g_StaDist[i] * 111.19;
@@ -90,6 +158,7 @@ void rebuild_station_list(void) {
         if (n >= MAX_ESTA) break;
         snprintf(items[n].name, sizeof(items[n].name), "%s", StaArray[i].szStation);
         items[n].dist_km = dkm;
+        items[n].idx = i;
         n++;
     }
 
@@ -105,42 +174,64 @@ void rebuild_station_list(void) {
         items[b + 1] = key;
     }
 
+    g_sta_rows_n = 0;
     for (a = 0; a < n; a++) {
-        char label[64];
-        if (items[a].dist_km > 0.0) snprintf(label, sizeof(label), "%s  (%.0f km)", items[a].name, items[a].dist_km);
-        else snprintf(label, sizeof(label), "%s", items[a].name);
-        GtkWidget *row = gtk_list_box_row_new();
-        GtkWidget *lbl = gtk_label_new(label);
-        gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-        gtk_widget_set_margin_start(lbl, 6);
-        gtk_widget_set_margin_end(lbl, 6);
-        gtk_list_box_row_set_child(GTK_LIST_BOX_ROW(row), lbl);
-        g_object_set_data_full(G_OBJECT(row), "sta", g_strdup(items[a].name), g_free);
-        gtk_list_box_append(GTK_LIST_BOX(g_list_stations), row);
-        if (sel[0] && strcmp(items[a].name, sel) == 0) to_select = row;
+        CsnhypodbpStaRow srow = build_row_for(items[a].idx, items[a].name);
+        CsnhypodbpStaItem *it;
+        if (g_sta_rows_n < MAX_ESTA) g_sta_rows[g_sta_rows_n++] = srow;
+        /* Dos filas por estacion: P (0) y S (1); cada una con su casilla, que es
+           la del pick de esa fase (estado en g_pick_on[], releido en el bind). */
+        it = csnhypodbp_sta_item_new(&srow, 0);
+        g_list_store_append(g_sta_store, it);
+        g_object_unref(it);
+        it = csnhypodbp_sta_item_new(&srow, 1);
+        g_list_store_append(g_sta_store, it);
+        g_object_unref(it);
     }
     g_rebuilding_stations = 0;
-    if (to_select) gtk_list_box_select_row(GTK_LIST_BOX(g_list_stations), GTK_LIST_BOX_ROW(to_select));
+    /* La seleccion se restaura por (estacion, fase), no por posicion: la tabla
+       puede estar ordenada por cualquier columna. */
+    if (sel[0]) {
+        guint i, nit = g_list_model_get_n_items(G_LIST_MODEL(g_sort_sta));
+        for (i = 0; i < nit; i++) {
+            gpointer it = g_list_model_get_item(G_LIST_MODEL(g_sort_sta), i);
+            int hit = 0;
+            if (CSNHYPODBP_IS_STA_ITEM(it)) {
+                const char *sta = NULL;
+                int ph = -1;
+                g_object_get(it, "sta", &sta, "phase", &ph, NULL);
+                hit = (sta && ph == 0 && strcmp(sta, sel) == 0);
+            }
+            g_object_unref(it);
+            if (hit) { to_select = (int)i; break; }
+        }
+    }
+    if (to_select >= 0)
+        gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_sta_sel), (guint)to_select, FALSE);
     /* Si la estacion ya no esta (filtro dinamico), NO se borra la seleccion:
        el canvas la sigue dibujando y reaparece si el filtro la readmite. */
 }
 
-void on_station_selected(GtkListBox *box, GtkListBoxRow *row, gpointer data) {
-    (void)box; (void)data;
+void on_station_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) {
+    (void)pspec; (void)data;
     char prev[16];
-    /* Durante el repoblado (vaciado -> row-selected(NULL)) no se pierde la
+    gpointer item;
+    char *sta = NULL;
+    /* Durante el repoblado (vaciado -> selected invalido) no se pierde la
        seleccion ni se reinicia el zoom. */
     if (g_rebuilding_stations) return;
     snprintf(prev, sizeof(prev), "%s", g_selected_station);
-    if (row) {
-        const char *sta = g_object_get_data(G_OBJECT(row), "sta");
-        if (sta) {
+    item = gtk_single_selection_get_selected_item(sel);
+    if (item && CSNHYPODBP_IS_STA_ITEM(item)) {
+        g_object_get(item, "sta", &sta, NULL);
+        if (sta && sta[0]) {
             snprintf(g_selected_station, sizeof(g_selected_station), "%s", sta);
             EnsureAndFetchStation(g_selected_station);
         }
     } else {
         g_selected_station[0] = '\0';
     }
+    g_free(sta);
     /* Solo al cambiar de estacion: re-seleccionar la misma no mata el zoom. */
     if (csnhypodbp_station_changed(prev, g_selected_station))
         csnhypodbp_view_set_default(&g_view, g_dScreenTime);
@@ -262,8 +353,212 @@ void on_btn_timewin_clicked(GtkWidget *w, gpointer d) {
     if (win) gtk_window_destroy(win);
 }
 
-void on_btn_cancel_clicked(GtkWidget *w, gpointer d) {
+/* Aviso modal simple (solo OK) para errores/avisos de la busqueda. */
+static void search_info(const char *title, const char *msg) {
+    GtkWidget *lbl = gtk_label_new(msg);
+    GtkWindow *win = NULL;
+    gtk_label_set_wrap(GTK_LABEL(lbl), TRUE);
+    gtk_label_set_max_width_chars(GTK_LABEL(lbl), 48);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL, title, lbl, "OK", &win);
+    if (win) gtk_window_destroy(win);
+}
+
+/* --- Selector de fecha: VENTANA MODAL propia con GtkCalendar -----------------
+ * Nada de popups: bajo WSLg/Wayland quedan detras de la ventana (bug #1299).
+ * La fecha se lee en el handler de "Accept", con el calendario todavia vivo:
+ * leerla despues de cerrar el dialogo (o depender de una señal) no es fiable. */
+typedef struct {
+    GtkWidget *cal;
+    GMainLoop *loop;
+    int        accepted;
+    int        y, m, d;
+} CalPick;
+
+static void cal_finish(CalPick *cp)
+{
+    if (cp->accepted) {
+        GDateTime *sel = gtk_calendar_get_date(GTK_CALENDAR(cp->cal));
+        if (sel) {
+            cp->y = g_date_time_get_year(sel);
+            cp->m = g_date_time_get_month(sel);
+            cp->d = g_date_time_get_day_of_month(sel);
+            g_date_time_unref(sel);
+        }
+    }
+    if (cp->loop) g_main_loop_quit(cp->loop);
+}
+
+static void on_cal_ok(GtkButton *b, gpointer ud)
+{
+    CalPick *cp = ud;
+    (void)b;
+    cp->accepted = 1;
+    cal_finish(cp);
+}
+
+static void on_cal_cancel(GtkButton *b, gpointer ud)
+{
+    CalPick *cp = ud;
+    (void)b;
+    cp->accepted = 0;
+    cal_finish(cp);
+}
+
+static int calendar_pick(GtkWindow *parent, int *y, int *m, int *d)
+{
+    CalPick cp;
+    GtkWidget *win, *box, *bb, *okb, *cb;
+    int ok;
+
+    memset(&cp, 0, sizeof(cp));
+    cp.y = *y; cp.m = *m; cp.d = *d;
+    cp.cal = gtk_calendar_new();
+    gtk_calendar_set_year(GTK_CALENDAR(cp.cal), cp.y);
+    gtk_calendar_set_month(GTK_CALENDAR(cp.cal), cp.m);
+    gtk_calendar_set_day(GTK_CALENDAR(cp.cal), cp.d);
+
+    win = gtk_window_new();
+    gtk_window_set_title(GTK_WINDOW(win), "Pick date");
+    gtk_window_set_modal(GTK_WINDOW(win), TRUE);
+    gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
+    if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
+    box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+    gtk_widget_set_margin_top(box, 10);
+    gtk_widget_set_margin_bottom(box, 10);
+    gtk_widget_set_margin_start(box, 10);
+    gtk_widget_set_margin_end(box, 10);
+    gtk_box_append(GTK_BOX(box), cp.cal);
+    bb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+    gtk_widget_set_halign(bb, GTK_ALIGN_END);
+    cb = gtk_button_new_with_label("Cancel");
+    okb = gtk_button_new_with_label("Accept");
+    g_signal_connect(cb, "clicked", G_CALLBACK(on_cal_cancel), &cp);
+    g_signal_connect(okb, "clicked", G_CALLBACK(on_cal_ok), &cp);
+    gtk_box_append(GTK_BOX(bb), cb);
+    gtk_box_append(GTK_BOX(bb), okb);
+    gtk_box_append(GTK_BOX(box), bb);
+    gtk_window_set_child(GTK_WINDOW(win), box);
+
+    cp.loop = g_main_loop_new(NULL, FALSE);
+    gtk_window_present(GTK_WINDOW(win));
+    g_main_loop_run(cp.loop);
+    g_main_loop_unref(cp.loop);
+    gtk_window_destroy(GTK_WINDOW(win));
+
+    ok = cp.accepted;
+    if (ok) { *y = cp.y; *m = cp.m; *d = cp.d; }
+    return ok;
+}
+
+/* Lee "YYYY-MM-DD[ HH:MM:SS]": 1 si la fecha es valida. */
+static int date_from_entry(const char *s, int *y, int *m, int *d)
+{
+    if (!s || strlen(s) < 10) return 0;
+    if (sscanf(s, "%4d-%2d-%2d", y, m, d) != 3) return 0;
+    return (s[4] == '-' && s[7] == '-' && *y >= 1900 && *y <= 2999 &&
+            *m >= 1 && *m <= 12 && *d >= 1 && *d <= 31);
+}
+
+static void on_calendar_clicked(GtkButton *btn, gpointer data)
+{
+    GtkWidget *entry = g_object_get_data(G_OBJECT(btn), "cal-entry");
+    GtkRoot *root = gtk_widget_get_root(GTK_WIDGET(btn));
+    int y, m, d;
+    (void)data;
+    if (!entry) return;
+    if (!date_from_entry(gtk_editable_get_text(GTK_EDITABLE(entry)), &y, &m, &d)) {
+        time_t now = time(NULL);
+        struct tm *tm = gmtime(&now);
+        y = tm ? tm->tm_year + 1900 : 2000;
+        m = tm ? tm->tm_mon + 1 : 1;
+        d = tm ? tm->tm_mday : 1;
+    }
+    if (!calendar_pick(root ? GTK_WINDOW(root) : NULL, &y, &m, &d)) return;
+    {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%s", gtk_editable_get_text(GTK_EDITABLE(entry)));
+        csnhypodbp_search_set_date(buf, sizeof(buf), y, m, d);
+        gtk_editable_set_text(GTK_EDITABLE(entry), buf);
+    }
+}
+
+/* Busqueda hipocentral por rangos (menu ☰, pestaña Eventos). */
+void on_btn_search_clicked(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
+    GtkWidget *grid = gtk_grid_new(), *e[CSNHYPODBP_SEARCH_FIELDS], *win = NULL;
+    static const char *labels[5] = {"Origin time", "Latitude", "Longitude", "Depth", "Magnitude"};
+    int i;
+
+    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
+    /* Columnas: 0 = etiqueta, 1 = Min, 2 = calendario de Min, 3 = Max,
+       4 = calendario de Max: cada boton pegado a su caja. */
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Min"), 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), gtk_label_new("Max"), 3, 0, 1, 1);
+    for (i = 0; i < 5; i++) {
+        GtkWidget *l = gtk_label_new(labels[i]);
+        gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+        gtk_grid_attach(GTK_GRID(grid), l, 0, i + 1, 1, 1);
+        e[2 * i]     = gtk_entry_new();
+        e[2 * i + 1] = gtk_entry_new();
+        gtk_grid_attach(GTK_GRID(grid), e[2 * i],     1, i + 1, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), e[2 * i + 1], 3, i + 1, 1, 1);
+    }
+    /* Los campos de hora de origen llevan fecha Y hora completas: fuente algo
+       mas chica y ancho minimo para que entren enteras en la caja. */
+    gtk_widget_add_css_class(e[0], "time-entry");
+    gtk_widget_add_css_class(e[1], "time-entry");
+    /* Boton de calendario junto a cada campo de hora de origen (min y max). */
+    for (i = 0; i < 2; i++) {
+        GtkWidget *btn = gtk_button_new_with_label("...");
+        gtk_widget_set_tooltip_text(btn, "Pick the date in a calendar");
+        gtk_accessible_update_property(GTK_ACCESSIBLE(btn),
+                                       GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                       i == 0 ? "calendar-min" : "calendar-max", -1);
+        g_object_set_data(G_OBJECT(btn), "cal-entry", e[i]);
+        g_signal_connect(btn, "clicked", G_CALLBACK(on_calendar_clicked), NULL);
+        gtk_grid_attach(GTK_GRID(grid), btn, 2 + 2 * i, 1, 1, 1);
+    }
+    {
+        GtkWidget *note = gtk_label_new("Only the origin time range is required.\n"
+                                        "Format: YYYY-MM-DD[ HH:MM:SS] (UTC)");
+        gtk_label_set_xalign(GTK_LABEL(note), 0.0);
+        gtk_grid_attach(GTK_GRID(grid), note, 0, 6, 5, 1);
+    }
+
+    if (ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL,
+                     "Search events", grid, "Search", &win)) {
+        const char *fields[CSNHYPODBP_SEARCH_FIELDS];
+        CsnhypodbpSearch s;
+        char err[128];
+        int n;
+        for (i = 0; i < CSNHYPODBP_SEARCH_FIELDS; i++)
+            fields[i] = gtk_editable_get_text(GTK_EDITABLE(e[i]));
+        if (!csnhypodbp_search_build(fields, g_search_max_events, &s, err, sizeof err)) {
+            search_info("Search events", err);
+        } else if (!csnhypodbp_db_ready()) {
+            search_info("Search events",
+                        "Base de datos no configurada.\n"
+                        "Falta DbEnvFile (db.env) o no se pudo conectar; "
+                        "revisa el log de csnhypodbp.");
+        } else if ((n = search_apply(&s)) < 0) {
+            search_info("Search events",
+                        "No se pudo consultar la base de datos. Revisa el log de csnhypodbp.");
+        } else if (n == 0) {
+            search_info("Search events", "0 events found.");
+        }
+    }
+    if (win) gtk_window_destroy(win);
+}
+
+/* Boton "Clear search" (junto al titulo "Events"): vuelve a vivo+historial. */
+void on_btn_clear_search_clicked(GtkWidget *w, gpointer d) {
+    (void)w; (void)d;
+    search_clear();
+}
+
+void on_btn_cancel_clicked(GtkWidget *w, gpointer d) {    (void)w; (void)d;
     /* Cancela TODO el trabajo manual local del evento actual. */
     csnhypodbp_manual_clear();
     for (int i = 0; i < NumEstaciones; i++) StaArray[i].dManualPickTime = 0.0;
@@ -293,6 +588,24 @@ void on_btn_locators_clicked(GtkWidget *w, gpointer d) {
             }
     }
     if (win) gtk_window_destroy(win);
+    csnhypodbp_update_locator_label();
+}
+
+/* --- Filtro de picadas (A/M/Teo) de la barra inferior --- */
+void on_filter_toggled(GtkCheckButton *b, gpointer data) {
+    int which = GPOINTER_TO_INT(data);
+    int on = gtk_check_button_get_active(b) ? 1 : 0;
+    if (which == 0)      g_filter_auto = on;
+    else if (which == 1) g_filter_manual = on;
+    else                 g_filter_theo = on;
+}
+
+/* Caja con el nombre del localizador activo. */
+void csnhypodbp_update_locator_label(void) {
+    char b[64];
+    if (!g_locator_label) return;
+    snprintf(b, sizeof(b), "Locator: %s", g_active_locator[0] ? g_active_locator : "(none)");
+    gtk_label_set_text(GTK_LABEL(g_locator_label), b);
 }
 
 /* --- locate: worker + preview --- */
@@ -328,7 +641,8 @@ static gboolean locate_finish(gpointer data) {
         g_preview_sol = job->out;
         g_preview_mag = job->mag;
         g_preview_valid = TRUE;
-        csnhypodbp_show_preview();
+        csnhypodbp_preview_update();
+        rebuild_station_list();   /* residual de la candidata en la tabla */
         logit("t", "csnhypodbp: locate OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
               job->locator, job->out.nph, job->out.rms,
               job->mag.ml[0] ? job->mag.ml : "-", job->mag.mwp[0] ? job->mag.mwp : "-");
@@ -339,24 +653,54 @@ static gboolean locate_finish(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
-void csnhypodbp_show_preview(void) {
-    char buf[512];
-    if (!g_preview_box || !g_preview_label) return;
-    snprintf(buf, sizeof(buf),
-        "Candidata [%s]: lat %.2f  lon %.2f  prof %.0f km   nph %d   rms %.2f   ML %s   Mwp %s",
-        g_active_locator[0] ? g_active_locator : "-",
-        g_preview_sol.lat, g_preview_sol.lon, g_preview_sol.depth,
-        g_preview_sol.nph, g_preview_sol.rms,
-        g_preview_mag.ml[0] ? g_preview_mag.ml : "-",
-        g_preview_mag.mwp[0] ? g_preview_mag.mwp : "-");
-    gtk_label_set_text(GTK_LABEL(g_preview_label), buf);
-    gtk_widget_set_visible(g_preview_box, TRUE);
+/* Unico punto que escribe la tablita del preview, para que estado, valores,
+   color y sensibilidad de los botones no se puedan desincronizar: la candidata
+   del `locate` si esta vigente, si no la solucion elegida en el detalle
+   (pestana Eventos), si no guiones. */
+void csnhypodbp_preview_update(void) {
+    CsnhypodbpPreviewVals v;
+    int i;
+    if (!g_preview_box || !g_preview_title) return;
+    if (g_preview_valid) {
+        csnhypodbp_preview_from_candidate(&v, g_active_locator,
+                                          g_preview_sol.lat, g_preview_sol.lon,
+                                          g_preview_sol.depth, g_preview_sol.nph,
+                                          g_preview_sol.rms,
+                                          g_preview_mag.ml, g_preview_mag.mwp);
+    } else {
+        gpointer item = g_selection_detail
+                        ? gtk_single_selection_get_selected_item(g_selection_detail)
+                        : NULL;
+        if (item) {
+            CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
+            double lat = 0, lon = 0, depth = 0;
+            g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth, NULL);
+            /* rms/nph/mags: las celdas ya formateadas de la fila (c5/c7/c9/c10). */
+            csnhypodbp_preview_from_selected(&v, lat, lon, depth,
+                                             csnhypodbp_row_col(row, 5),
+                                             csnhypodbp_row_col(row, 7),
+                                             csnhypodbp_row_col(row, 9),
+                                             csnhypodbp_row_col(row, 10));
+        } else {
+            csnhypodbp_preview_clear(&v);
+        }
+    }
+    gtk_label_set_text(GTK_LABEL(g_preview_title), v.title);
+    for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
+        gtk_label_set_text(GTK_LABEL(g_preview_val[i]), v.val[i]);
+    if (v.candidate) gtk_widget_add_css_class(g_preview_box, "candidate");
+    else             gtk_widget_remove_css_class(g_preview_box, "candidate");
+    if (g_preview_btn_confirm)
+        gtk_widget_set_sensitive(g_preview_btn_confirm, v.candidate);
+    if (g_preview_btn_discard)
+        gtk_widget_set_sensitive(g_preview_btn_discard, v.candidate);
 }
 
 void on_preview_discard(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
     g_preview_valid = FALSE;
-    if (g_preview_box) gtk_widget_set_visible(g_preview_box, FALSE);
+    csnhypodbp_preview_update();   /* vuelve a mostrar la solucion elegida */
+    rebuild_station_list();        /* quita el residual de la candidata */
 }
 
 void on_preview_confirm(GtkWidget *w, gpointer d) {
@@ -364,33 +708,53 @@ void on_preview_confirm(GtkWidget *w, gpointer d) {
     if (!g_preview_valid) return;
     csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag);
     g_preview_valid = FALSE;
-    if (g_preview_box) gtk_widget_set_visible(g_preview_box, FALSE);
+    csnhypodbp_preview_update();
     csnhypodbp_manual_clear();
+    rebuild_station_list();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
 void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
     LocateJob *job;
     GThread *th;
-    gpointer item;
-    CsnhypodbpRow *row;
-    EventGroup *g;
     int i;
     (void)w; (void)d;
     if (selected_qid == 0) { logit("t", "csnhypodbp: locate sin evento seleccionado\n"); return; }
     if (g_nlocators <= 0) { logit("t", "csnhypodbp: locate sin localizadores en el .d\n"); return; }
-    item = gtk_single_selection_get_selected_item(g_selection_detail);
-    if (!item) return;
-    row = CSNHYPODBP_ROW(item);
-    g = csnhypodbp_event_group_of(row);
     job = g_new0(LocateJob, 1);
     job->base.qid = selected_qid; job->base.version = (unsigned)selected_version; job->base.mod = selected_mod;
     job->base.otime = selected_otime; job->base.lat = selected_lat;
     job->base.lon = selected_lon; job->base.depth = selected_depth;
-    job->base.npicks = g ? csnhypodbp_event_group_picks(g, job->base.picks, CSNHYPODBP_MAX_PICKS) : 0;
+    /* Picadas = las filas de la tabla (una P y una S por estacion), filtradas
+       por la seleccion de estaciones/picks y por el origen A/M/Teo. */
+    {
+        CsnhypodbpPickFilter filter;
+        filter.auto_on = g_filter_auto;
+        filter.manual_on = g_filter_manual;
+        filter.theo_on = g_filter_theo;
+        job->base.npicks = csnhypodbp_locate_picks(g_sta_rows, g_sta_rows_n,
+                                                   (const int (*)[2])g_pick_on,
+                                                   &filter, job->base.picks,
+                                                   CSNHYPODBP_MAX_PICKS);
+    }
     job->base.nph = job->base.npicks;
-    job->nmp = csnhypodbp_manual_list(job->mp, CSNHYPODBP_MANUAL_MAX);
-    if (job->nmp > CSNHYPODBP_MANUAL_MAX) job->nmp = CSNHYPODBP_MANUAL_MAX;
+    /* Red/canal/loc: si la solucion base los perdio (p.ej. un ARC refinado por
+       NLLoc, que escribe la red en blanco y parte el canal), se completan con la
+       metadata de la estacion. Sin COMP3, HYPOINVERSE empareja
+       STA+NET+COMP3+LOC y rechaza TODAS las fases. */
+    for (i = 0; i < job->base.npicks; i++) {
+        CsnhypodbpPick *pk = &job->base.picks[i];
+        int k;
+        if (pk->chan[0] && pk->net[0]) continue;
+        for (k = 0; k < NumEstaciones; k++) {
+            if (strcmp(StaArray[k].szStation, pk->sta) != 0) continue;
+            if (!pk->chan[0]) snprintf(pk->chan, sizeof(pk->chan), "%s", StaArray[k].szChannel);
+            if (!pk->net[0])  snprintf(pk->net,  sizeof(pk->net),  "%s", StaArray[k].szNetID);
+            if (!pk->loc[0])  snprintf(pk->loc,  sizeof(pk->loc),  "%s", StaArray[k].szLocation);
+            break;
+        }
+    }
+    job->nmp = 0;   /* el overlay manual ya va incluido en las filas de la tabla */
     for (i = 0; i < NumEstaciones && job->ntank < MAX_ESTA; i++) {
         EwGuiTrace *tr = StaArray[i].trace;
         CsnhypodbpTankTrace *t;
@@ -481,15 +845,48 @@ void act_colour(GSimpleAction *action, GVariant *param, gpointer user_data) {
     on_colour_select(NULL, GINT_TO_POINTER(idx));
 }
 
-/* Etiqueta de ayuda de la barra inferior, segun el modo de clic. */
-void csnhypodbp_update_help(void) {
-    if (!g_help_label) return;
-    if (g_click_mode == CSNHYPODBP_CLICK_PICK)
-        gtk_label_set_text(GTK_LABEL(g_help_label),
-            "P/S activo: clic izq coloca la fase y vuelve a zoom | Esc: cancelar");
-    else
-        gtk_label_set_text(GTK_LABEL(g_help_label),
-            "P/S: elegir fase | clic izq: 1.º ancla, 2.º (der) zoom / (izq) reset | clic der: quitar pick | eje: arrastrar = zoom | Shift+←/→: contraer/expandir tiempo | Shift+↑/↓: escala");
+/* --- Ayuda (grupo "Help" del menu ☰): lista de comandos en ventana modal --- */
+void csnhypodbp_help_dialog_run(GtkWindow *parent) {
+    GtkWidget *win = gtk_window_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
+    GtkWidget *lbl = gtk_label_new(NULL);
+    GtkWidget *btn = gtk_button_new_with_label("Close");
+
+    static const char *help =
+        "<b>ZOOM (modo por defecto)</b>\n"
+        "  P / S            elegir fase a picar (entra en modo PICAR)\n"
+        "  clic izq         1.º clic: ancla; 2.º clic der: zoom / izq: reset\n"
+        "  clic der         quitar el pick de la traza\n"
+        "  eje (arrastrar)  zoom al rango / reset\n"
+        "  Shift+← / →      contraer / expandir tiempo\n"
+        "  Shift+↑ / ↓      escala vertical\n"
+        "\n"
+        "<b>PICAR (tras pulsar P o S)</b>\n"
+        "  clic izq         coloca la fase en la traza y vuelve a ZOOM\n"
+        "  Esc              cancelar";
+
+    gtk_window_set_title(GTK_WINDOW(win), "Commands");
+    if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
+    gtk_window_set_modal(GTK_WINDOW(win), TRUE);
+    gtk_window_set_default_size(GTK_WINDOW(win), 480, -1);
+
+    gtk_widget_set_margin_start(box, 14);
+    gtk_widget_set_margin_end(box, 14);
+    gtk_widget_set_margin_top(box, 14);
+    gtk_widget_set_margin_bottom(box, 14);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    gtk_label_set_justify(GTK_LABEL(lbl), GTK_JUSTIFY_LEFT);
+    gtk_label_set_selectable(GTK_LABEL(lbl), TRUE);
+    gtk_label_set_markup(GTK_LABEL(lbl), help);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    gtk_box_append(GTK_BOX(box), lbl);
+
+    gtk_widget_set_halign(btn, GTK_ALIGN_END);
+    g_signal_connect_swapped(btn, "clicked", G_CALLBACK(gtk_window_destroy), win);
+    gtk_box_append(GTK_BOX(box), btn);
+
+    gtk_window_set_child(GTK_WINDOW(win), box);
+    gtk_window_present(GTK_WINDOW(win));
 }
 
 gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
@@ -531,19 +928,16 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
     if (keyval == GDK_KEY_Escape) {
         g_click_mode = CSNHYPODBP_CLICK_ZOOM;
         csnhypodbp_view_cancel_anchor(&g_view);   /* cancela el zoom a medias, no el zoom */
-        csnhypodbp_update_help();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         return TRUE;
     }
     if (keyval == GDK_KEY_p || keyval == GDK_KEY_P) {
         g_pick_phase = 'P'; g_click_mode = CSNHYPODBP_CLICK_PICK;
-        csnhypodbp_update_help();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         return TRUE;
     }
     if (keyval == GDK_KEY_s || keyval == GDK_KEY_S) {
         g_pick_phase = 'S'; g_click_mode = CSNHYPODBP_CLICK_PICK;
-        csnhypodbp_update_help();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         return TRUE;
     }
@@ -556,6 +950,8 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
      * ordenada (no la del store), asi que se obtiene el item directamente.
      * get_selected_item es transfer-none: NO se libera. */
     gpointer item = gtk_single_selection_get_selected_item(g_selection_detail);
+    g_base_npicks = 0;
+    memset(&g_base_sol, 0, sizeof(g_base_sol));
     if (item) {
         CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
         double otime = 0, lat = 0, lon = 0, depth = 0; int qid = 0, mod = 0, ver = 0;
@@ -572,12 +968,20 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
             selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon;
             selected_depth = depth;
             selected_mod = mod; selected_version = ver;
+            /* Picadas de la solucion elegida: candidatas A/M de la tabla. */
+            g_base_npicks = csnhypodbp_event_group_picks(csnhypodbp_event_group_of(row),
+                                                          g_base_picks, CSNHYPODBP_MAX_PICKS);
+            /* Residuales de ESTA solucion: lo que la tabla de Ondas muestra en
+               `res` sin necesidad de pulsar locate. */
+            g_base_sol.npicks = csnhypodbp_event_sol_picks(row, g_base_sol.picks,
+                                                           CSNHYPODBP_MAX_PICKS);
             if (changed) {
                 g_zoom_factor = 1.0;
                 csnhypodbp_view_set_default(&g_view, g_dScreenTime);
             }
         }
     }
+    csnhypodbp_preview_update();   /* la tablita sigue a la solucion elegida */
 }
 
 /* Al seleccionar un evento (lista maestra) se despliega abajo la lista de sus
@@ -663,7 +1067,6 @@ void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y
         logit("t", "csnhypodbp: pick manual local %s.%s %c @ %.3f (overlay; no emitido)\n",
               mp.sta, mp.chan, mp.phase, mp.t);
         g_click_mode = CSNHYPODBP_CLICK_ZOOM;
-        csnhypodbp_update_help();
         ewgui_canvas_queue_draw(canvas_global);
         return;
     }
@@ -710,43 +1113,10 @@ void on_canvas_leave(GtkEventControllerMotion *ctrl, gpointer data) {
         ewgui_canvas_queue_draw(canvas_global);
 }
 
-/* Clic derecho sobre la lista: quita todas las picadas de esa estacion. */
-void on_station_right_click(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
-    (void)gesture; (void)n_press; (void)x; (void)data;
-    GtkListBoxRow *row;
-    const char *sta;
-    int r;
-    if (!g_list_stations) return;
-    row = gtk_list_box_get_row_at_y(GTK_LIST_BOX(g_list_stations), (int)y);
-    if (!row) return;
-    sta = g_object_get_data(G_OBJECT(row), "sta");
-    if (!sta) return;
-    r = csnhypodbp_manual_remove_station(sta);
-    logit("t", "csnhypodbp: clic der: -%d picks de la estacion %s\n", r, sta);
-    ewgui_canvas_queue_draw(canvas_global);
-}
+/* Nota: el clic derecho sobre una estacion vive ahora en las celdas de la tabla
+   (on_sta_cell_right_click, csnhypodbp_main.c), que es quien conoce la fila. */
 
-/* --------------------------------------------------------------------
- * Helper de alineacion por onda P (portado de EW7 new_hypo_display):
- *  - station_pick_time: marca P de la estacion (pick real del PICK_RING, o
- *    la P teorica IASP91, o la hora origen). El inicio de ventana ya no es
- *    por fila sino COMUN a la estacion (ver on_draw_signal / g_win_start_cur),
- *    para que el eje UTC y el picado valgan igual en todos los canales.
- * -------------------------------------------------------------------- */
-static double station_pick_time(int i, int *is_real) {
-    CsnhypodbpTracePick pk;
-    if (is_real) *is_real = 0;
-    /* P capturada del PICK_RING (A/M); si no, P teorica (IASP91). */
-    if (csnhypodbp_cap_find(&StaArray[i].pickcap, StaArray[i].szStation, 'P',
-                            selected_otime, g_pick_window_sec, &pk)) {
-        if (is_real) *is_real = 1;
-        return pk.t;
-    }
-    if (g_StaTheoP[i] > 1.0) return g_StaTheoP[i];
-    return selected_otime;
-}
-
-/* Nota: el inicio de ventana ya no es por fila sino COMUN a la estacion
+/* Nota: el inicio de ventana no es por fila sino COMUN a la estacion
    (se calcula en on_draw_signal y queda en g_win_start_cur), para que el eje
    UTC y el picado valgan igual en todos los canales. */
 
@@ -807,32 +1177,47 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
     int row_h = (g_NumSortedNodes > 0 && height > 160) ? (height - 60) / g_NumSortedNodes : g_spacing;
     if (row_h < 80) row_h = g_spacing;
 
-    /* Marca P mas temprana -> ventana global de referencia */
-    double earliest_pick = 1e15;
-    for (int n = 0; n < g_NumSortedNodes; n++) {
-        int i = g_SortedNodes[n].idx;
-        double pt = station_pick_time(i, NULL);
-        if (pt > 1.0 && pt < earliest_pick) earliest_pick = pt;
+    /* Una P y una S por estacion (M > A > T), con el overlay manual incluido.
+       `g_SortedNodes` son canales de UNA estacion (la seleccionada), asi que la
+       fila se calcula una sola vez y vale para todos sus canales. */
+    CsnhypodbpStaRow sta_row;
+    int have_row = 0;
+    memset(&sta_row, 0, sizeof(sta_row));
+    if (g_NumSortedNodes > 0) {
+        int i0 = g_SortedNodes[0].idx;
+        CsnhypodbpTracePick wc[CSNHYPODBP_CAP_MAX];
+        CsnhypodbpManualPick man[CSNHYPODBP_MANUAL_MAX];
+        CsnhypodbpStaInput si;
+        int nwc, nman;
+        memset(&si, 0, sizeof(si));
+        nwc = station_caps(StaArray[i0].szStation, wc, CSNHYPODBP_CAP_MAX);
+        nman = csnhypodbp_manual_list(man, CSNHYPODBP_MANUAL_MAX);
+        snprintf(si.sta, sizeof(si.sta), "%s", StaArray[i0].szStation);
+        si.dist_deg = g_StaDist[i0];
+        si.has_data = (bHasData[i0] == 1);
+        si.caps = wc; si.ncap = nwc;
+        si.theo_p = (g_StaTheoP[i0] > 1.0) ? g_StaTheoP[i0] : 0.0;
+        have_row = csnhypodbp_statable_build(&sta_row, 1, &si, 1, man, nman,
+                                             resid_source()) == 1;
     }
+
+    /* Marca P de referencia -> ventana global (todas las P alineadas). */
+    double earliest_pick = 1e15;
+    if (have_row && sta_row.p.present && sta_row.p.t > 1.0) earliest_pick = sta_row.p.t;
     if (earliest_pick == 1e15) earliest_pick = selected_otime + 15.0;
     g_dWindowStart = earliest_pick - g_align_lead;
 
     /* Ventana visible (zoom) y winStart COMUN de la estacion (para el eje UTC).
-       La P de referencia es la real si algun canal la trae (p. ej. HHZ), si no
-       la teorica; asi TODAS las trazas comparten ventana y un unico eje UTC
-       vale para todas (la P capturada vive solo en la fila que la recibio). */
+       La P de referencia es la leida (real o manual) si hay; si no la teorica.
+       Asi TODAS las trazas comparten ventana y un unico eje UTC vale para
+       todas. */
     double span = g_view.t1 - g_view.t0;
     if (span <= 0.0) span = g_dScreenTime;
     double sta_pick_t = selected_otime;
     int    sta_is_real = 0;
-    if (g_NumSortedNodes > 0) {
-        int n;
-        for (n = 0; n < g_NumSortedNodes; n++) {
-            int is_real = 0;
-            double pt = station_pick_time(g_SortedNodes[n].idx, &is_real);
-            if (is_real) { sta_pick_t = pt; sta_is_real = 1; break; }
-        }
-        if (!sta_is_real) sta_pick_t = station_pick_time(g_SortedNodes[0].idx, NULL);
+    if (have_row && sta_row.p.present) {
+        sta_pick_t = sta_row.p.t;
+        sta_is_real = (sta_row.p.origin == 'M' || sta_row.p.origin == 'A');
     }
     double sta_win_start = sta_pick_t - g_align_lead;
     g_win_start_cur = sta_win_start;
@@ -855,14 +1240,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         g_SortedNodes[n].y_bottom = y_center + (row_h / 2);
 
         int is_real = sta_is_real;
-        double pick_t = sta_pick_t;
         double winStart = sta_win_start;
 
-        /* LED de estado: verde = pick real, rojo = referencia origen */
-        cairo_new_path(cr); cairo_set_line_width(cr, 1.0);
-        if (is_real) cairo_set_source_rgb(cr, 0.2, 0.8, 0.2); else cairo_set_source_rgb(cr, 0.8, 0.2, 0.2);
-        cairo_arc(cr, 15, y_center + 1, 5, 0, 2 * M_PI); cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.0, 0.0, 0.0); cairo_stroke(cr);
+        /* (sin LED verde/rojo: era ambiguo y ya no se usa) */
+        cairo_new_path(cr);
+        cairo_set_line_width(cr, 1.0);
 
         /* Etiqueta por componente (HHZ/HHN/HHE); la estacion va en el titulo. */
         cairo_set_source_rgb(cr, 0.1, 0.2, 0.7);
@@ -981,32 +1363,29 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             }
         }
 
-        /* Marca P sobre la linea de referencia (todas alineadas). */
-        if (pick_t > 1.0 && pick_t >= winStart + g_view.t0 && pick_t <= winStart + g_view.t1) {
-            CsnhypodbpTracePick pcap;
-            int has_p = csnhypodbp_cap_find(&StaArray[i].pickcap, StaArray[i].szStation,
-                                            'P', selected_otime, g_pick_window_sec, &pcap);
-            cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
-            cairo_set_line_width(cr, 2);
-            cairo_move_to(cr, x_ref, y_center - (row_h / 2.5));
-            cairo_line_to(cr, x_ref, y_center + (row_h / 2.5));
-            cairo_stroke(cr);
-            cairo_set_font_size(cr, 11);
-            cairo_move_to(cr, x_ref + 4, y_center - (row_h / 3));
-            char plabel[16];
-            if (has_p) snprintf(plabel, sizeof(plabel), "P(%c)", pcap.origin);
-            else       snprintf(plabel, sizeof(plabel), "P(theo)");
-            cairo_show_text(cr, plabel);
+        /* Marca P (una sola por estacion: M > A > T). */
+        if (have_row && sta_row.p.present) {
+            double rel = sta_row.p.t - winStart;
+            if (rel >= g_view.t0 && rel <= g_view.t1) {
+                double xp = csnhypodbp_view_rel_to_x(&g_view, rel, g_margin_left, draw_width);
+                cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
+                cairo_set_line_width(cr, 2);
+                cairo_move_to(cr, xp, y_center - (row_h / 2.5));
+                cairo_line_to(cr, xp, y_center + (row_h / 2.5));
+                cairo_stroke(cr);
+                cairo_set_font_size(cr, 11);
+                cairo_move_to(cr, xp + 4, y_center - (row_h / 3));
+                char plabel[16];
+                if (sta_row.p.origin == 'T') snprintf(plabel, sizeof(plabel), "P(theo)");
+                else                         snprintf(plabel, sizeof(plabel), "P(%c)", sta_row.p.origin);
+                cairo_show_text(cr, plabel);
+            }
         }
 
-        /* Marcas S capturadas (A/M) de la estacion, sobre la traza. */
-        {
-            CsnhypodbpTracePick scaps[8];
-            int ns = csnhypodbp_cap_find_all(&StaArray[i].pickcap, StaArray[i].szStation,
-                                             'S', selected_otime, g_pick_window_sec, scaps, 8);
-            for (int s = 0; s < ns; s++) {
-                double rel = scaps[s].t - winStart;
-                if (rel < g_view.t0 || rel > g_view.t1) continue;
+        /* Marca S (una sola por estacion: M > A). */
+        if (have_row && sta_row.s.present) {
+            double rel = sta_row.s.t - winStart;
+            if (rel >= g_view.t0 && rel <= g_view.t1) {
                 double xs = csnhypodbp_view_rel_to_x(&g_view, rel, g_margin_left, draw_width);
                 cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
                 cairo_set_line_width(cr, 1.5);
@@ -1015,34 +1394,9 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
                 cairo_stroke(cr);
                 cairo_set_font_size(cr, 11);
                 char slab[16];
-                snprintf(slab, sizeof(slab), "S(%c)", scaps[s].origin);
+                snprintf(slab, sizeof(slab), "S(%c)", sta_row.s.origin);
                 cairo_move_to(cr, xs + 4, y_center + (row_h / 3));
                 cairo_show_text(cr, slab);
-            }
-        }
-
-        /* Picadas manuales del overlay local para este canal. */
-        {
-            CsnhypodbpManualPick mp[CSNHYPODBP_MANUAL_MAX];
-            int nm = csnhypodbp_manual_list(mp, CSNHYPODBP_MANUAL_MAX);
-            for (int k = 0; k < nm; k++) {
-                if (strcmp(mp[k].sta, StaArray[i].szStation) != 0) continue;
-                if (strcmp(mp[k].chan, StaArray[i].szChannel) != 0) continue;
-                double rel = mp[k].t - winStart;
-                if (rel < g_view.t0 || rel > g_view.t1) continue;
-                double x_pos = csnhypodbp_view_rel_to_x(&g_view, rel, g_margin_left, draw_width);
-                if (mp[k].phase == 'S')
-                    cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
-                else
-                    cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
-                cairo_set_line_width(cr, 1.5);
-                cairo_move_to(cr, x_pos, y_center - (row_h / 2.5));
-                cairo_line_to(cr, x_pos, y_center + (row_h / 2.5));
-                cairo_stroke(cr);
-                cairo_move_to(cr, x_pos + 4, y_center + (row_h / 3));
-                char mlab[16];
-                snprintf(mlab, sizeof(mlab), "%c(m)", mp[k].phase);
-                cairo_show_text(cr, mlab);
             }
         }
     }

@@ -73,32 +73,60 @@ pestaña *Ondas*). La lista de soluciones históricas se muestra subordinada: en
 `GtkFrame`, con fuente más pequeña y fondo ámbar claro en todas sus filas (la seleccionada, más
 intensa); el fondo entre filas queda sin teñir.
 
+## Búsqueda hipocentral (pestaña Eventos)
+
+El grupo **`Search`** del menú ☰ (visible solo en *Eventos*) abre **`Search events…`**: un formulario
+con rangos **min/max** de **tiempo de origen, latitud, longitud, profundidad y magnitud**. Solo el
+rango de **tiempo de origen** es obligatorio; un rango a un solo lado se completa con la cota
+natural del parámetro. Fechas en UTC con formato `YYYY-MM-DD` o `YYYY-MM-DD HH:MM:SS`
+(`csnhypodbp_search_build`, núcleo puro). El resultado se consulta con `ewguidb_search_events`
+(filtra por el **origen/magnitud preferidos** del evento, orden por `origin_time` DESC) y
+**reemplaza** el contenido de la vista: la maestra (título **`Events`**) muestra una fila por evento
+y el detalle (título **`Origins`**) sus soluciones. El tope de filas es `SearchMaxEvents`
+(def. 1000). Con 0 resultados no se toca la vista actual.
+
+`Clear search` (ítem del menú ☰ y **botón** junto al título `Events`, habilitado solo en modo
+búsqueda) vuelve a la vista **en vivo + historial**. Mientras hay una búsqueda activa, los eventos
+nuevos de los anillos se siguen agrupando en memoria pero **no** se añaden a la tabla.
+
 ## Pestaña Ondas (navegación por estación)
 
-El panel izquierdo lista las **estaciones** (una fila por nombre, orden por distancia) dentro de un
-`GtkFrame` con scroll propio; la fila seleccionada se resalta. **Por defecto no se dibuja ninguna
-traza**: al hacer clic en una estación se descargan (bajo demanda) y se dibujan **solo sus
-canales**, en el orden de `channelsOrder` × `componentsOrder` (`HHZ, HHN, HHE, BHZ, …`), omitiendo
-los no disponibles. Solo se piden canales de las **bandas que la estación ya tiene** (p. ej. un
-`.sta` con `HHZ` → `HHZ/HHN/HHE`; no se intenta `BH*`/`HN*`/`LH*`). Al seleccionar la estación se
-piden **todos** sus canales de esas bandas (no solo el del `.sta`): cualquier fila sin `fetched`
-fuerza la descarga. Cada canal ocupa una banda ≈ la pantalla (una componente a la vez); el resto se
-ve con scroll. Cada traza se rotula con su **componente** (`HHZ`, `HHN`, …); la estación va en el
-título del canvas.
+El panel izquierdo es una **tabla de estaciones** (`GtkColumnView` con **separadores de fila y de
+columna**, el mismo estilo que la tabla de *Eventos*) dentro de un `GtkFrame` con scroll propio, en
+fuente `0.75em` y con borde propio (clases `.sta-table` y `.detail-frame`). **Sin barra horizontal**:
+el marco se dimensiona a lo que pide la tabla (`station` se estira y las demás van a ancho fijo), así
+que las 5 columnas entran completas.
+**Una fila por (estación, fase)** ⇒ **2 filas por estación**, y las dos son **autónomas**: ambas
+muestran `station` (`[☑]` + nombre), `dist[km]`, `pick` (`P`|`S`), `stat` (`M`|`A`|`Teo`) y
+`res` (residual `%+.3f`; vacío si no aplica). La casilla va **junto al nombre** y es la del **pick de
+esa fila**: como cada fila es una fase suelta, desmarcarla desactiva **esa fase**, no la estación; si
+esa fase **no existe**, queda **vacía y no sensible** (marcada pero inerte
+confundía). Las casillas **solo filtran el envío al localizador** (no el dibujo). **Clic derecho**
+sobre cualquier celda quita las picadas manuales de esa estación. Cualquiera de las 2 filas
+selecciona la estación.
+La fila seleccionada se resalta y **por defecto no se dibuja ninguna traza**: al hacer clic en una
+estación se descargan (bajo demanda) y se dibujan **solo sus canales**, en el orden de
+`channelsOrder` × `componentsOrder` (`HHZ, HHN, HHE, BHZ, …`), omitiendo los no disponibles. Solo se
+piden canales de las **bandas que la estación ya tiene** (p. ej. un `.sta` con `HHZ` → `HHZ/HHN/HHE`;
+no se intenta `BH*`/`HN*`/`LH*`). Al seleccionar la estación se piden **todos** sus canales de esas
+bandas (no solo el del `.sta`): cualquier fila sin `fetched` fuerza la descarga. Cada canal ocupa una
+banda ≈ la pantalla (una componente a la vez); el resto se ve con scroll. Cada traza se rotula con su
+**componente** (`HHZ`, `HHN`, …); la estación va en el título del canvas.
 
-Cada traza se **alinea con la P de la estación**: se toma la picada capturada del `PICK_RING`
-(manual `M` o automática `A`) si algún canal la tiene; si no, la **P teórica** (IASP91). Como la P
-capturada vive solo en la fila que la recibió (p. ej. `HHZ`), la ventana es **común a la estación**
-(`winStart` compartido) para que todas las trazas y el eje UTC coincidan. Traza **negra** si la P es
-real; **gris** si solo teórica. Se dibujan además las **S** capturadas (A/M) y los picks manuales
-del overlay, con los colores de fase configurables (`pColor`/`sColor`).
-Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`; sin picada ⇒ teórica.
+Por estación se dibuja **una sola P y una sola S** (la de mayor rango `M > A > Teo`; empate → la más
+cercana a la teórica). Si hay una picada manual, **desplaza** a la automática y a la teórica (no se
+dibujan ambas). La traza se **alinea con la P** de la estación (manual/automática, o la **P teórica**
+IASP91 si no hay); la ventana es **común a la estación** (`winStart` compartido) para que todas las
+trazas y el eje UTC coincidan. Traza **negra** si la P es **leída** (real del `PICK_RING` o manual);
+**gris más oscuro (0.55)** si solo teórica. Los picks usan los colores de fase configurables
+(`pColor`/`sColor`). Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`; sin
+picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
 
 ### Interacción: zoom, eje de tiempo y picado
 
 - **Exageración vertical**: `Shift+↑` / `Shift+↓` multiplican la escala vertical (`g_zoom_factor`,
   ×1.5 / ÷1.5, acotada a `[0.1, 50]`); `Shift+0` la resetea **y también el zoom temporal**. Las
-  `↑`/`↓` **solas** siguen navegando la lista de estaciones (el `GtkListBox` conserva el foco); el
+  `↑`/`↓` **solas** siguen navegando la tabla de estaciones (la tabla conserva el foco); el
   controlador de teclas de la ventana está en fase **capture** y solo consume las variantes con
   `Shift` (y `p`/`S`/`Esc`) cuando la pestaña *Ondas* está activa.
 - **Zoom temporal** (`Shift+→` / `Shift+←`): expande / contrae el ancho visible del eje de tiempo
@@ -133,7 +161,8 @@ Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`;
   estación/evento/solución distintos). Un evento nuevo del anillo se añade a la lista pero **no roba**
   la selección si ya hay una (`csnhypodbp_should_autoselect`). La lista de estaciones **no pierde** la
   fila seleccionada al repoblarse tras un fetch (`g_rebuilding_stations`), así el canvas no se vacía.
-- **Picado P/S**: `P`/`S` activan el modo picado (la ayuda inferior lo indica); el **siguiente clic
+- **Picado P/S**: `P`/`S` activan el modo picado (los comandos están en **☰ → Help → Commands…**);
+  el **siguiente clic
   izquierdo** coloca la fase en la traza clickeada y **vuelve al modo zoom**; `Esc` cancela el modo
   picado (y el ancla de un zoom a medias) **sin** tocar el zoom. Mientras
   el modo picado está activo, un **círculo del color de la fase con la letra blanca** sigue al
@@ -142,24 +171,81 @@ Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`;
   manuales de una traza (canvas) o de toda una estación (lista). `Cancel` limpia todo el overlay del
   evento.
 
-Barra inferior: `Cancel`, `locators` y `locate`. El resto de controles viven en el menú **☰** del
-headerbar, que es **dependiente de la vista**: en *Eventos* solo `View`; en *Ondas* añade el grupo
+Barra inferior: a la **izquierda** `Cancel`; a la **derecha** los checkboxes de origen
+**`A` / `M` / `Teo`** (M marcada por defecto; deciden qué picadas se mandan al localizador), la caja
+con el **localizador activo** y los botones `locators` y `locate`. El resto de controles viven en el
+menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* los grupos `Search`
+(`Search events…`, `Clear search`) y `View`; en *Ondas* añade el grupo
 `Waveforms` con `Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia),
-`Time window…` (ventana de registro) y `Hide stations without data`, y el grupo `Colours` con
+`Time window…` (ventana de registro) y `Hide stations without data`, el grupo `Colours` con
 `P phase` / `S phase` (diálogo de color GTK4; el hex resultante queda en el log para copiarlo al
-`.d`).
+`.d`) y, **al final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
+comandos de teclado/ratón.
 
 `Hide stations without data` (clave `HideEmptyStations`) es un **modo dinámico no destructivo**:
 filtra la lista dejando solo las estaciones con datos en la ventana del evento; no borra filas, así
 que una estación que vuelve a tener datos (p. ej. por SeedLink) reaparece en la siguiente pasada.
 
-`locators` abre la lista de localizadores declarados con `locator <nombre> <bin> <cfg>`.
-`locate` ejecuta la **cadena offline** en un worker: escribe las picadas (solución + overlay) →
-`csnloc` offline (`DumpHypo 1`; el ARC se extrae del log) → refinador elegido
-(`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + `tank` temporal → `csnmags` offline).
-El resultado se muestra en un **preview** al tope de la pestaña; `Confirm` lo convierte en la
-**solución manual preferida** (se reinyecta por el camino normal de ARC, se emiten **una vez** las
-picadas a `PICK_RING` con origen `M` y se persiste en `ManualStateFile`, que se relee al arrancar).
+`locators` abre la lista de localizadores declarados con `locator <nombre> <bin> <cfg>`; la caja de
+la barra inferior muestra el **activo**. `locate` ejecuta la **cadena offline** en un worker con las
+picadas de la **tabla** (una P y una S por estación, **con su canal**) filtradas por la selección de
+estaciones/picks y por los checkboxes `A`/`M`/`Teo` (las `Teo` son la P teórica IASP91 de las
+estaciones sin P A ni M). El set enviado es **exactamente lo que muestra la tabla**: una estación que
+no aparece (por `MaxDistKm` o `HideEmptyStations`) no se manda. La cadena escribe las picadas →
+`csnloc` offline (`DumpHypo 1`; el ARC se extrae del log) → refinador
+elegido (`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + `tank` temporal → `csnmags`
+offline). El **residual por fase** lo aporta el propio localizador: el JSONL que `csnloc` emite a
+stdout y las columnas 35-38 (P) / 51-54 (S) del ARC de los refinadores; se muestra en la tabla.
+`nlloc_ring`/`hyp2000_ring` en modo offline **dicen la condición** que falló (`MinPhases`, `MaxRMS`,
+fuera de `GridFile`, sin banda, 0 fases, sin `LOCFILES`, NLLoc/LOC anormal), así que el error del
+botón trae la causa y no un `sin localizacion` mudo.
+
+Detalles de la cadena que importan si vuelve a fallar:
+
+- Las picadas se escriben con **net y loc reales** del ARC (`STA.CHAN.NET.LOC`); con `--.--`
+  HYPOINVERSE no empareja la estación contra `estaciones_hyp.sta` (`LET 5 2 3 0 0`) y **rechaza todas
+  las fases**. Los segundos se formatean `SS.mmm` (nunca ` 7.000` con espacio: `csnloc` descartaría
+  la picada).
+- **Si la solución base perdió el canal o la red** (p.ej. un ARC refinado por `nlloc_ring` antes del
+  arreglo), se completan con la metadata de la estación (`StaFile`/`estaciones_107.txt`, que trae la
+  red que el `.sta` necesita) en `build_row_for` y otra vez al armar `job->base`. Si aun así queda
+  alguna sin canal/red, el `locate` **falla con un mensaje explícito** en vez de dar un
+  `sin localizacion` mudo. El ARC que arma `Confirm` (`csnhypodbp_arc_build`) y las picadas manuales
+  (`emit_pick_scnl`) ya llevan el SCNL completo, y `ManualStateFile` lo persiste.
+- **Los residuales de la solución elegida se ven sin pulsar `locate`**: cada solución del grupo
+  guarda sus propias picadas (`EventSol.picks`, con su residual) y al seleccionarla en la tabla
+  *Origins* pasan a ser la fuente del `res` de la tabla de *Ondas* (`csnhypodbp_resid_source`:
+  candidata de `locate` si está vigente > solución elegida). Las picadas que se envían al localizador
+  van con `residual = NAN` (lo produce el localizador) y el JSONL de `csnloc` manda siempre. El
+  residual se persiste en `pick.uncertainty` (`hypodb` → `ewguidb_query_picks` → `pk->residual`).
+- **Orden por cabecera, fecha unificada y calendario**: las tres tablas usan el helper
+  `ewgui/table_ui.h` (`ewgui_table_column_sortable` + `ewgui_table_enable_sorting`); la fecha se
+  muestra como `YYYY-MM-DD HH:MM:SS` (`csnhypodbp_search_fmt_utc`) y el detalle añade `Created`
+  (orden por defecto). Las magnitudes ordenan por su propiedad numérica (`nmag0..nmag3`), porque el
+  texto de la celda es `"mag-nst"` y no es un número. El calendario del buscador es una ventana modal
+  con `GtkCalendar` (`day-selected` guarda la fecha: el widget se destruye con la ventana).
+- Del log de `csnloc` (que puede traer **varios** bloques `HYP2000ARC`, uno por pasada de la ventana
+  deslizante) se toma el **último**, que es el representante (mismo criterio que `offline_report.py`
+  y que el JSONL). El primero suele ser una solución parcial y con ella los refinadores se quedan sin
+  fases.
+- Los refinadores **silencian su stdout** mientras corren el motor (`freopen /dev/null`), porque
+  HYPOINVERSE imprime `NNN STATIONS READ IN.` antes del ARC y contaminaría el ARC que se parsea;
+  `csnhypodbp_arc_skip_preamble()` además salta cualquier preámbulo por si acaso.
+- Clave **`LocateKeepTmp 1`**: no borra el directorio temporal al fallar y **anexa su ruta al error**
+  (`[tmp=…]`), donde quedan `picks.txt`, `event.arc`, `csnloc.err` y `ref.err`. Arnés manual sin GTK:
+  `make -C ew_gui_tools/csnhypodbp chain` y
+  `./locate_chain <arc_entrada> [refinador] [tmp_root]` corre la cadena completa con los mismos
+  parámetros que la GUI y no borra nada.
+El resultado se muestra en una **tablita de 2 filas** al tope de la pestaña (cabecera de parámetros
+`Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`/`ML`/`Mwp` y su fila de valores), que **siempre está visible**:
+muestra primero la solución elegida en el detalle y, tras `locate`, la candidata con un **fondo rojo
+muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección muestra guiones.
+`Confirm` la convierte en la **solución manual preferida** (se reinyecta por el camino normal de ARC,
+se emiten **una vez** las picadas a `PICK_RING` con origen `M` y se persiste en `ManualStateFile`, que
+se relee al arrancar); `Discard` la descarta para seguir picando (vuelve a mostrar la elegida).
+El texto y el formato de los valores viven en la lógica pura `csnhypodbp_preview.{h,c}`
+(`make test` → `test_preview`), y la capa GTK solo vuelca el resultado en las etiquetas desde
+`csnhypodbp_preview_update()`, el **único** punto que escribe la tablita.
 
 La P teórica se calcula con el motor IASP91 de `csnloc` (librería `csnloc/libcsnloc_tt.a`), leyendo
 `iasp91.tbl`/`.hed` desde el cwd (`EW_PARAMS`, igual que `csnloc`). Si faltan las tablas, la teórica
@@ -191,6 +277,30 @@ config channelsOrder=[HH BH HN LH] componentsOrder=[Z N E] HideEmptyStations=0
 `componentsOrder` (listas separadas por espacios) se leen token a token y se re-unen. Si el log
 mostrara solo `[HH]`/`[Z]`, el parseo estaría truncado y solo se pediría `HHZ`.
 
+## Backend SDS (eventos antiguos)
+
+Las ondas se piden, por orden: **store** (`wstore`), **wave_serverV** y, por último, el archivo
+**SDS de SeisComP**. Con `SdsEnabled 1`, un evento más antiguo que `SdsFallbackHours` (def. 168 h ≈ 7
+días, alineado con la retención del `wstore`) se consulta **directo al SDS** (`SdsRoot`, def.
+`/mnt/sds/archive`), porque la retención local ya no lo tiene y `wave_serverV` solo devolvería un
+timeout. En ese caso (**evento antiguo**) se omite `wave_serverV` (misma ventana de retención que el
+store): el orden es **SDS → store**, y si ninguno tiene datos la estación queda sin traza. Para
+eventos recientes el SDS es el **último recurso** (cuando store y `wave_serverV` vienen vacíos).
+
+La ruta se arma con `ewgui_sds_path` (`common`):
+`<root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>`, y
+`csnhypodbp_sds_fetch` lee el día (o los dos días de una ventana que cruza medianoche) con
+**libmseed2** y ensambla un buffer `TRACE2_HEADER + i4` — el mismo contrato que `store_fetch_sta`,
+así que `ws_fetch_finish` no distingue el origen. Las muestras `int16`/`float`/`double` se convierten
+a `int32`; los huecos entre registros quedan en 0. Si el día no está en el SDS, el archivo ni se abre
+(no ensucia el log con el `Cannot open file` de libmseed2).
+
+**Location code.** El SDS de SeisComP escribe el location vacío (`C1.LL07..HHZ.D…`), mientras
+EarthWorm usa el literal `"--"` (`LOC_NULL_STRING`, `trace_buf.h`). `ewgui_sds_path` traduce
+`--`/vacío/solo-espacios → vacío; los locations reales (`00`, `10`, `04`, …) pasan literales. El
+`TRACE2_HEADER` que devuelve `csnhypodbp_sds_fetch` conserva el `loc` original (`--`), porque el
+resto del módulo (y EarthWorm) lo espera así.
+
 ## Configuración (`csnhypodbp.d`)
 
 | clave | default | función |
@@ -209,8 +319,14 @@ mostrara solo `[HH]`/`[Z]`, el parseo estaría truncado y solo se pediría `HHZ`
 | `ManualStateFile` | `csnhypodbp_manual.events` | soluciones manuales propias (locate+confirm) |
 | `LocatorTimeoutSec` | `180` | timeout (s) por localizador offline |
 | `PrefetchNeighbors` | `2` | estaciones vecinas a precargar |
-| `HideEmptyStations` | `0` | ocultar de la lista las estaciones sin datos en la ventana |
+| `HideEmptyStations` | `0` | ocultar de la tabla las estaciones sin datos en la ventana |
+| `MaxDistKm` | `500` | distancia (km) máxima de las estaciones de la tabla (y por tanto del `locate`) |
+| `LocateKeepTmp` | `0` | `1` = no borrar el directorio temporal del `locate` y anexar su ruta al error |
 | `GroupMaxSolutions` | `100` | tope de versiones por evento |
+| `SearchMaxEvents` | `1000` | tope de eventos que devuelve la búsqueda hipocentral |
+| `SdsEnabled` | `1` | habilitar el backend SDS (archivo SeisComP) |
+| `SdsRoot` | `/mnt/sds/archive` | raíz del archivo SDS |
+| `SdsFallbackHours` | `168` | edad (h) a partir de la cual se consulta el SDS |
 
 ## Tests
 
@@ -226,3 +342,19 @@ verifica el almacén por `(qid, mod)` y `csnhypodbp_mag_match`; `test_mag_msg` v
 módulo origen viaja y se recupera en `MAG_INFO.origin_version`; `test_station_order` cubre el orden
 de canales y las decisiones de la vista (banda/`needs_fetch`/`has_data`); `test_view` cubre el
 estado del zoom por dos clics, los mapeos tiempo↔x, los ticks del eje y la exageración vertical.
+`test_search` valida el formulario de búsqueda (fechas obligatorias, rangos a un solo lado, límite);
+`test_statable` cubre la tabla de estaciones (dedup `M > A > T`, residual de la solución, canal de la
+picada, color de traza y el filtro de picadas `csnhypodbp_locate_picks`/`csnhypodbp_pick_allowed` del
+localizador); `test_staitem` cubre el modelo de fila del `GtkColumnView` (una fila por (estación,
+fase), `stat` = M/A/Teo, `res` = `%+.3f`, `has-pick`); `test_preview` cubre la tablita del preview
+(título por estado, formato de los 7 valores y guion cuando falta el dato); `test_locate` cubre además la
+escritura de picadas con **net/loc reales**, que `arc_extract` devuelva el **último** bloque y el
+salto del preámbulo del refinador;
+`test_ui_invariants.sh` (grep, sin GTK) comprueba las invariantes de UI (tabla, barra inferior,
+Help, filtros `A`/`M`/`Teo`); `test_sds_read` genera un miniSEED sintético en el layout SDS y
+comprueba que el lector devuelve el
+buffer `TRACE2_HEADER + i4` con las muestras intactas, que un `loc "--"` encuentra el archivo escrito
+con loc vacío, que un día ausente no escribe en stderr y el predicado `csnhypodbp_sds_prefer`. En
+`common`, `test_sds_path` valida la construcción de la ruta SDS (incluido `loc "--"` → `..`) y
+`test_db_search` (integración, gated por `EWGUI_DB_TEST_ENV`) cubre los
+rangos, el orden y el `LIMIT` de `ewguidb_search_events`.

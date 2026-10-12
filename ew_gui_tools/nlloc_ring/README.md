@@ -121,12 +121,21 @@ cd <workdir>
 nlloc_ring <ruta>/nlloc_ring.d <arc_entrada> > out.arc   # ARC refinado a stdout
 ```
 
-NLLoc imprime su traza por stdout, así que el ARC (normalizado a header 197 /
-fases 114, con el `qid` y la versión de `csnloc` copiados) queda al final.
+NLLoc imprime su traza por stdout, así que el motor corre con su stdout redirigido a
+`/dev/null` (`freopen`) y por stdout sale **solo** el ARC (normalizado a header 197 /
+fases 114, con el `qid` y la versión de `csnloc` copiados).
 
 **Longitud**: NLLoc escribe `'E'` para el este y **blanco** para el oeste
 (`NLLocLib.c:12965`), mientras que `csnloc`/`csnhypodbp` usan `'W'`. El módulo lo
 normaliza al reescribir el header.
+
+**SCNL de las fases**: `arc_rewrite_id` copia además **red, COMP3 y LOC de cada
+línea de fase del ARC de entrada**. NLLoc escribe la línea de fase como
+`comp`(1 letra)+`inst`(3) y deja `inst` en blanco (el OBS sólo lleva el canal en
+el campo COMP: `NLLocLib.c:13171-13177`), así que su ARC salía **sin red y sin
+canal**; `csnhypodbp` y HYPOINVERSE emparejan las fases por `STA+NET+COMP3+LOC`
+(`LET 5 2 3 0 0`) y con `--`/blancos las rechazan **todas**. El OBS también
+escribe `?` cuando el canal viene vacío, para no quedarse en 13 campos.
 
 ## Estado
 

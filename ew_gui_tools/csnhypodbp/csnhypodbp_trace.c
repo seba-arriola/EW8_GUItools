@@ -135,9 +135,26 @@ int csnhypodbp_cap_find_all(const CsnhypodbpPickCap *cap, const char *sta,
     return count;
 }
 
-int csnhypodbp_ref_pick(const CsnhypodbpTracePick *p, int n,
-                        double theo_p, double *ref_t)
+int csnhypodbp_cap_window(const CsnhypodbpPickCap *cap, const char *sta,
+                          double t0, double window_sec,
+                          CsnhypodbpTracePick *out, int max_out)
 {
+    if (!cap || !sta || !out || max_out <= 0 || cap->n <= 0)
+        return 0;
+    int count = 0;
+    for (int k = 0; k < cap->n && count < max_out; k++) {
+        const CsnhypodbpTracePick *p = &cap->picks[k];
+        if (!p->sta[0] || strcmp(p->sta, sta))
+            continue;
+        if (fabs(p->t - t0) > window_sec)
+            continue;
+        out[count++] = *p;
+    }
+    return count;
+}
+
+int csnhypodbp_ref_pick(const CsnhypodbpTracePick *p, int n,
+                        double theo_p, double *ref_t){
     for (int k = 0; k < n; k++) {
         if (pick_phase(&p[k]) == 'P') {
             if (ref_t) *ref_t = p[k].t;
@@ -153,7 +170,7 @@ void csnhypodbp_trace_rgb(int has_p_pick, double rgb[3])
     if (!rgb)
         return;
     if (has_p_pick) { rgb[0] = 0.0; rgb[1] = 0.0; rgb[2] = 0.0; }
-    else            { rgb[0] = 0.7; rgb[1] = 0.7; rgb[2] = 0.7; }
+    else            { rgb[0] = 0.55; rgb[1] = 0.55; rgb[2] = 0.55; }
 }
 
 char csnhypodbp_phase_from_char(char c)

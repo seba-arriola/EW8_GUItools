@@ -352,7 +352,25 @@ static int hypo_locate(const char *arc_in, int in_len,
 
     fp = fopen("arcIn", "w");
     if (!fp) { logit("et", "hyp2000_ring: no se pudo escribir arcIn\n"); return -1; }
-    fwrite(arc_in, 1, (size_t)in_len, fp);
+    /* La linea 1 (resumen) de un ARC viejo puede traer el modelo de velocidades
+       en EWGUI_ARC_VMODEL_LEGACY_OFF.., justo donde HYPOINVERSE lee magnitudes
+       (FORMAT 1212: A1,F3.2,F3.1) -> aborta con "Bad value during floating point
+       read". Se le escribe ese bloque en blanco: LOC solo lee, y el modelo se
+       conserva en la linea 1 del ARC de salida (arc_rewrite_id). */
+    {
+        int hdr = 0, b0 = EWGUI_ARC_VMODEL_LEGACY_OFF;
+        int b1 = EWGUI_ARC_VMODEL_LEGACY_END, i;
+        while (hdr < in_len && arc_in[hdr] != '\n') hdr++;
+        if (b0 > hdr) b0 = hdr;
+        if (b1 > hdr) b1 = hdr;
+        if (b1 > b0) {
+            fwrite(arc_in, 1, (size_t)b0, fp);
+            for (i = b0; i < b1; i++) fputc(' ', fp);
+            fwrite(arc_in + b1, 1, (size_t)(in_len - b1), fp);
+        } else {
+            fwrite(arc_in, 1, (size_t)in_len, fp);
+        }
+    }
     /* El ARC debe terminar en '\n' y con una linea en blanco: hyphs.for lee el
        bloque de fases hasta el final y, sin ella, con eventos degenerados da
        "Sequential READ ... after EOF marker" y aborta el proceso. */
@@ -372,6 +390,11 @@ static int hypo_locate(const char *arc_in, int in_len,
     if (pid < 0) { logit("et", "hyp2000_ring: fork fallo\n"); return -1; }
     if (pid == 0) {
         int ret = 0;
+        /* LOC escribe su ARC en arcOut; su chachara de stdout (p.ej.
+           "NNN STATIONS READ IN.") contaminaria el ARC que el modo offline
+           imprime en stdout y csnhypodbp no podria parsearlo. */
+        if (freopen("/dev/null", "w", stdout) == NULL)
+            fprintf(stderr, "hyp2000_ring: no pude silenciar stdout\n");
         hypoinv_wrapper("LOC", &ret);
         _exit(0);
     }

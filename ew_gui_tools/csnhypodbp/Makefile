@@ -13,6 +13,7 @@ LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq)
 EWLIBS = ../common/libewgui_gtk4.a \
          ../csnloc/libcsnloc_tt.a \
          ../wavestore/libwavestore.a \
+         $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a \
          $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
@@ -23,7 +24,8 @@ EWLIBS = ../common/libewgui_gtk4.a \
 OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_group.o csnhypodbp_trace.o csnhypodbp_tt.o csnhypodbp_master.o \
        csnhypodbp_station.o csnhypodbp_locator.o csnhypodbp_manual.o csnhypodbp_locate.o \
-       csnhypodbp_view.o
+       csnhypodbp_view.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
+       csnhypodbp_staitem.o csnhypodbp_preview.o
 
 all: csnhypodbp
 
@@ -95,16 +97,49 @@ test_manual: test_manual.c csnhypodbp_manual.o
 	$(CC) $(CFLAGS) -o test_manual test_manual.c csnhypodbp_manual.o -lm
 
 # Pipeline offline locate (partes puras) + persistencia manual.
-test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o
-	$(CC) $(CFLAGS) -o test_locate test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o -lm
+test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o
+	$(CC) $(CFLAGS) -o test_locate test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o -lm
+
+# Arnes MANUAL de la cadena offline del boton `locate` (sin GTK). Corre
+# picks -> csnloc -> refinador -> magnitud con los mismos parametros que la GUI
+# y NO borra el directorio temporal. Necesita resources/ y los binarios
+# instalados, asi que NO forma parte de `make test`:
+#   make -C ew_gui_tools/csnhypodbp chain
+#   ./locate_chain <arc_entrada> [refinador] [tmp_root]
+chain: locate_chain
+locate_chain: locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o
+	$(CC) $(CFLAGS) -o locate_chain locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o -lm
+
+# Tabla de estaciones: dedup M>A>T, residual de la solucion y color de traza.
+test_statable: test_statable.c csnhypodbp_statable.o csnhypodbp_trace.o
+	$(CC) $(CFLAGS) -o test_statable test_statable.c csnhypodbp_statable.o csnhypodbp_trace.o -lm
+
+# Modelo de la tabla de estaciones (GObject): una fila por (estacion, fase).
+test_staitem: test_staitem.c csnhypodbp_staitem.o
+	$(CC) $(CFLAGS) -o test_staitem test_staitem.c csnhypodbp_staitem.o \
+	      $(shell pkg-config --libs glib-2.0 gobject-2.0) -lm
 
 # Regresion de la pestana Ondas: la 1a descarga debe fijar oldest (span).
 test_fetch_span: test_fetch_span.c ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o test_fetch_span test_fetch_span.c ../common/libewgui_gtk4.a -lm
 
+# Nucleo puro del formulario de busqueda (parseo/validacion de rangos).
+test_search: test_search.c csnhypodbp_search.o
+	$(CC) $(CFLAGS) -o test_search test_search.c csnhypodbp_search.o -lm
+
+# Tablita del preview de `locate`: titulos por estado y formato de los 7 valores.
+test_preview: test_preview.c csnhypodbp_preview.o
+	$(CC) $(CFLAGS) -o test_preview test_preview.c csnhypodbp_preview.o -lm
+
+# Lector SDS (libmseed2): genera un miniSEED sintetico y lo lee de vuelta.
+test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
+	$(CC) $(CFLAGS) -o test_sds_read test_sds_read.c csnhypodbp_sds.o \
+	      ../common/src/ewgui_sds.o $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a -lm
+
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
       test_master_store test_mag_msg test_station_order test_locator test_manual test_locate \
-      test_fetch_span test_view
+      test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
+      test_preview
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -119,8 +154,15 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_locate
 	./test_fetch_span
 	./test_view
+	./test_search
+	./test_sds_read
+	./test_statable
+	./test_staitem
+	./test_preview
+	sh ./test_ui_invariants.sh
 
 clean:
 	rm -f csnhypodbp test_filter test_group test_parse_solution test_magstore \
 	      test_trace test_tt test_master_store test_mag_msg test_station_order \
-	      test_locator test_manual test_locate test_fetch_span test_view *.o
+	      test_locator test_manual test_locate test_fetch_span test_view test_search \
+	      test_sds_read test_statable test_staitem test_preview locate_chain *.o

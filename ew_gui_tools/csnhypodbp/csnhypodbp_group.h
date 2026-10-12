@@ -27,6 +27,7 @@ typedef struct {
     char   net[4];      /* red (ARC [5:7])                              */
     char   loc[4];      /* localizacion (ARC [111:113]); "--" => ""     */
     double weight;      /* 0.0-1.0 (LPWT P / LSWT S del ARC)            */
+    double residual;    /* residual del localizador (s); NAN si no aplica */
 } CsnhypodbpPick;
 
 typedef struct {

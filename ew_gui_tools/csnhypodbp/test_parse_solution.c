@@ -18,7 +18,7 @@ static void setb(char *b, int off, const char *s)
 }
 
 static size_t add_phase(char *buf, size_t n, const char *sta, const char *chan,
-                        char phase, const char *time17)
+                        char phase, const char *time17, const char *resid4)
 {
     memset(buf + n, ' ', 114);
     setb(buf + n, 0, sta);
@@ -26,6 +26,7 @@ static size_t add_phase(char *buf, size_t n, const char *sta, const char *chan,
     setb(buf + n, 9, chan);
     buf[n + 14] = phase;
     setb(buf + n, 17, time17);
+    if (resid4) setb(buf + n, (phase == 'S') ? 50 : 34, resid4);
     buf[n + 114] = '\n';
     n += 115;
     /* Linea de continuacion de la fase. */
@@ -43,7 +44,7 @@ int main(void)
 {
     char buf[4096];
     CsnhypodbpSolution sol;
-    size_t n = 0;
+    size_t n = 0, p0;
     struct tm t;
     double base;
     int i;
@@ -67,8 +68,9 @@ int main(void)
     buf[n] = '$'; buf[n + 1] = '1'; buf[n + 197] = '\n';
     n += 198;
 
-    n = add_phase(buf, n, "BO03", "HHZ", 'P', "20260309163756.00");
-    n = add_phase(buf, n, "GO01", "HHE", 'S', "20260309164016.00");
+    p0 = n;
+    n = add_phase(buf, n, "BO03", "HHZ", 'P', "20260309163756.00", "  12");
+    n = add_phase(buf, n, "GO01", "HHE", 'S', "20260309164016.00", " -05");
 
     /* Linea final vacia. */
     memset(buf + n, ' ', 114); buf[n + 114] = '\n'; n += 115;
@@ -92,6 +94,15 @@ int main(void)
     CHECK(fabs(sol.picks[0].t_pick - base) < 0.01, "tiempo P correcto");
     for (i = 0; i < sol.npicks; i++)
         CHECK(sol.picks[i].t_pick > 0.0, "tiempo valido");
+
+    /* Residual Y2K: P en [34,37], S en [50,53] (entero x100). */
+    CHECK(fabs(sol.picks[0].residual - 0.12) < 1e-6, "residual P 0.12");
+    CHECK(fabs(sol.picks[1].residual - (-0.05)) < 1e-6, "residual S -0.05");
+
+    /* Residual en blanco (como el ARC de csnloc) -> NAN. */
+    memset(buf + p0 + 34, ' ', 4);
+    CHECK(csnhypodbp_parse_solution(buf, strlen(buf), 162, &sol) == 0, "parsea sin residual");
+    CHECK(isnan(sol.picks[0].residual), "residual en blanco -> NAN");
 
     /* Sin byte de marca -> automatica. */
     buf[174] = ' ';
