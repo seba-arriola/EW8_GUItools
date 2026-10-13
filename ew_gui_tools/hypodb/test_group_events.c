@@ -28,6 +28,7 @@ int main(void)
     memset(&cfg, 0, sizeof cfg);
     cfg.group_pick_tol_sec = 0.1;
     cfg.group_min_match_picks = 3;
+    cfg.event_max_dt_sec = 300.0;
 
     st = hypodb_state_new(&cfg);
     assert(st);
@@ -35,13 +36,14 @@ int main(void)
     /* Sismo 1, 4 picadas, qid 111 */
     memset(&a, 0, sizeof a);
     a.qid = 111;
+    a.otime = 1000000000.0;
     a.npicks = 4;
     mkpick(&a.picks[0], "GO01", 'P', 1000.00);
     mkpick(&a.picks[1], "GO02", 'P', 1001.00);
     mkpick(&a.picks[2], "GO03", 'P', 1002.00);
     mkpick(&a.picks[3], "GO01", 'S', 1005.00);
     assert(hypodb_assign_event(st, &a, e1, sizeof e1) == 0);
-    assert(strcmp(e1, "E111") == 0);
+    assert(strncmp(e1, "E111-", 5) == 0);   /* E<qid>-<yyyymmddhhmmss> */
 
     /* Mismo sismo, qid distinto, mismas picadas -> mismo evento */
     b = a;
@@ -69,6 +71,25 @@ int main(void)
     assert(hypodb_assign_event(st, &d, e4, sizeof e4) == 0);
     assert(strcmp(e4, "E444") == 0);
     assert(strcmp(e4, e1) != 0);
+
+    /* Mismo qid de OTRA sesión de csnloc (~27,7 h después) y picadas distintas:
+       la guarda EventMaxDtSec impide la fusión, así que es un evento nuevo y su
+       id lleva otra hora. */
+    {
+        CsnhypodbpSolution e;
+        char e5[64];
+
+        memset(&e, 0, sizeof e);
+        e.qid = 111;
+        e.otime = 1000000000.0 + 100000.0;
+        e.npicks = 3;
+        mkpick(&e.picks[0], "YY01", 'P', 5000.0);
+        mkpick(&e.picks[1], "YY02", 'P', 5001.0);
+        mkpick(&e.picks[2], "YY03", 'P', 5002.0);
+        assert(hypodb_assign_event(st, &e, e5, sizeof e5) == 0);
+        assert(strcmp(e5, e1) != 0);
+        assert(strncmp(e5, "E111-", 5) == 0);
+    }
 
     hypodb_state_free(st);
     printf("ALL HYPODB GROUP EVENTS TESTS PASSED\n");

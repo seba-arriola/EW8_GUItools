@@ -25,5 +25,22 @@ ew_controller: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o ew_controller $(OBJS) $(EWLIBS) $(LDFLAGS)
 	cp ew_controller $(EW_HOME)/$(EW_VERSION)/bin/
 
+# Invariantes de fuente (grep, sin GTK ni display): tablas ordenables y refresco
+# de estado. Ver test_ui_invariants.sh.
+test:
+	bash ./test_ui_invariants.sh
+
+# Arnes GUI (Xvfb + AT-SPI) contra el EarthWorm EN MARCHA: orden por cabecera,
+# estado que se refleja y reparto del espacio. Ver tests/test_sort_and_status.sh
+# y docs/GUI-TESTS.md.
+test-live: tests/fake_status
+	bash ./tests/test_sort_and_status.sh
+	bash ./tests/test_sort_and_status.sh --layout
+
+tests/fake_status: tests/fake_status.c
+	$(CC) $(CFLAGS) -o $@ tests/fake_status.c $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm -lpthread
+
+.PHONY: all clean test test-live
+
 clean:
-	rm -f ew_controller *.o
+	rm -f ew_controller *.o tests/fake_status

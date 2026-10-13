@@ -19,6 +19,10 @@
 #include "hypodb_config.h"
 #include "hypodb_ingest.h"
 
+/* El ARC de build_arc() tiene hora origen 2026-10-10T12:00:00Z y el event_id
+   lleva esa hora como sufijo (ver hypodb_ids.h). */
+#define EID "E987654-20261010120000"
+
 static void pad(char *dst, const char *s, int w)
 {
     int i, len = (int)strlen(s);
@@ -101,6 +105,15 @@ static void build_arc(char *out, int qid, int version, int manual)
     add_phase(out, "GO01", "C1", "HHN", 'S', "20261010120009.90", "--");
 }
 
+static void check_utc(const char *s, const char *prefix)
+{
+    if (strncmp(s, prefix, strlen(prefix)) != 0 || !strstr(s, "+00")) {
+        fprintf(stderr, "timestamp inesperado: '%s' (esperaba '%s...' y +00)\n",
+                s, prefix);
+        assert(0);
+    }
+}
+
 int main(void)
 {
     const char *envfile = getenv("EWGUI_DB_TEST_ENV");
@@ -131,7 +144,7 @@ int main(void)
     assert(st);
     hypodb_state_set_db(st, db);
 
-    ewguidb_exec(db, "DELETE FROM event WHERE event_id='E987654'");
+    ewguidb_exec(db, "DELETE FROM event WHERE event_id='" EID "'");
 
     build_arc(arc, 987654, 7, 1);
     assert(hypodb_feed_arc(st, arc, strlen(arc), 162) == 0);
@@ -141,14 +154,25 @@ int main(void)
         EwGuiOriginRow *ors = NULL;
         int nor = 0;
 
-        assert(ewguidb_query_origins(db, "E987654", &ors, &nor) == 1);
-        assert(strcmp(ors[0].origin_id, "E987654:162") == 0);
+        const char *wv = getenv("EW_VERSION");
+
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 1);
+        assert(strcmp(ors[0].origin_id, EID ":162") == 0);
         assert(strcmp(ors[0].status, "REVIEWED") == 0);
         assert(strcmp(ors[0].velocity_model, "CHILE_POTIN") == 0);
         assert(ors[0].station_count == 4);
         assert(fabs(ors[0].latitude + 33.75) < 0.01);   /* 33°45' */
         assert(fabs(ors[0].longitude + 71.10) < 0.01);  /* 70°66' */
         assert(fabs(ors[0].depth - 12.5) < 0.01);
+        /* D2: `author` constante (el modulo) y `software` de $EW_VERSION. */
+        assert(strcmp(ors[0].author, "csnhypodbp") == 0);
+        assert(strcmp(ors[0].software, (wv && *wv) ? wv : "earthworm_8.0") == 0);
+        assert(strcmp(ors[0].location_algorithm, "csnloc") == 0);
+        assert(fabs(ors[0].azimuthal_gap - 180.0) < 1e-9);
+        assert(fabs(ors[0].standard_error - 0.35) < 1e-6);
+        /* PostgreSQL rinde el timestamptz sin milisegundos si son cero: se
+           comprueba el instante (prefijo) y que sea UTC (+00). */
+        check_utc(ors[0].origin_time, "2026-10-10 12:00:00");
         ewguidb_rows_free(ors);
     }
 
@@ -157,11 +181,19 @@ int main(void)
         EwGuiPickRow *pks = NULL;
         int npk = 0;
 
-        assert(ewguidb_query_picks(db, "E987654:162", &pks, &npk) == 2);
+        assert(ewguidb_query_picks(db, EID ":162", &pks, &npk) == 2);
         assert(strcmp(pks[0].phase, "P") == 0);
         assert(strcmp(pks[0].channel, "C1.GO01..HHZ") == 0);
+        check_utc(pks[0].pick_time, "2026-10-10 12:00:05");
         assert(strcmp(pks[1].phase, "S") == 0);
         assert(strcmp(pks[1].channel, "C1.GO01..HHN") == 0);
+        /* Peso (LPWT/LSWT 0 -> 1.0), residual ausente -> NULL -> NAN, y
+           pick_status automatico: el ARC es manual, pero la marca manual de la
+           PICADA la da el cruce con PICK_RING. */
+        assert(fabs(pks[0].weight - 1.0) < 1e-9);
+        assert(fabs(pks[1].weight - 1.0) < 1e-9);
+        assert(isnan(pks[0].residual));
+        assert(strcmp(pks[0].pick_status, "automatic") == 0);
         ewguidb_rows_free(pks);
     }
 
@@ -199,16 +231,46 @@ int main(void)
         EwGuiMagRow *mgs = NULL;
         int nmg = 0;
 
-        assert(ewguidb_query_magnitudes(db, "E987654:162", &mgs, &nmg) == 1);
+        assert(ewguidb_query_magnitudes(db, EID ":162", &mgs, &nmg) == 1);
         assert(strcmp(mgs[0].magnitude_type, "ML") == 0);
         assert(fabs(mgs[0].magnitude_value - 4.2) < 1e-6);
+        assert(fabs(mgs[0].mag_uncertainty - 0.1) < 1e-6);
+        assert(mgs[0].station_count == 1);
+        /* D3: el metodo viaja en el mensaje (antes se escribia "CSNNet" fijo). */
+        assert(strcmp(mgs[0].calculation_method, "CSNNet") == 0);
+        ewguidb_rows_free(mgs);
+    }
+    /* D3 (regresion): una magnitud ajustada a mano ("CSNMan") se relee con su
+       marca, que es la que csnhypodbp busca para preferirla al recargar. */
+    {
+        MAG_INFO m;
+        char buf[1024];
+        EwGuiMagRow *mgs = NULL;
+        int nmg = 0;
+
+        memset(&m, 0, sizeof m);
+        snprintf(m.qid, sizeof m.qid, "987654");
+        m.origin_version = 162;
+        m.imagtype = 1;
+        snprintf(m.szmagtype, sizeof m.szmagtype, "ML");
+        m.mag = 4.4;
+        m.error = -1.0;
+        m.nstations = 2;
+        snprintf(m.algorithm, sizeof m.algorithm, "CSNMan");
+        assert(wr_mag_scnl(&m, buf, sizeof buf) == 0);
+        assert(hypodb_feed_mag(st, buf, strlen(buf)) == 0);
+        assert(ewguidb_query_magnitudes(db, EID ":162", &mgs, &nmg) == 1);
+        assert(strcmp(mgs[0].calculation_method, "CSNMan") == 0);
+        assert(fabs(mgs[0].magnitude_value - 4.4) < 1e-6);
+        assert(mgs[0].station_count == 2);
+        assert(isnan(mgs[0].mag_uncertainty));   /* error < 0 -> NULL */
         ewguidb_rows_free(mgs);
     }
     {
         EwGuiStaMagRow *sms = NULL;
         int nsm = 0;
 
-        assert(ewguidb_query_station_magnitudes(db, "E987654:162/mag/ML",
+        assert(ewguidb_query_station_magnitudes(db, EID ":162/mag/ML",
                                                 &sms, &nsm) == 1);
         assert(strcmp(sms[0].channel, "C1.GO01..HHZ") == 0);
         assert(strcmp(sms[0].amplitude_type, "AML") == 0);
@@ -222,16 +284,31 @@ int main(void)
 
         assert(ewguidb_query_recent_events(db, 24, &evs, &nev) >= 1);
         for (int i = 0; i < nev; i++)
-            if (strcmp(evs[i].event_id, "E987654") == 0)
+            if (strcmp(evs[i].event_id, EID) == 0)
                 f = i;
         assert(f >= 0);
-        assert(strcmp(evs[f].preferred_origin_id, "E987654:162") == 0);
+        assert(strcmp(evs[f].preferred_origin_id, EID ":162") == 0);
         assert(strcmp(evs[f].preferred_magnitude_id,
-                      "E987654:162/mag/ML") == 0);
+                      EID ":162/mag/ML") == 0);
         ewguidb_rows_free(evs);
     }
 
-    ewguidb_exec(db, "DELETE FROM event WHERE event_id='E987654'");
+    /* D10 (orden): con dos soluciones del mismo evento, `query_origins` las da
+       en el orden del contrato (creation_time DESC, origin_time DESC,
+       origin_id): la ultima escrita (163) va primero, como el default `Created`
+       DESC de la tabla Origins. */
+    {
+        EwGuiOriginRow *ors = NULL;
+        int nor = 0;
+
+        assert(hypodb_feed_arc(st, arc, strlen(arc), 163) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 2);
+        assert(strcmp(ors[0].origin_id, EID ":163") == 0);
+        assert(strcmp(ors[1].origin_id, EID ":162") == 0);
+        ewguidb_rows_free(ors);
+    }
+
+    ewguidb_exec(db, "DELETE FROM event WHERE event_id='" EID "'");
     ewguidb_close(db);
     hypodb_state_free(st);
 

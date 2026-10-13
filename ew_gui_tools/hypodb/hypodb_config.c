@@ -13,6 +13,7 @@ int hypodb_config_load(HypodbConfig *cfg, const char *path)
     strcpy(cfg->in_pick_ring, "PICK_RING");
     cfg->group_pick_tol_sec = 0.1;
     cfg->group_min_match_picks = 3;
+    cfg->event_max_dt_sec = 300.0;
     cfg->event_load_hours = 24;
     cfg->pick_match_tol_sec = 0.05;
     cfg->heartbeat_int = 30;
@@ -27,6 +28,7 @@ int hypodb_config_load(HypodbConfig *cfg, const char *path)
         { "DbEnvFile", EW_KEY_STR, cfg->db_env_file, sizeof(cfg->db_env_file), 1 },
         { "GroupPickTolSec", EW_KEY_DBL, &cfg->group_pick_tol_sec, 0, 0 },
         { "GroupMinMatchPicks", EW_KEY_INT, &cfg->group_min_match_picks, 0, 0 },
+        { "EventMaxDtSec", EW_KEY_DBL, &cfg->event_max_dt_sec, 0, 0 },
         { "EventLoadHours", EW_KEY_INT, &cfg->event_load_hours, 0, 0 },
         { "PickMatchTolSec", EW_KEY_DBL, &cfg->pick_match_tol_sec, 0, 0 },
         { "HeartBeatInt", EW_KEY_INT, &cfg->heartbeat_int, 0, 0 },

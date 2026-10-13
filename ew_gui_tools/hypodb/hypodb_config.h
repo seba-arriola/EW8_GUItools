@@ -4,8 +4,8 @@
 /*
  * Configuración del ingester hypodb_ingest (archivo .d tipo EarthWorm).
  * Claves: MyModuleId, InRing, InRingRef, InRingRef2, InPickRing, DbEnvFile,
- * GroupPickTolSec, GroupMinMatchPicks, EventLoadHours, PickMatchTolSec,
- * HeartBeatInt, LogFile, Debug.
+ * GroupPickTolSec, GroupMinMatchPicks, EventMaxDtSec, EventLoadHours,
+ * PickMatchTolSec, HeartBeatInt, LogFile, Debug.
  */
 typedef struct {
     char   my_module_id[32];
@@ -15,6 +15,7 @@ typedef struct {
     char   db_env_file[128];   /* db.env */
     double group_pick_tol_sec;
     int    group_min_match_picks;
+    double event_max_dt_sec;   /* ventana de la guarda anti-fusión por qid (s) */
     int    event_load_hours;
     double pick_match_tol_sec;
     int    heartbeat_int;

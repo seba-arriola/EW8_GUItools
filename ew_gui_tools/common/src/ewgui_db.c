@@ -441,7 +441,7 @@ int ewguidb_query_recent_events(EwGuiDb *db, int hours,
         "SELECT event_id,event_type,felt,published,preferred_origin_id,"
         "preferred_magnitude_id FROM event "
         "WHERE creation_time >= now() - ($1::int * interval '1 hour') "
-        "ORDER BY creation_time DESC", 1, NULL, v, NULL, NULL, 0);
+        "ORDER BY creation_time DESC, event_id", 1, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
         snprintf(db->err, sizeof(db->err), "%s", PQerrorMessage(db->conn));
         PQclear(res);
@@ -492,7 +492,7 @@ int ewguidb_query_map_events(EwGuiDb *db, int hours,
         "FROM event e JOIN origin o ON o.origin_id=e.preferred_origin_id "
         "LEFT JOIN magnitude m ON m.magnitude_id=e.preferred_magnitude_id "
         "WHERE e.creation_time >= now() - ($1::int * interval '1 hour') "
-        "ORDER BY o.origin_time DESC", 1, NULL, v, NULL, NULL, 0);
+        "ORDER BY o.origin_time DESC, e.event_id", 1, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
         snprintf(db->err, sizeof(db->err), "%s", PQerrorMessage(db->conn));
         PQclear(res);
@@ -602,7 +602,7 @@ int ewguidb_search_events(EwGuiDb *db, const EwGuiSearchFilter *f,
     snprintf(vbuf[nbuf], sizeof vbuf[nbuf], "%d", limit);
     v[np++] = vbuf[nbuf++];
     snprintf(sql + off, sizeof sql - off,
-             " ORDER BY o.origin_time DESC LIMIT $%d", np);
+             " ORDER BY o.origin_time DESC, e.event_id LIMIT $%d", np);
 
     PGresult *res = PQexecParams(db->conn, sql, np, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
@@ -650,7 +650,8 @@ int ewguidb_query_origins(EwGuiDb *db, const char *event_id,
         "SELECT origin_id,event_id,origin_time,latitude,longitude,depth,"
         "author,software,location_algorithm,velocity_model,azimuthal_gap,"
         "station_count,standard_error,status,creation_time FROM origin "
-        "WHERE event_id=$1 ORDER BY origin_time, origin_id", 1, NULL, v, NULL, NULL, 0);
+        "WHERE event_id=$1 ORDER BY creation_time DESC, origin_time DESC, origin_id",
+        1, NULL, v, NULL, NULL, 0);
     if (PQresultStatus(res) != PGRES_TUPLES_OK) {
         snprintf(db->err, sizeof(db->err), "%s", PQerrorMessage(db->conn));
         PQclear(res);

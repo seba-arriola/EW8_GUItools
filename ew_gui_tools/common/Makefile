@@ -79,6 +79,8 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_arc_layout.sh
 	@echo "== check_table_ui =="
 	@bash tests/test_table_ui.sh
+	@echo "== check_schema_coverage =="
+	@bash tests/test_schema_coverage.sh
 	@echo "== check_lines =="
 	@bash tests/test_check_lines.sh
 	@echo "== make_overlays =="

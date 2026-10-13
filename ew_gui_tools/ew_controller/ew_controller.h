@@ -55,6 +55,9 @@ extern time_t g_last_status;
 /* --- GTK --- */
 extern GtkWidget *g_tree, *g_rings_tree;
 extern GListStore *g_store, *g_rings_store;
+/* Cadena vista: store -> sort model -> selección -> ColumnView. Ordena por clic
+   en la cabecera (helper compartido ewgui/table_ui.h). */
+extern GtkSortListModel *g_mod_sort, *g_rings_sort;
 extern GtkSingleSelection *g_mod_sel;
 extern GtkWidget *g_btn_start, *g_btn_restart, *g_btn_stop, *g_btn_reconfig, *g_btn_refresh;
 extern GtkWidget *g_lbl_header, *g_lbl_statusbar;
@@ -83,6 +86,9 @@ void reiniciar_mod(int pid);
 void reconfigurar(void);
 
 void poblar_listas(void);
+/* Marca/desmarca "startstop no responde": con 1 la columna Status muestra "?"
+   en todas las filas (el último Alive conocido ya no es cierto). */
+void ec_set_noreply(int on);
 void populate_combo(void);
 void actualizar_log(void);
 void aplicar_botones(void);

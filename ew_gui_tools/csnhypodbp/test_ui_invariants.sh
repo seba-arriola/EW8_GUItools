@@ -12,6 +12,10 @@ ck() {  # ck  <descripcion> <patron ERE> <archivo>
 nck() { # nck <descripcion> <patron ERE> <archivo>  (no debe aparecer)
     if grep -qE "$2" "$3"; then echo "FAIL: $1"; fails=$((fails+1)); else echo "ok  : $1"; fi
 }
+ck2() { # ck2 <descripcion> <patron linea 1> <patron linea 2> <archivo>
+    if grep -A1 -E "$2" "$4" | grep -qE "$3"; then echo "ok  : $1"
+    else echo "FAIL: $1"; fails=$((fails+1)); fi
+}
 
 # --- Tabla de estaciones (panel izquierdo): GtkColumnView con separadores ---
 ck  "tabla: es un GtkColumnView"             'gtk_column_view_new'                         csnhypodbp_main.c
@@ -232,6 +236,12 @@ ck  "fetch: no borra lo que no va a repoblar"     'csnhypodbp_fetch_clear_on'   
 ck  "mapa: la candidata se dibuja con la estrella" 'csnhypodbp_marker_star_path'                csnhypodbp_gui.c
 ck  "mapa: estrella pura en mapview"              'csnhypodbp_marker_star_path'                 csnhypodbp_mapview.c
 nck "mapa: la candidata ya no es el circulo rosa" 'cairo_set_source_rgb\(cr, 0\.99, 0\.91, 0\.91\)' csnhypodbp_gui.c
+# --- Orden de las tablas (contrato en docs/DATA-MAPPING.md, seccion 5) ------
+ck2 "orden: Events por Date DESC"          'ewgui_table_enable_sorting\(GTK_COLUMN_VIEW\(tree_global\), g_sort_events, cdate,' 'EWGUI_TABLE_DESC' csnhypodbp_main.c
+ck2 "orden: Origins por Created DESC"      'ewgui_table_enable_sorting\(GTK_COLUMN_VIEW\(tree_detail\), g_sort_detail, ccreated,' 'EWGUI_TABLE_DESC' csnhypodbp_main.c
+ck  "orden: estaciones sin orden inicial"  'ewgui_table_enable_sorting\(GTK_COLUMN_VIEW\(g_sta_view\), g_sort_sta, NULL, 0\)' csnhypodbp_main.c
+ck  "orden: magnitudes sin orden inicial"  'ewgui_table_enable_sorting\(GTK_COLUMN_VIEW\(g_mag_view\), g_mag_sort, NULL, 0\)' csnhypodbp_main.c
+nck "orden: Origins ya no se ordena por origin_time" 'ORDER BY origin_time, origin_id' ../common/src/ewgui_db.c
 ck  "magnitudes: casilla inerte sin traza"  'g_mag_rows\[idx\].has_data'                  csnhypodbp_main.c
 ck  "magnitudes: ventana por defecto del .d" 'csnhypodbp_magcfg_window\(&g_magcfg'         csnhypodbp_gui.c
 ck  "magnitudes: radios del selector"       'csnhypodbp_magcfg_name\(k\)'                 csnhypodbp_main.c

@@ -2,6 +2,7 @@
 #include <adwaita.h>
 #include "ewgui/actions.h"
 #include "ewgui/menu_ui.h"
+#include "ewgui/table_ui.h"
 
 /* Configuration parameters read from the .d file
  *************************************************/
@@ -40,6 +41,7 @@ time_t g_last_status = 0;    /* time of the last status message received */
 /* --- GTK --- */
 GtkWidget *g_tree, *g_rings_tree;            /* tree views for modules and rings */
 GListStore *g_store, *g_rings_store;
+GtkSortListModel *g_mod_sort = NULL, *g_rings_sort = NULL;
 GtkSingleSelection *g_mod_sel = NULL;
 GApplication *g_app = NULL;      /* para salir desde los timers */
 GtkWidget *g_btn_start, *g_btn_restart, *g_btn_stop, *g_btn_reconfig, *g_btn_refresh;  /* action buttons */
@@ -178,6 +180,10 @@ static gboolean on_poll(gpointer data)
       gtk_widget_set_sensitive(g_btn_restart, FALSE);
       gtk_widget_set_sensitive(g_btn_start, FALSE);
       gtk_widget_set_sensitive(g_btn_reconfig, FALSE);
+      /* Sin respuesta, la columna Status deja de afirmar "Alive": muestra "?". */
+      if (!g_refresh_paused) ec_set_noreply(1);
+   } else if (!g_refresh_paused) {
+      ec_set_noreply(0);   /* con respuesta otra vez (no-op si ya estaba a 0) */
    }
    return G_SOURCE_CONTINUE;
 }
@@ -202,7 +208,13 @@ static gboolean on_read(gpointer data)
 
    do {
       res = tport_getmsg(&Region, filtro, 1, &reclogo, &recsize, msg, sizeof(msg) - 1);
-      if (res == GET_OK || res == GET_MISS || res == GET_NOTRACK || res == GET_MISS_SEQGAP) {
+      /* GET_OK, GET_MISS y GET_NOTRACK traen el mensaje YA copiado en msg[]
+         (transport.c:844-865; el salto de secuencia se marca DESPUES, :903) y
+         son el idioma habitual de Earthworm. GET_NONE y GET_TOOBIG no son un
+         mensaje: en TOOBIG no hubo copia y *length = hd.size (:832-834), asi que
+         recsize se acota antes de cerrar la cadena. */
+      if ((res == GET_OK || res == GET_MISS || res == GET_NOTRACK) &&
+          recsize > 0 && recsize < (long) sizeof(msg)) {
          msg[recsize] = '\0';
          ewgui_ctrl_parse_status(msg, &g_status);
          time(&g_last_status);
@@ -222,7 +234,7 @@ static gboolean on_read(gpointer data)
             actualizar_log();
          }
       }
-   } while (res == GET_OK);
+   } while (res == GET_OK || res == GET_MISS || res == GET_NOTRACK);
 
    return G_SOURCE_CONTINUE;
 }
@@ -311,6 +323,48 @@ static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint page
    actualizar_log();
 }
 
+/* Reparto inicial de los divisores. GtkPaned no aplica la posicion hasta que el
+   widget tiene tamano real (gtk_paned_set_position no esta documentado antes de
+   mapear), de ahi el reintento cada 50 ms. El flag por widget evita pisar el
+   reparto que ya haya hecho el usuario cuando la pagina se vuelve a mapear (al
+   volver de la pestaña Configuration, que desmapea y remapea la pagina). */
+static gboolean ec_split_h(GtkWidget *paned, gpointer data)
+{
+   (void)data;
+   int width, pos;
+
+   if (g_object_get_data(G_OBJECT(paned), "ec-split")) return G_SOURCE_REMOVE;
+   width = gtk_widget_get_width(paned);
+   if (width <= 0) {
+      g_timeout_add(50, (GSourceFunc) ec_split_h, paned);
+      return G_SOURCE_REMOVE;
+   }
+   pos = width - 400;          /* ancho inicial del panel derecho (anillos+logs) */
+   if (pos < 300) pos = 300;    /* ... pero deja sitio a la tabla de Modulos */
+   gtk_paned_set_position(GTK_PANED(paned), pos);
+   g_object_set_data(G_OBJECT(paned), "ec-split", GINT_TO_POINTER(1));
+   return G_SOURCE_REMOVE;
+}
+
+/* Idem para el divisor vertical Anillos/Logs: mitad y mitad. Con
+   resize_start_child=FALSE el alto de los anillos lo fija esta posicion (la
+   requisicion de una tabla vacia los dejaria en nada). */
+static gboolean ec_split_v(GtkWidget *paned, gpointer data)
+{
+   (void)data;
+   int height;
+
+   if (g_object_get_data(G_OBJECT(paned), "ec-split")) return G_SOURCE_REMOVE;
+   height = gtk_widget_get_height(paned);
+   if (height <= 0) {
+      g_timeout_add(50, (GSourceFunc) ec_split_v, paned);
+      return G_SOURCE_REMOVE;
+   }
+   gtk_paned_set_position(GTK_PANED(paned), height / 2);
+   g_object_set_data(G_OBJECT(paned), "ec-split", GINT_TO_POINTER(1));
+   return G_SOURCE_REMOVE;
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data)
 {
     static gboolean css_done = FALSE;
@@ -361,6 +415,10 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
     g_lbl_header = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(g_lbl_header), 0.0);
+    /* El minimo de un GtkLabel es su texto completo: sin elipsis, esta linea de
+       estado (host + horas + disco + version) fijaba el minimo de TODA la
+       ventana en ~1051 px y no se podia encoger. */
+    gtk_label_set_ellipsize(GTK_LABEL(g_lbl_header), PANGO_ELLIPSIZE_END);
     gtk_widget_set_margin_top(g_lbl_header, 6);
     gtk_widget_set_margin_bottom(g_lbl_header, 2);
     gtk_box_append(GTK_BOX(vbox), g_lbl_header);
@@ -379,11 +437,19 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
     GtkWidget *box_mod = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
     gtk_paned_set_start_child(GTK_PANED(paned), box_mod);
+    /* El ancho extra al agrandar la ventana se lo queda la tabla de Modulos, y
+       shrink TRUE (el default) deja arrastrar el divisor en los dos sentidos y
+       que la ventana pueda encogerse: con shrink FALSE el hijo no baja de su
+       requisicion, lo que ponia un minimo de 620+340 px a toda la ventana. */
     gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_shrink_start_child(GTK_PANED(paned), FALSE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned), TRUE);
 
     g_store = g_list_store_new(EC_TYPE_MOD_ROW);
-    g_mod_sel = gtk_single_selection_new(G_LIST_MODEL(g_store));
+    /* store -> sort model -> selección -> vista: las cabeceras ordenan por clic
+       (helper compartido, igual que csnhypodbp). OJO: con el sort model en medio
+       el índice de la VISTA ya no es el índice del store (ver on_row_selected). */
+    g_mod_sort = gtk_sort_list_model_new(G_LIST_MODEL(g_store), NULL);
+    g_mod_sel = gtk_single_selection_new(G_LIST_MODEL(g_mod_sort));
     gtk_single_selection_set_autoselect(g_mod_sel, FALSE);
     gtk_single_selection_set_can_unselect(g_mod_sel, TRUE);
     g_tree = gtk_column_view_new(GTK_SELECTION_MODEL(g_mod_sel));
@@ -392,18 +458,38 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     {
         const char *m_hdr[] = {"Module","PID","Status","Details"};
         const char *m_prop[] = {"name","pid","status","details"};
+        /* -1 = se queda el ancho extra (texto de largo variable); >0 = ancho
+           fijo. Todas ajustables arrastrando el borde de la cabecera. */
+        const int   m_w[]   = {-1, 70, 84, -1};
+        GtkColumnViewColumn *col_mod = NULL;
         for (int i = 0; i < 4; i++) {
             GtkListItemFactory *f = gtk_signal_list_item_factory_new();
             g_signal_connect(f, "setup", G_CALLBACK(ec_col_setup), NULL);
             g_signal_connect(f, "bind", G_CALLBACK(ec_col_bind), (gpointer)m_prop[i]);
-            gtk_column_view_append_column(GTK_COLUMN_VIEW(g_tree), gtk_column_view_column_new(m_hdr[i], f));
+            GtkColumnViewColumn *c = gtk_column_view_column_new(m_hdr[i], f);
+            /* "name" desempata: orden estable aunque se repita el valor ordenado. */
+            ewgui_table_column_sortable(c, m_prop[i], "name", EWGUI_TABLE_ASC);
+            if (m_w[i] > 0) gtk_column_view_column_set_fixed_width(c, m_w[i]);
+            else            gtk_column_view_column_set_expand(c, TRUE);
+            gtk_column_view_column_set_resizable(c, TRUE);
+            gtk_column_view_append_column(GTK_COLUMN_VIEW(g_tree), c);
+            if (i == 0) col_mod = c;
         }
+        /* Orden inicial: Module ascendente. */
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(g_tree), g_mod_sort, col_mod, EWGUI_TABLE_ASC);
     }
     g_signal_connect(g_mod_sel, "notify::selected", G_CALLBACK(on_row_selected), NULL);
 
     GtkWidget *sw_mod = gtk_scrolled_window_new();
-    gtk_widget_set_size_request(sw_mod, 620, 300);
+    /* Sin size_request a proposito: fija el MINIMO ("leaves the window at least
+       as large"), y 620 px de minimo forzaban la ventana a ~1051 px y dejaban
+       las tablas cortadas. El reparto lo hace el divisor. */
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_mod), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    /* min_content_width acota el MINIMO del panel aunque el contenido pida mas
+       (los docs: "can and usually will be smaller than the minimum size of the
+       content"): sin esto el texto largo de la tabla/logs fijaba el minimo de
+       TODA la ventana en ~1051 px y no se podia encoger. */
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_mod), 320);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_mod), g_tree);
     gtk_widget_set_vexpand(sw_mod, TRUE);
     gtk_box_append(GTK_BOX(box_mod), sw_mod);
@@ -427,43 +513,73 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_set_sensitive(g_btn_start, FALSE);
     gtk_widget_set_sensitive(g_btn_reconfig, FALSE);
 
-    /* ---- Right panel: rings + logs ---- */
-    GtkWidget *box_der = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-    gtk_paned_set_end_child(GTK_PANED(paned), box_der);
-    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_shrink_end_child(GTK_PANED(paned), FALSE);
+    /* ---- Right panel: rings arriba / logs abajo, con divisor propio ---- */
+    GtkWidget *paned_v = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
+    gtk_widget_set_vexpand(paned_v, TRUE);
+    gtk_paned_set_end_child(GTK_PANED(paned), paned_v);
+    /* El ancho extra se lo queda la izquierda (la tabla): el panel derecho
+       conserva el ancho que le de el usuario. */
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), FALSE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(paned), TRUE);
+
+    GtkWidget *box_rings = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_paned_set_start_child(GTK_PANED(paned_v), box_rings);
+    /* El alto extra se lo quedan los LOGS; los anillos conservan el alto que les
+       de el usuario (el inicial lo fija ec_split_v). */
+    gtk_paned_set_resize_start_child(GTK_PANED(paned_v), FALSE);
+    gtk_paned_set_shrink_start_child(GTK_PANED(paned_v), TRUE);
 
     GtkWidget *lbl_rings = gtk_label_new("RINGS");
     gtk_label_set_xalign(GTK_LABEL(lbl_rings), 0.0);
-    gtk_box_append(GTK_BOX(box_der), lbl_rings);
+    gtk_box_append(GTK_BOX(box_rings), lbl_rings);
 
     g_rings_store = g_list_store_new(EC_TYPE_RING_ROW);
-    g_rings_tree = gtk_column_view_new(GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(g_rings_store))));
+    g_rings_sort = gtk_sort_list_model_new(G_LIST_MODEL(g_rings_store), NULL);
+    g_rings_tree = gtk_column_view_new(GTK_SELECTION_MODEL(gtk_no_selection_new(G_LIST_MODEL(g_rings_sort))));
     {
         const char *r_hdr[] = {"Ring","Key","Size KB"};
         const char *r_prop[] = {"name","key","size"};
+        /* -1 = se queda el ancho extra (texto de largo variable); >0 = ancho
+           fijo. Todas ajustables arrastrando el borde de la cabecera. */
+        const int   r_w[]   = {-1, 80, 90};
+        GtkColumnViewColumn *col_ring = NULL;
         for (int i = 0; i < 3; i++) {
             GtkListItemFactory *f = gtk_signal_list_item_factory_new();
             g_signal_connect(f, "setup", G_CALLBACK(ec_col_setup), NULL);
             g_signal_connect(f, "bind", G_CALLBACK(ec_col_bind), (gpointer)r_prop[i]);
-            gtk_column_view_append_column(GTK_COLUMN_VIEW(g_rings_tree), gtk_column_view_column_new(r_hdr[i], f));
+            GtkColumnViewColumn *c = gtk_column_view_column_new(r_hdr[i], f);
+            ewgui_table_column_sortable(c, r_prop[i], "name", EWGUI_TABLE_ASC);
+            if (r_w[i] > 0) gtk_column_view_column_set_fixed_width(c, r_w[i]);
+            else            gtk_column_view_column_set_expand(c, TRUE);
+            gtk_column_view_column_set_resizable(c, TRUE);
+            gtk_column_view_append_column(GTK_COLUMN_VIEW(g_rings_tree), c);
+            if (i == 0) col_ring = c;
         }
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(g_rings_tree), g_rings_sort, col_ring, EWGUI_TABLE_ASC);
     }
     GtkWidget *sw_rings = gtk_scrolled_window_new();
-    gtk_widget_set_size_request(sw_rings, 340, 120);
+    /* Sin size_request (fijaba 340x120 de minimo y la tabla no crecia) y con
+       vexpand, para quedarse el alto que le de el divisor vertical. */
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_rings), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_rings), 200);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_rings), g_rings_tree);
-    gtk_box_append(GTK_BOX(box_der), sw_rings);
+    gtk_widget_set_vexpand(sw_rings, TRUE);
+    gtk_box_append(GTK_BOX(box_rings), sw_rings);
+
+    GtkWidget *box_logs = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+    gtk_paned_set_end_child(GTK_PANED(paned_v), box_logs);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned_v), TRUE);
+    gtk_paned_set_shrink_end_child(GTK_PANED(paned_v), TRUE);
 
     GtkWidget *lbl_log = gtk_label_new("LOGS (tail)");
     gtk_label_set_xalign(GTK_LABEL(lbl_log), 0.0);
-    gtk_box_append(GTK_BOX(box_der), lbl_log);
+    gtk_box_append(GTK_BOX(box_logs), lbl_log);
 
     /* Selector de modulo para los logs: boton que abre una ventana modal con la
        lista (sin GtkDropDown/xdg_popup, que bajo WSLg/Wayland queda detras). */
     g_combo = gtk_button_new_with_label("(none)");
     g_signal_connect(g_combo, "clicked", G_CALLBACK(on_log_combo_clicked), NULL);
-    gtk_box_append(GTK_BOX(box_der), g_combo);
+    gtk_box_append(GTK_BOX(box_logs), g_combo);
 
     g_logview = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(g_logview), FALSE);
@@ -471,9 +587,14 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     g_logbuf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_logview));
     GtkWidget *sw_log = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_log), GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_log), 200);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_log), g_logview);
     gtk_widget_set_vexpand(sw_log, TRUE);
-    gtk_box_append(GTK_BOX(box_der), sw_log);
+    gtk_box_append(GTK_BOX(box_logs), sw_log);
+
+    /* Reparto inicial de los dos divisores (ver ec_split_h / ec_split_v). */
+    g_signal_connect(paned, "map", G_CALLBACK(ec_split_h), NULL);
+    g_signal_connect(paned_v, "map", G_CALLBACK(ec_split_v), NULL);
 
     /* ================= Tab 2: CONFIGURATION ================= */
     GtkWidget *page_cfg = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
@@ -518,6 +639,7 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
     g_lbl_cfg_status = gtk_label_new("");
     gtk_label_set_xalign(GTK_LABEL(g_lbl_cfg_status), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(g_lbl_cfg_status), PANGO_ELLIPSIZE_MIDDLE);
     gtk_widget_set_hexpand(g_lbl_cfg_status, TRUE);
     gtk_box_append(GTK_BOX(cfg_btn), g_lbl_cfg_status);
 
@@ -527,6 +649,9 @@ static void on_activate(GtkApplication *app, gpointer user_data)
 
     g_lbl_statusbar = gtk_label_new("Waiting for startstop response...");
     gtk_label_set_xalign(GTK_LABEL(g_lbl_statusbar), 0.0);
+    /* Puede mostrar rutas largas ("Saved to ... (backup .bak)"): misma razon
+       que g_lbl_header, su texto no debe fijar el minimo de la ventana. */
+    gtk_label_set_ellipsize(GTK_LABEL(g_lbl_statusbar), PANGO_ELLIPSIZE_END);
     gtk_box_append(GTK_BOX(vbox), g_lbl_statusbar);
 
     gtk_window_present(GTK_WINDOW(window));

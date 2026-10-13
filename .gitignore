@@ -66,6 +66,7 @@ run_working_v8/params/db.env
 /ew_gui_tools/csnstaevdisp/csnstaevdisp
 /ew_gui_tools/csnstaevdisp/test/test_data
 /ew_gui_tools/ew_controller/ew_controller
+/ew_gui_tools/ew_controller/tests/fake_status
 /ew_gui_tools/_legacy_atwc/loc_wcatwc/loc_wcatwc
 /ew_gui_tools/_legacy_atwc/pick_wcatwc/pick_wcatwc
 /ew_gui_tools/_legacy_atwc/disk_wcatwc/disk_wcatwc

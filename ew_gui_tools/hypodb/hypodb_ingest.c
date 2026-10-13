@@ -50,6 +50,7 @@ typedef struct {
 typedef struct {
     CsnhypodbpGroupKey key;   /* PRIMERO: permite pasar &groups[0] como keys */
     char     event_id[64];
+    double   otime;           /* hora origen de la 1.ª solución del grupo */
     int      norigins;
     HypodbOriginMeta origins[HYPODB_MAX_ORIGINS];
     int      nmags;
@@ -65,6 +66,7 @@ typedef struct {
     double value;
     double error;
     int    nsta;
+    char   algorithm[64];
     char   msg[512];
     int    msg_len;
 } HypodbPendingMag;
@@ -150,12 +152,19 @@ static double pick_time_to_epoch(const char *s)
     return (double)e + (ss - (int)ss);
 }
 
-static const char *mod_author(int mod)
+/* `origin.software`: la version del framework, de $EW_VERSION (la exporta
+   ew8_unix.sh) con fallback para tests y ejecuciones fuera de startstop. */
+static const char *ew_software(void)
 {
-    if (mod == 162) return "csnloc";
-    if (mod == 163) return "hyp2000";
-    if (mod == 164) return "nlloc";
-    return "unknown";
+    static char cached[64];
+    static int  done = 0;
+
+    if (!done) {
+        const char *v = getenv("EW_VERSION");
+        snprintf(cached, sizeof cached, "%s", (v && v[0]) ? v : "earthworm_8.0");
+        done = 1;
+    }
+    return cached;
 }
 
 static const char *mod_algorithm(int mod)
@@ -304,6 +313,19 @@ static void update_mag_meta(HypodbGroup *g, const char *magnitude_id,
 /* Núcleo puro: agrupación                                                    */
 /* ------------------------------------------------------------------------- */
 
+/* El atajo de agrupación por qid (`csnhypodbp_group_matches`) no comprueba la
+   firma de picadas, así que dos sismos de sesiones distintas de csnloc con el
+   mismo qid se fusionarían en un solo evento (el rango de qid se repite cada
+   ~27,7 h). Se exige además que la hora origen del grupo esté dentro de
+   `EventMaxDtSec`. Sin horas conocidas o con la guarda desactivada (<= 0), el
+   comportamiento es el previo. */
+static int same_event_in_time(const HypodbGroup *g, double otime, double max_dt)
+{
+    if (!(max_dt > 0.0) || !(otime > 0.0) || !(g->otime > 0.0))
+        return 1;
+    return (fabs(g->otime - otime) <= max_dt) ? 1 : 0;
+}
+
 int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
                         char *event_id_out, size_t n)
 {
@@ -321,6 +343,11 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
                                   st->cfg.group_min_match_picks,
                                   idx, HYPODB_MAX_GROUPS);
 
+    /* Mismo qid pero otro sismo (sesiones distintas de csnloc): no fusionar. */
+    if (nm > 0 && !same_event_in_time(&st->groups[idx[0]], sol->otime,
+                                      st->cfg.event_max_dt_sec))
+        nm = 0;
+
     if (nm > 0) {
         g = &st->groups[idx[0]];
     } else {
@@ -333,8 +360,10 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
         g = &st->groups[st->ngroups++];
         memset(g, 0, sizeof(*g));
         g->key.qid = sol->qid;
+        g->otime = sol->otime;
         snprintf(qb, sizeof qb, "%d", sol->qid);
-        if (hypodb_event_id(g->event_id, sizeof g->event_id, qb) != 0)
+        if (hypodb_event_id(g->event_id, sizeof g->event_id, qb,
+                            sol->otime) != 0)
             return -1;
     }
 
@@ -407,7 +436,8 @@ static int write_station_magnitudes(HypodbState *st, const char *magnitude_id,
 
 static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
                            const char *type, double value, double error,
-                           int nsta, const char *msg, size_t len)
+                           int nsta, const char *algorithm,
+                           const char *msg, size_t len)
 {
     char origin_id[64], mid[64];
     EwGuiMagRow m;
@@ -424,7 +454,12 @@ static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
         m.magnitude_value = value;
         snprintf(m.magnitude_type, sizeof m.magnitude_type, "%s", type);
         m.mag_uncertainty = (error >= 0.0) ? error : NAN;
-        snprintf(m.calculation_method, sizeof m.calculation_method, "CSNNet");
+        /* El metodo viaja en el mensaje: "CSNNet" (automatica) o "CSNMan"
+           (ajustada a mano en csnhypodbp). Antes se escribia "CSNNet" fijo y la
+           marca manual se perdia al releer de la BD. */
+        if (algorithm && algorithm[0])
+            snprintf(m.calculation_method, sizeof m.calculation_method, "%s",
+                     algorithm);
         m.station_count = nsta;
         if (ewguidb_upsert_magnitude(st->db, &m) != 0)
             return -1;
@@ -544,8 +579,10 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     o.latitude = sol->lat;
     o.longitude = sol->lon;
     o.depth = sol->depth;
-    snprintf(o.author, sizeof o.author, "%s", mod_author(mod));
-    snprintf(o.software, sizeof o.software, "%s", mod_author(mod));
+    /* `author` = modulo que revisa/produce el registro (constante); el
+       localizador real viaja en `location_algorithm`. */
+    snprintf(o.author, sizeof o.author, "csnhypodbp");
+    snprintf(o.software, sizeof o.software, "%s", ew_software());
     snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s",
              mod_algorithm(mod));
     if (vmodel && vmodel[0])
@@ -600,14 +637,15 @@ static void flush_pending_mags(HypodbState *st, HypodbGroup *g, int mod)
         if (!pm->used || pm->qid != g->key.qid || pm->mod != mod)
             continue;
         apply_magnitude(st, g, pm->mod, pm->type, pm->value, pm->error,
-                        pm->nsta, pm->msg, (size_t)pm->msg_len);
+                        pm->nsta, pm->algorithm, pm->msg, (size_t)pm->msg_len);
         pm->used = 0;
     }
 }
 
 static void store_pending_mag(HypodbState *st, int qid, int mod,
                               const char *type, double value, double error,
-                              int nsta, const char *msg, size_t len)
+                              int nsta, const char *algorithm,
+                              const char *msg, size_t len)
 {
     for (int i = 0; i < HYPODB_MAX_PENDING_MAGS; i++) {
         HypodbPendingMag *pm = &st->pmag[i];
@@ -620,6 +658,8 @@ static void store_pending_mag(HypodbState *st, int qid, int mod,
         pm->value = value;
         pm->error = error;
         pm->nsta = nsta;
+        snprintf(pm->algorithm, sizeof pm->algorithm, "%s",
+                 (algorithm && algorithm[0]) ? algorithm : "");
         pm->msg_len = (len < sizeof(pm->msg)) ? (int)len
                                               : (int)sizeof(pm->msg) - 1;
         memcpy(pm->msg, msg, (size_t)pm->msg_len);
@@ -695,12 +735,12 @@ int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len)
     g = find_group_by_qid(st, qid);
     if (g && find_origin_meta(g, mod)) {
         apply_magnitude(st, g, mod, type, mag.mag, mag.error, mag.nstations,
-                        msg, len);
+                        mag.algorithm, msg, len);
         if (st->db)
             update_preferred(st, g);
     } else {
         store_pending_mag(st, qid, mod, type, mag.mag, mag.error,
-                          mag.nstations, msg, len);
+                          mag.nstations, mag.algorithm, msg, len);
     }
     return 0;
 }
@@ -785,6 +825,8 @@ int hypodb_load_from_db(HypodbState *st)
                                    0, ors[j].station_count,
                                    isnan(ors[j].standard_error)
                                        ? 9999.0 : ors[j].standard_error, 0.0);
+                if (!(g->otime > 0.0))
+                    g->otime = iso_to_epoch(ors[j].origin_time);
 
                 if (ewguidb_query_picks(st->db, ors[j].origin_id, &pks, &npk)
                     > 0) {

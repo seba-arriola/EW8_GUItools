@@ -1,0 +1,12 @@
+Hostname-OS: probe (ew_controller gui test)
+Start time (UTC): 2026-01-01 00:00:00
+Current time (UTC): 2026-01-01 00:05:00
+Disk space avail: 1024 MB
+Stopstart Version: probe
+Process     Process       Id   Status      Start-up
+Name        Command      Num               Time
+-------     -------      ---  ------      --------
+ZZ_probe               33  Alive       ??/ 0 00:00:50  probe_z.d
+AA_probe              200  Alive       ??/ 0 00:00:50  probe_a.d
+name/key/size: WILDCARD_RING / 1000 / 16
+name/key/size: ZZZ_RING / 20 / 512

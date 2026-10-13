@@ -1,9 +1,12 @@
 #include "ew_controller.h"
 
-/* Refresco sin parpadeo: se compara el estado con el anterior para decidir
-   entre no tocar nada, actualizar las filas in situ o reconstruirlas. */
+/* Refresco sin parpadeo: se compara el estado con el anterior para decidir si
+   hay que reconstruir las filas (plan != NONE) o no tocar nada. */
 static EwCtrlStatus g_status_prev;
 static int  g_status_prev_valid = 0;
+/* 1 mientras startstop no responde: la columna Status muestra "?" en TODAS las
+   filas, porque el último "Alive" conocido ya no es cierto. */
+static int  g_no_reply = 0;
 /* Identidad de la selección: el NOMBRE del módulo (estable ante reinicios),
    no el pid (que cambia al reiniciar). */
 static char g_sel_name[64] = "";
@@ -18,64 +21,91 @@ static char *g_log_last = NULL;
 static char g_log_name[64] = "";
 
 static char *tail_file(const char *path, long maxbytes);
+static void ec_rebuild_rows(void);
+
+/* Índice, dentro del MODELO ORDENADO (el que ve GtkSingleSelection), de la fila
+   con ese nombre; -1 si no está. Con un GtkSortListModel en medio el índice de
+   la vista NO es ni el del store ni el de g_status.mods. */
+static int ec_view_pos_of_name(const char *name)
+{
+   if (!name || !*name || !g_mod_sort) return -1;
+   guint n = g_list_model_get_n_items(G_LIST_MODEL(g_mod_sort));
+   for (guint i = 0; i < n; i++) {
+      GObject *row = g_list_model_get_item(G_LIST_MODEL(g_mod_sort), i);
+      if (!row) continue;
+      char *nm = NULL;
+      g_object_get(row, "name", &nm, NULL);
+      int hit = (nm && !strcmp(nm, name));
+      g_free(nm);
+      g_object_unref(row);
+      if (hit) return (int) i;
+   }
+   return -1;
+}
+
+/* Reconstruye las filas de módulos y anillos desde g_status y re-selecciona por
+   nombre. Se usa para CUALQUIER cambio, no sólo el estructural: el "bind" de
+   GtkSignalListItemFactory es un snapshot y NO se repite al mutar una propiedad
+   de la fila, así que actualizar la fila in situ no se vería nunca. */
+static void ec_rebuild_rows(void)
+{
+   char want[64];
+   int i;
+
+   snprintf(want, sizeof(want), "%s", g_sel_name);
+
+   g_row_sel_suppress = 1;
+   g_list_store_remove_all(g_store);
+   for (i = 0; i < g_status.nmods; i++) {
+      EcModRow *row = ec_mod_row_new(g_status.mods[i].name, g_status.mods[i].pid,
+                                     g_no_reply ? "?" : g_status.mods[i].status,
+                                     g_status.mods[i].detalle);
+      g_list_store_append(g_store, row);
+      g_object_unref(row);
+   }
+   g_list_store_remove_all(g_rings_store);
+   for (i = 0; i < g_status.nrings; i++) {
+      EcRingRow *row = ec_ring_row_new(g_status.rings[i].name, g_status.rings[i].key, g_status.rings[i].size);
+      g_list_store_append(g_rings_store, row);
+      g_object_unref(row);
+   }
+   g_row_sel_suppress = 0;
+
+   /* g_sel_idx es el índice del módulo en g_status.mods (lo usan los botones y
+      el log); la POSICIÓN de esa fila en la vista se resuelve por nombre dentro
+      del modelo ordenado. */
+   g_sel_idx = -1;
+   for (i = 0; i < g_status.nmods; i++)
+      if (want[0] && !strcmp(g_status.mods[i].name, want)) { g_sel_idx = i; break; }
+   int pos = (want[0] && g_sel_idx >= 0) ? ec_view_pos_of_name(want) : -1;
+   if (pos >= 0 && g_mod_sel) {
+      g_row_sel_suppress = 1;
+      gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_mod_sel), (guint) pos, TRUE);
+      g_row_sel_suppress = 0;
+   } else {
+      g_sel_name[0] = '\0';
+   }
+}
+
+/* Sin respuesta de startstop: reconstruye para que la columna Status muestre
+   "?" en todas las filas (no basta g_object_set: la celda no se repinta). */
+void ec_set_noreply(int on)
+{
+   if (g_no_reply == on) return;
+   g_no_reply = on;
+   ec_rebuild_rows();
+   aplicar_botones();
+}
 
 void poblar_listas(void)
 {
-   int i;
    EwCtrlSync plan = g_status_prev_valid
       ? ewgui_ctrl_sync_plan(&g_status_prev, &g_status)
       : EWCTRL_SYNC_STRUCTURE;
 
-   if (plan == EWCTRL_SYNC_VALUES) {
-      /* Misma estructura: actualizar las filas existentes sin destruirlas,
-         así el ColumnView conserva la fila seleccionada. */
-      for (i = 0; i < g_status.nmods; i++) {
-         GObject *row = g_list_model_get_item(G_LIST_MODEL(g_store), (guint)i);
-         if (row) {
-            g_object_set(row, "status", g_status.mods[i].status,
-                              "details", g_status.mods[i].detalle, NULL);
-            g_object_unref(row);
-         }
-      }
-      for (i = 0; i < g_status.nrings; i++) {
-         GObject *row = g_list_model_get_item(G_LIST_MODEL(g_rings_store), (guint)i);
-         if (row) {
-            g_object_set(row, "size", g_status.rings[i].size, NULL);
-            g_object_unref(row);
-         }
-      }
-   } else if (plan == EWCTRL_SYNC_STRUCTURE) {
-      /* Cambió el conjunto/orden: reconstruir y re-seleccionar por nombre. */
-      char want[64];
-      snprintf(want, sizeof(want), "%s", g_sel_name);
-
-      g_row_sel_suppress = 1;
-      g_list_store_remove_all(g_store);
-      for (i = 0; i < g_status.nmods; i++) {
-         EcModRow *row = ec_mod_row_new(g_status.mods[i].name, g_status.mods[i].pid,
-                                        g_status.mods[i].status, g_status.mods[i].detalle);
-         g_list_store_append(g_store, row);
-         g_object_unref(row);
-      }
-      g_list_store_remove_all(g_rings_store);
-      for (i = 0; i < g_status.nrings; i++) {
-         EcRingRow *row = ec_ring_row_new(g_status.rings[i].name, g_status.rings[i].key, g_status.rings[i].size);
-         g_list_store_append(g_rings_store, row);
-         g_object_unref(row);
-      }
-      g_row_sel_suppress = 0;
-
-      g_sel_idx = -1;
-      for (i = 0; i < g_status.nmods; i++)
-         if (want[0] && !strcmp(g_status.mods[i].name, want)) { g_sel_idx = i; break; }
-      if (g_sel_idx >= 0 && g_mod_sel) {
-         g_row_sel_suppress = 1;
-         gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_mod_sel), (guint)g_sel_idx, TRUE);
-         g_row_sel_suppress = 0;
-      } else {
-         g_sel_name[0] = '\0';
-      }
-   }
+   /* Cualquier cambio visible obliga a reconstruir (ver ec_rebuild_rows). */
+   if (plan != EWCTRL_SYNC_NONE)
+      ec_rebuild_rows();
 
    g_status_prev = g_status;
    g_status_prev_valid = 1;
@@ -108,19 +138,18 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data)
    g_sel_idx = -1;
    g_sel_name[0] = '\0';
    if (g_mod_sel) {
-      guint idx = gtk_single_selection_get_selected(g_mod_sel);
-      if (idx != GTK_INVALID_LIST_POSITION) {
-         EcModRow *row = g_list_model_get_item(G_LIST_MODEL(g_store), idx);
-         if (row) {
-            char *nm = NULL;
-            g_object_get(row, "name", &nm, NULL);
-            for (int i = 0; i < g_status.nmods; i++)
-               if (nm && !strcmp(g_status.mods[i].name, nm)) { g_sel_idx = i; break; }
-            if (g_sel_idx >= 0)
-               snprintf(g_sel_name, sizeof(g_sel_name), "%s", g_status.mods[g_sel_idx].name);
-            g_free(nm);
-            g_object_unref(row);
-         }
+      /* El ITEM seleccionado, no la posición: la posición es la del modelo
+         ORDENADO y no indexa g_store. */
+      GObject *item = gtk_single_selection_get_selected_item(g_mod_sel);
+      if (item) {
+         char *nm = NULL;
+         g_object_get(item, "name", &nm, NULL);
+         for (int i = 0; i < g_status.nmods; i++)
+            if (nm && !strcmp(g_status.mods[i].name, nm)) { g_sel_idx = i; break; }
+         if (g_sel_idx >= 0)
+            snprintf(g_sel_name, sizeof(g_sel_name), "%s", g_status.mods[g_sel_idx].name);
+         g_free(nm);
+         g_object_unref(item);
       }
    }
    aplicar_botones();

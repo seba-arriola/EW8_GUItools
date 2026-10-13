@@ -5,6 +5,12 @@ del sistema (`event`, `origin`, `pick`, `magnitude`, `station_magnitude`,
 `tensor`). El esquema es una **copia literal** del proyecto `test_db`
 (simplificación QuakeML para el CSN); no se modifica aquí.
 
+Mapeo campo a campo entre los módulos y este esquema (ida y vuelta, con
+`archivo:línea`): `docs/DATA-MAPPING.md`; lo que queda por decidir:
+`docs/DATA-MAPPING-PENDIENTES.md`. El invariante
+`common/tests/test_schema_coverage.sh` (`make -C ew_gui_tools/common check`)
+falla si una columna del esquema no la escribe nadie.
+
 ## Arranque (dev)
 
 ```bash

@@ -5,7 +5,7 @@
 
 /*
  * Composición de los IDs de la base hipocentral (VARCHAR(64)).
- *   event_id             E<qid>
+ *   event_id             E<qid>-<yyyymmddhhmmss>    (UTC; sin hora: E<qid>)
  *   origin_id            <event_id>:<mod>            (mod = 162/163/164)
  *   magnitude_id         <origin_id>/mag/<TIPO>
  *   station_magnitude_id <magnitude_id>/<NSLCO>
@@ -15,7 +15,9 @@
  * resultado no cabe en `out` (garantiza <= 63 caracteres + NUL).
  */
 
-int hypodb_event_id(char *out, size_t n, const char *qid);
+/* event_id = "E<qid>-<yyyymmddhhmmss>". El sufijo (hora origen UTC) hace único
+ * el id aunque dos sesiones de csnloc compartan qid; `otime <= 0` -> "E<qid>". */
+int hypodb_event_id(char *out, size_t n, const char *qid, double otime);
 int hypodb_origin_id(char *out, size_t n, const char *event_id, int mod);
 int hypodb_magnitude_id(char *out, size_t n, const char *origin_id,
                         const char *type);
