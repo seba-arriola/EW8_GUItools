@@ -122,6 +122,69 @@ static void test_mapfit(void)
     CHECK(isfinite(z) && z > 0.0, "mapfit: margen mayor que el canvas no rompe");
 }
 
+static void test_split_parse(void)
+{
+    double f = -1.0;
+
+    CHECK(csnhypodbp_map_split_parse("7/3", &f) == 1 && fabs(f - 0.7) < 1e-9,
+          "split: 7/3 -> 0.7");
+    CHECK(csnhypodbp_map_split_parse("0.65", &f) == 1 && fabs(f - 0.65) < 1e-9,
+          "split: 0.65 -> 0.65");
+    CHECK(csnhypodbp_map_split_parse(" 8 / 2 ", &f) == 1 && fabs(f - 0.8) < 1e-9,
+          "split: admite espacios alrededor de /");
+    CHECK(csnhypodbp_map_split_parse("7/0", &f) == 0, "split: denominador 0 -> 0");
+    CHECK(csnhypodbp_map_split_parse("0", &f) == 0, "split: 0 esta fuera de (0,1)");
+    CHECK(csnhypodbp_map_split_parse("1", &f) == 0, "split: 1 esta fuera de (0,1)");
+    CHECK(csnhypodbp_map_split_parse("x", &f) == 0, "split: texto -> 0");
+    CHECK(csnhypodbp_map_split_parse("7/3x", &f) == 0, "split: basura al final -> 0");
+    CHECK(csnhypodbp_map_split_parse("", &f) == 0, "split: vacio -> 0");
+    CHECK(csnhypodbp_map_split_parse(NULL, &f) == 0, "split: NULL -> 0");
+}
+
+static void test_mapfit_at(void)
+{
+    const double cw = 400.0, ch = 300.0, margin = 8.0;
+    double z1, cx1, cy1, z2, cx2, cy2, sx, sy;
+
+    /* Referencia: un punto DENTRO del bbox (no el centro geometrico). */
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, 1.0, &z1, &cx1, &cy1);
+    csnhypodbp_mapfit(-76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H, (int)cw, (int)ch,
+                      margin, &z2, &cx2, &cy2);
+    CHECK(fabs(z1 - z2) < 1e-9, "mapfit_at: zoom 1.0 = auto-encuadre del bbox");
+    corner_px(-33.0, -71.5, z1, cx1, cy1, &sx, &sy);
+    CHECK(fabs(sx - cw / 2.0) < 1e-6 && fabs(sy - ch / 2.0) < 1e-6,
+          "mapfit_at: la referencia proyecta al centro del canvas");
+    CHECK(fabs(cx1 - cx2) > 1e-9 || fabs(cy1 - cy2) > 1e-9,
+          "mapfit_at: el centro NO es el punto medio del bbox");
+
+    /* MapZoom: factor sobre el auto-encuadre, sin mover la referencia. */
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, 2.0, &z1, &cx1, &cy1);
+    CHECK(fabs(z1 - 2.0 * z2) < 1e-9, "mapfit_at: factor 2.0 duplica el zoom");
+    corner_px(-33.0, -71.5, z1, cx1, cy1, &sx, &sy);
+    CHECK(fabs(sx - cw / 2.0) < 1e-6 && fabs(sy - ch / 2.0) < 1e-6,
+          "mapfit_at: con zoom 2.0 la referencia sigue en el centro");
+
+    /* Sin referencia valida -> punto medio del bbox (como mapfit). */
+    csnhypodbp_mapfit_at(0.0, 0.0, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, 1.0, &z1, &cx1, &cy1);
+    CHECK(fabs(z1 - z2) < 1e-9 && fabs(cx1 - cx2) < 1e-9 && fabs(cy1 - cy2) < 1e-9,
+          "mapfit_at: sin referencia vuelve al bbox");
+    csnhypodbp_mapfit_at(NAN, NAN, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, 1.0, &z1, &cx1, &cy1);
+    CHECK(fabs(cx1 - cx2) < 1e-9 && fabs(cy1 - cy2) < 1e-9,
+          "mapfit_at: referencia NaN vuelve al bbox");
+
+    /* Factor invalido -> 1.0. */
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, 0.0, &z1, &cx1, &cy1);
+    CHECK(fabs(z1 - z2) < 1e-9, "mapfit_at: factor 0 -> automatico");
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, IMG_W, IMG_H,
+                         (int)cw, (int)ch, margin, -3.0, &z1, &cx1, &cy1);
+    CHECK(fabs(z1 - z2) < 1e-9, "mapfit_at: factor negativo -> automatico");
+}
+
 static void test_span_min(void)
 {
     double lon0, lon1, lat0, lat1;
@@ -361,16 +424,54 @@ static void test_frame(void)
     CHECK(csnhypodbp_frame_valid(NULL) == 0, "valid(NULL) = 0");
 }
 
+static void test_star(void)
+{
+    double xs[10], ys[10];
+    double d;
+    int n, i, bad = 0;
+
+    n = csnhypodbp_marker_star_path(100.0, 50.0, 10.0, 5, 0.45, xs, ys, 10);
+    CHECK(n == 10, "estrella: 5 puntas -> 10 vertices");
+    CHECK(fabs(xs[0] - 100.0) < 1e-9 && fabs(ys[0] - 40.0) < 1e-9,
+          "estrella: el primer vertice apunta arriba");
+    for (i = 0; i < n; i++) {
+        d = hypot(xs[i] - 100.0, ys[i] - 50.0);
+        if (i % 2 == 0 ? fabs(d - 10.0) > 1e-9 : fabs(d - 4.5) > 1e-9) {
+            printf("FAIL: vertice %d con radio %.6f\n", i, d);
+            bad++;
+        }
+    }
+    CHECK(bad == 0, "estrella: alterna radio exterior / interior");
+
+    /* Mas de 2*points no cabe: no escribe nada. */
+    CHECK(csnhypodbp_marker_star_path(0, 0, 5, 5, 0.45, xs, ys, 9) == 0,
+          "estrella: sin sitio para 10 vertices -> 0");
+    CHECK(csnhypodbp_marker_star_path(0, 0, 0, 5, 0.45, xs, ys, 10) == 0,
+          "estrella: r <= 0 -> 0");
+    CHECK(csnhypodbp_marker_star_path(0, 0, 5, 2, 0.45, xs, ys, 10) == 0,
+          "estrella: menos de 3 puntas -> 0");
+    CHECK(csnhypodbp_marker_star_path(0, 0, 5, 5, 0.45, NULL, ys, 10) == 0,
+          "estrella: punteros NULL -> 0");
+
+    /* inner_ratio invalido -> 0.45. */
+    n = csnhypodbp_marker_star_path(0.0, 0.0, 10.0, 5, 0.0, xs, ys, 10);
+    CHECK(n == 10 && fabs(hypot(xs[1], ys[1]) - 4.5) < 1e-9,
+          "estrella: inner_ratio invalido usa 0.45");
+}
+
 int main(void)
 {
     test_bbox();
     test_mapfit();
+    test_split_parse();
+    test_mapfit_at();
     test_span_min();
     test_profile_frame();
     test_frame_view();
     test_hit();
     test_find_id();
     test_frame();
+    test_star();
 
     if (fails > 0) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_mapview\n");

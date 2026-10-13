@@ -13,30 +13,51 @@
  * `rms`/`nph` de la solucion ELEGIDA llegan ya formateados por la tabla de
  * detalle (una decimal / entero) y se copian tal cual; los de la candidata se
  * formatean aqui (%.2f / %d) porque llegan como numero del localizador. */
-#define CSNHYPODBP_PREVIEW_NVALS 7
+#define CSNHYPODBP_PREVIEW_NVALS 9
 
 typedef struct {
     int  candidate;                             /* 1 = candidata del locate */
     char title[48];                             /* "New solution · csnloc" | "Selected solution" | "No solution selected" */
-    char val[CSNHYPODBP_PREVIEW_NVALS][24];     /* Lat, Lon, Depth, Nph, RMS, ML, Mwp */
+    char val[CSNHYPODBP_PREVIEW_NVALS][24];     /* Lat, Lon, Depth, Nph, RMS, ML, Mwp, Mb, Ms */
 } CsnhypodbpPreviewVals;
 
 /* Titulos de la fila 0 (indice = el de `val[]`). */
 extern const char *const csnhypodbp_preview_headers[CSNHYPODBP_PREVIEW_NVALS];
 
-/* Sin seleccion: titulo propio y los 7 valores en "-". */
+/* --- Magnitud preferida (radios del cuadro de la candidata) ---------------- */
+
+#define CSNHYPODBP_PREVIEW_MAGS 4   /* ML, Mwp, Mb, Ms */
+
+/* Parte "valor-nst" de una celda de magnitud ("4.5-12"): 1 si habia valor > 0
+ * (deja `val` y `nst`), 0 si la celda esta vacia o es "-". */
+int csnhypodbp_mag_split(const char *txt, double *val, int *nst);
+
+/* Magnitud preferida por defecto, con la MISMA regla que csnmags (asi el radio
+ * arranca donde el sistema ya la considera preferida):
+ *   Mwp con nst>=3 y valor>=5.5 > Ms con nst>=3 > Mb con nst>=3 > ML>0.
+ * Devuelve 0=ML 1=Mwp 2=Mb 3=Ms, o -1 si ninguna tiene valor. */
+int csnhypodbp_mag_pref_default(const char *ml, const char *mwp,
+                                const char *mb, const char *ms);
+
+/* 1 si la magnitud `kind` (0=ML..3=Ms) se puede marcar como preferida: tiene que
+ * haber venido con valor. `has[i]` = 1 si esa magnitud se calculo. */
+int csnhypodbp_mag_pref_ok(const int has[CSNHYPODBP_PREVIEW_MAGS], int kind);
+
+/* Sin seleccion: titulo propio y los 9 valores en "-". */
 void csnhypodbp_preview_clear(CsnhypodbpPreviewVals *v);
 
 /* Solucion nueva del `locate`: titulo con el localizador activo y `nph`/`rms`
- * formateados desde numero. `ml`/`mwp` vacios -> "-". */
+ * formateados desde numero. Cada magnitud vacia -> "-". */
 void csnhypodbp_preview_from_candidate(CsnhypodbpPreviewVals *v, const char *locator,
                                        double lat, double lon, double depth, int nph,
-                                       double rms, const char *ml, const char *mwp);
+                                       double rms, const char *ml, const char *mwp,
+                                       const char *mb, const char *ms);
 
-/* Solucion elegida en el detalle: `rms`/`nph`/`ml`/`mwp` son los textos de la
- * fila (celdas c5/c7/c9/c10); vacios -> "-". */
+/* Solucion elegida en el detalle: `rms`/`nph` son los textos de la fila y
+ * `ml`/`mwp`/`mb`/`ms` los valores formateados; vacios -> "-". */
 void csnhypodbp_preview_from_selected(CsnhypodbpPreviewVals *v, double lat, double lon,
                                       double depth, const char *rms, const char *nph,
-                                      const char *ml, const char *mwp);
+                                      const char *ml, const char *mwp, const char *mb,
+                                      const char *ms);
 
 #endif /* CSNHYPODBP_PREVIEW_H */

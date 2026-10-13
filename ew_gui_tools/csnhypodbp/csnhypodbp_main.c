@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "csnhypodbp.h"
 #include "csnhypodbp_locator.h"
 #include "ewgui/table_ui.h"
@@ -9,6 +11,8 @@ char InRingRawName[MAX_STR];   /* 2.º anillo de entrada (csnloc crudo, opcional
 char OutRingName[MAX_STR];
 char InRingPickName[MAX_STR];  /* anillo de picks a leer (TYPE_PICK_SCNL) */
 char DbEnvFile[MAX_STR];       /* credenciales PostgreSQL (historial) */
+char MagConfigFile[MAX_STR] = "csnmags.d";  /* .d de csnmags: defaults de magnitud */
+CsnhypodbpMagCfg g_magcfg;     /* parametros de magnitud (se llenan al leer el .d) */
 int  g_db_hours = 24;          /* ventana de historial de la BD (horas) */
 char TauModel[MAX_STR];        /* modelo de tiempos de viaje (default iasp91) */
 char StaFile[MAX_STR];
@@ -46,6 +50,9 @@ int     NumEstaciones = 0;
 int     selected_qid = 0;
 int     selected_mod = 0;
 int     selected_version = 0;
+/* 1 mientras una llegada del anillo recompone la seleccion: la re-seleccion
+ * interna NO debe reiniciar la vista del usuario (ver should_reset). */
+int     g_ring_sync = 0;
 double  selected_otime = 0;
 double  selected_depth = 0;
 char    selected_id[32] = "None";
@@ -61,6 +68,8 @@ GtkSingleSelection *g_selection_hypo = NULL;
 GtkSingleSelection *g_selection_events = NULL;
 GtkSingleSelection *g_selection_detail = NULL;
 GtkWidget *g_notebook = NULL;
+GtkWidget *g_page_procesar = NULL;            /* pagina raiz "Procesar" (sub-notebook) */
+GtkWidget *g_subnotebook = NULL;              /* sub-pestañas: picking / magnitudes */
 GApplication *g_app = NULL;
 GtkWidget *tree_global = NULL;
 GtkWidget *tree_detail = NULL;
@@ -90,10 +99,11 @@ double g_color_s[3] = { 0.0, 0.6, 0.0 };   /* S: verde (marca S actual) */
 GtkWidget *window_global = NULL; 
 
 double g_max_dist_km = 500.0; 
+double g_mag_fetch_sec = 700.0;   /* ventana pedida por solucion (s; Ms necesita ~400) */
 double   g_zoom_factor = 1.0; 
 double   g_dWindowStart = 0;
 double   g_dScreenTime = 120.0; 
-int      g_margin_left = 160; 
+int      g_margin_left = 44;   /* etiqueta de componente + aire, nada mas */ 
 int      g_spacing = 100;
 
 StaNode g_SortedNodes[MAX_ESTA];
@@ -118,11 +128,46 @@ GtkSortListModel *g_sort_detail = NULL;
 GtkSortListModel *g_sort_sta = NULL;
 int  g_rebuilding_stations = 0;   /* 1 mientras rebuild_station_list repuebla */
 
+/* Sub-pestaña `magnitudes`: tabla con UNA fila por estacion (misma lista de
+   estaciones que la de picking, con el valor de la magnitud activa). */
+int g_mag_kind = CSNHYPODBP_MAG_ML;          /* magnitud activa (0=ML..3=Ms) */
+CsnhypodbpMagRow g_mag_rows[MAX_ESTA];
+int g_mag_sta_idx[MAX_ESTA];              /* fila de magnitudes -> fila de Ondas */
+int g_mag_rows_n = 0;
+EwGuiCanvas *g_mag_canvas = NULL;
+EwGuiCanvas *g_mag_axis_canvas = NULL;
+double       g_mag_cursor_x = 0.0;      /* puntero en el canvas de magnitudes */
+int          g_mag_cursor_valid = 0;    /* 1 = sobre el canvas */
+char g_mag_station[16] = "";
+CsnhypodbpMagMarks g_mag_marks;   /* ventanas ajustadas por (estacion, magnitud) */
+/* Filtro A/M/Teo de `magnitudes`: que ventanas entran al forzado (por defecto
+   M y A si, Teo no). */
+int g_magf_auto = 1, g_magf_manual = 1, g_magf_theo = 0;
+CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];   /* override de distancia */
+GtkWidget *g_magf_chk[3] = { NULL, NULL, NULL };
+GtkWidget *g_mag_ov_min = NULL, *g_mag_ov_max = NULL, *g_mag_ov_km = NULL;
+GtkWidget *g_mag_ov_dmin = NULL, *g_mag_ov_depth = NULL;
+GtkWidget *g_mag_ov_reset = NULL;
+GtkWidget *g_mag_btn_calc = NULL, *g_mag_btn_calc_all = NULL;
+GtkWidget *g_mag_view = NULL;
+GListStore *g_mag_store = NULL;
+GtkSingleSelection *g_mag_sel = NULL;
+GtkSortListModel *g_mag_sort = NULL;
+GtkWidget *g_mag_radio[CSNHYPODBP_MAG_NKIND];
+GtkWidget *g_mag_status = NULL;
+
 /* Vista de ondas: zoom por dos clics, modo de clic y eje de tiempo UTC. */
 CsnhypodbpView      g_view;
+/* Zoom por dos clics del canvas de `magnitudes` (misma vista que la de ondas). */
+CsnhypodbpView g_mag_zoomview;
 CsnhypodbpClickMode g_click_mode = CSNHYPODBP_CLICK_ZOOM;
 EwGuiCanvas        *g_axis_canvas = NULL;
 double              g_win_start_cur = 0.0;
+/* Ancla de la ventana del picking: P de referencia CONGELADA (tiempo absoluto).
+ * Picar no la mueve; solo se refresca al deshacer el zoom o cambiar de
+ * estacion/solucion/evento. `has_p` = 1 si ya es una P real (no el respaldo). */
+double              g_win_ref_pick = 0.0;
+int                 g_win_ref_has_p = 0;
 double              g_cursor_x = 0.0, g_cursor_y = 0.0;  /* puntero en el canvas */
 int                 g_cursor_valid = 0;                  /* 1 = sobre el canvas */
 
@@ -131,6 +176,9 @@ GtkWidget *g_preview_box = NULL;
 GtkWidget *g_preview_title = NULL;
 GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS];
 GtkWidget *g_preview_btn_confirm = NULL, *g_preview_btn_discard = NULL;
+GtkWidget *g_preview_radio[CSNHYPODBP_PREVIEW_MAGS];   /* magnitud preferida */
+int        g_preview_pref_kind = -1;                   /* 0=ML..3=Ms, -1 = ninguna */
+int        g_preview_pref_sync = 0;                    /* 1 = la GUI sincroniza */
 CsnhypodbpSolution g_preview_sol;
 CsnhypodbpMagOut g_preview_mag;
 gboolean g_preview_valid = FALSE;
@@ -149,6 +197,8 @@ int    g_profile_lon_col = 3;                /* ProfileCols: columnas 1-based */
 int    g_profile_val_col = 7;
 double g_profile_depth_min_km = 200.0;       /* ProfileDepthMinKm */
 double g_map_min_span_deg = 5.0;             /* MapMinSpanDeg (auto-encuadre) */
+double g_map_zoom_factor = 1.0;              /* MapZoom: factor sobre el auto-encuadre */
+double g_map_split_frac  = 0.7;              /* MapSplit: altura de la planta (default 7/3) */
 static char   g_overlay_files[EWGUI_OVERLAY_MAX_FILES][MAX_STR];
 static int    g_overlay_nfiles = 0;
 static char   g_overlay_color_layer[EWGUI_OVERLAY_MAX_FILES][EWGUI_OVERLAY_NAME_MAX];
@@ -247,11 +297,13 @@ int ReadConfig(char *configfile) {
         else if (k_its("TauModel")) { str = k_str(); if (str) strcpy(TauModel, str); }
         else if (k_its("PickCaptureWindowSec")) { g_pick_window_sec = k_val(); }
         else if (k_its("MaxDistKm")) { double v = k_val(); if (v > 0.0) g_max_dist_km = v; }
+        else if (k_its("MagFetchSeconds")) { double v = k_val(); if (v > 0.0) g_mag_fetch_sec = v; }
         else if (k_its("LocateKeepTmp")) { csnhypodbp_locate_keep_tmp(k_int()); }
         else if (k_its("GroupPickTolSec")) { g_group_pick_tol_sec = k_val(); }
         else if (k_its("GroupMinMatchPicks")) { g_group_min_match_picks = k_int(); }
         else if (k_its("GroupMaxSolutions")) { g_group_max_solutions = k_int(); }
         else if (k_its("DbEnvFile")) { str = k_str(); if (str) strcpy(DbEnvFile, str); }
+        else if (k_its("MagConfigFile")) { str = k_str(); if (str) strcpy(MagConfigFile, str); }
         else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
         else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
         else if (k_its("WaveBackend")) {
@@ -310,6 +362,31 @@ int ReadConfig(char *configfile) {
         else if (k_its("MapMinSpanDeg")) {
             double v = k_val();
             if (v > 0.0) g_map_min_span_deg = v;
+        }
+        /* Zoom por defecto del panel de planta (factor sobre el auto-encuadre)
+           y reparto vertical planta/perfil (p.ej. `7/3`). */
+        else if (k_its("MapZoom")) {
+            double v = k_val();
+            if (v > 0.0 && v <= 50.0) {
+                g_map_zoom_factor = v;
+            } else {
+                logit("et", "csnhypodbp: MapZoom <%.4g> fuera de (0,50], uso %.2f\n",
+                      v, g_map_zoom_factor);
+            }
+        }
+        else if (k_its("MapSplit")) {
+            double f = 0.0;
+
+            str = k_str();
+            if (csnhypodbp_map_split_parse(str, &f)) {
+                if (f < 0.1) f = 0.1;
+                if (f > 0.9) f = 0.9;
+                g_map_split_frac = f;
+            } else {
+                logit("et", "csnhypodbp: MapSplit <%s> invalido (usa `a/b`, p.ej. 7/3 "
+                            "sin espacios); uso %.3f\n",
+                      str ? str : "(none)", g_map_split_frac);
+            }
         }
         else if (k_its("OverlayFile")) {
             str = k_str();
@@ -372,6 +449,12 @@ int ReadConfig(char *configfile) {
         }
     }
     csnhypodbp_profiles_default_files(&g_profiles, ProfileDataDir);
+    /* Parametros de magnitud: defaults de fabrica y, encima, lo que diga el .d de
+       csnmags (la MISMA fuente que usa el motor: la GUI no duplica valores). */
+    csnhypodbp_magcfg_defaults(&g_magcfg);
+    if (csnhypodbp_magcfg_load(&g_magcfg, MagConfigFile) != 0)
+        fprintf(stderr, "Aviso: no se pudo leer MagConfigFile <%s>; se usan los "
+                        "defaults de magnitud\n", MagConfigFile);
     for (i = 0; i < ncommand; i++) if (!init[i]) nmiss++;
     k_close(); return (nmiss > 0) ? -1 : 0;
 }
@@ -382,6 +465,8 @@ static int maps_print_config(void) {
     int i;
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
     printf("MapMinSpanDeg %.1f\n", g_map_min_span_deg);
+    printf("MapZoom %.3f\n", g_map_zoom_factor);
+    printf("MapSplit %.4f\n", g_map_split_frac);
     printf("OverlayFiles %d\n", g_overlay_nfiles);
     for (i = 0; i < g_overlay_nfiles; i++)
         printf("OverlayFile %s\n", g_overlay_files[i]);
@@ -393,6 +478,27 @@ static int maps_print_config(void) {
     for (i = 0; i < g_overlay_nhides; i++)
         printf("OverlayHide %s\n", g_overlay_hide_layer[i]);
     printf("ProfileDataDir %s\n", ProfileDataDir[0] ? ProfileDataDir : "(none)");
+    /* Parametros de magnitud: los lee la sub-pestaña `magnitudes` para dibujar la
+       traza de vista y las franjas de ventana. */
+    printf("MagConfigFile %s\n", MagConfigFile[0] ? MagConfigFile : "(none)");
+    printf("MagWindow ML %.3f %.3f\n", g_magcfg.ml_ta, g_magcfg.ml_tb);
+    printf("MagWindow Mwp %.3f %.3f\n", g_magcfg.mwp_start,
+           g_magcfg.mwp_start + g_magcfg.mwp_t0);
+    printf("MagWindow Mb %.3f %.3f\n", 0.0, g_magcfg.mb_window);
+    printf("MagWindow Ms %.3f %.3f\n", 0.0, g_magcfg.ms_window);
+    printf("MagWoodAnderson %.3f %.3f %.1f\n", g_magcfg.wa_period,
+           g_magcfg.wa_damp, g_magcfg.wa_gain);
+    printf("MagBand Mb %.3f %.3f\n", g_magcfg.mb_f1, g_magcfg.mb_f2);
+    printf("MagBand Ms %.3f %.3f\n", g_magcfg.ms_f1, g_magcfg.ms_f2);
+    printf("MagFetchSeconds %.1f\n", g_mag_fetch_sec);
+    {
+        int gi;
+        for (gi = 0; gi < CSNHYPODBP_MAG_NKIND; gi++) {
+            double lo = 0.0, hi = 0.0, km = 0.0;
+            csnhypodbp_magcfg_gate_limits(&g_magcfg, gi, &lo, &hi, &km);
+            printf("MagGate %s %.1f %.1f %.1f\n", csnhypodbp_magcfg_name(gi), lo, hi, km);
+        }
+    }
     printf("ProfileFile %s\n", ProfileFile[0] ? ProfileFile : "(none)");
     printf("ProfileCols %d %d\n", g_profile_lon_col, g_profile_val_col);
     printf("ProfileDepthMinKm %.1f\n", g_profile_depth_min_km);
@@ -821,6 +927,143 @@ static void add_sta_text_column(GtkWidget *view, const char *title, const char *
     gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
 }
 
+/* -------------------------------------------------------------------------
+ * Tabla de MAGNITUDES (sub-pestaña `magnitudes`): UNA fila por estacion con
+ * station | dist[km] | mag | res | stat. La casilla de `station` marca si esa
+ * estacion entra en el recalculo de la magnitud de red; su estado vive en la
+ * tabla de filas (g_mag_rows[i].used), no en el modelo, porque las celdas se
+ * reciclan al hacer scroll.
+ * ------------------------------------------------------------------------- */
+
+#define MAG_CELL_CHK "mag-cell-chk"
+#define MAG_CELL_LBL "mag-cell-lbl"
+
+static CsnhypodbpMagItem *mag_item_of(GtkListItem *item)
+{
+    gpointer it = gtk_list_item_get_item(item);
+    return (it && CSNHYPODBP_IS_MAG_ITEM(it)) ? CSNHYPODBP_MAG_ITEM(it) : NULL;
+}
+
+/* Casilla de uso: entra o no en el calculo de la magnitud de red. */
+static void on_mag_check_toggled(GtkButton *b, gpointer data)
+{
+    int idx = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(b), "mag_idx"));
+    (void)data;
+    if (idx < 0 || idx >= g_mag_rows_n) return;
+    g_mag_rows[idx].used = gtk_check_button_get_active(GTK_CHECK_BUTTON(b)) ? 1 : 0;
+    csnhypodbp_magmarks_set_used(&g_mag_marks, g_mag_rows[idx].sta, g_mag_kind,
+                                 g_mag_rows[idx].used);
+    csnhypodbp_mag_status_update();
+}
+
+/* Columna `station`: [casilla de uso] nombre. */
+static void mag_col_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    GtkWidget *box, *chk, *lbl;
+    (void)f; (void)data;
+    box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+    chk = gtk_check_button_new();
+    lbl = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+    gtk_widget_set_hexpand(lbl, TRUE);
+    g_signal_connect(chk, "toggled", G_CALLBACK(on_mag_check_toggled), NULL);
+    gtk_box_append(GTK_BOX(box), chk);
+    gtk_box_append(GTK_BOX(box), lbl);
+    g_object_set_data(G_OBJECT(box), MAG_CELL_CHK, chk);
+    g_object_set_data(G_OBJECT(box), MAG_CELL_LBL, lbl);
+    gtk_list_item_set_child(item, box);
+}
+
+static void mag_col_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    CsnhypodbpMagItem *it;
+    GtkWidget *box, *chk, *lbl;
+    char *name = NULL;
+    gboolean used = FALSE;
+    GBinding *b;
+    int idx;
+    (void)f; (void)data;
+    it = mag_item_of(item);
+    if (!it) return;
+    box = gtk_list_item_get_child(item);
+    chk = g_object_get_data(G_OBJECT(box), MAG_CELL_CHK);
+    lbl = g_object_get_data(G_OBJECT(box), MAG_CELL_LBL);
+    idx = csnhypodbp_mag_item_idx(it);
+    g_object_get(it, "sta", &name, "used", &used, NULL);
+    b = g_object_bind_property(it, "sta", lbl, "label", G_BINDING_SYNC_CREATE);
+    g_object_set_data_full(G_OBJECT(item), "cell-binding", b, g_object_unref);
+    g_object_set_data(G_OBJECT(chk), "mag_idx", GINT_TO_POINTER(idx));
+    g_signal_handlers_block_by_func(chk, G_CALLBACK(on_mag_check_toggled), NULL);
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(chk), used);
+    g_signal_handlers_unblock_by_func(chk, G_CALLBACK(on_mag_check_toggled), NULL);
+    /* Sin traza descargada no hay nada que medir ni que forzar: la casilla
+       queda inerte (marcar una estacion sin ondas no cambiaria el calculo). */
+    gtk_widget_set_sensitive(chk, (idx >= 0 && idx < g_mag_rows_n &&
+                                   g_mag_rows[idx].has_data) ? TRUE : FALSE);
+    g_free(name);
+}
+
+/* Columnas de texto (dist/mag/res/stat): bind por nombre de propiedad. */
+static void mag_txt_setup(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    GtkWidget *lbl;
+    (void)f; (void)data;
+    lbl = gtk_label_new(NULL);
+    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
+    gtk_list_item_set_child(item, lbl);
+}
+
+static void mag_txt_bind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    const char *prop = (const char *)data;
+    GtkWidget *lbl;
+    CsnhypodbpMagItem *it;
+    GBinding *b;
+    (void)f;
+    it = mag_item_of(item);
+    lbl = gtk_list_item_get_child(item);
+    if (!it || !lbl || !prop) return;
+    b = g_object_bind_property(it, prop, lbl, "label", G_BINDING_SYNC_CREATE);
+    g_object_set_data_full(G_OBJECT(item), "cell-binding", b, g_object_unref);
+}
+
+static void mag_txt_unbind(GtkSignalListItemFactory *f, GtkListItem *item, gpointer data)
+{
+    (void)f; (void)data;
+    g_object_set_data(G_OBJECT(item), "cell-binding", NULL);
+}
+
+static void add_mag_station_column(GtkWidget *view, const char *title)
+{
+    GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+    GtkColumnViewColumn *col;
+    g_signal_connect(f, "setup",  G_CALLBACK(mag_col_setup), NULL);
+    g_signal_connect(f, "bind",   G_CALLBACK(mag_col_bind), NULL);
+    g_signal_connect(f, "unbind", G_CALLBACK(mag_txt_unbind), NULL);
+    col = gtk_column_view_column_new(title, f);
+    gtk_column_view_column_set_expand(col, TRUE);
+    gtk_column_view_column_set_resizable(col, TRUE);
+    ewgui_table_column_sortable(col, "sta", NULL, EWGUI_TABLE_ASC);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
+}
+
+/* `sort_prop` es una propiedad NUMERICA del item (las celdas son texto). */
+static void add_mag_text_column(GtkWidget *view, const char *title, const char *prop,
+                                const char *sort_prop, int width, int dir)
+{
+    GtkListItemFactory *f = gtk_signal_list_item_factory_new();
+    GtkColumnViewColumn *col;
+    g_signal_connect(f, "setup",  G_CALLBACK(mag_txt_setup), NULL);
+    g_signal_connect(f, "bind",   G_CALLBACK(mag_txt_bind), (gpointer)prop);
+    g_signal_connect(f, "unbind", G_CALLBACK(mag_txt_unbind), NULL);
+    col = gtk_column_view_column_new(title, f);
+    gtk_column_view_column_set_fixed_width(col, width);
+    gtk_column_view_column_set_resizable(col, TRUE);
+    ewgui_table_column_sortable(col, sort_prop, NULL, dir);
+    gtk_column_view_append_column(GTK_COLUMN_VIEW(view), col);
+}
+
 /* Exporta la vista de trazas a SVG/PDF/PNG (diálogo Guardar). */
 static void act_export(GSimpleAction *a, GVariant *p, gpointer ud) {
     (void)a; (void)p; (void)ud;
@@ -923,12 +1166,14 @@ void csnhypodbp_update_search_ui(void)
         gtk_widget_set_sensitive(g_btn_clear_search, g_search_active ? TRUE : FALSE);
 }
 
-/* En la pestaña Ondas (página 1) el ☰ muestra el grupo Waveforms. */
+/* En la pestaña raiz Procesar el ☰ muestra el grupo Waveforms. Se compara el
+   WIDGET de la pagina, no su indice: añadir o reordenar pestañas no cambia el
+   menu. */
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint num, gpointer ud) {
-    (void)nb; (void)page; (void)ud;
+    (void)nb; (void)num; (void)ud;
     if (!g_menu_btn) return;
-    if (num == 1) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 4);
-    else          ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
+    if (page == g_page_procesar) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 4);
+    else                         ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
 }
 
 /* Un cuadro de mapa: caption (texto visible por AT-SPI) + canvas. */
@@ -956,27 +1201,56 @@ static GtkWidget *map_panel_new(EwGuiCanvas **cv, GtkWidget **cap, EwDrawFn draw
 }
 
 /* Deja ~340 px para la columna de mapas cuando el paned ya tiene ancho. */
+static gboolean paned_maps_log_idle(gpointer data);
 static gboolean paned_maps_set_idle(gpointer data) {
     GtkWidget *p = data;
     int w = gtk_widget_get_width(p);
-    if (w > 0) gtk_paned_set_position(GTK_PANED(p), w - 340);
+
+    /* El `map` puede llegar con tamano 0 y entonces el reparto se perdia en
+       silencio: se reintenta cada 50 ms hasta que haya ancho. */
+    if (w <= 0) return G_SOURCE_CONTINUE;
+    {
+        int pos = w - 340;
+        /* Suelo: si el ancho medido aun es pequeno, no dejar los mapas en nada. */
+        if (pos < 260) pos = 260;
+        gtk_paned_set_position(GTK_PANED(p), pos);
+        g_idle_add(paned_maps_log_idle, NULL);   /* ya con la posicion aplicada */
+    }
+    return G_SOURCE_REMOVE;
+}
+
+/* Una linea con la geometria al arrancar: si la columna de mapas quedara sin
+   ancho (el fallo que la dejo invisible), se ve aqui sin abrir un inspector. */
+static gboolean paned_maps_log_idle(gpointer data) {
+    (void)data;
+    logit("et", "csnhypodbp: ventana=%d px, columna de mapas=%d px\n",
+          window_global ? gtk_widget_get_width(GTK_WIDGET(window_global)) : 0,
+          g_maps_col ? gtk_widget_get_width(g_maps_col) : 0);
     return G_SOURCE_REMOVE;
 }
 static void paned_maps_map(GtkWidget *paned, gpointer data) {
     (void)data;
-    g_idle_add(paned_maps_set_idle, paned);
+    g_timeout_add(50, paned_maps_set_idle, paned);
 }
 
-/* Reparte la columna de mapas 65% planta / 35% perfil en el primer mapeo. */
+/* Reparte la columna de mapas planta/perfil en el primer mapeo, con la fraccion
+   de `MapSplit` (default 7/3 = 0.70 de planta arriba). Se aplica UNA vez: un
+   reparto posterior pisaria el que el usuario haya hecho a mano. */
+static int g_map_split_done = 0;
 static gboolean paned_vmaps_set_idle(gpointer data) {
     GtkWidget *p = data;
     int h = gtk_widget_get_height(p);
-    if (h > 0) gtk_paned_set_position(GTK_PANED(p), (int)(h * 0.65));
+
+    if (h <= 0) return G_SOURCE_CONTINUE;      /* aun sin alto: reintenta */
+    if (!g_map_split_done) {
+        g_map_split_done = 1;
+        gtk_paned_set_position(GTK_PANED(p), (int)(h * g_map_split_frac));
+    }
     return G_SOURCE_REMOVE;
 }
 static void paned_vmaps_map(GtkWidget *paned, gpointer data) {
     (void)data;
-    g_idle_add(paned_vmaps_set_idle, paned);
+    g_timeout_add(50, paned_vmaps_set_idle, paned);
 }
 
 /* Los dos canvas de mapa se manejan igual: rueda = zoom, arrastre boton 1 =
@@ -1017,13 +1291,21 @@ static void build_maps_column(void)
 
     gtk_paned_set_start_child(GTK_PANED(paned), plan_frame);
     gtk_paned_set_end_child(GTK_PANED(paned), prof_frame);
+    /* La planta (arriba) se queda con el alto sobrante: crece con la ventana y el
+       perfil no se estira mas alla de su tamano. */
     gtk_paned_set_resize_start_child(GTK_PANED(paned), TRUE);
-    gtk_paned_set_resize_end_child(GTK_PANED(paned), TRUE);
+    gtk_paned_set_resize_end_child(GTK_PANED(paned), FALSE);
     gtk_paned_set_position(GTK_PANED(paned), 320);
     gtk_widget_set_vexpand(paned, TRUE);
     g_signal_connect(paned, "map", G_CALLBACK(paned_vmaps_map), NULL);
 
     g_maps_col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+    /* Sin `size_request`: su minimo ya lo dan los dos canvas (300 px) y un minimo
+       propio se SUMA al de la ventana, que es lo que dejaba la columna sin ancho
+       (el notebook no cede por debajo de su minimo). La protege el
+       `shrink_end_child(FALSE)` del paned. */
+    gtk_widget_set_hexpand(g_maps_col, TRUE);
+    gtk_widget_set_vexpand(g_maps_col, TRUE);
     gtk_box_append(GTK_BOX(g_maps_col), paned);
     csnhypodbp_maps_refresh();   /* estado inicial (sin seleccion) */
 }
@@ -1039,6 +1321,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     setlocale(LC_NUMERIC, "C");
 
     csnhypodbp_view_set_default(&g_view, g_dScreenTime);
+    csnhypodbp_pick_anchor_refresh();   /* arranque: ancla sin P (respaldo) */
 
     if (!css_done) {
         GtkCssProvider *provider = gtk_css_provider_new();
@@ -1134,9 +1417,14 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         GtkWidget *paned_maps = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
         gtk_paned_set_start_child(GTK_PANED(paned_maps), g_notebook);
         gtk_paned_set_end_child(GTK_PANED(paned_maps), g_maps_col);
+        /* Ambos `resize_*` en TRUE: el ancho sobrante se reparte y los mapas
+           crecen con la ventana. `shrink_end_child(FALSE)` impide que la columna
+           de mapas baje de su minimo (los dos canvas, 300 px): asi no puede
+           quedar en unos pocos pixeles ni fuera de vista. */
         gtk_paned_set_resize_start_child(GTK_PANED(paned_maps), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned_maps), TRUE);
         gtk_paned_set_shrink_start_child(GTK_PANED(paned_maps), FALSE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned_maps), FALSE);
         gtk_widget_set_vexpand(paned_maps, TRUE);
         g_signal_connect(paned_maps, "map", G_CALLBACK(paned_maps_map), NULL);
         gtk_box_append(GTK_BOX(vbox), paned_maps);
@@ -1374,6 +1662,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_box_append(GTK_BOX(waves_hbox), waves_right);
     gtk_widget_set_vexpand(waves_hbox, TRUE);
 
+    /* Pestaña raiz "Procesar": la tablita de la solucion es COMPARTIDA por las dos
+       sub-pestañas (no se pierde al cambiar de `picking` a `magnitudes`), asi que
+       va por encima del sub-notebook. */
+    GtkWidget *page_procesar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
     /* Preview de la solucion: tablita de 2 filas (cabecera de parametros +
        valores) con Confirm/Discard a la derecha. Muestra la solucion elegida en
        el detalle y, tras `locate`, la candidata (fondo rojo leve). SIEMPRE
@@ -1397,7 +1690,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_box_append(GTK_BOX(inner), g_preview_title);
         gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
         gtk_grid_set_row_spacing(GTK_GRID(grid), 0);
-        /* Fila 0 = cabeceras, fila 1 = valores (mismo indice en las dos). */
+        /* Fila 0 = radios de magnitud preferida (solo en las columnas de
+           magnitud), fila 1 = cabeceras, fila 2 = valores (mismo indice). */
         for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++) {
             GtkWidget *h = gtk_label_new(csnhypodbp_preview_headers[i]);
             gtk_label_set_xalign(GTK_LABEL(h), 0.0);
@@ -1406,8 +1700,23 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
             gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
             gtk_widget_add_css_class(g_preview_val[i], "preview-val");
-            gtk_grid_attach(GTK_GRID(grid), h, i, 0, 1, 1);
-            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 1, 1, 1);
+            if (i >= CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS) {
+                int k = i - (CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS);
+
+                g_preview_radio[k] = gtk_check_button_new();
+                if (k > 0)   /* en grupo: se comportan como radios */
+                    gtk_check_button_set_group(GTK_CHECK_BUTTON(g_preview_radio[k]),
+                                               GTK_CHECK_BUTTON(g_preview_radio[0]));
+                gtk_widget_set_halign(g_preview_radio[k], GTK_ALIGN_CENTER);
+                gtk_widget_set_tooltip_text(g_preview_radio[k],
+                    "Marca esta magnitud como la preferida al confirmar");
+                gtk_widget_set_sensitive(g_preview_radio[k], FALSE);
+                g_signal_connect(g_preview_radio[k], "toggled",
+                                 G_CALLBACK(on_preview_pref_toggled), GINT_TO_POINTER(k));
+                gtk_grid_attach(GTK_GRID(grid), g_preview_radio[k], i, 0, 1, 1);
+            }
+            gtk_grid_attach(GTK_GRID(grid), h, i, 1, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 2, 1, 1);
         }
         gtk_box_append(GTK_BOX(inner), grid);
         gtk_box_append(GTK_BOX(g_preview_box), inner);
@@ -1425,7 +1734,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_preview_btn_discard = pd;
     }
     gtk_widget_set_visible(g_preview_box, TRUE);
-    gtk_box_append(GTK_BOX(page_waves), g_preview_box);
+    gtk_box_append(GTK_BOX(page_procesar), g_preview_box);
     csnhypodbp_preview_update();   /* estado inicial (sin seleccion: guiones) */
 
     gtk_box_append(GTK_BOX(page_waves), waves_hbox);
@@ -1433,7 +1742,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     canvas_global = ewgui_canvas_new();
     ewgui_canvas_set_draw(canvas_global, on_draw_signal, NULL);
     GtkWidget *canvas_widget = ewgui_canvas_widget(canvas_global);
-    gtk_widget_set_size_request(canvas_widget, -1, 600);
+    /* Minimo, no altura fija: el canvas llena el area disponible y on_draw_signal
+       reparte el alto real entre las bandas (ver actualizar_altura_canvas). */
+    gtk_widget_set_hexpand(canvas_widget, TRUE);
+    gtk_widget_set_vexpand(canvas_widget, TRUE);
+    gtk_widget_set_size_request(canvas_widget, -1, CSNHYPODBP_BAND_MIN + 60);
     GtkGesture *click = gtk_gesture_click_new();
     gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(click), 1);
     g_signal_connect(click, "pressed", G_CALLBACK(on_canvas_clicked), NULL);
@@ -1452,7 +1765,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_widget_add_controller(canvas_widget, motion);
     }
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_ondas), canvas_widget);
-    gtk_notebook_append_page(GTK_NOTEBOOK(g_notebook), page_waves, gtk_label_new("Ondas"));
+    /* La pagina NO se añade aqui: va dentro del sub-notebook de "Procesar", que
+       se arma al final (cuando page_waves ya tiene todo su contenido). */
 
     GtkWidget *hbox_bottom = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
     gtk_widget_set_margin_start(hbox_bottom, 10); gtk_widget_set_margin_end(hbox_bottom, 10); gtk_widget_set_margin_bottom(hbox_bottom, 5);
@@ -1496,6 +1810,298 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_box_append(GTK_BOX(hbox_bottom), btn_locate);
     }
     gtk_box_append(GTK_BOX(page_waves), hbox_bottom);
+
+    /* Pestaña raiz "Procesar": agrupa dos sub-pestañas. `picking` es el contenido
+       de siempre; `magnitudes` (F2/F3) es el procesado de magnitudes. */
+    g_subnotebook = gtk_notebook_new();
+    gtk_widget_set_vexpand(g_subnotebook, TRUE);
+    gtk_notebook_append_page(GTK_NOTEBOOK(g_subnotebook), page_waves,
+                             gtk_label_new("picking"));
+    {
+        /* Sub-pestaña `magnitudes`: barra con el selector de magnitud y la linea
+           de estado, tabla (una fila por estacion) y, a la derecha, la traza
+           procesada con las ventanas (F3). */
+        GtkWidget *page_mags = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+        GtkWidget *hbox_mag = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+        GtkWidget *mag_frame = gtk_frame_new(NULL);
+        GtkWidget *sw_mag = gtk_scrolled_window_new();
+        GtkWidget *mag_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        int k;
+
+        gtk_widget_set_margin_start(hbox_mag, 10);
+        gtk_widget_set_margin_end(hbox_mag, 10);
+        gtk_widget_set_margin_bottom(hbox_mag, 5);
+        gtk_box_append(GTK_BOX(hbox_mag), gtk_label_new("magnitud:"));
+        for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++) {
+            GtkWidget *r = gtk_check_button_new_with_label(csnhypodbp_magcfg_name(k));
+            if (k > 0)
+                gtk_check_button_set_group(GTK_CHECK_BUTTON(r),
+                                           GTK_CHECK_BUTTON(g_mag_radio[0]));
+            gtk_check_button_set_active(GTK_CHECK_BUTTON(r),
+                                        k == g_mag_kind ? TRUE : FALSE);
+            g_signal_connect(r, "toggled", G_CALLBACK(on_mag_kind_toggled),
+                             GINT_TO_POINTER(k));
+            g_mag_radio[k] = r;
+            gtk_box_append(GTK_BOX(hbox_mag), r);
+        }
+        g_mag_status = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(g_mag_status), 0.0);
+        gtk_widget_set_hexpand(g_mag_status, TRUE);
+        gtk_box_append(GTK_BOX(hbox_mag), g_mag_status);
+        gtk_box_append(GTK_BOX(page_mags), hbox_mag);
+
+        gtk_widget_add_css_class(mag_frame, "detail-frame");
+        gtk_widget_set_vexpand(mag_frame, TRUE);
+        gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_mag),
+                                       GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_widget_set_vexpand(sw_mag, TRUE);
+        g_mag_store = g_list_store_new(CSNHYPODBP_TYPE_MAG_ITEM);
+        g_mag_sort = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_mag_store)), NULL);
+        g_mag_sel = gtk_single_selection_new(G_LIST_MODEL(g_object_ref(g_mag_sort)));
+        gtk_single_selection_set_autoselect(g_mag_sel, FALSE);
+        gtk_single_selection_set_can_unselect(g_mag_sel, TRUE);
+        g_signal_connect(g_mag_sel, "notify::selected",
+                         G_CALLBACK(on_mag_row_selected), NULL);
+        g_mag_view = gtk_column_view_new(GTK_SELECTION_MODEL(g_mag_sel));
+        gtk_column_view_set_show_row_separators(GTK_COLUMN_VIEW(g_mag_view), TRUE);
+        gtk_column_view_set_show_column_separators(GTK_COLUMN_VIEW(g_mag_view), TRUE);
+        gtk_widget_add_css_class(g_mag_view, "sta-table");
+        add_mag_station_column(g_mag_view, "station");
+        add_mag_text_column(g_mag_view, "dist[km]", "dist", "distv", 56,
+                            EWGUI_TABLE_DESC);
+        add_mag_text_column(g_mag_view, "ancla", "anchor", "anchor", 44,
+                            EWGUI_TABLE_ASC);
+        add_mag_text_column(g_mag_view, "t0[s]", "t0", "t0v", 44, EWGUI_TABLE_DESC);
+        add_mag_text_column(g_mag_view, "t1[s]", "t1", "t1v", 44, EWGUI_TABLE_DESC);
+        add_mag_text_column(g_mag_view, "mag", "mag", "magv", 46, EWGUI_TABLE_DESC);
+        add_mag_text_column(g_mag_view, "res", "res", "resv", 46, EWGUI_TABLE_DESC);
+        add_mag_text_column(g_mag_view, "stat", "stat", "stat", 30, EWGUI_TABLE_ASC);
+        ewgui_table_enable_sorting(GTK_COLUMN_VIEW(g_mag_view), g_mag_sort, NULL, 0);
+        gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_mag), g_mag_view);
+        gtk_frame_set_child(GTK_FRAME(mag_frame), sw_mag);
+        gtk_box_append(GTK_BOX(mag_hbox), mag_frame);
+        /* Traza procesada de la estacion elegida con la franja de la ventana de
+           la magnitud activa: se arrastra un borde (o la franja entera) para
+           ajustarla. La cadena por magnitud la construye csnhypodbp_magview. */
+        g_mag_canvas = ewgui_canvas_new();
+        ewgui_canvas_set_draw(g_mag_canvas, on_draw_mag, NULL);
+        {
+            GtkWidget *mw = ewgui_canvas_widget(g_mag_canvas);
+            GtkWidget *sw_magcv = gtk_scrolled_window_new();
+            GtkGesture *dg = gtk_gesture_drag_new();
+
+            /* El alto lo fija csnhypodbp_mag_canvas_fit() segun el numero de
+               canales de la estacion elegida: sin el scrolled window las filas de
+               abajo quedaban fuera del area visible (se veia solo la primera). */
+            gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_magcv),
+                                           GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+            gtk_widget_set_hexpand(sw_magcv, TRUE);
+            gtk_widget_set_vexpand(sw_magcv, TRUE);
+            /* Ancho minimo del canvas: sin el, la tabla de 8 columnas se lo comia
+               y el grafico quedaba en unos pocos pixeles. */
+            gtk_widget_set_size_request(sw_magcv, CSNHYPODBP_CANVAS_MIN_W, -1);
+            gtk_widget_set_hexpand(mw, TRUE);
+            gtk_widget_set_vexpand(mw, TRUE);
+            gtk_widget_set_size_request(mw, CSNHYPODBP_CANVAS_MIN_W,
+                                        CSNHYPODBP_BAND_MIN + 60);
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_magcv), mw);
+            gtk_box_append(GTK_BOX(mag_hbox), sw_magcv);
+            g_signal_connect(dg, "drag-begin",  G_CALLBACK(on_mag_drag_begin), NULL);
+            g_signal_connect(dg, "drag-update", G_CALLBACK(on_mag_drag_update), NULL);
+            g_signal_connect(dg, "drag-end",    G_CALLBACK(on_mag_drag_end), NULL);
+            gtk_widget_add_controller(mw, GTK_EVENT_CONTROLLER(dg));
+            /* Zoom por dos clics sobre la traza (el arrastre vive en el handle). */
+            {
+                GtkGesture *mc = gtk_gesture_click_new();
+                gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(mc), 1);
+                g_signal_connect(mc, "pressed", G_CALLBACK(on_mag_canvas_clicked), NULL);
+                gtk_widget_add_controller(mw, GTK_EVENT_CONTROLLER(mc));
+            }
+            /* Puntero: dice si el clic va a arrastrar la franja (grab), mover un
+               borde (ew-resize) o hacer zoom (crosshair). */
+            {
+                GtkEventController *mmo = gtk_event_controller_motion_new();
+                g_signal_connect(mmo, "motion", G_CALLBACK(on_mag_canvas_motion), NULL);
+                g_signal_connect(mmo, "leave", G_CALLBACK(on_mag_canvas_leave), NULL);
+                gtk_widget_add_controller(mw, mmo);
+            }
+        }
+        gtk_widget_set_vexpand(mag_hbox, TRUE);
+        gtk_box_append(GTK_BOX(page_mags), mag_hbox);
+
+        /* Eje temporal abajo (mismo patron que el de `picking`): ticks UTC y
+           arrastre para acercar; doble clic recentra la franja entera. */
+        g_mag_axis_canvas = ewgui_canvas_new();
+        ewgui_canvas_set_draw(g_mag_axis_canvas, on_draw_mag_axis, NULL);
+        {
+            GtkWidget *axw = ewgui_canvas_widget(g_mag_axis_canvas);
+            GtkGesture *adg = gtk_gesture_drag_new();
+            GtkGesture *acl = gtk_gesture_click_new();
+
+            gtk_widget_set_size_request(axw, -1, 26);
+            g_signal_connect(adg, "drag-begin", G_CALLBACK(on_mag_axis_drag_begin), NULL);
+            g_signal_connect(adg, "drag-update", G_CALLBACK(on_mag_axis_drag_update), NULL);
+            g_signal_connect(adg, "drag-end", G_CALLBACK(on_mag_axis_drag_end), NULL);
+            gtk_widget_add_controller(axw, GTK_EVENT_CONTROLLER(adg));
+            g_signal_connect(acl, "pressed", G_CALLBACK(on_mag_axis_clicked), NULL);
+            gtk_widget_add_controller(axw, GTK_EVENT_CONTROLLER(acl));
+            gtk_box_append(GTK_BOX(page_mags), axw);
+        }
+
+        /* Barra inferior, mismo patron que la de `picking` (spacer con hexpand y
+           todo el grupo a la DERECHA). Las UNIDADES van solo en la cabecera de
+           cada grupo; cada caja se rotula solo `min`/`max`, para que no haya duda
+           de a que caja pertenece cada texto. Sin casilla: el rango que se ve ES
+           el que se aplica (editar un campo activa el override de la magnitud
+           activa) y `reset default` devuelve las cuatro al .d.
+           Va dentro de un scrolled window: asi su ancho no infla el minimo de la
+           ventana, que era lo que dejaba la columna de mapas sin ancho. */
+        {
+            GtkWidget *barsw = gtk_scrolled_window_new();
+            GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+            GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+            int j;
+
+            gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(barsw),
+                                           GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
+            gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(barsw), bar);
+            gtk_widget_set_margin_start(bar, 10);
+            gtk_widget_set_margin_end(bar, 10);
+            gtk_widget_set_margin_bottom(bar, 6);
+            gtk_widget_set_hexpand(spacer, TRUE);
+            gtk_box_append(GTK_BOX(bar), spacer);
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("ventanas:"));
+            for (j = 0; j < 3; j++) {
+                const char *lbl = (j == 0) ? "A" : (j == 1) ? "M" : "Teo";
+
+                g_magf_chk[j] = gtk_check_button_new_with_label(lbl);
+                gtk_check_button_set_active(GTK_CHECK_BUTTON(g_magf_chk[j]),
+                                            (j == 2) ? FALSE : TRUE);
+                gtk_widget_set_tooltip_text(g_magf_chk[j],
+                    "Origen de la ventana que entra al calculo: A = default del .d "
+                    "con P observada, M = ajustada a mano, Teo = ancla teorica.");
+                g_signal_connect(g_magf_chk[j], "toggled",
+                                 G_CALLBACK(on_mag_filter_toggled), GINT_TO_POINTER(j));
+                gtk_box_append(GTK_BOX(bar), g_magf_chk[j]);
+            }
+            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+
+            /* Grupo distancia: `distancia [°]  min [ ]  max [ ]`. */
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("distancia [°]"));
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
+            g_mag_ov_min = gtk_spin_button_new_with_range(0.0, 180.0, 0.5);
+            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_min), 1);
+            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_min), 4);
+            gtk_widget_set_tooltip_text(g_mag_ov_min,
+                "Distancia epicentral MINIMA en grados. Editar cualquier campo de "
+                "la barra activa el override para la magnitud activa.");
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_min);
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
+            g_mag_ov_max = gtk_spin_button_new_with_range(0.0, 180.0, 0.5);
+            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_max), 1);
+            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_max), 4);
+            gtk_widget_set_tooltip_text(g_mag_ov_max,
+                "Distancia epicentral MAXIMA en grados.");
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_max);
+            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+
+            /* Grupo distancia hipocentral: el corte en km de ML. */
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("dist. hip. [km]"));
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
+            g_mag_ov_km = gtk_spin_button_new_with_range(0.0, 2000.0, 10.0);
+            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_km), 0);
+            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_km), 4);
+            gtk_widget_set_tooltip_text(g_mag_ov_km,
+                "Tope de distancia HIPOCENTRAL en km (el corte en km de ML; "
+                "0 = sin tope).");
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_km);
+            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+
+            /* Grupo profundidad del EVENTO: `prof. [km]  min [ ]  max [ ]`. */
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("prof. [km]"));
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
+            g_mag_ov_dmin = gtk_spin_button_new_with_range(0.0, 700.0, 5.0);
+            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_dmin), 0);
+            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_dmin), 4);
+            gtk_widget_set_tooltip_text(g_mag_ov_dmin,
+                "Profundidad MINIMA del evento para esta magnitud, en km "
+                "(0 = sin piso).");
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_dmin);
+            gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
+            g_mag_ov_depth = gtk_spin_button_new_with_range(0.0, 700.0, 5.0);
+            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_depth), 0);
+            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_depth), 4);
+            gtk_widget_set_tooltip_text(g_mag_ov_depth,
+                "Profundidad MAXIMA del evento para esta magnitud, en km (0 = sin "
+                "corte). El veto por defecto de Ms es 60 km.");
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_depth);
+            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
+
+            g_mag_ov_reset = gtk_button_new_with_label("reset default");
+            gtk_widget_set_tooltip_text(g_mag_ov_reset,
+                "Devuelve las cuatro magnitudes a la puerta del .d de csnmags "
+                "(tambien se resetea al elegir otra solucion en Origins).");
+            g_signal_connect(g_mag_ov_reset, "clicked",
+                             G_CALLBACK(on_mag_ov_reset_clicked), NULL);
+            gtk_box_append(GTK_BOX(bar), g_mag_ov_reset);
+
+            /* `calculate` = la magnitud activa; `calculate all` = las cuatro.
+               Una sola corrida de csnmags en los dos casos (ver locate_start). */
+            g_mag_btn_calc = gtk_button_new_with_label("calculate");
+            gtk_widget_set_tooltip_text(g_mag_btn_calc,
+                "Recalcula la magnitud ACTIVA con las ventanas que ajustaste "
+                "(no relocaliza). El resultado entra como candidata.");
+            g_signal_connect(g_mag_btn_calc, "clicked",
+                             G_CALLBACK(on_mag_calc_clicked), NULL);
+            gtk_box_append(GTK_BOX(bar), g_mag_btn_calc);
+            g_mag_btn_calc_all = gtk_button_new_with_label("calculate all");
+            gtk_widget_set_tooltip_text(g_mag_btn_calc_all,
+                "Recalcula las CUATRO magnitudes con las ventanas ajustadas "
+                "(no relocaliza).");
+            g_signal_connect(g_mag_btn_calc_all, "clicked",
+                             G_CALLBACK(on_mag_calc_all_clicked), NULL);
+            gtk_box_append(GTK_BOX(bar), g_mag_btn_calc_all);
+
+            g_signal_connect(g_mag_ov_min, "value-changed",
+                             G_CALLBACK(on_mag_ov_changed), NULL);
+            g_signal_connect(g_mag_ov_max, "value-changed",
+                             G_CALLBACK(on_mag_ov_changed), NULL);
+            g_signal_connect(g_mag_ov_km, "value-changed",
+                             G_CALLBACK(on_mag_ov_changed), NULL);
+            g_signal_connect(g_mag_ov_dmin, "value-changed",
+                             G_CALLBACK(on_mag_ov_changed), NULL);
+            g_signal_connect(g_mag_ov_depth, "value-changed",
+                             G_CALLBACK(on_mag_ov_changed), NULL);
+            /* Compacta la barra (~75%): asi caben tambien los dos botones nuevos
+               sin scroll horizontal. Los spins a 3 caracteres, las etiquetas al
+               75% (el ancho de la barra es lo que decide si todo entra). */
+            {
+                GtkWidget *cw2;
+
+                for (cw2 = gtk_widget_get_first_child(bar); cw2;
+                     cw2 = gtk_widget_get_next_sibling(cw2)) {
+                    if (GTK_IS_SPIN_BUTTON(cw2)) {
+                        gtk_editable_set_width_chars(GTK_EDITABLE(cw2), 3);
+                    } else if (GTK_IS_LABEL(cw2)) {
+                        PangoAttrList *al = pango_attr_list_new();
+
+                        pango_attr_list_insert(al, pango_attr_scale_new(0.75));
+                        gtk_label_set_attributes(GTK_LABEL(cw2), al);
+                        pango_attr_list_unref(al);
+                    }
+                }
+            }
+            gtk_box_append(GTK_BOX(page_mags), barsw);
+            csnhypodbp_mag_ov_sync();   /* la barra arranca con la puerta del .d */
+        }
+
+        gtk_notebook_append_page(GTK_NOTEBOOK(g_subnotebook), page_mags,
+                                 gtk_label_new("magnitudes"));
+    }
+    gtk_box_append(GTK_BOX(page_procesar), g_subnotebook);
+    g_page_procesar = page_procesar;
+    gtk_notebook_append_page(GTK_NOTEBOOK(g_notebook), page_procesar,
+                             gtk_label_new("Procesar"));
 
     cargar_sismos_iniciales(tree_global);
     cargar_sismos_db();

@@ -8,6 +8,7 @@ struct _CsnhypodbpRow {
     char  *estado;   /* "A" | "M" (marca de solucion manual)  */
     char  *nsol;     /* nº de soluciones del evento (maestro)  */
     char  *created;  /* hora de creacion de la solucion (YYYY-MM-DD HH:MM:SS) */
+    char  *origin_id; /* PK del origen en la BD ("" si la fila no viene de ahi) */
     double otime, lat, lon, depth;
     int    qver, qid, mod;
     /* Valor numerico de cada magnitud (0=ML..3=Ms) para ordenar por cabecera:
@@ -21,7 +22,7 @@ enum {
     PROP_0, PROP_C0, PROP_C1, PROP_C2, PROP_C3, PROP_C4, PROP_C5, PROP_C6,
     PROP_C7, PROP_C8, PROP_C9, PROP_C10, PROP_C11, PROP_C12, PROP_C13, PROP_C14,
     PROP_OTIME, PROP_QVER, PROP_QID, PROP_LAT, PROP_LON, PROP_DEPTH, PROP_MOD,
-    PROP_ESTADO, PROP_NSOL, PROP_CREATED,
+    PROP_ESTADO, PROP_NSOL, PROP_CREATED, PROP_ORIGIN_ID,
     PROP_NMAG0, PROP_NMAG1, PROP_NMAG2, PROP_NMAG3, N_PROPS
 };
 static GParamSpec *props[N_PROPS];
@@ -33,6 +34,7 @@ static void csnhypodbp_row_finalize(GObject *o)
     g_free(r->estado);
     g_free(r->nsol);
     g_free(r->created);
+    g_free(r->origin_id);
     G_OBJECT_CLASS(csnhypodbp_row_parent_class)->finalize(o);
 }
 
@@ -57,6 +59,7 @@ static void csnhypodbp_row_set_property(GObject *o, guint id, const GValue *v, G
         case PROP_ESTADO: g_free(r->estado); r->estado = g_value_dup_string(v); break;
         case PROP_NSOL:   g_free(r->nsol);   r->nsol   = g_value_dup_string(v); break;
         case PROP_CREATED: g_free(r->created); r->created = g_value_dup_string(v); break;
+        case PROP_ORIGIN_ID: g_free(r->origin_id); r->origin_id = g_value_dup_string(v); break;
     }
 }
 
@@ -79,6 +82,7 @@ static void csnhypodbp_row_get_property(GObject *o, guint id, GValue *v, GParamS
         case PROP_ESTADO: g_value_set_string(v, r->estado ? r->estado : "A"); break;
         case PROP_NSOL:   g_value_set_string(v, r->nsol ? r->nsol : ""); break;
         case PROP_CREATED: g_value_set_string(v, r->created ? r->created : ""); break;
+        case PROP_ORIGIN_ID: g_value_set_string(v, r->origin_id ? r->origin_id : ""); break;
     }
 }
 
@@ -103,6 +107,7 @@ static void csnhypodbp_row_class_init(CsnhypodbpRowClass *k)
     props[PROP_ESTADO] = g_param_spec_string("estado", "estado", NULL, "A", G_PARAM_READWRITE);
     props[PROP_NSOL]   = g_param_spec_string("nsol", "nsol", NULL, "", G_PARAM_READWRITE);
     props[PROP_CREATED] = g_param_spec_string("created", "created", NULL, "", G_PARAM_READWRITE);
+    props[PROP_ORIGIN_ID] = g_param_spec_string("origin-id", "origin-id", NULL, "", G_PARAM_READWRITE);
     for (int i = 0; i < 4; i++) {
         char name[16];
         snprintf(name, sizeof(name), "nmag%d", i);
@@ -118,6 +123,7 @@ static void csnhypodbp_row_init(CsnhypodbpRow *r)
     r->estado = NULL;
     r->nsol = NULL;
     r->created = NULL;
+    r->origin_id = NULL;
     for (int i = 0; i < 4; i++) r->nmag[i] = -1.0;
 }
 
@@ -140,4 +146,14 @@ CsnhypodbpRow *csnhypodbp_row_new(const char *c0, const char *c1, const char *c2
 const char *csnhypodbp_row_col(CsnhypodbpRow *r, int i)
 {
     return (i >= 0 && i < 15 && r->cols[i]) ? r->cols[i] : "";
+}
+
+void csnhypodbp_row_set_origin_id(CsnhypodbpRow *r, const char *id)
+{
+    if (r) g_object_set(r, "origin-id", id ? id : "", NULL);
+}
+
+const char *csnhypodbp_row_origin_id(CsnhypodbpRow *r)
+{
+    return (r && r->origin_id) ? r->origin_id : "";
 }

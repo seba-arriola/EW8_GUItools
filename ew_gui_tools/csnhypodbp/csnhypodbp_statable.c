@@ -120,6 +120,7 @@ int csnhypodbp_statable_build(CsnhypodbpStaRow *out, int max,
         snprintf(row->sta, sizeof(row->sta), "%s", st->sta);
         row->idx = st->idx;
         row->dist_km = st->dist_deg * 111.19;
+    row->dist_deg = st->dist_deg;
         row->has_data = st->has_data;
 
         for (k = 0; k < st->ncap && st->caps; k++) {
@@ -198,6 +199,22 @@ int csnhypodbp_pick_allowed(char origin, int idx, int ph,
         case 'T': case 't': return f ? f->theo_on : 0;
         default:            return 1;
     }
+}
+
+int csnhypodbp_pick_on_from_used(const int *mag_sta_idx, const int *used, int nmag,
+                                 int (*pick_on)[2], int nrows)
+{
+    int i;
+
+    if (!mag_sta_idx || !used || !pick_on || nrows <= 0) return -1;
+    for (i = 0; i < nrows; i++) pick_on[i][0] = pick_on[i][1] = 0;
+    for (i = 0; i < nmag; i++) {
+        int s = mag_sta_idx[i];
+        if (s < 0 || s >= nrows) continue;
+        if (!used[i]) continue;
+        pick_on[s][0] = pick_on[s][1] = 1;
+    }
+    return 0;
 }
 
 int csnhypodbp_locate_picks(const CsnhypodbpStaRow *rows, int nrows,

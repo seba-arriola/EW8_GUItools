@@ -50,6 +50,28 @@ double        csnhypodbp_view_rel_to_x(const CsnhypodbpView *v, double rel,
 double        csnhypodbp_view_x_to_rel(const CsnhypodbpView *v, double x,
                                        int margin_left, int draw_width);
 
+/* Nombre del cursor segun la zona del canvas: cruz sobre el area de trazas y
+ * normal sobre el margen de etiquetas. No se usan cursores de mano (invariante
+ * del modulo: ver test_ui_invariants.sh). */
+const char    *csnhypodbp_view_cursor(int in_plot);
+
+/* --- Ancla de la ventana del picking -------------------------------------- */
+
+/* 1 solo si la accion aplicada a la vista obliga a re-anclar la ventana: el
+ * RESET (deshacer el zoom). Anclar, hacer zoom y nada NO re-anclan, y picar
+ * tampoco: la ventana no se mueve mientras el usuario mira las trazas. */
+int    csnhypodbp_view_reanchor_on(CsnhypodbpAct act);
+
+/* Tiempo de la P de referencia al re-anclar: la P ganadora si existe, si no el
+ * respaldo (selected_otime + 15). */
+double csnhypodbp_view_ref_pick(int have_p, double p_t, double fallback);
+
+/* x de una marca cuya `rel` puede caer fuera de [t0,t1]: devuelve una x DENTRO
+ * del area de trazas y `*edge` = -1 izquierda / 0 dentro / +1 derecha, para
+ * dibujar el indicador de borde en vez de perder la marca en silencio. */
+double csnhypodbp_view_mark_x(const CsnhypodbpView *v, double rel, int margin_left,
+                              int draw_width, int *edge);
+
 /* --- Zoom temporal (eje de tiempo) ------------------------------------
  * El ancho visible (span = t1-t0) se expande/contrae con Shift+->/<- anclado
  * al CENTRO de la ventana; el registro (trazas, marcas y eje) se estira con el.
@@ -143,6 +165,27 @@ int           csnhypodbp_solution_changed(int oq, int om, int ov,
 int           csnhypodbp_station_row_to_select(const char *sel,
                                                const char *const *names, int n);
 int           csnhypodbp_should_autoselect(int has_selection);
+
+/* --- Vista PEGAJOSA ante llegadas del anillo ---------------------------
+ * El bloque de reset (zoom, ancla de la P, marcas y ventanas de magnitud) solo
+ * corre si el cambio de solucion lo provoco el USUARIO; `ring_sync` lo marca
+ * mientras una llegada del anillo recompone la seleccion. */
+int           csnhypodbp_view_should_reset(int changed, int ring_sync);
+
+/* Identidad de una solucion (qid, mod, version): conserva la elegida al
+ * recomponer el detalle tras una llegada. */
+int           csnhypodbp_view_solution_same(int aq, int am, int av,
+                                            int bq, int bm, int bv);
+
+/* --- Trazas: que se borra al terminar un fetch -------------------------
+ * 1 = borrar la traza de esa estacion antes de repoblarla: si el evento
+ * renderizado cambio (todo el canvas es de otro sismo) o si el job trae datos
+ * para ella. Si el job no trae nada y es el MISMO evento se conserva lo que ya
+ * estaba (un refetch que no devuelve nada no debe vaciar la pantalla). */
+int           csnhypodbp_fetch_clear_on(int prev_qid, int prev_mod, int prev_ver,
+                                        int job_qid, int job_mod, int job_ver,
+                                        int has_data);
+
 void          csnhypodbp_view_cancel_anchor(CsnhypodbpView *v);
 
 #endif /* CSNHYPODBP_VIEW_H */

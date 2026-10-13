@@ -42,6 +42,21 @@ void csnhypodbp_mapfit(double lon0, double lon1, double lat0, double lat1,
                        double img_w, double img_h, int cw, int ch, double margin,
                        double *zoom, double *cx, double *cy);
 
+/* Igual que csnhypodbp_mapfit, pero con el CENTRO en la solucion de referencia
+ * (la preferida, o la elegida en Origins = la verde) en vez del punto medio del
+ * bbox, y con un factor de zoom sobre el encuadre (MapZoom; 1.0 = automatico).
+ * El span sigue saliendo del bbox (con el suelo que ya aplico el llamante), asi
+ * el zoom no depende de donde caiga la referencia.
+ * Referencia no finita o (0,0) -> se vuelve al punto medio del bbox. */
+void csnhypodbp_mapfit_at(double ref_lat, double ref_lon,
+                          double lon0, double lon1, double lat0, double lat1,
+                          double img_w, double img_h, int cw, int ch, double margin,
+                          double zoom_factor, double *zoom, double *cx, double *cy);
+
+/* Fraccion de altura de la planta a partir de `MapSplit`: "7/3" -> 7/11 (0.7) o
+ * "0.7" -> 0.7. Devuelve 0 si el texto no sirve o la fraccion no cae en (0,1). */
+int csnhypodbp_map_split_parse(const char *s, double *frac);
+
 /* Marco por defecto del panel de perfil a partir de los DATOS del perfil:
  * x = rango de longitud del slab y la topografia (+2% de margen) e
  * y = -(profundidad declarada o el slab mas profundo, +5%) .. elevacion maxima
@@ -109,5 +124,13 @@ void csnhypodbp_frame_pad(CsnhypodbpFrame *f, double fx, double fy);
  * el area de dibujo. zoom <= 0 o no finito se ignora. */
 void csnhypodbp_frame_view(CsnhypodbpFrame *f, double zoom,
                            double pan_x, double pan_y);
+
+/* Vertices de una estrella de `points` puntas centrada en (cx,cy), radio
+ * exterior `r` e interior `inner_ratio*r`, con el primer vertice ARRIBA.
+ * Escribe hasta `max` pares (x,y) en xs/ys y devuelve cuantos escribio (0 si no
+ * caben 2*points, si r <= 0, si points < 3 o si falta algun puntero).
+ * `inner_ratio` fuera de (0,1) se sustituye por 0.45. */
+int csnhypodbp_marker_star_path(double cx, double cy, double r, int points,
+                                double inner_ratio, double *xs, double *ys, int max);
 
 #endif /* CSNHYPODBP_MAPVIEW_H */

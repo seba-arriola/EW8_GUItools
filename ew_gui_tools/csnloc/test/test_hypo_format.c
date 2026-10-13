@@ -97,6 +97,20 @@ int main(void)
     CHECK(nl2 && strncmp(nl2 + 1 + 17, "20260309163756.00", 17) == 0,
           "hora de fase + 20s");
 
+    /* BMTYPI (columna 123 = offset 122): la magnitud preferida que elige la GUI
+       llega en el 13.er token de la picada; sin eleccion queda en blanco. */
+    picks[0].pref_mag = 'L';
+    buf[0] = '\0';
+    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, 1, buf, sizeof(buf)) == 0,
+          "formatea con preferida sin error");
+    CHECK(buf[122] == 'L', "BMTYPI (offset 122) = magnitud preferida");
+    picks[0].pref_mag = '-';
+    buf[0] = '\0';
+    CHECK(FormatHYP2000ARC(&h, &st, picks, &cfg, 42UL, 3U, 1, buf, sizeof(buf)) == 0,
+          "formatea con '-' sin error");
+    CHECK(buf[122] == ' ', "'-' -> BMTYPI en blanco");
+    picks[0].pref_mag = 0;
+
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_hypo_format\n");
     return 0;

@@ -54,6 +54,7 @@ typedef struct {
     HypodbOriginMeta origins[HYPODB_MAX_ORIGINS];
     int      nmags;
     HypodbMagMeta mags[HYPODB_MAX_MAGS];
+    char     pref_mag;        /* tipo preferido del ARC (BMTYPI): L/W/B/S */
 } HypodbGroup;
 
 typedef struct {
@@ -456,6 +457,25 @@ static int update_preferred(HypodbState *st, HypodbGroup *g)
     if (pi >= 0)
         pref_origin = g->origins[pi].origin_id;
 
+    /* Preferida elegida a mano: el ARC trae en BMTYPI el tipo (L/W/B/S) que la GUI
+       puso en el 13.er token de las picadas, y manda sobre el orden fijo. */
+    {
+        const char *from_arc = NULL;
+
+        switch (g->pref_mag) {
+            case 'L': case 'l': from_arc = "ML";  break;
+            case 'W': case 'w': from_arc = "Mwp"; break;
+            case 'B': case 'b': from_arc = "Mb";  break;
+            case 'S': case 's': from_arc = "Ms";  break;
+            default: break;
+        }
+        if (from_arc)
+            for (int i = 0; i < g->nmags; i++)
+                if (strcmp(g->mags[i].type, from_arc) == 0) {
+                    pref_mag = g->mags[i].magnitude_id;
+                    break;
+                }
+    }
     for (int o = 0; o < 4 && !pref_mag; o++)
         for (int i = 0; i < g->nmags; i++)
             if (strcmp(g->mags[i].type, order[o]) == 0) {
@@ -640,6 +660,7 @@ int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
         if (write_origin(st, g, &sol, mod, vmodel) != 0)
             return -1;
         flush_pending_mags(st, g, mod);
+        if (sol.pref_mag) g->pref_mag = sol.pref_mag;
         update_preferred(st, g);
     } else {
         char origin_id[64];

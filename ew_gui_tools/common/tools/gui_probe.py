@@ -39,7 +39,9 @@ except Exception as exc:                                    # pragma: no cover
     sys.exit(3)
 
 MAX_NODES = 20000
-MAX_DEPTH = 16
+# 24 y no 16: las pestañas anidadas (Procesar > picking/magnitudes) suman niveles
+# y con 16 el contenido de la sub-pestaña quedaba fuera del arbol.
+MAX_DEPTH = 24
 
 
 def _name(obj):

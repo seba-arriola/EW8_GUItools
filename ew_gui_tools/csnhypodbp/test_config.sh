@@ -66,6 +66,7 @@ OverlayColor    capa FF0000
 OverlayWidth    1.2
 OverlayHide     fallas
 ProfileDataDir  $TMP/prof
+MagConfigFile   $TMP/mags.d
 ProfileCols     3 7
 ProfileDepthMinKm 250
 Profile A -72 -20.000000 -66 -18.333333
@@ -74,6 +75,20 @@ EOF
 }
 
 # Recta correcta de B: b = -2 -> lat(-72) = -22, lat(-66) = -20.333333
+# .d de csnmags del que la sub-pestaña `magnitudes` saca sus defaults: se cambian
+# Ml_TA y Ms_Window para comprobar que se leen de ahi y no de constantes.
+cat > "$TMP/mags.d" <<EOF
+# comentario
+WoodAndersonCoefs 0.8 0.7 2080
+Ml_TA 7.5
+Ml_TB 45
+Mwp_T0 95
+Mwp_StartOff 0
+Mb_Window 30
+Ms_Window 380
+Mb_Band 0.5 2.0
+Ms_Band 0.045 0.056
+EOF
 cfg "$TMP/ok.d" -22.000000 -20.333333
 
 "$BIN" --print-config "$TMP/ok.d" > "$TMP/pc.txt" 2>&1
@@ -91,6 +106,17 @@ ck  "print-config: DepthMinKm"      '^ProfileDepthMinKm 250\.0$'          "$TMP/
 ck  "print-config: 2 perfiles"      '^Profiles 2$'                        "$TMP/pc.txt"
 ck  "print-config: convencion slab" "^Profile A .* $TMP/prof/slabA\.tmp $TMP/prof/topoA\.tmp$" "$TMP/pc.txt"
 ck  "print-config: perfil B"        '^Profile B '                         "$TMP/pc.txt"
+ck  "print-config: MagConfigFile"   "^MagConfigFile $TMP/mags\.d$"         "$TMP/pc.txt"
+ck  "print-config: Ml_TA del .d"    '^MagWindow ML 7\.500 45\.000$'        "$TMP/pc.txt"
+ck  "print-config: ventana Mwp"     '^MagWindow Mwp 0\.000 95\.000$'       "$TMP/pc.txt"
+ck  "print-config: ventana Mb"      '^MagWindow Mb 0\.000 30\.000$'        "$TMP/pc.txt"
+ck  "print-config: Ms_Window del .d" '^MagWindow Ms 0\.000 380\.000$'      "$TMP/pc.txt"
+ck  "print-config: Wood-Anderson"   '^MagWoodAnderson 0\.800 0\.700 2080\.0$' "$TMP/pc.txt"
+ck  "print-config: banda Mb"        '^MagBand Mb 0\.500 2\.000$'           "$TMP/pc.txt"
+ck  "print-config: banda Ms"        '^MagBand Ms 0\.045 0\.056$'           "$TMP/pc.txt"
+ck  "print-config: ventana de peticion" '^MagFetchSeconds 700\.0$'          "$TMP/pc.txt"
+ck  "print-config: puerta de Ms"    '^MagGate Ms 20\.0 160\.0 0\.0$'        "$TMP/pc.txt"
+ck  "print-config: puerta de ML"    '^MagGate ML 0\.0 8\.0 600\.0$'         "$TMP/pc.txt"
 
 "$BIN" --check-profiles "$TMP/ok.d" > "$TMP/cp.txt" 2>&1
 rc=$?
@@ -131,6 +157,14 @@ echo "Profile C -72 -20 -66" >> "$TMP/badprof.d"
 "$BIN" --print-config "$TMP/badprof.d" > "$TMP/bp.txt" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && echo "ok  : Profile mal formada -> rc != 0" || { echo "FAIL: Profile mal formada rc=$rc"; fails=$((fails+1)); }
+
+# MagConfigFile ausente: aviso por stderr y defaults de fabrica (no rompe).
+sed "s|MagConfigFile   $TMP/mags.d|MagConfigFile   $TMP/no_existe_mags.d|" "$TMP/ok.d" > "$TMP/nomags.d"
+"$BIN" --print-config "$TMP/nomags.d" > "$TMP/nm.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : MagConfigFile ausente no rompe" || { echo "FAIL: MagConfigFile ausente rc=$rc"; fails=$((fails+1)); }
+ck  "print-config: avisa si falta MagConfigFile" 'no se pudo leer MagConfigFile' "$TMP/nm.txt"
+ck  "print-config: sin .d quedan los defaults" '^MagWindow ML 10\.000 45\.000$' "$TMP/nm.txt"
 
 rm -rf "$TMP"
 if [ "$fails" -gt 0 ]; then echo "FALLOS: $fails"; exit 1; fi

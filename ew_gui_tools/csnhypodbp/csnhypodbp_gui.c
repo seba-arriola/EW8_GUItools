@@ -45,8 +45,16 @@ void actualizar_altura_canvas() {
         if ((g_StaDist[i] * 111.19) > g_max_dist_km) continue;
         count++;
     }
-    if (count > 0) gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, (count * CSNHYPODBP_BAND_H) + 60);
-    else gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, 600);
+    /* MINIMO, no altura fija: el canvas llena el area que le da el scrolled
+       window y on_draw_signal reparte el alto REAL entre las bandas, asi que el
+       dibujo es proporcional al tamano de la ventana. Por debajo del minimo
+       (muchas componentes), aparece el scroll. */
+    if (count > 0)
+        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
+                                    (count * CSNHYPODBP_BAND_MIN) + 60);
+    else
+        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
+                                    CSNHYPODBP_BAND_MIN + 60);
 }
 
 /* --- Tabla de estaciones (panel izquierdo) -------------------------------
@@ -210,6 +218,989 @@ void rebuild_station_list(void) {
         gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_sta_sel), (guint)to_select, FALSE);
     /* Si la estacion ya no esta (filtro dinamico), NO se borra la seleccion:
        el canvas la sigue dibujando y reaparece si el filtro la readmite. */
+    csnhypodbp_mag_views_invalidate();   /* puede haber trazas nuevas */
+    rebuild_mag_list();   /* la tabla de magnitudes usa la MISMA lista */
+}
+
+/* --- Sub-pestaña `magnitudes` ------------------------------------------- */
+
+/* Config de magnitud con el override de distancia de la magnitud activa (se
+   define mas abajo, junto a la barra inferior). */
+static void mag_effective_cfg(CsnhypodbpMagCfg *out);
+
+/* Linea de estado: magnitud activa, valor de red, estaciones con traza, con dato
+   y cuantas estan marcadas. Dice explicitamente cual de las tres cosas falta
+   (trazas, valores de csnmags o la magnitud de red) en vez de dejar la tabla
+   llena de guiones sin explicacion. */
+void csnhypodbp_mag_status_update(void)
+{
+    char txt[256], tail[96] = "", gate[48] = "";
+    int con = 0, fuera = 0, filtradas = 0, enuso = 0, traza = 0, i;
+    double red = NAN;
+    CsnhypodbpMagCfg eff;
+    const char *name = csnhypodbp_magcfg_name(g_mag_kind);
+
+    if (!g_mag_status) return;
+    csnhypodbp_magrow_counts(g_mag_rows, g_mag_rows_n, &con, &fuera, &filtradas, &enuso);
+    for (i = 0; i < g_mag_rows_n; i++) {
+        if (g_mag_rows[i].has_data) traza++;
+        /* El residual de la fila es mag_estacion - mag_red, asi que de ahi se
+           recupera la de red (el residual de la magnitud va en
+           magnitude.mag_uncertainty al publicarla). */
+        if (!isfinite(red) && isfinite(g_mag_rows[i].res))
+            red = g_mag_rows[i].mag - g_mag_rows[i].res;
+    }
+    mag_effective_cfg(&eff);
+    csnhypodbp_magcfg_gate_text(&eff, g_mag_kind, gate, sizeof(gate));
+    /* Corte de profundidad: es del EVENTO, no de la estacion. Si no pasa, la
+       magnitud entera queda fuera y se dice por que. */
+    if (!csnhypodbp_magcfg_depth_ok(&eff, g_mag_kind, selected_depth)) {
+        snprintf(txt, sizeof(txt),
+                 "%s  fuera por profundidad: %.0f km no entra en [%.0f, %.0f] "
+                 "(ajusta `prof.`)",
+                 name, selected_depth, csnhypodbp_magcfg_min_depth(&eff, g_mag_kind),
+                 csnhypodbp_magcfg_max_depth(&eff, g_mag_kind));
+        gtk_label_set_text(GTK_LABEL(g_mag_status), txt);
+        return;
+    }
+    if (fuera > 0)
+        snprintf(tail, sizeof(tail), ", %d fuera de %s", fuera, gate);
+    if (g_mag_rows_n <= 0)
+        snprintf(txt, sizeof(txt), "%s  sin solucion seleccionada", name);
+    else if (traza == 0)
+        snprintf(txt, sizeof(txt),
+                 "%s  sin trazas descargadas (Fetch o doble clic en la solucion)", name);
+    else if (fuera == g_mag_rows_n)
+        snprintf(txt, sizeof(txt),
+                 "%s  %d estaciones, ninguna dentro de la puerta (%s)", name, fuera, gate);
+    else if (con == 0)
+        snprintf(txt, sizeof(txt),
+                 "%s  sin valores de csnmags  (%d con traza, %d filtradas por ventana%s)",
+                 name, traza, filtradas, tail);
+    else if (!isfinite(red))
+        snprintf(txt, sizeof(txt),
+                 "%s  sin magnitud de red  (%d con dato, %d en uso%s)",
+                 name, con, enuso, tail);
+    else
+        snprintf(txt, sizeof(txt), "%s  red %.2f  (%d con dato, %d en uso%s)",
+                 name, red, con, enuso, tail);
+    gtk_label_set_text(GTK_LABEL(g_mag_status), txt);
+}
+
+/* Repuebla la tabla: una fila por estacion (la MISMA lista que la de picking),
+   con el valor de la magnitud activa y el residual contra la de red. */
+void rebuild_mag_list(void)
+{
+    static CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];
+    gpointer item;
+    int nval = 0, i;
+    double red = NAN, t0 = NAN, t1 = NAN;
+    CsnhypodbpMagCfg eff;
+
+    if (!g_mag_store) return;
+    g_list_store_remove_all(g_mag_store);
+    g_mag_rows_n = 0;
+
+    item = g_selection_detail ? gtk_single_selection_get_selected_item(g_selection_detail)
+                              : NULL;
+    if (item && CSNHYPODBP_IS_ROW(item)) {
+        char prop[8];
+        double v = -1.0;
+        CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
+        snprintf(prop, sizeof(prop), "nmag%d", g_mag_kind);
+        g_object_get(row, prop, &v, NULL);
+        if (v >= 0.0) red = v;
+        nval = csnhypodbp_magsta_for(row, g_mag_kind, vals, CSNHYPODBP_MAGSTA_MAX);
+    }
+    /* La ventana por defecto de la magnitud activa (la del .d de csnmags) es la
+       que se dibuja en la traza y la que se ajusta despues por estacion. */
+    csnhypodbp_magcfg_window(&g_magcfg, g_mag_kind, &t0, &t1);
+    if (g_sta_rows_n > 0)
+        g_mag_rows_n = csnhypodbp_magrow_build(g_mag_rows, MAX_ESTA, g_sta_rows,
+                                               g_sta_rows_n, vals, nval, red,
+                                               t0, t1);
+    /* Ventana vigente de cada fila (la ajustada por (estacion, magnitud) si
+       existe, si no la default que ya trae el builder), de donde sale esa ventana
+       (M/A/Teo), si la estacion cae dentro de la puerta de distancia de la
+       magnitud activa y si el filtro A/M/Teo la admite. */
+    mag_effective_cfg(&eff);
+    for (i = 0; i < g_mag_rows_n; i++) {
+        csnhypodbp_magmarks_window(&g_mag_marks, g_mag_rows[i].sta, g_mag_kind,
+                                   t0, t1, &g_mag_rows[i].t0, &g_mag_rows[i].t1);
+        g_mag_rows[i].win_src = csnhypodbp_magmarks_winsrc(&g_mag_marks,
+                                                           g_mag_rows[i].sta,
+                                                           g_mag_kind,
+                                                           g_mag_rows[i].anchor);
+        csnhypodbp_magcfg_gate(&eff, g_mag_kind, g_mag_rows[i].dist_deg,
+                               g_mag_rows[i].dist_km, &g_mag_rows[i].in_range);
+        g_mag_rows[i].eligible = (g_mag_rows[i].has_data && g_mag_rows[i].in_range &&
+                                  csnhypodbp_magmarks_allowed(&g_mag_marks,
+                                                              g_mag_rows[i].sta,
+                                                              g_mag_kind,
+                                                              g_mag_rows[i].anchor,
+                                                              g_magf_auto, g_magf_manual,
+                                                              g_magf_theo)) ? 1 : 0;
+        g_mag_rows[i].used = g_mag_rows[i].eligible
+                             ? csnhypodbp_magmarks_used(&g_mag_marks, g_mag_rows[i].sta,
+                                                        g_mag_kind, 1)
+                             : 0;
+    }
+    /* Mapa fila de magnitudes -> fila de la tabla de Ondas (lo usa el envio al
+       localizador desde la pestana de magnitudes). */
+    for (i = 0; i < g_mag_rows_n && i < MAX_ESTA; i++) {
+        int k;
+
+        g_mag_sta_idx[i] = -1;
+        for (k = 0; k < g_sta_rows_n; k++) {
+            if (strcmp(g_sta_rows[k].sta, g_mag_rows[i].sta) == 0) {
+                g_mag_sta_idx[i] = k;
+                break;
+            }
+        }
+    }
+    for (i = 0; i < g_mag_rows_n; i++) {
+        CsnhypodbpMagItem *it;
+
+        /* Las estaciones fuera de la puerta de distancia no se listan: el motor
+           no las usaria. La linea de estado dice cuantas quedaron fuera. */
+        if (!g_mag_rows[i].in_range) continue;
+        it = csnhypodbp_mag_item_new(&g_mag_rows[i], i);
+        if (!it) continue;
+        g_list_store_append(g_mag_store, it);
+        g_object_unref(it);
+    }
+    csnhypodbp_mag_status_update();
+    csnhypodbp_mag_canvas_fit();
+}
+
+/* Selector de magnitud (radios): cambia la vista, no las ventanas. */
+void on_mag_kind_toggled(GtkCheckButton *b, gpointer data)
+{
+    int k = GPOINTER_TO_INT(data);
+    if (!gtk_check_button_get_active(b)) return;
+    if (k < 0 || k >= CSNHYPODBP_MAG_NKIND || k == g_mag_kind) return;
+    g_mag_kind = k;
+    csnhypodbp_mag_ov_sync();   /* los campos de distancia son por magnitud */
+    rebuild_mag_list();
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+/* --- Filtro A/M/Teo y override de distancia de `magnitudes` -------------- */
+
+/* 1 mientras csnhypodbp_mag_ov_sync() escribe los campos (para no reentrar). */
+static int g_mag_ov_syncing = 0;
+
+/* Config de magnitud con el override de distancia de la magnitud activa. */
+static void mag_effective_cfg(CsnhypodbpMagCfg *out)
+{
+    csnhypodbp_magcfg_apply_override(&g_magcfg, g_mag_kind,
+                                     &g_mag_gate_ov[g_mag_kind], out);
+}
+
+/* Vuelca en la barra la puerta vigente de la magnitud activa. */
+void csnhypodbp_mag_ov_sync(void)
+{
+    CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
+    double lo = 0.0, hi = 0.0, km = 0.0, dmin = 0.0, dmax = 0.0;
+
+    if (!g_mag_ov_min) return;
+    g_mag_ov_syncing = 1;
+    if (ov->on) {
+        lo = ov->min_delta; hi = ov->max_delta; km = ov->max_dist_km;
+        dmin = ov->min_depth; dmax = ov->max_depth;
+    } else {
+        csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind, &lo, &hi, &km);
+        dmin = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
+        dmax = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
+    }
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_min), lo);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_max), hi);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_km), km);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_dmin), dmin);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_depth), dmax);
+    g_mag_ov_syncing = 0;
+}
+
+void on_mag_filter_toggled(GtkCheckButton *b, gpointer data)
+{
+    int which = GPOINTER_TO_INT(data);
+    int on = gtk_check_button_get_active(b) ? 1 : 0;
+
+    if (which == 0)      g_magf_auto = on;
+    else if (which == 1) g_magf_manual = on;
+    else                 g_magf_theo = on;
+    rebuild_mag_list();
+}
+
+/* `reset default`: las CUATRO magnitudes vuelven a la puerta del .d de csnmags.
+   Se usa desde el boton y al elegir otra solucion en Origins (los valores solo
+   valen mientras se procesa el evento). */
+void csnhypodbp_mag_ov_reset_all(void)
+{
+    memset(g_mag_gate_ov, 0, sizeof(g_mag_gate_ov));
+    csnhypodbp_mag_ov_sync();
+    rebuild_mag_list();
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data)
+{
+    (void)w; (void)data;
+    csnhypodbp_mag_ov_reset_all();
+}
+
+/* Editar cualquier campo de la barra activa el override de ESA magnitud: no hay
+   casilla (el rango que se ve es el que se aplica). */
+void on_mag_ov_changed(GtkSpinButton *s, gpointer data)
+{
+    CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
+
+    (void)s; (void)data;
+    if (g_mag_ov_syncing || !g_mag_ov_min) return;
+    ov->on = 1;
+    ov->min_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_min));
+    ov->max_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_max));
+    ov->max_dist_km = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_km));
+    ov->min_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_dmin));
+    ov->max_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_depth));
+    rebuild_mag_list();
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+/* --- Canvas de la sub-pestaña `magnitudes` ------------------------------- */
+
+#define MAG_GRAB_TOL_PX  5.0    /* tolerancia para agarrar un borde de la franja */
+#define MAG_MIN_SPAN_SEC 0.5    /* duracion minima de la ventana ajustable */
+#define MAG_BAND_TOP     24.0   /* y del borde superior de la banda (donde va el handle) */
+
+/* Canales de la estacion del canvas, en el orden de siempre (channelsOrder x
+   componentsOrder, el mismo del canvas de picking). */
+static StaNode g_MagNodes[MAX_ESTA];
+static int     g_NumMagNodes = 0;
+
+/* Vista procesada por canal. Se reconstruye solo cuando cambia la clave
+   (estacion, magnitud, rango dibujado) o se invalidan las trazas: cambiar de
+   magnitud con la misma ventana no vuelve a filtrar. */
+static CsnhypodbpMagView g_mag_views[MAX_ESTA];
+static int      g_mag_views_valid = 0;
+static char     g_mag_views_sta[16];
+static int      g_mag_views_kind = -1;
+static double   g_mag_views_win0 = 0.0, g_mag_views_win1 = 0.0;
+
+/* Ventana de dibujo CONGELADA mientras se arrastra: si no, al mover la franja el
+   margen de contexto reencuadra el dibujo y el arrastre se escapa. */
+static int    g_mag_freeze = 0;
+/* Encuadre CONGELADO durante un arrastre: el EFECTIVO del `drag-begin` (no el
+   automatico), para que la escala no cambie a mitad de la maniobra. */
+static CsnhypodbpView g_mag_freeze_view;
+/* Eje temporal del canvas de magnitudes: arrastre = zoom, doble clic = recentrar. */
+static CsnhypodbpAxisDrag g_mag_axis_drag;
+static double g_mag_axis_sx = 0.0;
+
+/* Columnas del canvas de magnitudes (propias: el de picking usa las suyas). */
+static double g_mag_col_min[MAX_DRAW_W], g_mag_col_max[MAX_DRAW_W];
+static int    g_mag_col_has[MAX_DRAW_W];
+
+/* Estado del arrastre de la franja. */
+static int    g_mag_grab = CSNHYPODBP_MAGG_NONE;
+static double g_mag_grab_t0 = 0.0, g_mag_grab_t1 = 0.0, g_mag_grab_sec_px = 0.0;
+
+void csnhypodbp_mag_views_invalidate(void)
+{
+    int i;
+
+    for (i = 0; i < MAX_ESTA; i++) csnhypodbp_magview_free(&g_mag_views[i]);
+    g_mag_views_valid = 0;
+    g_mag_views_kind = -1;
+    g_mag_views_sta[0] = '\0';
+}
+
+/* Ventana vigente de la estacion del canvas (marca > default del .d). */
+static void mag_current_window(double *t0, double *t1)
+{
+    double d0 = NAN, d1 = NAN;
+
+    csnhypodbp_magcfg_window(&g_magcfg, g_mag_kind, &d0, &d1);
+    csnhypodbp_magmarks_window(&g_mag_marks, g_mag_station, g_mag_kind, d0, d1, t0, t1);
+}
+
+/* Ancla (P efectiva) de una estacion de la tabla de magnitudes; 0 si no hay.
+   `winsrc` recibe de donde sale la VENTANA ("M"/"A"/"Teo"), que es lo que
+   filtran los checkboxes de la barra inferior. */
+static double mag_anchor_of(const char *sta, const char **winsrc)
+{
+    int i;
+
+    if (winsrc) *winsrc = "-";
+    if (!sta || !sta[0]) return 0.0;
+    for (i = 0; i < g_mag_rows_n; i++) {
+        if (strcmp(g_mag_rows[i].sta, sta) != 0) continue;
+        if (winsrc) *winsrc = csnhypodbp_magrow_vent_text(&g_mag_rows[i]);
+        return g_mag_rows[i].anchor_t;
+    }
+    return 0.0;
+}
+
+/* Indices de los canales de `sta`, en el orden de siempre. Se incluyen TODOS los
+   canales configurados de la estacion, no solo los que tienen traza: el canvas
+   muestra siempre sus componentes y deja ver cual falta (banda "sin traza"). */
+static int mag_nodes_for(const char *sta)
+{
+    int i;
+
+    g_NumMagNodes = 0;
+    if (!sta || !sta[0]) return 0;
+    for (i = 0; i < NumEstaciones && g_NumMagNodes < MAX_ESTA; i++) {
+        if (strcmp(StaArray[i].szStation, sta) != 0) continue;
+        g_MagNodes[g_NumMagNodes].idx = i;
+        g_MagNodes[g_NumMagNodes].dist = g_StaDist[i];
+        g_NumMagNodes++;
+    }
+    if (g_NumMagNodes > 1) {
+        build_chan_rank();
+        qsort(g_MagNodes, (size_t)g_NumMagNodes, sizeof(StaNode), cmp_node_chan);
+    }
+    return g_NumMagNodes;
+}
+
+/* Altura del canvas de magnitudes segun el numero de canales de la estacion
+   elegida (mismo criterio que el canvas de picking): lo que sobra lo cubre el
+   scrolled window. Sin esto las filas de abajo quedaban fuera del area visible. */
+void csnhypodbp_mag_canvas_fit(void)
+{
+    const char *sta;
+    int n, h;
+
+    if (!g_mag_canvas) return;
+    sta = g_mag_station[0] ? g_mag_station : g_selected_station;
+    n = mag_nodes_for(sta);
+    /* Minimo por banda: el canvas llena el area del scrolled window y on_draw_mag
+       reparte el alto REAL entre las componentes (proporcional a la ventana). */
+    h = (n > 0) ? (n * CSNHYPODBP_BAND_MIN) + 60 : CSNHYPODBP_BAND_MIN + 60;
+    gtk_widget_set_size_request(ewgui_canvas_widget(g_mag_canvas),
+                                CSNHYPODBP_CANVAS_MIN_W, h);
+}
+
+/* Construye las vistas de los canales si cambio la clave. */
+static void mag_views_sync(const char *sta, double win0, double win1)
+{
+    int n;
+
+    if (g_mag_views_valid && g_mag_views_kind == g_mag_kind &&
+        strcmp(g_mag_views_sta, sta) == 0 &&
+        fabs(g_mag_views_win0 - win0) < 1e-6 && fabs(g_mag_views_win1 - win1) < 1e-6)
+        return;
+    csnhypodbp_mag_views_invalidate();
+    for (n = 0; n < g_NumMagNodes; n++) {
+        int i = g_MagNodes[n].idx;
+        csnhypodbp_magview_build(&g_mag_views[n], StaArray[i].trace, g_mag_kind,
+                                 &g_magcfg, win0, win1);
+    }
+    snprintf(g_mag_views_sta, sizeof(g_mag_views_sta), "%s", sta);
+    g_mag_views_kind = g_mag_kind;
+    g_mag_views_win0 = win0;
+    g_mag_views_win1 = win1;
+    g_mag_views_valid = 1;
+}
+
+/* Ancho dibujable del canvas de magnitudes, igual que en el dibujo
+   (ncol = min(ancho - margen_izq - 10, MAX_DRAW_W)). */
+static int mag_draw_w(int width);
+
+/* Linea vertical a trazos que sigue al puntero, igual en los dos canvas.
+   `in_plot` la limita al area de trazas (no sobre el margen de etiquetas). */
+static void draw_cursor_line(cairo_t *cr, double x, int height, int in_plot)
+{
+    const double dash[] = { 2.0, 4.0 };
+
+    if (!in_plot) return;
+    cairo_set_source_rgb(cr, 0.35, 0.35, 0.45);
+    cairo_set_line_width(cr, 1.0);
+    cairo_set_dash(cr, dash, 2, 0.0);
+    cairo_move_to(cr, x, 0);
+    cairo_line_to(cr, x, (double)height);
+    cairo_stroke(cr);
+    cairo_set_dash(cr, NULL, 0, 0.0);
+}
+
+/* Vista vigente del canvas: durante un arrastre manda la congelada. */
+static const CsnhypodbpView *mag_view_now(void)
+{
+    return g_mag_freeze ? &g_mag_freeze_view : &g_mag_zoomview;
+}
+
+/* Ventana efectiva del canvas de magnitudes. TODO (dibujo, clic, agarre del
+   handle y arrastre) pasa por aqui: si cada camino recalculara la suya, se
+   desincronizan (era el motivo de que la franja se moviera al hacer zoom). */
+static int mag_frame(double *win0, double *span)
+{
+    const char *sta = g_mag_station[0] ? g_mag_station : g_selected_station;
+    double t0 = NAN, t1 = NAN, anchor;
+
+    mag_current_window(&t0, &t1);
+    anchor = mag_anchor_of(sta, NULL);
+    return csnhypodbp_magview_frame(mag_view_now(), anchor, t0, t1, win0, span);
+}
+
+void on_draw_mag(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
+{
+    const char *sta;
+    double t0 = NAN, t1 = NAN, margin, anchor, win0, span;
+    int margin_right = 10, draw_width = width - g_margin_left - margin_right;
+    int n, row_h, ncol;
+
+    (void)canvas; (void)data;
+    cairo_set_source_rgb(cr, 1, 1, 1);
+    cairo_paint(cr);
+    if (draw_width <= 0) return;
+    ncol = draw_width < MAX_DRAW_W ? draw_width : MAX_DRAW_W;
+
+    sta = g_mag_station[0] ? g_mag_station : g_selected_station;
+    mag_current_window(&t0, &t1);
+    margin = csnhypodbp_magview_margin(t0, t1);
+    anchor = mag_anchor_of(sta, NULL);
+    if (!mag_frame(&win0, &span)) {        /* sin ancla: avisa mas abajo y sale */
+        win0 = anchor + t0 - margin;
+        span = (anchor + t1 + margin) - win0;
+    }
+
+    /* (sin titulo: la magnitud activa, el ancla y la ventana ya estan en la tabla
+       de magnitudes; el canvas queda entero para las trazas) */
+
+    /* Sin estacion o sin ancla se dice el motivo en vez de dejar el cuadro vacio. */
+    if (!sta || !sta[0] || anchor <= 0.0 || !(span > 0.0)) {
+        cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
+        cairo_set_font_size(cr, 12);
+        cairo_move_to(cr, 10, 20);
+        cairo_show_text(cr, (!sta || !sta[0])
+                                ? "elige una estacion en la tabla de magnitudes"
+                                : "sin P (ni observada ni teorica): no hay ancla");
+        return;
+    }
+
+    if (mag_nodes_for(sta) <= 0) {
+        cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
+        cairo_set_font_size(cr, 12);
+        cairo_move_to(cr, 10, 20);
+        cairo_show_text(cr, "sin canales para esa estacion (revisa StaFile)");
+        return;
+    }
+
+    row_h = (height - 60) / g_NumMagNodes;
+    if (row_h < 80) row_h = g_spacing;
+    mag_views_sync(sta, win0, win0 + span);
+
+    /* Franja de la ventana y marca del ancla, sobre todas las filas. El arrastre
+       vive SOLO en el handle (barra superior), asi el resto del canvas queda
+       libre para el zoom por dos clics. */
+    {
+        double xa = csnhypodbp_view_sample_x(anchor + t0, win0, span, ncol);
+        double xb = csnhypodbp_view_sample_x(anchor + t1, win0, span, ncol);
+        double xp = csnhypodbp_view_sample_x(anchor, win0, span, ncol);
+        double band_h = (height > MAG_BAND_TOP + 4.0) ? (height - MAG_BAND_TOP - 4.0) : 4.0;
+        const double dash2[] = { 4.0, 3.0 };
+        int k;
+
+        cairo_save(cr);
+        cairo_rectangle(cr, g_margin_left, MAG_BAND_TOP, ncol, band_h);
+        cairo_clip(cr);
+        cairo_set_source_rgba(cr, 0.95, 0.82, 0.35, 0.22);
+        cairo_rectangle(cr, g_margin_left + xa, MAG_BAND_TOP, xb - xa, band_h);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 0.72, 0.52, 0.0);
+        cairo_set_line_width(cr, 1.5);
+        cairo_move_to(cr, g_margin_left + xa, MAG_BAND_TOP);
+        cairo_line_to(cr, g_margin_left + xa, height);
+        cairo_move_to(cr, g_margin_left + xb, MAG_BAND_TOP);
+        cairo_line_to(cr, g_margin_left + xb, height);
+        cairo_stroke(cr);
+
+        cairo_set_source_rgb(cr, 0.55, 0.55, 0.75);
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_dash(cr, dash2, 2, 0.0);
+        cairo_move_to(cr, g_margin_left + xp, MAG_BAND_TOP);
+        cairo_line_to(cr, g_margin_left + xp, height);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0.0);
+
+        /* HANDLE: barra rellena en la parte superior de la franja, con marcas de
+           agarre. Es la unica zona que mueve o redimensiona la ventana. */
+        cairo_set_source_rgba(cr, 0.15, 0.35, 0.75, 0.9);
+        cairo_rectangle(cr, g_margin_left + xa, MAG_BAND_TOP, xb - xa,
+                        CSNHYPODBP_MAG_HANDLE_H);
+        cairo_fill(cr);
+        cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+        cairo_set_line_width(cr, 1.0);
+        for (k = 1; k <= 2; k++) {
+            double yk = MAG_BAND_TOP + k * (CSNHYPODBP_MAG_HANDLE_H / 3.0);
+            cairo_move_to(cr, g_margin_left + xa + 3.0, yk);
+            cairo_line_to(cr, g_margin_left + xb - 3.0, yk);
+        }
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    }
+
+    /* Linea del puntero, por debajo del ancla y de la franja. */
+    if (g_mag_cursor_valid)
+        draw_cursor_line(cr, g_mag_cursor_x, height,
+                         g_mag_cursor_x >= g_margin_left &&
+                         g_mag_cursor_x <= g_margin_left + ncol);
+
+    /* Ancla del zoom (el primer clic), como en `picking`: marca el punto fijo del
+       proximo zoom. `g_mag_zoomview.anchor` es tiempo ABSOLUTO, igual que win0, asi
+       que se proyecta con la misma escala que la franja, INCLUIDO su margen (si no,
+       la marca aparece corrida g_margin_left px a la izquierda del clic). */
+    if (g_mag_zoomview.have_anchor) {
+        const double dashz[] = { 2.0, 4.0 };
+        double xan = g_margin_left + csnhypodbp_view_sample_x(g_mag_zoomview.anchor,
+                                                             win0, span, ncol);
+
+        if (xan < g_margin_left) xan = g_margin_left;
+        if (xan > g_margin_left + ncol) xan = g_margin_left + ncol;
+        cairo_set_source_rgb(cr, 0.10, 0.45, 0.10);
+        cairo_set_line_width(cr, 1.5);
+        cairo_set_dash(cr, dashz, 2, 0.0);
+        cairo_move_to(cr, xan, MAG_BAND_TOP);
+        cairo_line_to(cr, xan, height);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    }
+
+    /* El zoom (clics y eje) y el encuadre congelado de un arrastre ya vienen
+       aplicados por mag_frame(): unica fuente de verdad de la ventana visible. */
+
+    for (n = 0; n < g_NumMagNodes; n++) {
+        int idx = g_MagNodes[n].idx;
+        int y_center = (n * row_h) + (row_h / 2) + 30;
+        CsnhypodbpMagView *v = &g_mag_views[n];
+        char lbl[64];
+        double scale, max_abs = 0.0;
+        long k;
+        int px;
+
+        cairo_set_source_rgb(cr, 0.1, 0.2, 0.7);
+        csnhypodbp_trace_label(lbl, sizeof(lbl), StaArray[idx].szStation,
+                               StaArray[idx].szChannel, 0.0);
+        cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
+        cairo_set_font_size(cr, 12);
+        cairo_move_to(cr, 8, y_center + 5);
+        cairo_show_text(cr, lbl);
+
+        cairo_set_source_rgb(cr, 0.85, 0.85, 0.85);
+        cairo_set_line_width(cr, 1);
+        cairo_move_to(cr, g_margin_left, y_center);
+        cairo_line_to(cr, width - margin_right, y_center);
+        cairo_stroke(cr);
+
+        if (!v->v || v->n <= 0) {
+            /* Componente configurada pero sin traza descargada: la banda se
+               mantiene y se dice, para no confundir "no hay dato" con "no
+               existe" (y para que se vea de un golpe que componente falta). */
+            cairo_set_source_rgb(cr, 0.6, 0.35, 0.35);
+            cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL,
+                                   CAIRO_FONT_WEIGHT_NORMAL);
+            cairo_set_font_size(cr, 11);
+            cairo_move_to(cr, g_margin_left + 8, y_center - 8);
+            cairo_show_text(cr, "sin traza");
+            continue;
+        }
+
+        /* Una pasada por columna: min/max/has de la vista en ese pixel. Los
+           huecos (NaN) se omiten: columna sin datos -> no se dibuja. */
+        for (px = 0; px < ncol; px++) {
+            double ta = win0 + ((double)px / ncol) * span;
+            double tb = win0 + ((double)(px + 1) / ncol) * span;
+            long k0 = (long)floor((ta - v->oldest) * v->rate);
+            long k1 = (long)ceil((tb - v->oldest) * v->rate);
+            double pmin = 1e30, pmax = -1e30;
+            int has = 0;
+
+            if (k0 < 0) k0 = 0;
+            if (k1 > v->n) k1 = v->n;
+            for (k = k0; k < k1; k++) {
+                double fv = v->v[k];
+
+                if (!isfinite(fv)) continue;
+                if (fv < pmin) pmin = fv;
+                if (fv > pmax) pmax = fv;
+                has = 1;
+            }
+            g_mag_col_min[px] = has ? pmin : 0.0;
+            g_mag_col_max[px] = has ? pmax : 0.0;
+            g_mag_col_has[px] = has;
+            if (has) {
+                if (fabs(pmin) > max_abs) max_abs = fabs(pmin);
+                if (fabs(pmax) > max_abs) max_abs = fabs(pmax);
+            }
+        }
+        if (max_abs <= 0.0) continue;
+
+        scale = (row_h * 0.45) / max_abs;
+        cairo_set_source_rgb(cr, 0.05, 0.05, 0.05);
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+        cairo_save(cr);
+        cairo_rectangle(cr, g_margin_left, y_center - (row_h / 2.0), ncol, row_h);
+        cairo_clip(cr);
+
+        if (csnhypodbp_view_use_polyline(span, ncol, v->rate)) {
+            /* Un pixel cubre menos de CSNHYPODBP_POLYLINE_SPP muestras (vistas
+               diezmadas de Mwp/Ms): el envelope degenera en guiones, asi que se
+               une muestra a muestra. Se corta en los huecos sin unir a traves. */
+            long k0 = (long)floor((win0 - v->oldest) * v->rate) - 1;
+            long k1 = (long)ceil((win0 + span - v->oldest) * v->rate) + 1;
+            int pen = 0;
+
+            if (k0 < 0) k0 = 0;
+            if (k1 > v->n) k1 = v->n;
+            for (k = k0; k < k1; k++) {
+                double fv = v->v[k];
+                double x, y;
+
+                if (!isfinite(fv)) { pen = 0; continue; }
+                x = g_margin_left + csnhypodbp_view_sample_x(
+                        v->oldest + (double)k / v->rate, win0, span, ncol);
+                y = y_center - fv * scale;
+                if (pen) cairo_line_to(cr, x, y);
+                else cairo_move_to(cr, x, y);
+                pen = 1;
+            }
+            cairo_stroke(cr);
+        } else {
+            /* Envelope por tramos contiguos con datos; `min_half` garantiza que
+               una zona plana (min==max) siga dejando trazo visible. */
+            double min_half = csnhypodbp_view_min_half(scale, 0.8);
+            int nruns = csnhypodbp_view_band_runs(g_mag_col_has, ncol, g_band_runs,
+                                                  MAX_DRAW_W);
+            int r;
+
+            for (r = 0; r < nruns; r++) {
+                int px0 = g_band_runs[2 * r];
+                int px1 = g_band_runs[2 * r + 1];
+
+                if (px1 <= px0) continue;
+                /* max de izquierda a derecha y min de derecha a izquierda: cierra
+                   la banda por arriba y por abajo. */
+                for (px = px0; px < px1; px++) {
+                    double ytop = y_center - (g_mag_col_max[px] + min_half) * scale;
+
+                    if (px == px0) cairo_move_to(cr, g_margin_left + (double)px, ytop);
+                    else cairo_line_to(cr, g_margin_left + (double)px, ytop);
+                }
+                for (px = px1 - 1; px >= px0; px--)
+                    cairo_line_to(cr, g_margin_left + (double)px,
+                                  y_center - (g_mag_col_min[px] - min_half) * scale);
+                cairo_close_path(cr);
+                cairo_fill(cr);
+            }
+            cairo_stroke(cr);
+        }
+        cairo_restore(cr);
+    }
+}
+
+void on_mag_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data)
+{
+    gpointer item;
+    char *sta = NULL;
+
+    (void)pspec; (void)data;
+    item = gtk_single_selection_get_selected_item(sel);
+    /* El repoblado de la tabla (vaciado -> sin seleccion) no debe perder la
+       estacion que se esta mirando. */
+    if (item && CSNHYPODBP_IS_MAG_ITEM(item)) {
+        g_object_get(item, "sta", &sta, NULL);
+        snprintf(g_mag_station, sizeof(g_mag_station), "%s", sta ? sta : "");
+        g_free(sta);
+        csnhypodbp_mag_canvas_fit();
+        csnhypodbp_view_set_default(&g_mag_zoomview, 0.0);   /* otra estacion: sin zoom */
+        if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+    }
+}
+
+/* Zoom por dos clics en el canvas de magnitudes, igual que en `picking`: el
+   primer clic ancla, el segundo a la DERECHA acerca y a la IZQUIERDA vuelve al
+   encuadre automatico. El `rel` se calcula en el MISMO sistema de coordenadas
+   que el dibujo (zoom activo o encuadre del ancla), para que el clic y lo que se
+   ve coincidan. El arrastre de la franja vive en el handle, no aqui. */
+void on_mag_canvas_clicked(GtkGestureClick *g, int n_press, double x, double y,
+                           gpointer data)
+{
+    GtkWidget *w;
+    double win0 = 0.0, span = 0.0, rel;
+    CsnhypodbpView cur;
+    int cw = 0;
+
+    (void)n_press; (void)y; (void)data;
+    if (!g_mag_canvas) return;
+    w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(g));
+    if (w) cw = mag_draw_w(gtk_widget_get_width(w));
+    if (cw <= 0) return;
+    /* Mismo encuadre que el dibujo (mag_frame): asi el `rel` del clic cae en el
+       sistema de coordenadas correcto tambien despues de un zoom. */
+    if (!mag_frame(&win0, &span)) return;
+    memset(&cur, 0, sizeof(cur));
+    cur.t0 = win0;
+    cur.t1 = win0 + span;
+    rel = csnhypodbp_view_x_to_rel(&cur, x, g_margin_left, cw);
+    csnhypodbp_view_click(&g_mag_zoomview, rel);
+    ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+void on_mag_drag_begin(GtkGestureDrag *g, double x, double y, gpointer data)
+{
+    const char *sta;
+    double t0 = NAN, t1 = NAN, anchor, win0, span, xa, xb;
+    int ncol, cw = 0;
+
+    (void)g; (void)data;
+    /* Solo desde el HANDLE (barra superior de la franja): el resto del canvas es
+       para el zoom por dos clics, como en `picking`. */
+    if (!csnhypodbp_magmarks_handle_hit(y, MAG_BAND_TOP)) return;
+    if (!g_mag_canvas) return;
+    ewgui_canvas_get_size(g_mag_canvas, &cw, NULL);
+    ncol = mag_draw_w(cw);
+    if (ncol <= 0) return;
+    sta = g_mag_station[0] ? g_mag_station : g_selected_station;
+    if (!g_mag_station[0] && sta && sta[0])
+        snprintf(g_mag_station, sizeof(g_mag_station), "%s", sta);
+    mag_current_window(&t0, &t1);
+    anchor = mag_anchor_of(sta, NULL);
+    /* Ventana EFECTIVA (con el zoom incluido): la franja se agarra donde se ve y
+       el arrastre convierte pixeles a segundos con esa MISMA escala. */
+    if (!mag_frame(&win0, &span)) return;
+    xa = csnhypodbp_view_sample_x(anchor + t0, win0, span, ncol);
+    xb = csnhypodbp_view_sample_x(anchor + t1, win0, span, ncol);
+    g_mag_grab = csnhypodbp_magmarks_grab(x - g_margin_left, xa, xb, MAG_GRAB_TOL_PX);
+    if (g_mag_grab == CSNHYPODBP_MAGG_NONE) return;
+    g_mag_grab_t0 = t0;
+    g_mag_grab_t1 = t1;
+    g_mag_grab_sec_px = span / (double)ncol;
+    /* El encuadre se congela en el EFECTIVO: arrastrar despues de un zoom ya no
+       devuelve la vista al encuadre automatico a mitad de la maniobra. */
+    g_mag_freeze_view.t0 = win0;
+    g_mag_freeze_view.t1 = win0 + span;
+    g_mag_freeze_view.active = 1;
+    g_mag_freeze_view.have_anchor = 0;
+    g_mag_freeze = 1;
+}
+
+void on_mag_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data)
+{
+    double dt, nt0, nt1;
+
+    (void)g; (void)oy; (void)data;
+    if (g_mag_grab == CSNHYPODBP_MAGG_NONE || !g_mag_station[0]) return;
+    dt = ox * g_mag_grab_sec_px;
+    switch (g_mag_grab) {
+        case CSNHYPODBP_MAGG_T0: nt0 = g_mag_grab_t0 + dt; nt1 = g_mag_grab_t1; break;
+        case CSNHYPODBP_MAGG_T1: nt0 = g_mag_grab_t0;      nt1 = g_mag_grab_t1 + dt; break;
+        default:                 nt0 = g_mag_grab_t0 + dt; nt1 = g_mag_grab_t1 + dt; break;
+    }
+    if (nt1 < nt0 + MAG_MIN_SPAN_SEC) return;
+    if (csnhypodbp_magmarks_set(&g_mag_marks, g_mag_station, g_mag_kind, nt0, nt1) != 0)
+        return;
+    /* La tabla se repuebla al soltar (no en cada movimiento): repoblarla ahora
+       perderia la seleccion de la fila a media maniobra. */
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+void on_mag_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data)
+{
+    (void)g; (void)ox; (void)oy; (void)data;
+    g_mag_grab = CSNHYPODBP_MAGG_NONE;
+    g_mag_freeze = 0;
+    rebuild_mag_list();   /* la tabla muestra la ventana ajustada */
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+/* Puntero del canvas de magnitudes: informa si el clic va a arrastrar la franja,
+   mover un borde o hacer zoom. La decision es pura (magview_cursor). */
+static int mag_draw_w(int width);   /* definido en la seccion del eje */
+void on_mag_canvas_motion(GtkEventControllerMotion *c, double x, double y, gpointer data)
+{
+    GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(c));
+    const char *sta;
+    double t0 = NAN, t1 = NAN, anchor, win0, span, xa = NAN, xb = NAN;
+    int ncol = 0, on_handle = 0, on_edge = 0;
+
+    (void)data;
+    if (!w || !g_mag_canvas) return;
+    ewgui_canvas_get_size(g_mag_canvas, &ncol, NULL);
+    ncol = mag_draw_w(ncol);
+    if (ncol > 0) {
+        sta = g_mag_station[0] ? g_mag_station : g_selected_station;
+        mag_current_window(&t0, &t1);
+        anchor = mag_anchor_of(sta, NULL);
+        if (mag_frame(&win0, &span)) {
+            xa = csnhypodbp_view_sample_x(anchor + t0, win0, span, ncol);
+            xb = csnhypodbp_view_sample_x(anchor + t1, win0, span, ncol);
+            on_edge = (csnhypodbp_magmarks_grab(x - g_margin_left, xa, xb, MAG_GRAB_TOL_PX)
+                       != CSNHYPODBP_MAGG_NONE);
+        }
+    }
+    /* El handle solo es agarrable sobre la franja, no en toda la franja de alto. */
+    on_handle = on_edge && csnhypodbp_magmarks_handle_hit(y, MAG_BAND_TOP);
+    gtk_widget_set_cursor_from_name(w,
+                                    csnhypodbp_magview_cursor(on_handle, on_edge));
+    /* Linea del puntero: se repinta solo cuando cambia de pixel. */
+    {
+        int moved = !g_mag_cursor_valid || (int)x != (int)g_mag_cursor_x;
+
+        g_mag_cursor_x = x;
+        g_mag_cursor_valid = 1;
+        if (moved) ewgui_canvas_queue_draw(g_mag_canvas);
+    }
+}
+
+void on_mag_canvas_leave(GtkEventControllerMotion *c, gpointer data)
+{
+    GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(c));
+
+    (void)data;
+    if (w) gtk_widget_set_cursor_from_name(w, NULL);   /* cursor por defecto */
+    if (g_mag_cursor_valid) {
+        g_mag_cursor_valid = 0;
+        if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+    }
+}
+
+/* --- Eje de tiempo del canvas de magnitudes ------------------------------ */
+
+/* Ancho dibujable del canvas de magnitudes, igual que en el dibujo
+   (ncol = min(ancho - margen_izq - 10, MAX_DRAW_W)). */
+static int mag_draw_w(int width)
+{
+    int w = width - g_margin_left - 10;
+
+    if (w > MAX_DRAW_W) w = MAX_DRAW_W;
+    return (w > 0) ? w : 0;
+}
+
+/* Encuadre efectivo listo para proyectar: vista con t0/t1 = la ventana visible. */
+static int mag_frame_view(CsnhypodbpView *out)
+{
+    double win0 = 0.0, span = 0.0;
+
+    memset(out, 0, sizeof(*out));
+    if (!mag_frame(&win0, &span)) return 0;
+    out->t0 = win0;
+    out->t1 = win0 + span;
+    return 1;
+}
+
+/* Tiempo ABSOLUTO del x del eje, recortado al area dibujable. */
+static double mag_axis_rel_at(double x)
+{
+    CsnhypodbpView cur;
+    int dw, right;
+
+    if (!g_mag_axis_canvas) return 0.0;
+    dw = mag_draw_w(gtk_widget_get_width(ewgui_canvas_widget(g_mag_axis_canvas)));
+    right = g_margin_left + dw;
+    if (dw <= 0 || !mag_frame_view(&cur)) return 0.0;
+    if (x < g_margin_left) x = g_margin_left;
+    if (x > right) x = right;
+    return csnhypodbp_view_x_to_rel(&cur, x, g_margin_left, dw);
+}
+
+void on_draw_mag_axis(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
+{
+    CsnhypodbpView fv;
+    double win0 = 0.0, span = 0.0, xa = 0.0, xb = 0.0;
+    double ticks[128];
+    int dw = mag_draw_w(width);
+    int max_ticks, n, i;
+
+    (void)canvas; (void)data;
+    cairo_set_source_rgb(cr, 0.97, 0.97, 0.98);
+    cairo_paint(cr);
+    cairo_set_source_rgb(cr, 0.35, 0.35, 0.35);
+    cairo_set_font_size(cr, 10);
+    cairo_move_to(cr, 6, height - 4);
+    cairo_show_text(cr, "UTC");
+
+    if (dw <= 0 || !mag_frame(&win0, &span)) return;
+
+    /* Banda del arrastre en curso, con el mismo helper que el eje de `picking`. */
+    memset(&fv, 0, sizeof(fv));
+    fv.t0 = win0;
+    fv.t1 = win0 + span;
+    if (csnhypodbp_view_axis_band_x(&fv, &g_mag_axis_drag, g_margin_left, dw, &xa, &xb)) {
+        cairo_set_source_rgba(cr, 0.5, 0.5, 0.5, 0.35);
+        cairo_rectangle(cr, xa, 0.0, xb - xa, (double)height);
+        cairo_fill(cr);
+    }
+
+    max_ticks = dw / 90;
+    if (max_ticks < 1) max_ticks = 1;
+    n = csnhypodbp_view_ticks(win0, win0 + span, max_ticks, ticks, 128);
+    for (i = 0; i < n; i++) {
+        char b[16];
+        cairo_text_extents_t ext;
+        double x = csnhypodbp_view_sample_x(ticks[i], win0, span, dw);
+
+        if (x < g_margin_left - 0.5 || x > g_margin_left + dw + 0.5) continue;
+        cairo_set_source_rgb(cr, 0.4, 0.4, 0.4);
+        cairo_move_to(cr, x, 1);
+        cairo_line_to(cr, x, 7);
+        cairo_stroke(cr);
+        csnhypodbp_view_fmt_utc(ticks[i], b, sizeof(b));
+        cairo_text_extents(cr, b, &ext);
+        cairo_set_source_rgb(cr, 0.15, 0.15, 0.15);
+        cairo_move_to(cr, x - ext.width / 2.0, height - 4);
+        cairo_show_text(cr, b);
+    }
+}
+
+void on_mag_axis_drag_begin(GtkGestureDrag *g, double sx, double sy, gpointer data)
+{
+    int dw, right;
+
+    (void)g; (void)sy; (void)data;
+    if (!g_mag_axis_canvas) return;
+    g_mag_axis_sx = sx;
+    dw = mag_draw_w(gtk_widget_get_width(ewgui_canvas_widget(g_mag_axis_canvas)));
+    right = g_margin_left + dw;
+    if (dw <= 0 || sx < g_margin_left || sx > right) {
+        g_mag_axis_drag.active = 0;      /* press fuera del area: ignorar */
+        return;
+    }
+    csnhypodbp_view_drag_begin(&g_mag_axis_drag, mag_axis_rel_at(sx));
+    ewgui_canvas_queue_draw(g_mag_axis_canvas);
+}
+
+void on_mag_axis_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data)
+{
+    (void)g; (void)oy; (void)data;
+    if (!g_mag_axis_drag.active) return;
+    csnhypodbp_view_drag_update(&g_mag_axis_drag, mag_axis_rel_at(g_mag_axis_sx + ox));
+    if (g_mag_axis_canvas) ewgui_canvas_queue_draw(g_mag_axis_canvas);
+}
+
+void on_mag_axis_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data)
+{
+    (void)g; (void)oy; (void)data;
+    if (g_mag_axis_drag.active) {
+        csnhypodbp_view_drag_update(&g_mag_axis_drag, mag_axis_rel_at(g_mag_axis_sx + ox));
+        csnhypodbp_view_drag_end(&g_mag_axis_drag, &g_mag_zoomview);
+    }
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+    if (g_mag_axis_canvas) ewgui_canvas_queue_draw(g_mag_axis_canvas);
+}
+
+/* Doble clic en el eje: vuelve al encuadre automatico del ancla, es decir a ver
+   la franja entera y centrada (funciona aunque el zoom la haya dejado fuera). */
+void on_mag_axis_clicked(GtkGestureClick *g, int n_press, double x, double y,
+                         gpointer data)
+{
+    (void)g; (void)x; (void)y; (void)data;
+    if (n_press != 2) return;
+    csnhypodbp_view_set_default(&g_mag_zoomview, 0.0);
+    g_mag_axis_drag.active = 0;
+    if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+    if (g_mag_axis_canvas) ewgui_canvas_queue_draw(g_mag_axis_canvas);
 }
 
 void on_station_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) {
@@ -233,8 +1224,10 @@ void on_station_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer da
     }
     g_free(sta);
     /* Solo al cambiar de estacion: re-seleccionar la misma no mata el zoom. */
-    if (csnhypodbp_station_changed(prev, g_selected_station))
+    if (csnhypodbp_station_changed(prev, g_selected_station)) {
         csnhypodbp_view_set_default(&g_view, g_dScreenTime);
+        csnhypodbp_pick_anchor_refresh();   /* otra estacion: otra P de referencia */
+    }
     actualizar_altura_canvas();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
@@ -347,6 +1340,7 @@ void on_btn_timewin_clicked(GtkWidget *w, gpointer d) {
         double v = atof(gtk_editable_get_text(GTK_EDITABLE(e)));
         if (v > 0.0) { if (v > 10.0) v = 10.0; g_dScreenTime = v * 60.0; }
         csnhypodbp_view_set_default(&g_view, g_dScreenTime);   /* nuevo ancho: sin zoom */
+        csnhypodbp_pick_anchor_refresh();
         actualizar_altura_canvas();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
     }
@@ -620,17 +1614,35 @@ typedef struct {
     CsnhypodbpMagOut mag;
     char err[256];
     int rc;
+    /* `calculate`/`calculate all`: solo magnitudes, con las ventanas ajustadas. */
+    int mags_only;
+    unsigned kind_mask;
+    CsnhypodbpMagOvrRow ovr[CSNHYPODBP_MAGMARKS_MAX];
+    int novr;
 } LocateJob;
 
 static gboolean locate_finish(gpointer data);
 
 static gpointer locate_thread(gpointer data) {
     LocateJob *job = data;
-    job->rc = csnhypodbp_locate_run(g_locators, g_nlocators, job->locator,
-                                    getenv("EW_PARAMS"), getenv("EW_HOME"), getenv("EW_VERSION"),
-                                    NULL, &job->base, job->mp, job->nmp,
-                                    job->tank, job->ntank, &job->out, &job->mag,
-                                    job->err, sizeof(job->err));
+    if (job->mags_only) {
+        /* Sin relocalizar: la solucion se queda como esta y solo se recalculan
+           las magnitudes con las ventanas que el usuario ajusto. */
+        job->out = job->base;
+        job->rc = csnhypodbp_mag_run(getenv("EW_PARAMS"), getenv("EW_HOME"),
+                                     getenv("EW_VERSION"), NULL, &job->base,
+                                     job->tank, job->ntank,
+                                     job->ovr, job->novr, job->kind_mask,
+                                     &job->mag, job->err, sizeof(job->err));
+    } else {
+        job->rc = csnhypodbp_locate_run(g_locators, g_nlocators, job->locator,
+                                        getenv("EW_PARAMS"), getenv("EW_HOME"), getenv("EW_VERSION"),
+                                        NULL, &job->base, job->mp, job->nmp,
+                                        job->tank, job->ntank,
+                                        job->ovr, job->novr, job->kind_mask,
+                                        &job->out, &job->mag,
+                                        job->err, sizeof(job->err));
+    }
     g_idle_add(locate_finish, job);
     return NULL;
 }
@@ -643,11 +1655,13 @@ static gboolean locate_finish(gpointer data) {
         g_preview_valid = TRUE;
         csnhypodbp_preview_update();
         rebuild_station_list();   /* residual de la candidata en la tabla */
-        logit("t", "csnhypodbp: locate OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
+        logit("t", "csnhypodbp: %s OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
+              job->mags_only ? "calculate" : "locate",
               job->locator, job->out.nph, job->out.rms,
               job->mag.ml[0] ? job->mag.ml : "-", job->mag.mwp[0] ? job->mag.mwp : "-");
     } else {
-        logit("e", "csnhypodbp: locate fallo [%s]: %s\n", job->locator, job->err);
+        logit("e", "csnhypodbp: %s fallo [%s]: %s\n",
+              job->mags_only ? "calculate" : "locate", job->locator, job->err);
     }
     g_free(job);
     return G_SOURCE_REMOVE;
@@ -657,6 +1671,24 @@ static gboolean locate_finish(gpointer data) {
    color y sensibilidad de los botones no se puedan desincronizar: la candidata
    del `locate` si esta vigente, si no la solucion elegida en el detalle
    (pestana Eventos), si no guiones. */
+/* Celda de magnitud del preview: el valor numerico de la fila en "%.2f", o un
+   guion si la solucion no tiene esa magnitud (`nmag*` < 0). */
+static void preview_mag_text(double v, char *out, size_t n)
+{
+    if (!isfinite(v) || v < 0.0) snprintf(out, n, "-");
+    else snprintf(out, n, "%.2f", v);
+}
+
+/* Radio de magnitud preferida del cuadro de la candidata. */
+void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
+    int k = GPOINTER_TO_INT(data);
+
+    if (g_preview_pref_sync) return;                  /* lo mueve preview_update */
+    if (!gtk_check_button_get_active(b)) return;
+    if (k < 0 || k >= CSNHYPODBP_PREVIEW_MAGS) return;
+    g_preview_pref_kind = k;
+}
+
 void csnhypodbp_preview_update(void) {
     CsnhypodbpPreviewVals v;
     int i;
@@ -666,7 +1698,8 @@ void csnhypodbp_preview_update(void) {
                                           g_preview_sol.lat, g_preview_sol.lon,
                                           g_preview_sol.depth, g_preview_sol.nph,
                                           g_preview_sol.rms,
-                                          g_preview_mag.ml, g_preview_mag.mwp);
+                                          g_preview_mag.ml, g_preview_mag.mwp,
+                                          g_preview_mag.mb, g_preview_mag.ms);
     } else {
         gpointer item = g_selection_detail
                         ? gtk_single_selection_get_selected_item(g_selection_detail)
@@ -674,13 +1707,21 @@ void csnhypodbp_preview_update(void) {
         if (item) {
             CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
             double lat = 0, lon = 0, depth = 0;
-            g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth, NULL);
-            /* rms/nph/mags: las celdas ya formateadas de la fila (c5/c7/c9/c10). */
+            double nm[CSNHYPODBP_MAG_NKIND] = { -1.0, -1.0, -1.0, -1.0 };
+            char mtxt[CSNHYPODBP_MAG_NKIND][16];
+            int k;
+
+            g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth,
+                         "nmag0", &nm[0], "nmag1", &nm[1],
+                         "nmag2", &nm[2], "nmag3", &nm[3], NULL);
+            for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++)
+                preview_mag_text(nm[k], mtxt[k], sizeof(mtxt[k]));
+            /* rms/nph: las celdas ya formateadas de la fila (c5/c7). Las cuatro
+               magnitudes salen de nmag0..3, asi el formato es el mismo en las 4. */
             csnhypodbp_preview_from_selected(&v, lat, lon, depth,
                                              csnhypodbp_row_col(row, 5),
                                              csnhypodbp_row_col(row, 7),
-                                             csnhypodbp_row_col(row, 9),
-                                             csnhypodbp_row_col(row, 10));
+                                             mtxt[0], mtxt[1], mtxt[2], mtxt[3]);
         } else {
             csnhypodbp_preview_clear(&v);
         }
@@ -694,6 +1735,31 @@ void csnhypodbp_preview_update(void) {
         gtk_widget_set_sensitive(g_preview_btn_confirm, v.candidate);
     if (g_preview_btn_discard)
         gtk_widget_set_sensitive(g_preview_btn_discard, v.candidate);
+    /* Radios de magnitud preferida: sensibles solo si esa magnitud vino con valor
+       (y solo con candidata: es ella la que se confirma). La eleccion del usuario
+       se respeta mientras la candidata viva; si la preferida ya no tiene valor (o
+       no hay eleccion), se cae a la regla de csnmags. */
+    {
+        int has[CSNHYPODBP_PREVIEW_MAGS];
+
+        has[0] = g_preview_valid && g_preview_mag.ml[0] != 0;
+        has[1] = g_preview_valid && g_preview_mag.mwp[0] != 0;
+        has[2] = g_preview_valid && g_preview_mag.mb[0] != 0;
+        has[3] = g_preview_valid && g_preview_mag.ms[0] != 0;
+        if (g_preview_valid && !csnhypodbp_mag_pref_ok(has, g_preview_pref_kind))
+            g_preview_pref_kind = csnhypodbp_mag_pref_default(g_preview_mag.ml,
+                                                             g_preview_mag.mwp,
+                                                             g_preview_mag.mb,
+                                                             g_preview_mag.ms);
+        g_preview_pref_sync = 1;
+        for (i = 0; i < CSNHYPODBP_PREVIEW_MAGS; i++) {
+            if (!g_preview_radio[i]) continue;
+            gtk_widget_set_sensitive(GTK_WIDGET(g_preview_radio[i]), has[i]);
+            gtk_check_button_set_active(GTK_CHECK_BUTTON(g_preview_radio[i]),
+                                        g_preview_pref_kind == i);
+        }
+        g_preview_pref_sync = 0;
+    }
     /* La candidata del locate tambien se ve en los dos mapas. */
     csnhypodbp_maps_refresh();
 }
@@ -701,6 +1767,7 @@ void csnhypodbp_preview_update(void) {
 void on_preview_discard(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
     g_preview_valid = FALSE;
+    g_preview_pref_kind = -1;
     csnhypodbp_preview_update();   /* vuelve a mostrar la solucion elegida */
     rebuild_station_list();        /* quita el residual de la candidata */
 }
@@ -708,34 +1775,90 @@ void on_preview_discard(GtkWidget *w, gpointer d) {
 void on_preview_confirm(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
     if (!g_preview_valid) return;
-    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag);
+    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, g_preview_pref_kind);
     g_preview_valid = FALSE;
+    g_preview_pref_kind = -1;
     csnhypodbp_preview_update();
     csnhypodbp_manual_clear();
     rebuild_station_list();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
-void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
+/* Mascara de magnitudes del proximo `calculate` (bit 0=ML..3=Ms); la fijan los
+   botones antes de arrancar el job. */
+static unsigned g_mag_calc_mask = 0u;
+
+/* Filas del WindowOverridesFile: la ventana ajustada a mano de cada estacion,
+   para las magnitudes de la mascara y solo las que se van a enviar (`used`).
+   En tiempo ABSOLUTO (ancla + t0/t1), que es lo que espera csnmags. */
+static int mag_ovr_rows_build(unsigned kind_mask, CsnhypodbpMagOvrRow *rows, int max)
+{
+    int i, k, n = 0;
+
+    if (kind_mask == 0u) kind_mask = (1u << CSNHYPODBP_MAGMARKS_KIND) - 1u;
+    for (i = 0; i < g_mag_rows_n && n < max; i++) {
+        if (!g_mag_rows[i].used || !(g_mag_rows[i].anchor > 0.0)) continue;
+        for (k = 0; k < CSNHYPODBP_MAGMARKS_KIND && n < max; k++) {
+            double t0 = 0.0, t1 = 0.0;
+
+            if (!(kind_mask & (1u << k))) continue;
+            if (!csnhypodbp_magmarks_touched(&g_mag_marks, g_mag_rows[i].sta, k)) continue;
+            csnhypodbp_magmarks_window(&g_mag_marks, g_mag_rows[i].sta, k,
+                                       g_mag_rows[i].t0, g_mag_rows[i].t1, &t0, &t1);
+            if (!(t1 > t0)) continue;
+            snprintf(rows[n].sta, sizeof(rows[n].sta), "%s", g_mag_rows[i].sta);
+            rows[n].kind = k;
+            rows[n].t0 = g_mag_rows[i].anchor + t0;
+            rows[n].t1 = g_mag_rows[i].anchor + t1;
+            n++;
+        }
+    }
+    return n;
+}
+
+/* Arranca un job. `mags_only` = recalcular SOLO magnitudes con las ventanas
+   ajustadas (sin relocalizar): lo usan `calculate`/`calculate all`. */
+static void locate_start(int mags_only) {
     LocateJob *job;
     GThread *th;
     int i;
-    (void)w; (void)d;
-    if (selected_qid == 0) { logit("t", "csnhypodbp: locate sin evento seleccionado\n"); return; }
-    if (g_nlocators <= 0) { logit("t", "csnhypodbp: locate sin localizadores en el .d\n"); return; }
+    if (selected_qid == 0) {
+        logit("t", "csnhypodbp: %s sin evento seleccionado\n",
+              mags_only ? "calculate" : "locate");
+        return;
+    }
+    if (!mags_only && g_nlocators <= 0) {
+        logit("t", "csnhypodbp: locate sin localizadores en el .d\n");
+        return;
+    }
     job = g_new0(LocateJob, 1);
     job->base.qid = selected_qid; job->base.version = (unsigned)selected_version; job->base.mod = selected_mod;
     job->base.otime = selected_otime; job->base.lat = selected_lat;
     job->base.lon = selected_lon; job->base.depth = selected_depth;
     /* Picadas = las filas de la tabla (una P y una S por estacion), filtradas
-       por la seleccion de estaciones/picks y por el origen A/M/Teo. */
+       por la seleccion de estaciones/picks y por el origen A/M/Teo. Desde la
+       pestana de magnitudes mandan SU barra A/M/Teo y la casilla de su tabla
+       (es lo que el usuario tiene delante); en picking, la tabla de Ondas. */
     {
         CsnhypodbpPickFilter filter;
-        filter.auto_on = g_filter_auto;
-        filter.manual_on = g_filter_manual;
-        filter.theo_on = g_filter_theo;
-        job->base.npicks = csnhypodbp_locate_picks(g_sta_rows, g_sta_rows_n,
-                                                   (const int (*)[2])g_pick_on,
+        int pick_on_mag[MAX_ESTA][2];
+        int used[MAX_ESTA];
+        const int (*pon)[2] = (const int (*)[2])g_pick_on;
+
+        if (mags_only) {
+            filter.auto_on = g_magf_auto;
+            filter.manual_on = g_magf_manual;
+            filter.theo_on = g_magf_theo;
+            for (i = 0; i < g_mag_rows_n && i < MAX_ESTA; i++) used[i] = g_mag_rows[i].used;
+            if (csnhypodbp_pick_on_from_used(g_mag_sta_idx, used, g_mag_rows_n,
+                                             pick_on_mag, g_sta_rows_n) == 0)
+                pon = (const int (*)[2])pick_on_mag;
+        } else {
+            filter.auto_on = g_filter_auto;
+            filter.manual_on = g_filter_manual;
+            filter.theo_on = g_filter_theo;
+        }
+        job->base.npicks = csnhypodbp_locate_picks(g_sta_rows, g_sta_rows_n, pon,
                                                    &filter, job->base.picks,
                                                    CSNHYPODBP_MAX_PICKS);
     }
@@ -772,10 +1895,37 @@ void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
         t->nsamp = ewgui_trace_length(tr);
     }
     snprintf(job->locator, sizeof(job->locator), "%s", g_active_locator);
-    logit("t", "csnhypodbp: locate [%s] qid=%d npicks=%d overlay=%d tank=%d\n",
-          job->locator, job->base.qid, job->base.npicks, job->nmp, job->ntank);
+    job->mags_only = mags_only;
+    /* Las ventanas ajustadas van al motor en LAS DOS rutas: `calculate` con la
+       mascara del boton y `locate` con todas las que haya a mano. */
+    job->kind_mask = mags_only ? g_mag_calc_mask : 0u;
+    job->novr = mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
+    logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d tank=%d winovr=%d\n",
+          mags_only ? "calculate" : "locate", job->locator, job->base.qid,
+          job->base.npicks, job->nmp, job->ntank, job->novr);
     th = g_thread_new("locate", locate_thread, job);
     g_thread_unref(th);
+}
+
+/* Boton `locate` (localiza y refina) y los dos de magnitudes: `calculate` aplica
+   las ventanas ajustadas de la magnitud ACTIVA y `calculate all` las de las
+   cuatro (en los dos casos, una sola corrida de csnmags). */
+void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
+    (void)w; (void)d;
+    locate_start(0);
+}
+
+void on_mag_calc_clicked(GtkWidget *w, gpointer d) {
+    (void)w; (void)d;
+    if (g_mag_kind < 0 || g_mag_kind >= CSNHYPODBP_MAGMARKS_KIND) return;
+    g_mag_calc_mask = 1u << g_mag_kind;
+    locate_start(1);
+}
+
+void on_mag_calc_all_clicked(GtkWidget *w, gpointer d) {
+    (void)w; (void)d;
+    g_mag_calc_mask = (1u << CSNHYPODBP_MAGMARKS_KIND) - 1u;
+    locate_start(1);
 }
 
 void on_btn_fetch_clicked(GtkWidget *widget, gpointer data) {
@@ -799,9 +1949,23 @@ void on_btn_fetch_clicked(GtkWidget *widget, gpointer data) {
 
 /* color_rows_func eliminado: en GTK4 el resaltado de fila lo da el tema. */
 
-/* 1 si la pestaña Ondas (indice 1) es la activa. */
+/* 1 si la pestaña raiz Procesar es la activa (cualquiera de sus sub-pestañas).
+   Se compara el WIDGET de la pagina, no su indice: añadir sub-pestañas no
+   altera este predicado. */
 static gboolean waves_page_active(void) {
-    return g_notebook && gtk_notebook_get_current_page(GTK_NOTEBOOK(g_notebook)) == 1;
+    int n;
+    if (!g_notebook || !g_page_procesar) return FALSE;
+    n = gtk_notebook_get_current_page(GTK_NOTEBOOK(g_notebook));
+    return n >= 0 &&
+           gtk_notebook_get_nth_page(GTK_NOTEBOOK(g_notebook), n) == g_page_procesar;
+}
+
+/* Lleva la ventana a la pestaña raiz Procesar (su primera sub-pestaña). */
+void csnhypodbp_show_procesar(void) {
+    int n;
+    if (!g_notebook || !g_page_procesar) return;
+    n = gtk_notebook_page_num(GTK_NOTEBOOK(g_notebook), g_page_procesar);
+    if (n >= 0) gtk_notebook_set_current_page(GTK_NOTEBOOK(g_notebook), n);
 }
 
 /* Loguea los colores de fase en hex, listos para copiar al .d. */
@@ -958,6 +2122,9 @@ static double g_map_cx = 0.0, g_map_cy = 0.0;
 static int    g_map_fit_key = -1;              /* identidad del ultimo auto-encuadre */
 static int    g_map_need_fit = 1;
 static double g_map_fit_lon0 = 0, g_map_fit_lon1 = 0, g_map_fit_lat0 = 0, g_map_fit_lat1 = 0;
+/* Referencia del encuadre: la solucion verde (elegida en Origins) o, si no hay,
+   la preferida. El mapa se centra SIEMPRE en ella, con cualquier MapZoom. */
+static double g_map_fit_ref_lat = NAN, g_map_fit_ref_lon = NAN;
 static int    g_map_panning = 0;
 static double g_map_pan_last_x = 0.0, g_map_pan_last_y = 0.0;
 /* Puntero: posiciones ya proyectadas de cada punto (las llena el dibujo, las usa
@@ -980,6 +2147,7 @@ static double g_prof_zoom = 1.0;               /* zoom del panel de perfil */
 static double g_prof_pan_x = 0.0, g_prof_pan_y = 0.0;   /* paneo en unidades de datos */
 static double g_prof_units_px_x = 1.0, g_prof_units_px_y = 1.0;  /* traduce el arrastre */
 static int    g_prof_fit_key = -1;             /* identidad del ultimo encuadre */
+static int    g_prof_pick_key = -1;            /* identidad del ultimo perfil elegido */
 static int    g_prof_panning = 0;
 static double g_prof_last_x = 0.0, g_prof_last_y = 0.0;
 
@@ -1163,6 +2331,12 @@ void csnhypodbp_maps_refresh(void)
         map_pt_push(g_preview_sol.lat, g_preview_sol.lon, g_preview_sol.depth, mag, 2, NULL);
     }
 
+    /* Identidad de la VISTA (evento + solucion elegida + candidata): gobierna el
+       auto-encuadre y la eleccion del perfil activo. Una llegada del anillo no
+       la cambia, asi que no mueve ni el encuadre ni el perfil. */
+    key = ((selected_qid * 31 + selected_mod) * 7 + selected_version) * 2
+          + (g_preview_valid ? 1 : 0);
+
     /* Solucion elegida en Origins -> se dibuja verde. Se busca por id (el orden de
        g_map_pts no es el de la tabla) y en la seleccion vigente, no en selected_id
        (este refresco tambien corre antes de que la seleccion se recomponga). */
@@ -1172,17 +2346,36 @@ void csnhypodbp_maps_refresh(void)
         g_map_sel = csnhypodbp_map_find_id(g_map_id, g_map_npts, sel_id);
     }
 
-    /* Perfil activo: el mas cercano a la solucion preferida del evento. */
-    g_active_profile = have_pref ? csnhypodbp_profile_nearest(&g_profiles, plat, plon) : -1;
+    /* Perfil activo: el mas cercano a la solucion preferida del evento. Se
+       re-elige SOLO cuando cambia la vista del usuario (evento o solucion
+       elegida), no cuando una llegada del anillo cambia la preferida: si no, el
+       panel de perfil cambiaba solo mientras se procesaba el evento. */
+    if (key != g_prof_pick_key) {
+        g_prof_pick_key = key;
+        g_active_profile = have_pref ? csnhypodbp_profile_nearest(&g_profiles, plat, plon) : -1;
+    }
     map_load_profile_lines();
 
     /* Auto-encuadre del mapa de planta al cambiar de evento o de candidata. */
-    key = ((selected_qid * 31 + selected_mod) * 7 + selected_version) * 2
-          + (g_preview_valid ? 1 : 0);
     if (key != g_map_fit_key) {
         double lon0, lon1, lat0, lat1;
         g_map_fit_key = key;
         if (csnhypodbp_map_bbox(g_map_pts, g_map_npts, &lon0, &lon1, &lat0, &lat1) == 0) {
+            /* Referencia del centro: la verde si hay, si no la preferida (kind 1). */
+            int ri = (g_map_sel >= 0 && g_map_sel < g_map_npts) ? g_map_sel : -1;
+
+            if (ri < 0) {
+                int k;
+                for (k = 0; k < g_map_npts; k++) {
+                    if (g_map_pts[k].kind == 1) { ri = k; break; }
+                }
+            }
+            if (ri >= 0) {
+                g_map_fit_ref_lat = g_map_pts[ri].lat;
+                g_map_fit_ref_lon = g_map_pts[ri].lon;
+            } else {
+                g_map_fit_ref_lat = g_map_fit_ref_lon = NAN;
+            }
             csnhypodbp_map_span_min(&lon0, &lon1, &lat0, &lat1, g_map_min_span_deg);
             g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
             g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
@@ -1238,16 +2431,21 @@ static void draw_marker(cairo_t *cr, double x, double y, double r, int kind, int
         return;
     }
     if (kind == 2) {
-        double dash[2];
-        cairo_set_source_rgb(cr, 0.99, 0.91, 0.91);
-        cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
-        cairo_fill_preserve(cr);
-        cairo_set_source_rgb(cr, 0.91, 0.63, 0.63);
-        cairo_set_line_width(cr, r * 0.45);
-        dash[0] = r * 0.8; dash[1] = r * 0.6;
-        cairo_set_dash(cr, dash, 2, 0.0);
-        cairo_stroke(cr);
-        cairo_set_dash(cr, NULL, 0, 0.0);
+        /* Candidata del `locate` (el estado "New solution" de la tablita):
+           ESTRELLA roja con borde blanco, para que se distinga de la preferida
+           (circulo rojo oscuro) a cualquier zoom. */
+        double sx[10], sy[10];
+        int ns = csnhypodbp_marker_star_path(x, y, r * 1.6, 5, 0.45, sx, sy, 10);
+        if (ns > 0) {
+            cairo_set_source_rgb(cr, 0.85, 0.10, 0.10);
+            cairo_move_to(cr, sx[0], sy[0]);
+            for (int k = 1; k < ns; k++) cairo_line_to(cr, sx[k], sy[k]);
+            cairo_close_path(cr);
+            cairo_fill_preserve(cr);
+            cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
+            cairo_set_line_width(cr, r * 0.3);
+            cairo_stroke(cr);
+        }
     } else if (kind == 1) {
         cairo_set_source_rgb(cr, 0.83, 0.18, 0.18);
         cairo_arc(cr, x, y, r, 0.0, 2.0 * M_PI);
@@ -1301,9 +2499,11 @@ void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, v
         ih = gdk_pixbuf_get_height(g_map_pixbuf);
     }
     if (g_map_need_fit && g_map_pixbuf && width > 40 && height > 40) {
-        csnhypodbp_mapfit(g_map_fit_lon0, g_map_fit_lon1, g_map_fit_lat0, g_map_fit_lat1,
-                          iw, ih, width, height, 12.0,
-                          &g_map_zoom, &g_map_cx, &g_map_cy);
+        csnhypodbp_mapfit_at(g_map_fit_ref_lat, g_map_fit_ref_lon,
+                             g_map_fit_lon0, g_map_fit_lon1,
+                             g_map_fit_lat0, g_map_fit_lat1,
+                             iw, ih, width, height, 12.0, g_map_zoom_factor,
+                             &g_map_zoom, &g_map_cx, &g_map_cy);
         g_map_pan_x = g_map_pan_y = 0.0;
         g_map_need_fit = 0;
     }
@@ -1629,14 +2829,96 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
                `res` sin necesidad de pulsar locate. */
             g_base_sol.npicks = csnhypodbp_event_sol_picks(row, g_base_sol.picks,
                                                            CSNHYPODBP_MAX_PICKS);
-            if (changed) {
+            /* El reset (zoom, ancla de la P, marcas y ventanas de magnitud) es
+               SOLO si el cambio de solucion lo pidio el usuario: una llegada del
+               anillo recompone la seleccion con g_ring_sync puesto y no debe
+               mover la vista que se esta mirando. */
+            if (csnhypodbp_view_should_reset(changed, g_ring_sync)) {
                 g_zoom_factor = 1.0;
                 csnhypodbp_view_set_default(&g_view, g_dScreenTime);
+                csnhypodbp_pick_anchor_refresh();   /* otra solucion: otra P */
+                /* Otra solucion: otras anclas y otras trazas, asi que las
+                   ventanas ajustadas a mano ya no valen. */
+                csnhypodbp_magmarks_clear(&g_mag_marks);
+                csnhypodbp_mag_views_invalidate();
+                /* El zoom por clics tampoco sobrevive al cambio de solucion. */
+                csnhypodbp_view_set_default(&g_mag_zoomview, 0.0);
+                /* Las puertas tampoco: vuelven a los valores del .d. Los ajustes
+                   de la barra valen solo mientras se procesa ESE evento. */
+                csnhypodbp_mag_ov_reset_all();
             }
         }
     }
     csnhypodbp_preview_update();   /* la tablita sigue a la solucion elegida */
     csnhypodbp_maps_refresh();     /* y los mapas, al evento elegido */
+    rebuild_mag_list();            /* y la tabla de magnitudes, al evento elegido */
+}
+
+/* Rellena Origins con las soluciones del grupo de `master_row` (la preferida
+   primero). Devuelve la preferida, o NULL si no hay fila/grupo. */
+static CsnhypodbpRow *detail_fill(CsnhypodbpRow *master_row)
+{
+    EventGroup *g;
+    CsnhypodbpRow *pref;
+    size_t n, i;
+
+    if (!g_store_detail) return NULL;
+    g_list_store_remove_all(g_store_detail);
+    if (!master_row) return NULL;
+    g = csnhypodbp_event_group_of(master_row);
+    if (!g) return NULL;
+    pref = csnhypodbp_event_group_preferred(g);
+    if (pref) g_list_store_append(g_store_detail, pref);
+    n = csnhypodbp_event_group_nsol(g);
+    for (i = 0; i < n; i++) {
+        CsnhypodbpRow *s = csnhypodbp_event_group_solution(g, i);
+        if (s && s != pref) g_list_store_append(g_store_detail, s);
+    }
+    return pref;
+}
+
+/* Selecciona en Origins la solucion (qid,mod,ver); si ya no esta, `fallback`. */
+static void detail_select_solution(CsnhypodbpRow *fallback, int qid, int mod, int ver)
+{
+    guint i, n;
+
+    if (!g_selection_detail) return;
+    n = g_list_model_get_n_items(G_LIST_MODEL(g_store_detail));
+    for (i = 0; i < n; i++) {
+        gpointer it = g_list_model_get_item(G_LIST_MODEL(g_store_detail), i);
+        CsnhypodbpRow *r = it ? CSNHYPODBP_ROW(it) : NULL;
+        int rq = 0, rm = 0, rv = 0;
+        if (r) g_object_get(r, "qid", &rq, "mod", &rm, "qver", &rv, NULL);
+        if (r && csnhypodbp_view_solution_same(qid, mod, ver, rq, rm, rv)) {
+            map_select_row(r);
+            g_object_unref(it);
+            return;
+        }
+        if (it) g_object_unref(it);
+    }
+    if (fallback) map_select_row(fallback);
+}
+
+/* Una solucion que llega del anillo para el evento que el usuario tiene abierto
+   no debe mover su vista: se recompone Origins conservando la solucion elegida
+   (qid,mod,ver). Con `g_ring_sync` puesto, la re-seleccion no dispara el reset
+   del zoom/anclas (ver csnhypodbp_view_should_reset). */
+void csnhypodbp_detail_refresh(void)
+{
+    gpointer sel, master;
+    CsnhypodbpRow *pref;
+    int qid = 0, mod = 0, ver = 0;
+
+    if (!g_store_detail || !g_selection_detail || !g_selection_events) return;
+    sel = gtk_single_selection_get_selected_item(g_selection_detail);
+    if (sel) g_object_get(CSNHYPODBP_ROW(sel), "qid", &qid, "mod", &mod, "qver", &ver, NULL);
+    master = gtk_single_selection_get_selected_item(g_selection_events);
+    pref = detail_fill(master ? CSNHYPODBP_ROW(master) : NULL);
+    if (!master) return;
+    g_ring_sync = 1;
+    if (sel) detail_select_solution(pref, qid, mod, ver);
+    else if (pref) map_select_row(pref);
+    g_ring_sync = 0;
 }
 
 /* Al seleccionar un evento (lista maestra) se despliega abajo la lista de sus
@@ -1645,29 +2927,15 @@ void on_event_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data
     (void)pspec; (void)data;
     gpointer item = gtk_single_selection_get_selected_item(sel);
     if (!g_store_detail) return;
-    g_list_store_remove_all(g_store_detail);
+    detail_fill(item ? CSNHYPODBP_ROW(item) : NULL);
     if (!item) return;
-    {
-        CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
-        EventGroup *g = csnhypodbp_event_group_of(row);
-        CsnhypodbpRow *pref;
-        size_t n, i;
-        if (!g) return;
-        pref = csnhypodbp_event_group_preferred(g);
-        if (pref) g_list_store_append(g_store_detail, pref);
-        n = csnhypodbp_event_group_nsol(g);
-        for (i = 0; i < n; i++) {
-            CsnhypodbpRow *s = csnhypodbp_event_group_solution(g, i);
-            if (s && s != pref) g_list_store_append(g_store_detail, s);
-        }
-        if (g_selection_detail) {
-            /* La primera fila del store es la preferida: se selecciona por fila, no
-               por la posicion 0 (la vista del detalle esta ordenada). */
-            gpointer first = g_list_model_get_item(G_LIST_MODEL(g_store_detail), 0);
-            if (first) {
-                map_select_row(CSNHYPODBP_ROW(first));
-                g_object_unref(first);
-            }
+    if (g_selection_detail) {
+        /* La primera fila del store es la preferida: se selecciona por fila, no
+           por la posicion 0 (la vista del detalle esta ordenada). */
+        gpointer first = g_list_model_get_item(G_LIST_MODEL(g_store_detail), 0);
+        if (first) {
+            map_select_row(CSNHYPODBP_ROW(first));
+            g_object_unref(first);
         }
     }
     csnhypodbp_maps_refresh();     /* el evento cambio: perfil y planta nuevos */
@@ -1678,8 +2946,9 @@ void on_list_double_click(GtkGestureClick *g, int n_press, double x, double y, g
     if (n_press != 2) return;
     guint idx = gtk_single_selection_get_selected(g_selection_detail);
     if (idx == GTK_INVALID_LIST_POSITION) return;
-    if (g_notebook) gtk_notebook_set_current_page(GTK_NOTEBOOK(g_notebook), 1);  /* pestaña Ondas */
+    if (g_notebook) csnhypodbp_show_procesar();   /* pestaña Procesar */
     csnhypodbp_manual_clear();   /* nuevo evento: overlay manual limpio */
+    csnhypodbp_pick_anchor_refresh();   /* evento nuevo: ancla nueva */
     pending_waveform_reload = TRUE;
     waveform_reload_timer(NULL);   /* fetch inmediato */
 }
@@ -1699,6 +2968,15 @@ gboolean waveform_reload_timer(gpointer data) {
 void on_btn_repick_clicked(GtkWidget *widget, gpointer data) {
     /* Retirado: el picado P/S ya es permanente (ver on_key_press/on_canvas_clicked). */
     (void)widget; (void)data;
+}
+
+/* El overlay manual cambio (picar o borrar): la tabla y las picadas que van al
+   localizador salen de `g_sta_rows`, asi que hay que reconstruirla ademas de
+   repintar. Sin esto, picar y pulsar `locate` no enviaba la manual. */
+static void pick_overlay_changed(void)
+{
+    rebuild_station_list();
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
 void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y, gpointer data) {
@@ -1730,15 +3008,19 @@ void on_canvas_clicked(GtkGestureClick *gesture, int n_press, double x, double y
         logit("t", "csnhypodbp: pick manual local %s.%s %c @ %.3f (overlay; no emitido)\n",
               mp.sta, mp.chan, mp.phase, mp.t);
         g_click_mode = CSNHYPODBP_CLICK_ZOOM;
-        ewgui_canvas_queue_draw(canvas_global);
+        pick_overlay_changed();   /* la tabla y el envio al localizador, al dia */
         return;
     }
 
     /* Modo zoom (Seisan): 1.er clic ancla; 2.º a la derecha hace zoom, a la
-       izquierda vuelve al default. */
+       izquierda vuelve al default. Al deshacer el zoom manda la P actual (puede
+       ser una manual recien picada): ahi SI se re-ancla la ventana. */
     {
         double rel = csnhypodbp_view_x_to_rel(&g_view, x, g_margin_left, draw_width);
-        csnhypodbp_view_click(&g_view, rel);
+        CsnhypodbpAct act = csnhypodbp_view_click(&g_view, rel);
+
+        if (csnhypodbp_view_reanchor_on(act))
+            csnhypodbp_pick_anchor_refresh();
         ewgui_canvas_queue_draw(canvas_global);
     }
 }
@@ -1755,25 +3037,34 @@ void on_canvas_right_click(GtkGestureClick *gesture, int n_press, double x, doub
     r = csnhypodbp_manual_remove_trace(StaArray[i].szStation, StaArray[i].szChannel);
     logit("t", "csnhypodbp: clic der: -%d picks de %s.%s\n",
           r, StaArray[i].szStation, StaArray[i].szChannel);
-    ewgui_canvas_queue_draw(canvas_global);
+    pick_overlay_changed();
 }
 
-/* Puntero sobre el canvas: guarda la posicion para el indicador de picado. */
+/* Puntero sobre el canvas: guarda la posicion para el indicador de picado y
+   para la linea que sigue al puntero, y pone el cursor de cruz sobre las trazas. */
 void on_canvas_motion(GtkEventControllerMotion *ctrl, double x, double y, gpointer data) {
-    (void)ctrl; (void)data;
+    GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(ctrl));
+    int moved = !g_cursor_valid || (int)x != (int)g_cursor_x || (int)y != (int)g_cursor_y;
+
+    (void)data;
     g_cursor_x = x; g_cursor_y = y;
     g_cursor_valid = 1;
-    if (g_click_mode == CSNHYPODBP_CLICK_PICK && canvas_global)
+    if (w) gtk_widget_set_cursor_from_name(w, csnhypodbp_view_cursor(x >= g_margin_left));
+    /* En modo picado el indicador sigue al puntero en las dos direcciones; en el
+       resto basta con repintar cuando cambia de pixel. */
+    if (canvas_global && (moved || g_click_mode == CSNHYPODBP_CLICK_PICK))
         ewgui_canvas_queue_draw(canvas_global);
 }
 
-/* El puntero sale del canvas: oculta el indicador. */
+/* El puntero sale del canvas: oculta el indicador y la linea. */
 void on_canvas_leave(GtkEventControllerMotion *ctrl, gpointer data) {
-    (void)ctrl; (void)data;
+    GtkWidget *w = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(ctrl));
+
+    (void)data;
+    if (w) gtk_widget_set_cursor_from_name(w, NULL);
     if (!g_cursor_valid) return;
     g_cursor_valid = 0;
-    if (g_click_mode == CSNHYPODBP_CLICK_PICK && canvas_global)
-        ewgui_canvas_queue_draw(canvas_global);
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
 }
 
 /* Nota: el clic derecho sobre una estacion vive ahora en las celdas de la tabla
@@ -1800,6 +3091,82 @@ void ApplySelectedFilter(void) {
     }
 }
 
+/* --- Ancla de la ventana del picking -------------------------------------- */
+
+/* Indice en StaArray de una estacion, o -1. */
+static int station_index_of(const char *sta)
+{
+    int i;
+
+    if (!sta || !sta[0]) return -1;
+    for (i = 0; i < NumEstaciones; i++)
+        if (strcmp(StaArray[i].szStation, sta) == 0) return i;
+    return -1;
+}
+
+/* Fila de la estacion seleccionada. `g_SortedNodes` son canales de UNA estacion,
+ * asi que una sola fila vale para todos; la usan el dibujo y el ancla. */
+static int selected_station_row(CsnhypodbpStaRow *row)
+{
+    CsnhypodbpTracePick wc[CSNHYPODBP_CAP_MAX];
+    CsnhypodbpManualPick man[CSNHYPODBP_MANUAL_MAX];
+    CsnhypodbpStaInput si;
+    int i0, nwc, nman;
+
+    memset(row, 0, sizeof(*row));
+    if (g_NumSortedNodes <= 0) return 0;
+    i0 = g_SortedNodes[0].idx;
+    memset(&si, 0, sizeof(si));
+    nwc = station_caps(StaArray[i0].szStation, wc, CSNHYPODBP_CAP_MAX);
+    nman = csnhypodbp_manual_list(man, CSNHYPODBP_MANUAL_MAX);
+    snprintf(si.sta, sizeof(si.sta), "%s", StaArray[i0].szStation);
+    si.dist_deg = g_StaDist[i0];
+    si.has_data = (bHasData[i0] == 1);
+    si.caps = wc; si.ncap = nwc;
+    si.theo_p = (g_StaTheoP[i0] > 1.0) ? g_StaTheoP[i0] : 0.0;
+    return csnhypodbp_statable_build(row, 1, &si, 1, man, nman, resid_source()) == 1;
+}
+
+/* P de referencia de una estacion: la ganadora (M > A > T). Devuelve 1 si es una
+ * P real y deja su tiempo en `*t`; 0 si no hay P (queda el respaldo). */
+static int pick_ref_for_station(int i, double *t)
+{
+    CsnhypodbpTracePick wc[CSNHYPODBP_CAP_MAX];
+    CsnhypodbpManualPick man[CSNHYPODBP_MANUAL_MAX];
+    CsnhypodbpStaInput si;
+    CsnhypodbpStaRow row;
+    int nman;
+
+    if (t) *t = selected_otime + 15.0;
+    if (i < 0 || i >= NumEstaciones) return 0;
+    memset(&si, 0, sizeof(si));
+    memset(&row, 0, sizeof(row));
+    si.dist_deg = g_StaDist[i];
+    si.has_data = (bHasData[i] == 1);
+    si.ncap = station_caps(StaArray[i].szStation, wc, CSNHYPODBP_CAP_MAX);
+    si.caps = wc;
+    si.theo_p = (g_StaTheoP[i] > 1.0) ? g_StaTheoP[i] : 0.0;
+    snprintf(si.sta, sizeof(si.sta), "%s", StaArray[i].szStation);
+    nman = csnhypodbp_manual_list(man, CSNHYPODBP_MANUAL_MAX);
+    if (csnhypodbp_statable_build(&row, 1, &si, 1, man, nman, resid_source()) != 1)
+        return 0;
+    if (!row.p.present) return 0;
+    if (t) *t = csnhypodbp_view_ref_pick(1, row.p.t, selected_otime + 15.0);
+    return 1;
+}
+
+/* Re-ancla la ventana del picking a la P de referencia. Se llama al deshacer el
+ * zoom, al cambiar de estacion/solucion/evento y al arrancar; NUNCA al picar (la
+ * vista no se mueve y la marca aparece donde el usuario hizo clic). */
+void csnhypodbp_pick_anchor_refresh(void)
+{
+    double t = selected_otime + 15.0;
+    int have = pick_ref_for_station(station_index_of(g_selected_station), &t);
+
+    g_win_ref_pick = t;
+    g_win_ref_has_p = have;
+}
+
 void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
     (void)data;
     cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
@@ -1808,16 +3175,8 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
     int draw_width = width - g_margin_left - margin_right;
     if (draw_width <= 0) return;
 
-    /* Titulo */
-    cairo_set_source_rgb(cr, 0.5, 0.1, 0.1);
-    cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-    cairo_set_font_size(cr, 14); cairo_move_to(cr, width / 2 - 120, 20);
-    char buf[128];
-    snprintf(buf, sizeof(buf), "Historical Data - Quake ID: %s%s%s",
-             selected_id,
-             g_selected_station[0] ? " - " : "",
-             g_selected_station[0] ? g_selected_station : "");
-    cairo_show_text(cr, buf);
+    /* (sin rotulo: el id del evento ya esta en la tabla de estaciones de al lado,
+       asi que el canvas queda entero para las trazas) */
 
     /* Solo los canales de la estacion seleccionada (por defecto: ninguna). */
     g_NumSortedNodes = 0;
@@ -1844,45 +3203,32 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
        `g_SortedNodes` son canales de UNA estacion (la seleccionada), asi que la
        fila se calcula una sola vez y vale para todos sus canales. */
     CsnhypodbpStaRow sta_row;
-    int have_row = 0;
-    memset(&sta_row, 0, sizeof(sta_row));
-    if (g_NumSortedNodes > 0) {
-        int i0 = g_SortedNodes[0].idx;
-        CsnhypodbpTracePick wc[CSNHYPODBP_CAP_MAX];
-        CsnhypodbpManualPick man[CSNHYPODBP_MANUAL_MAX];
-        CsnhypodbpStaInput si;
-        int nwc, nman;
-        memset(&si, 0, sizeof(si));
-        nwc = station_caps(StaArray[i0].szStation, wc, CSNHYPODBP_CAP_MAX);
-        nman = csnhypodbp_manual_list(man, CSNHYPODBP_MANUAL_MAX);
-        snprintf(si.sta, sizeof(si.sta), "%s", StaArray[i0].szStation);
-        si.dist_deg = g_StaDist[i0];
-        si.has_data = (bHasData[i0] == 1);
-        si.caps = wc; si.ncap = nwc;
-        si.theo_p = (g_StaTheoP[i0] > 1.0) ? g_StaTheoP[i0] : 0.0;
-        have_row = csnhypodbp_statable_build(&sta_row, 1, &si, 1, man, nman,
-                                             resid_source()) == 1;
+    int have_row;
+    have_row = selected_station_row(&sta_row);
+
+    /* Ventana del picking anclada a la P de REFERENCIA CONGELADA, no a la P
+       ganadora: picar no mueve la vista (la marca nueva aparece donde el usuario
+       hizo clic) y la referencia solo se refresca al deshacer el zoom o cambiar
+       de estacion/solucion/evento. Si el ancla aun no tenia P (estacion recien
+       cambiada, picadas sin llegar), se engancha en cuanto aparece. */
+    if (g_win_ref_pick <= 0.0)
+        csnhypodbp_pick_anchor_refresh();
+    /* El enganche perezoso es solo para la P que LLEGA (automatica o teorica): una
+       manual nunca mueve la ventana, ni siquiera si el ancla venia del respaldo. */
+    if (!g_win_ref_has_p && have_row && sta_row.p.present && sta_row.p.t > 1.0 &&
+        sta_row.p.origin != 'M') {
+        g_win_ref_pick = csnhypodbp_view_ref_pick(1, sta_row.p.t, selected_otime + 15.0);
+        g_win_ref_has_p = 1;
     }
+    g_dWindowStart = g_win_ref_pick - g_align_lead;
 
-    /* Marca P de referencia -> ventana global (todas las P alineadas). */
-    double earliest_pick = 1e15;
-    if (have_row && sta_row.p.present && sta_row.p.t > 1.0) earliest_pick = sta_row.p.t;
-    if (earliest_pick == 1e15) earliest_pick = selected_otime + 15.0;
-    g_dWindowStart = earliest_pick - g_align_lead;
-
-    /* Ventana visible (zoom) y winStart COMUN de la estacion (para el eje UTC).
-       La P de referencia es la leida (real o manual) si hay; si no la teorica.
-       Asi TODAS las trazas comparten ventana y un unico eje UTC vale para
-       todas. */
+    /* Ventana visible (zoom) y winStart COMUN de la estacion (para el eje UTC):
+       todas las trazas comparten ventana y un unico eje UTC vale para todas. */
     double span = g_view.t1 - g_view.t0;
     if (span <= 0.0) span = g_dScreenTime;
-    double sta_pick_t = selected_otime;
-    int    sta_is_real = 0;
-    if (have_row && sta_row.p.present) {
-        sta_pick_t = sta_row.p.t;
-        sta_is_real = (sta_row.p.origin == 'M' || sta_row.p.origin == 'A');
-    }
-    double sta_win_start = sta_pick_t - g_align_lead;
+    int sta_is_real = (have_row && sta_row.p.present &&
+                       (sta_row.p.origin == 'M' || sta_row.p.origin == 'A'));
+    double sta_win_start = g_win_ref_pick - g_align_lead;
     g_win_start_cur = sta_win_start;
 
     /* Linea de referencia vertical discontinua (todas las P alineadas) */
@@ -1909,14 +3255,13 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         cairo_new_path(cr);
         cairo_set_line_width(cr, 1.0);
 
-        /* Etiqueta por componente (HHZ/HHN/HHE); la estacion va en el titulo. */
+        /* Etiqueta: solo la componente (HHZ/HHN/HHE), pegada a la tabla. */
         cairo_set_source_rgb(cr, 0.1, 0.2, 0.7);
         char sta_label[64];
         csnhypodbp_trace_label(sta_label, sizeof(sta_label),
-                               StaArray[i].szStation, StaArray[i].szChannel,
-                               g_SortedNodes[n].dist * 111.19);
+                               StaArray[i].szStation, StaArray[i].szChannel, 0.0);
         cairo_select_font_face(cr, "Sans", CAIRO_FONT_SLANT_NORMAL, CAIRO_FONT_WEIGHT_BOLD);
-        cairo_set_font_size(cr, 12); cairo_move_to(cr, 28, y_center + 5); cairo_show_text(cr, sta_label);
+        cairo_set_font_size(cr, 12); cairo_move_to(cr, 8, y_center + 5); cairo_show_text(cr, sta_label);
 
         /* Linea media */
         cairo_set_source_rgb(cr, 0.8, 0.8, 0.8); cairo_set_line_width(cr, 1);
@@ -2026,43 +3371,58 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             }
         }
 
-        /* Marca P (una sola por estacion: M > A > T). */
+        /* Marca P (una sola por estacion: M > A > T). Si el zoom la deja fuera de
+           la ventana se dibuja pegada al borde con una flecha: nunca desaparece
+           en silencio (era el motivo de "no aparece lo que pique"). */
         if (have_row && sta_row.p.present) {
             double rel = sta_row.p.t - winStart;
-            if (rel >= g_view.t0 && rel <= g_view.t1) {
-                double xp = csnhypodbp_view_rel_to_x(&g_view, rel, g_margin_left, draw_width);
-                cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
-                cairo_set_line_width(cr, 2);
-                cairo_move_to(cr, xp, y_center - (row_h / 2.5));
-                cairo_line_to(cr, xp, y_center + (row_h / 2.5));
-                cairo_stroke(cr);
-                cairo_set_font_size(cr, 11);
-                cairo_move_to(cr, xp + 4, y_center - (row_h / 3));
-                char plabel[16];
-                if (sta_row.p.origin == 'T') snprintf(plabel, sizeof(plabel), "P(theo)");
-                else                         snprintf(plabel, sizeof(plabel), "P(%c)", sta_row.p.origin);
-                cairo_show_text(cr, plabel);
-            }
+            int edge = 0;
+            double xp = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
+            char plabel[24];
+
+            cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
+            cairo_set_line_width(cr, 2);
+            cairo_move_to(cr, xp, y_center - (row_h / 2.5));
+            cairo_line_to(cr, xp, y_center + (row_h / 2.5));
+            cairo_stroke(cr);
+            cairo_set_font_size(cr, 11);
+            cairo_move_to(cr, edge > 0 ? (double)(g_margin_left + draw_width - 52) : xp + 4,
+                          y_center - (row_h / 3));
+            if (sta_row.p.origin == 'T')
+                snprintf(plabel, sizeof(plabel), "P(theo)%s",
+                         edge < 0 ? "<" : (edge > 0 ? ">" : ""));
+            else
+                snprintf(plabel, sizeof(plabel), "P(%c)%s", sta_row.p.origin,
+                         edge < 0 ? "<" : (edge > 0 ? ">" : ""));
+            cairo_show_text(cr, plabel);
         }
 
-        /* Marca S (una sola por estacion: M > A). */
+        /* Marca S (una sola por estacion: M > A). Igual: al borde si el zoom la
+           deja fuera de la ventana. */
         if (have_row && sta_row.s.present) {
             double rel = sta_row.s.t - winStart;
-            if (rel >= g_view.t0 && rel <= g_view.t1) {
-                double xs = csnhypodbp_view_rel_to_x(&g_view, rel, g_margin_left, draw_width);
-                cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
-                cairo_set_line_width(cr, 1.5);
-                cairo_move_to(cr, xs, y_center - (row_h / 2.5));
-                cairo_line_to(cr, xs, y_center + (row_h / 2.5));
-                cairo_stroke(cr);
-                cairo_set_font_size(cr, 11);
-                char slab[16];
-                snprintf(slab, sizeof(slab), "S(%c)", sta_row.s.origin);
-                cairo_move_to(cr, xs + 4, y_center + (row_h / 3));
-                cairo_show_text(cr, slab);
-            }
+            int edge = 0;
+            double xs = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
+            char slab[24];
+
+            cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
+            cairo_set_line_width(cr, 1.5);
+            cairo_move_to(cr, xs, y_center - (row_h / 2.5));
+            cairo_line_to(cr, xs, y_center + (row_h / 2.5));
+            cairo_stroke(cr);
+            cairo_set_font_size(cr, 11);
+            snprintf(slab, sizeof(slab), "S(%c)%s", sta_row.s.origin,
+                     edge < 0 ? "<" : (edge > 0 ? ">" : ""));
+            cairo_move_to(cr, edge > 0 ? (double)(g_margin_left + draw_width - 52) : xs + 4,
+                          y_center + (row_h / 3));
+            cairo_show_text(cr, slab);
         }
     }
+
+    /* Linea vertical a trazos siguiendo al puntero (por debajo del ancla). */
+    if (g_cursor_valid)
+        draw_cursor_line(cr, g_cursor_x, height,
+                         g_cursor_x >= g_margin_left && g_cursor_x <= width - margin_right);
 
     /* Marca del ancla del zoom (1.er clic pendiente). */
     if (g_view.have_anchor) {

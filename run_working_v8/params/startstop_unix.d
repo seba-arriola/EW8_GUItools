@@ -86,8 +86,8 @@
  Process	  "nlloc_ring nlloc_ring.d"
  Class/Priority    OTHER 0
 #
- Process	  "wave_serverV wave_serverV.d"
- Class/Priority    OTHER 0
+ #Process	  "wave_serverV wave_serverV.d"
+ #Class/Priority    OTHER 0
 #
  Process	  "wstore_ingest wavestore.d"
  Class/Priority    OTHER 0

@@ -38,6 +38,7 @@ typedef struct {
     int      nph;
     int      gap;
     int      manual;    /* marca de solucion manual (byte 174 del ARC) */
+    char     pref_mag;  /* tipo preferido del ARC (BMTYPI): L/W/B/S, 0 = ninguna */
     int      npicks;
     CsnhypodbpPick picks[CSNHYPODBP_MAX_PICKS];
 } CsnhypodbpSolution;

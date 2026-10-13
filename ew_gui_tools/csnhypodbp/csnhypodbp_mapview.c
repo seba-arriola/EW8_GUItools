@@ -4,6 +4,7 @@
  */
 
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ewgui/geo.h"
@@ -98,6 +99,67 @@ void csnhypodbp_mapfit(double lon0, double lon1, double lat0, double lat1,
     if (zoom) *zoom = z;
     if (cx) *cx = (xa + xb) / 2.0;
     if (cy) *cy = (ya + yb) / 2.0;
+}
+
+void csnhypodbp_mapfit_at(double ref_lat, double ref_lon,
+                          double lon0, double lon1, double lat0, double lat1,
+                          double img_w, double img_h, int cw, int ch, double margin,
+                          double zoom_factor, double *zoom, double *cx, double *cy)
+{
+    double z, rx, ry;
+    double f = (isfinite(zoom_factor) && zoom_factor > 0.0) ? zoom_factor : 1.0;
+
+    /* El span sale del bbox (el suelo MapMinSpanDeg ya lo aplico el llamante) y
+       el factor lo acerca; el CENTRO es la referencia. */
+    csnhypodbp_mapfit(lon0, lon1, lat0, lat1, img_w, img_h, cw, ch, margin,
+                      &z, NULL, NULL);
+    z *= f;
+    if (!isfinite(z) || z <= 0.0) z = 1.0;
+
+    if (isfinite(ref_lat) && isfinite(ref_lon) &&
+        !(ref_lat == 0.0 && ref_lon == 0.0)) {
+        ewgui_geo_project(ref_lat, ref_lon, img_w, img_h, &rx, &ry);
+    } else {
+        /* Sin referencia valida: el punto medio del bbox (como mapfit). */
+        double xa, ya, xb, yb, x0, y0, x1, y1;
+
+        ewgui_geo_project(lat0, lon0, img_w, img_h, &xa, &ya);
+        ewgui_geo_project(lat1, lon1, img_w, img_h, &xb, &yb);
+        x0 = (xa < xb) ? xa : xb;
+        x1 = (xa < xb) ? xb : xa;
+        y0 = (ya < yb) ? ya : yb;
+        y1 = (ya < yb) ? yb : ya;
+        rx = (x0 + x1) / 2.0;
+        ry = (y0 + y1) / 2.0;
+    }
+
+    if (zoom) *zoom = z;
+    if (cx) *cx = rx;
+    if (cy) *cy = ry;
+}
+
+int csnhypodbp_map_split_parse(const char *s, double *frac)
+{
+    char *end = NULL;
+    double a, b;
+
+    if (!s) return 0;
+    a = strtod(s, &end);
+    if (end == s || !isfinite(a)) return 0;
+    while (*end == ' ' || *end == '\t') end++;
+    if (*end == '/') {
+        char *e2 = NULL;
+
+        b = strtod(end + 1, &e2);
+        if (e2 == end + 1 || !isfinite(b) || b <= 0.0 || a <= 0.0) return 0;
+        end = e2;
+        a = a / (a + b);
+    }
+    while (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n') end++;
+    if (*end) return 0;                       /* basura al final: no se acepta */
+    if (!(a > 0.0) || !(a < 1.0)) return 0;
+    if (frac) *frac = a;
+    return 1;
 }
 
 /* --- aciertos con el puntero --- */
@@ -287,4 +349,25 @@ void csnhypodbp_frame_pad(CsnhypodbpFrame *f, double fx, double fy)
     dy = (f->y1 - f->y0) * fy;
     f->x0 -= dx; f->x1 += dx;
     f->y0 -= dy; f->y1 += dy;
+}
+
+int csnhypodbp_marker_star_path(double cx, double cy, double r, int points,
+                                double inner_ratio, double *xs, double *ys, int max)
+{
+    int i, need;
+
+    if (!xs || !ys || points < 3 || max < 2 * points) return 0;
+    if (!(r > 0.0) || !isfinite(r) || !isfinite(cx) || !isfinite(cy)) return 0;
+    if (!(inner_ratio > 0.0) || inner_ratio >= 1.0) inner_ratio = 0.45;
+    need = 2 * points;
+    for (i = 0; i < need; i++) {
+        /* Alterna exterior/interior; -PI/2 deja el primer vertice ARRIBA (en
+           pantalla y crece hacia abajo). */
+        double rad = (i % 2 == 0) ? r : r * inner_ratio;
+        double a = -M_PI / 2.0 + (M_PI * (double)i) / (double)points;
+
+        xs[i] = cx + rad * cos(a);
+        ys[i] = cy + rad * sin(a);
+    }
+    return need;
 }

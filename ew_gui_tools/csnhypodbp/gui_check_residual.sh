@@ -55,7 +55,7 @@ if ! kill -0 "$app" 2>/dev/null; then
 fi
 
 if [ "$EWGUI_MODE" = "--dump" ]; then
-    python3 "$EWGUI_PROBE" --click-by-name Ondas --timeout 25 >/dev/null 2>&1 || true
+    python3 "$EWGUI_PROBE" --click-by-name Procesar --timeout 25 >/dev/null 2>&1 || true
     printf '\n== filas de la tabla ==\n'
     python3 "$EWGUI_PROBE" --rows --limit 12
     printf '\n== arbol ==\n'
@@ -64,8 +64,8 @@ if [ "$EWGUI_MODE" = "--dump" ]; then
 fi
 
 rc=0
-printf '== pestaña Ondas ==\n'
-python3 "$EWGUI_PROBE" --click-by-name Ondas --timeout 25 || rc=1
+printf '== pestaña Procesar (picking) ==\n'
+python3 "$EWGUI_PROBE" --click-by-name Procesar --timeout 25 || rc=1
 printf '== residuales de la solucion elegida (sin pulsar locate) ==\n'
 python3 "$EWGUI_PROBE" --assert-text "+0.250" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "-0.300" --timeout 25 || rc=1

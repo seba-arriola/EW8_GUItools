@@ -26,7 +26,9 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_station.o csnhypodbp_locator.o csnhypodbp_manual.o csnhypodbp_locate.o \
        csnhypodbp_view.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
        csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
-       csnhypodbp_mapview.o
+       csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
+       csnhypodbp_magsta.o csnhypodbp_magitem.o \
+        csnhypodbp_magmarks.o csnhypodbp_magview.o
 
 all: csnhypodbp
 
@@ -98,8 +100,8 @@ test_manual: test_manual.c csnhypodbp_manual.o
 	$(CC) $(CFLAGS) -o test_manual test_manual.c csnhypodbp_manual.o -lm
 
 # Pipeline offline locate (partes puras) + persistencia manual.
-test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o
-	$(CC) $(CFLAGS) -o test_locate test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o -lm
+test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o
+	$(CC) $(CFLAGS) -o test_locate test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o -lm
 
 # Arnes MANUAL de la cadena offline del boton `locate` (sin GTK). Corre
 # picks -> csnloc -> refinador -> magnitud con los mismos parametros que la GUI
@@ -108,8 +110,8 @@ test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_loc
 #   make -C ew_gui_tools/csnhypodbp chain
 #   ./locate_chain <arc_entrada> [refinador] [tmp_root]
 chain: locate_chain
-locate_chain: locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o
-	$(CC) $(CFLAGS) -o locate_chain locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o -lm
+locate_chain: locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o
+	$(CC) $(CFLAGS) -o locate_chain locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o -lm
 
 # Tabla de estaciones: dedup M>A>T, residual de la solucion y color de traza.
 test_statable: test_statable.c csnhypodbp_statable.o csnhypodbp_trace.o
@@ -146,6 +148,29 @@ test_mapview: test_mapview.c csnhypodbp_mapview.o ../common/src/ewgui_geo.o
 ../common/src/ewgui_geo.o:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_geo.o
 
+# Modelo de la fila de la tabla de magnitudes (GObject): una fila por estacion.
+test_magitem: test_magitem.c csnhypodbp_magitem.o csnhypodbp_magrow.o
+	$(CC) $(CFLAGS) -o test_magitem test_magitem.c csnhypodbp_magitem.o \
+	      csnhypodbp_magrow.o $(shell pkg-config --libs glib-2.0 gobject-2.0) -lm
+
+# Cache de las magnitudes por estacion que llegan vivas (anillo acotado).
+test_magsta: test_magsta.c csnhypodbp_magsta.o
+	$(CC) $(CFLAGS) -o test_magsta test_magsta.c csnhypodbp_magsta.o -lm
+
+# Modelo de la tabla de magnitudes (una fila por estacion): NSLC, residual, celdas.
+test_magrow: test_magrow.c csnhypodbp_magrow.o
+	$(CC) $(CFLAGS) -o test_magrow test_magrow.c csnhypodbp_magrow.o -lm
+
+test_magmarks: test_magmarks.c csnhypodbp_magmarks.o
+	$(CC) $(CFLAGS) -o test_magmarks test_magmarks.c csnhypodbp_magmarks.o -lm
+
+test_magview: test_magview.c csnhypodbp_magview.o csnhypodbp_magcfg.o ../common/libewgui_gtk4.a
+	$(CC) $(CFLAGS) -o test_magview test_magview.c csnhypodbp_magview.o csnhypodbp_magcfg.o ../common/libewgui_gtk4.a -lm
+
+# Parametros de magnitud que la GUI lee del .d de csnmags (defaults y ventanas).
+test_magcfg: test_magcfg.c csnhypodbp_magcfg.o
+	$(CC) $(CFLAGS) -o test_magcfg test_magcfg.c csnhypodbp_magcfg.o -lm
+
 # Lector SDS (libmseed2): genera un miniSEED sintetico y lo lee de vuelta.
 test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
 	$(CC) $(CFLAGS) -o test_sds_read test_sds_read.c csnhypodbp_sds.o \
@@ -154,7 +179,8 @@ test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
       test_master_store test_mag_msg test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
-      test_preview test_profile test_mapview
+      test_preview test_profile test_mapview test_magcfg test_magrow test_magsta \
+      test_magitem test_magmarks test_magview
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -176,6 +202,12 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_preview
 	./test_profile
 	./test_mapview
+	./test_magcfg
+	./test_magrow
+	./test_magsta
+	./test_magitem
+	./test_magmarks
+	./test_magview
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
 
@@ -184,4 +216,6 @@ clean:
 	      test_trace test_tt test_master_store test_mag_msg test_station_order \
 	      test_locator test_manual test_locate test_fetch_span test_view test_search \
 	      test_sds_read test_statable test_staitem test_preview test_profile \
-	      test_mapview locate_chain *.o
+	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
+	      test_magmarks test_magview \
+	      locate_chain *.o

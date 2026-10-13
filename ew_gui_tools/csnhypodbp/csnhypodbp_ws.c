@@ -148,6 +148,8 @@ struct EventGroup {
 
 static GPtrArray *g_groups = NULL;
 static CsnhypodbpMagStore g_pending_mags;  /* magnitudes llegadas antes del grupo */
+/* Magnitudes POR ESTACION de los ultimos mensajes (sub-pestaña `magnitudes`). */
+static CsnhypodbpMagStaStore g_magsta_live;
 
 /* Agrega una picada a la solucion (copia exacta, con su residual). */
 static void event_sol_add_pick(EventSol *es, const CsnhypodbpPick *pk)
@@ -330,14 +332,48 @@ CsnhypodbpRow *csnhypodbp_event_group_preferred(const EventGroup *g)
     return g ? g->preferred : NULL;
 }
 
+/* Fila seleccionada en la lista maestra (prestada: transfer-none). */
+static gpointer selected_master_row(void)
+{
+    if (!g_selection_events) return NULL;
+    return gtk_single_selection_get_selected_item(g_selection_events);
+}
+
+/* Grupo del EVENTO que el usuario tiene abierto, o NULL. Se resuelve por la
+   fila (no por el qid): tras un merge, las filas del grupo absorbido ya apuntan
+   al superviviente. */
+static gpointer viewed_group(void)
+{
+    gpointer it = selected_master_row();
+
+    if (!it) return NULL;
+    return csnhypodbp_event_group_of(CSNHYPODBP_ROW(it));
+}
+
+/* Devuelve la seleccion de la maestra al grupo `keep` (por identidad, no por
+   indice: el upsert reemplaza la fila y un merge la borra). `g_ring_sync` evita
+   que la re-seleccion reinicie la vista del usuario. */
+static void sticky_reselect(gpointer keep)
+{
+    int idx;
+
+    if (!keep || !g_store_events || !g_selection_events) return;
+    idx = csnhypodbp_master_find(g_store_events, keep);
+    if (idx < 0) return;
+    g_ring_sync = 1;
+    gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_selection_events),
+                                    (guint)idx, TRUE);
+    g_ring_sync = 0;
+}
+
 /* Inserta/actualiza el item maestro del grupo. La identidad es el GRUPO (no el
    qid de la solucion): un grupo fusionado puede tener soluciones de varios qid
-   y la preferida puede ser cualquiera de ellas. Si la preferida cambio, se
-   reemplaza y se re-selecciona para refrescar el detalle. */
+   y la preferida puede ser cualquiera de ellas. */
 static void event_store_upsert(EventGroup *g)
 {
     char nb[16];
     CsnhypodbpRow *old = NULL;
+    gpointer keep_row, keep;
     int idx;
 
     if (!g_store_events || !g->preferred) return;
@@ -348,15 +384,29 @@ static void event_store_upsert(EventGroup *g)
        eventos vivos se siguen agrupando en memoria, pero no entran a la tabla. */
     if (g_search_active) return;
 
+    /* La seleccion del usuario es PEGAJOSA: se captura ANTES de mutar la maestra
+       (el upsert reemplaza la fila y un merge borra la del absorbido) para
+       devolversela despues. Nunca se reselecciona al grupo que acaba de llegar:
+       eso cambiaba el detalle, la tablita y las trazas que el usuario miraba. */
+    keep_row = selected_master_row();
+    if (keep_row) g_object_ref(keep_row);
+
     idx = csnhypodbp_master_find(g_store_events, g);
     if (idx >= 0) {
         gpointer it = g_list_model_get_item(G_LIST_MODEL(g_store_events), (guint)idx);
         old = it ? CSNHYPODBP_ROW(it) : NULL;   /* prestado (ref nuestro) */
     }
     csnhypodbp_master_upsert(g_store_events, g, g->preferred);
-    if (old && old != g->preferred)
-        reselect_event_by_row(g->preferred);
     if (old) g_object_unref(old);
+
+    if (keep_row) {
+        /* Ya DESPUES de mutar: si el evento del usuario fue absorbido en un
+           merge, sus filas apuntan al grupo superviviente. */
+        keep = csnhypodbp_event_group_of(CSNHYPODBP_ROW(keep_row));
+        if (!keep) keep = csnhypodbp_master_group(CSNHYPODBP_ROW(keep_row));
+        sticky_reselect(keep);
+        g_object_unref(keep_row);
+    }
 }
 
 void rebuild_event_store(void)
@@ -687,6 +737,7 @@ static int cargar_grupos_db(const char *const *ids, int nev)
                                      szAzm, szStn, szID, szMl, szMwp, szMb, szMs,
                                      szMod, szVer, otime, 0, qid, ors[j].latitude,
                                      ors[j].longitude, ors[j].depth, mod);
+            csnhypodbp_row_set_origin_id(row, ors[j].origin_id);
             g_object_set(row, "estado",
                          strcmp(ors[j].status, "REVIEWED") == 0 ? "M" : "A", NULL);
             g_object_set(row, "created", created, NULL);
@@ -982,6 +1033,15 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     event_store_upsert(g);
     /* Magnitudes que llegaron antes de existir esta solucion (qid,mod). */
     solution_take_pending(row, sol.qid, mod);
+    /* Si la solucion es del evento que el usuario tiene ABIERTO, se refrescan en
+       sitio el detalle, la tabla de estaciones y la tablita. Sin esto quedaban
+       incoherentes (tablita nueva, tabla vieja) y con la seleccion intacta no se
+       dispara ningun fetch (selected_* no cambia). */
+    if (viewed_group() == g) {
+        csnhypodbp_detail_refresh();
+        rebuild_station_list();
+        csnhypodbp_preview_update();
+    }
     /* La solucion (nueva o actualizada) puede cambiar lo que muestran los mapas
        del evento vigente. */
     csnhypodbp_maps_refresh();
@@ -1025,6 +1085,40 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
 
     snprintf(mag_str, sizeof(mag_str), "%.1f-%d", mag.mag, mag.nstations);
 
+    /* Magnitudes POR ESTACION del propio mensaje: las muestra la sub-pestaña
+       `magnitudes`. Se guardan por (qid,mod,magnitud); si la tabla no las tiene
+       (p. ej. la solucion viene del historial), cae a la BD. El numero de canales
+       se deduce del mensaje (lineas - 1), igual que hace hypodb. */
+    {
+        static CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];
+        MAG_CHAN_INFO *ch;
+        const char *p;
+        size_t len = strlen(payload);
+        int nch = 0, i, n = 0;
+
+        for (p = payload; *p; p++) if (*p == '\n') nch++;
+        if (len > 0 && payload[len - 1] != '\n') nch++;
+        nch -= 1;                       /* sin la linea resumen */
+        if (nch > CSNHYPODBP_MAGSTA_MAX) nch = CSNHYPODBP_MAGSTA_MAX;
+        if (nch > 0 && (ch = calloc((size_t)nch, sizeof(*ch))) != NULL) {
+            if (rd_chan_mag((char *)payload, (int)len, ch,
+                            (int)((size_t)nch * sizeof(*ch))) == 0) {
+                for (i = 0; i < nch; i++) {
+                    if (ch[i].sta[0] == '\0') continue;
+                    memset(&vals[n], 0, sizeof(vals[n]));
+                    snprintf(vals[n].sta, sizeof(vals[n].sta), "%s", ch[i].sta);
+                    snprintf(vals[n].chan, sizeof(vals[n].chan), "%s", ch[i].comp);
+                    vals[n].mag = ch[i].mag;
+                    vals[n].amp = (double)ch[i].Amp1;
+                    vals[n].period = (double)ch[i].Period1;
+                    n++;
+                }
+            }
+            free(ch);
+            if (n > 0) csnhypodbp_magsta_put(&g_magsta_live, qid, mod, slot, vals, n);
+        }
+    }
+
     ensure_groups();
     if (apply_mag_to_solutions(qid, mod, slot, mag_str)) {
         logit("t", "csnhypodbp: Mag ID %d mod %d slot %d: %s\n", qid, mod, slot, mag_str);
@@ -1032,12 +1126,68 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
         /* La tablita del preview muestra ML/Mwp de la solucion elegida: si la
            magnitud llega despues de seleccionarla, hay que repintarla. */
         csnhypodbp_preview_update();
+        rebuild_mag_list();   /* y la tabla de magnitudes (llegan las estaciones) */
         return 1;
     }
     /* Sin solucion todavia: guardar para aplicarla cuando exista. */
     csnhypodbp_mag_store_put(&g_pending_mags, qid, mod, slot, mag_str);
     logit("t", "csnhypodbp: Mag pendiente ID %d mod %d slot %d: %s\n", qid, mod, slot, mag_str);
     return 0;
+}
+
+/* Magnitudes POR ESTACION de una solucion (fila de la tabla) y una magnitud
+   (slot 0..3): primero las que llegaron vivas por el anillo y, si no hay, las
+   del historial en la BD. Devuelve cuantas filas dejo en `out`. */
+int csnhypodbp_magsta_for(CsnhypodbpRow *row, int slot, CsnhypodbpMagIn *out, int max)
+{
+    int qid = 0, mod = 0, n;
+
+    if (!row || !out || max <= 0 || slot < 0 || slot >= CSNHYPODBP_MAG_N) return 0;
+    g_object_get(row, "qid", &qid, "mod", &mod, NULL);
+    n = csnhypodbp_magsta_take(&g_magsta_live, qid, mod, slot, out, max);
+    if (n > 0) return n;
+
+    {
+        const char *oid = csnhypodbp_row_origin_id(row);
+        const char *want = csnhypodbp_magcfg_name(slot);
+        EwGuiMagRow *mgs = NULL;
+        EwGuiStaMagRow *stas = NULL;
+        const EwGuiMagRow *best = NULL;
+        CsnhypodbpMagDbRow *raw;
+        int nm = 0, ns = 0, i, k = 0;
+
+        if (!oid[0] || !g_db) return 0;
+        if (ewguidb_query_magnitudes(g_db, oid, &mgs, &nm) <= 0) {
+            ewguidb_rows_free(mgs);
+            return 0;
+        }
+        /* Del mismo origen puede haber la automatica y la ajustada: manda la
+           ajustada (misma marca que publica la GUI en `algorithm`). */
+        for (i = 0; i < nm; i++) {
+            if (strcmp(mgs[i].magnitude_type, want) != 0) continue;
+            if (strcmp(mgs[i].calculation_method,
+                       CSNHYPODBP_MAG_MANUAL_ALGO) == 0) {
+                best = &mgs[i];
+                break;
+            }
+            if (!best) best = &mgs[i];
+        }
+        if (best && ewguidb_query_station_magnitudes(g_db, best->magnitude_id,
+                                                     &stas, &ns) > 0 && ns > 0) {
+            raw = g_new0(CsnhypodbpMagDbRow, (gsize)ns);
+            for (i = 0; i < ns; i++) {
+                raw[k].channel = stas[i].channel;
+                raw[k].read_amplitude = stas[i].read_amplitude;
+                raw[k].calculated_magnitude = stas[i].calculated_magnitude;
+                k++;
+            }
+            n = csnhypodbp_magrow_from_db(out, max, raw, k);
+            g_free(raw);
+        }
+        ewguidb_rows_free(stas);
+        ewguidb_rows_free(mgs);
+    }
+    return n;
 }
 
 /* --- Descarga asincrona de formas de onda (worker + publicacion) ---
@@ -1210,6 +1360,11 @@ static gpointer ws_fetch_thread(gpointer data)
     return NULL;
 }
 
+/* Identidad del ultimo evento RENDERIZADO en el canvas. Distingue un fetch del
+   mismo evento (refetch: no debe vaciar nada) de uno de otro evento (todo el
+   canvas es de otro sismo). */
+static int g_rendered_qid = 0, g_rendered_mod = 0, g_rendered_ver = 0;
+
 static gboolean ws_fetch_finish(gpointer data)
 {
     WsFetchJob *job = data;
@@ -1220,9 +1375,17 @@ static gboolean ws_fetch_finish(gpointer data)
         for (int i = 0; i < NumEstaciones; i++) {
             if (job->only_sta[0] && strcmp(StaArray[i].szStation, job->only_sta) != 0) continue;
             EwGuiTrace *tr = StaArray[i].trace;
+            /* ¿Trae el job datos para esta estacion? Si no los trae y es el MISMO
+               evento, se conserva la traza: un refetch que no devuelve nada no
+               vacia la pantalla (era el motivo de "desaparecio la traza que
+               miraba" tras una solucion nueva). */
+            int has = (i < job->nsta && job->stas[i].has_data && job->stas[i].raw) ? 1 : 0;
             StaArray[i].fetched = 1;
-            bHasData[i] = 0;
-            if (tr) ewgui_trace_clear(tr);
+            if (csnhypodbp_fetch_clear_on(g_rendered_qid, g_rendered_mod, g_rendered_ver,
+                                          job->qid, job->mod, job->version, has)) {
+                bHasData[i] = 0;
+                if (tr) ewgui_trace_clear(tr);
+            }
             StaArray[i].iNumPicks = 0; StaArray[i].dManualPickTime = 0.0;
             g_StaDist[i] = 0.0; g_StaTheoP[i] = 0.0;
             /* oldest/rate/length se fijan con ewgui_trace_set_span al llenar
@@ -1309,6 +1472,7 @@ static gboolean ws_fetch_finish(gpointer data)
                   job->only_sta[0] ? job->only_sta : "(todas)", nwith, nreq);
         }
 
+        g_rendered_qid = job->qid; g_rendered_mod = job->mod; g_rendered_ver = job->version;
         if (window_global) gtk_window_set_title(GTK_WINDOW(window_global), "CSNhypodbp - Hypocenter database picker (EW8)");
         if (canvas_global) {
             rebuild_station_list();
@@ -1327,17 +1491,53 @@ static gboolean ws_fetch_finish(gpointer data)
     return G_SOURCE_REMOVE;
 }
 
+static void ensure_station_channels(const char *sta);
+
+/* Asegura las componentes de TODAS las estaciones antes de pedir. El .sta de
+   csnhypodbp trae una linea por estacion y solo la vertical (estaciones_107.txt:
+   137 x HHZ); sin fila no hay peticion, y el fetch itera filas de StaArray. El
+   dato SI esta (slink2ew pide HH?.D, wstore_ingest ingiere todo SLINK_RING y el
+   SDS archiva por canal), pero nunca se pedia. Con esto el canvas de magnitudes
+   (y el de picking) muestra siempre todas las componentes de la estacion. */
+static void ensure_all_station_channels(void) {
+    int i, n = NumEstaciones;
+
+    for (i = 0; i < n && i < MAX_ESTA; i++) {
+        char sta[16];
+
+        snprintf(sta, sizeof(sta), "%s", StaArray[i].szStation);
+        ensure_station_channels(sta);
+    }
+}
+
 static void start_fetch(const char *only_sta, double otime, double eq_lat, double eq_lon,
                         int qid, int mod, int version) {
     if (g_ws_busy) { pending_waveform_reload = TRUE; return; }
+
+    /* Antes de congelar job->nsta/job->stas: las filas nuevas tienen que entrar
+       al fetch (y asi reciben su g_StaDist y su g_StaTheoP). */
+    ensure_all_station_channels();
 
     WsFetchJob *job = calloc(1, sizeof(*job));
     if (!job) return;
     job->qid = qid; job->mod = mod; job->version = version;
     job->eq_lat = eq_lat; job->eq_lon = eq_lon;
     job->event_otime = otime;
-    job->req_start = otime - 30.0;
-    job->req_end   = otime + g_dScreenTime + g_max_dist_km / 5.5 + g_align_lead;
+    /* La peticion es LARGA a proposito: Ms mide su ventana (P + Ms_Window, cientos
+       de segundos) y la sub-pestaña `magnitudes` necesita ese dato ya descargado
+       para no re-pedirlo al cambiar de magnitud. El tope duro es el buffer de la
+       traza (MAX_MINUTES*60 s): lo que pase de ahi no cabria. */
+    {
+        double hard = (double)(MAX_MINUTES * 60) - 30.0;
+        double mag_end = (g_mag_fetch_sec > hard) ? hard : g_mag_fetch_sec;
+        double pick_end = g_dScreenTime + g_max_dist_km / 5.5 + g_align_lead;
+
+        if (g_mag_fetch_sec > hard)
+            logit("t", "csnhypodbp: MagFetchSeconds %.0f excede el buffer (%d s); se usa %.0f s\n",
+                  g_mag_fetch_sec, MAX_MINUTES * 60, hard);
+        job->req_start = otime - 30.0;
+        job->req_end   = otime + ((pick_end > mag_end) ? pick_end : mag_end);
+    }
     job->max_dist_km = g_max_dist_km;
     job->nsta = NumEstaciones;
     if (only_sta) snprintf(job->only_sta, sizeof(job->only_sta), "%s", only_sta);
@@ -1446,8 +1646,51 @@ int csnhypodbp_event_sol_picks(const CsnhypodbpRow *row, CsnhypodbpPick *out, in
     return n;
 }
 
+/* Codigo de 1 letra de la magnitud preferida: viaja en el 13.er token de la
+   picada; csnloc lo copia al BMTYPI del ARC y hypodb lo usa como preferida. */
+static char pref_code(int kind)
+{
+    switch (kind) {
+        case 0: return 'L';   /* ML  */
+        case 1: return 'W';   /* Mwp */
+        case 2: return 'B';   /* Mb  */
+        case 3: return 'S';   /* Ms  */
+        default: return '-';
+    }
+}
+
+/* Publica una magnitud calculada a mano por la GUI como TYPE_MAGNITUDE, con la
+   marca manual en `algorithm` (mismo convenio que la solucion manual). Va al
+   anillo de hipocentros refinados, que es de donde la leen la propia GUI, csnrv
+   y hypodb (la base). Sin lineas de canal: wr_mag_scnl escribe solo la cabecera. */
+static void emit_mag_scnl(int imagtype, const char *type, const char *txt,
+                          int qid, int mod)
+{
+    char buf[1024];
+    double val = 0.0;
+    int nst = 0;
+    MAG_INFO m;
+    MSG_LOGO logo;
+
+    if (!txt || !txt[0] || !csnhypodbp_mag_split(txt, &val, &nst)) return;
+    memset(&m, 0, sizeof(m));
+    snprintf(m.qid, sizeof(m.qid), "%010d", qid);
+    snprintf(m.szmagtype, sizeof(m.szmagtype), "%s", type);
+    snprintf(m.algorithm, sizeof(m.algorithm), "%s", "CSNMan");
+    m.imagtype = imagtype;
+    m.mag = val;
+    m.quality = 1.0;
+    m.nstations = (nst > 0) ? nst : 1;
+    m.nchannels = 0;
+    m.origin_version = (unsigned)mod;
+    wr_mag_scnl(&m, buf, sizeof(buf));
+    logo.instid = MyInstId; logo.mod = MyModId; logo.type = TypeMagnitude;
+    if (tport_putmsg(&InRegion, &logo, (long)strlen(buf), buf) != PUT_OK)
+        logit("e", "csnhypodbp: error publicando la magnitud %s manual\n", type);
+}
+
 static void emit_pick_scnl(const char *sta, const char *chan, const char *net,
-                           const char *loc, char phase, double t)
+                           const char *loc, char phase, double t, char pref)
 {
     char out_msg[256], ts[32];
     static unsigned char seq = 0;
@@ -1466,19 +1709,24 @@ static void emit_pick_scnl(const char *sta, const char *chan, const char *net,
     snprintf(ts, sizeof(ts), "%04d%02d%02d%02d%02d%02d.%03d",
              tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
              tm->tm_hour, tm->tm_min, tm->tm_sec, ms);
-    /* net/loc reales: con "--" HYPOINVERSE no empareja la estacion. */
-    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c M\n",
+    /* net/loc reales: con "--" HYPOINVERSE no empareja la estacion.
+       13.er token: la magnitud preferida elegida en el cuadro de la candidata
+       ('-' si no hay eleccion); csnloc lo copia al BMTYPI del ARC. */
+    snprintf(out_msg, sizeof(out_msg), "%d %d %d %d %s.%s.%s.%s ?0 %s 0 0 0 %c M %c\n",
              TypePickSCNL, MyModId, MyInstId, seq++, sta, chan,
-             (net && net[0]) ? net : "--", (loc && loc[0]) ? loc : "--", ts, phase);
+             (net && net[0]) ? net : "--", (loc && loc[0]) ? loc : "--", ts, phase,
+             pref ? pref : '-');
     logo.instid = MyInstId; logo.mod = MyModId; logo.type = TypePickSCNL;
     if (tport_putmsg(&PRegion, &logo, strlen(out_msg), out_msg) != PUT_OK)
         logit("e", "csnhypodbp: error emitiendo pick manual\n");
 }
 
-int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMagOut *mag)
+int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMagOut *mag,
+                              int pref_kind)
 {
     char arc[65536];
     CsnhypodbpSolution s;
+    char pref = pref_code(pref_kind);
     int i;
     if (!sol) return -1;
     s = *sol;
@@ -1486,18 +1734,24 @@ int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMag
     if (s.version == 0) s.version = (unsigned)time(NULL);
     if (csnhypodbp_arc_build(&s, 1, arc, sizeof(arc)) != 0) return -1;
     procesar_mensaje_sismo(tree_global, arc, s.mod);
+    /* Se asignan TODAS las magnitudes calculadas; la preferida es la que eligio
+       el radio del cuadro de la candidata. */
     if (mag) {
-        if (mag->ml[0])  apply_mag_to_solutions(s.qid, s.mod, 0, mag->ml);
-        if (mag->mwp[0]) apply_mag_to_solutions(s.qid, s.mod, 1, mag->mwp);
-        if (mag->mb[0])  apply_mag_to_solutions(s.qid, s.mod, 2, mag->mb);
-        if (mag->ms[0])  apply_mag_to_solutions(s.qid, s.mod, 3, mag->ms);
+        if (mag->ml[0])  { apply_mag_to_solutions(s.qid, s.mod, 0, mag->ml);
+                           emit_mag_scnl(1, "ML",  mag->ml,  s.qid, s.mod); }
+        if (mag->mwp[0]) { apply_mag_to_solutions(s.qid, s.mod, 1, mag->mwp);
+                           emit_mag_scnl(5, "Mwp", mag->mwp, s.qid, s.mod); }
+        if (mag->mb[0])  { apply_mag_to_solutions(s.qid, s.mod, 2, mag->mb);
+                           emit_mag_scnl(3, "Mb",  mag->mb,  s.qid, s.mod); }
+        if (mag->ms[0])  { apply_mag_to_solutions(s.qid, s.mod, 3, mag->ms);
+                           emit_mag_scnl(4, "Ms",  mag->ms,  s.qid, s.mod); }
     }
     for (i = 0; i < s.npicks; i++)
         emit_pick_scnl(s.picks[i].sta, s.picks[i].chan, s.picks[i].net,
-                       s.picks[i].loc, s.picks[i].phase, s.picks[i].t_pick);
+                       s.picks[i].loc, s.picks[i].phase, s.picks[i].t_pick, pref);
     csnhypodbp_manual_state_save(g_manual_state_file, &s, mag);
-    logit("t", "csnhypodbp: solucion manual confirmada qid=%d nph=%d (%d picks emitidos)\n",
-          s.qid, s.nph, s.npicks);
+    logit("t", "csnhypodbp: solucion manual confirmada qid=%d nph=%d (%d picks, pref=%c)\n",
+          s.qid, s.nph, s.npicks, pref);
     return 0;
 }
 

@@ -68,6 +68,36 @@ double csnhypodbp_view_x_to_rel(const CsnhypodbpView *v, double x,
     return v->t0 + ((x - margin_left) / (double)draw_width) * span;
 }
 
+const char *csnhypodbp_view_cursor(int in_plot)
+{
+    return in_plot ? "crosshair" : "default";
+}
+
+int csnhypodbp_view_reanchor_on(CsnhypodbpAct act)
+{
+    return act == CSNHYPODBP_ACT_RESET ? 1 : 0;
+}
+
+double csnhypodbp_view_ref_pick(int have_p, double p_t, double fallback)
+{
+    if (have_p && p_t > 1.0) return p_t;
+    return fallback;
+}
+
+double csnhypodbp_view_mark_x(const CsnhypodbpView *v, double rel, int margin_left,
+                              int draw_width, int *edge)
+{
+    double span;
+
+    if (edge) *edge = 0;
+    if (!v || draw_width <= 0) return (double)margin_left;
+    span = v->t1 - v->t0;
+    if (span <= 0.0) return (double)margin_left;
+    if (rel < v->t0) { if (edge) *edge = -1; return (double)margin_left + 2.0; }
+    if (rel > v->t1) { if (edge) *edge = 1;  return (double)(margin_left + draw_width - 2); }
+    return margin_left + ((rel - v->t0) / span) * draw_width;
+}
+
 double csnhypodbp_view_time_zoom(CsnhypodbpView *v, int dir)
 {
     double span, center, ns, maxs;
@@ -276,6 +306,24 @@ int csnhypodbp_station_row_to_select(const char *sel, const char *const *names, 
 int csnhypodbp_should_autoselect(int has_selection)
 {
     return has_selection ? 0 : 1;
+}
+
+int csnhypodbp_view_should_reset(int changed, int ring_sync)
+{
+    return (changed && !ring_sync) ? 1 : 0;
+}
+
+int csnhypodbp_view_solution_same(int aq, int am, int av, int bq, int bm, int bv)
+{
+    return (aq == bq && am == bm && av == bv) ? 1 : 0;
+}
+
+int csnhypodbp_fetch_clear_on(int prev_qid, int prev_mod, int prev_ver,
+                              int job_qid, int job_mod, int job_ver, int has_data)
+{
+    if (prev_qid != job_qid || prev_mod != job_mod || prev_ver != job_ver)
+        return 1;   /* otro evento: el canvas entero es de otro sismo */
+    return has_data ? 1 : 0;   /* mismo evento: solo si hay datos nuevos */
 }
 
 void csnhypodbp_view_cancel_anchor(CsnhypodbpView *v)

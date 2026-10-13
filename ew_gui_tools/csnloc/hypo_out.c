@@ -129,6 +129,22 @@ int FormatHYP2000ARC(const HypoCandidate *h, const StationList *st,
     line[EWGUI_ARC_MANUAL_OFF] = manual ? EWGUI_ARC_MANUAL_CHAR
                                         : EWGUI_ARC_AUTO_CHAR;
 
+    /* BMTYPI (columna 123 = offset 122): tipo de la magnitud preferida elegida en
+       la GUI, que llega en el 13.er token de la picada. Ausente o '-': se deja en
+       blanco (ahi HYPOINVERSE espera un A1, nunca texto: ver arc_layout.h). */
+    {
+        int k;
+
+        for (k = 0; k < h->nphases && k < CSLOC_MAX_PHASES; k++) {
+            const Pick *pk = &picks[h->phase_idx[k]];
+
+            if (pk->pref_mag && pk->pref_mag != '-') {
+                line[EWGUI_ARC_BMTYPI_OFF] = pk->pref_mag;
+                break;
+            }
+        }
+    }
+
     /* Modelo de velocidades (linea 1, offsets 123..135). */
     {
         const char *m = cfg->TauModel;

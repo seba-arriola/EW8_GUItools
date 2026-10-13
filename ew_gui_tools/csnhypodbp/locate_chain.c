@@ -89,7 +89,8 @@ int main(int argc, char **argv)
     memset(&mag, 0, sizeof(mag));
     memset(err, 0, sizeof(err));
     rc = csnhypodbp_locate_run(loc, nloc, refiner, ewp, ewh, ewv, tmp_root,
-                               &base, NULL, 0, NULL, 0, &out, &mag, err, sizeof(err));
+                               &base, NULL, 0, NULL, 0, NULL, 0, 0u,
+                               &out, &mag, err, sizeof(err));
     printf("== locate_run rc=%d\n   err: %s\n", rc, err);
     printf("== out: qid=%d ver=%u nph=%d npicks=%d lat=%.4f lon=%.4f depth=%.1f rms=%.3f\n",
            out.qid, out.version, out.nph, out.npicks, out.lat, out.lon, out.depth, out.rms);

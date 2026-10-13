@@ -115,6 +115,49 @@ int main(void)
         CHECK(nrows == 2 && isnan(rows[0].p.resid), "sin solucion -> residual NAN");
     }
 
+    /* --- C8: las automaticas P y S llegan a la fila (pick_FP y pickS) --- */
+    {
+        CsnhypodbpStaInput in[1];
+        CsnhypodbpTracePick caps[2];
+        CsnhypodbpManualPick man[1];
+        CsnhypodbpStaRow rows[1];
+        int nrows;
+
+        memset(in, 0, sizeof(in));
+        memset(caps, 0, sizeof(caps));
+        memset(man, 0, sizeof(man));
+        snprintf(in[0].sta, sizeof(in[0].sta), "GO10");
+        in[0].dist_deg = 1.5; in[0].has_data = 1;
+        snprintf(in[0].chan, sizeof(in[0].chan), "HHZ");
+        snprintf(in[0].net, sizeof(in[0].net), "C1");
+        snprintf(in[0].loc, sizeof(in[0].loc), "--");
+        in[0].caps = caps; in[0].ncap = 2;
+        snprintf(caps[0].sta, sizeof(caps[0].sta), "GO10");
+        caps[0].phase = 'P'; caps[0].origin = 'A'; caps[0].t = 100.0;
+        snprintf(caps[0].chan, sizeof(caps[0].chan), "HHZ");
+        snprintf(caps[1].sta, sizeof(caps[1].sta), "GO10");
+        caps[1].phase = 'S'; caps[1].origin = 'A'; caps[1].t = 130.0;
+        snprintf(caps[1].chan, sizeof(caps[1].chan), "HHN");
+
+        nrows = csnhypodbp_statable_build(rows, 1, in, 1, NULL, 0, NULL);
+        CHECK(nrows == 1, "C8: 1 fila");
+        CHECK(rows[0].p.present && rows[0].p.origin == 'A', "C8: P automatica (pick_FP)");
+        CHECK(fabs(rows[0].p.t - 100.0) < 1e-9, "C8: tiempo de la P automatica");
+        CHECK(rows[0].s.present && rows[0].s.origin == 'A', "C8: S automatica (pickS)");
+        CHECK(fabs(rows[0].s.t - 130.0) < 1e-9, "C8: tiempo de la S automatica");
+        CHECK(strcmp(rows[0].s.chan, "HHN") == 0, "C8: canal de la S automatica");
+
+        /* La manual desplaza a la automatica (M > A) y no toca la S. */
+        snprintf(man[0].sta, sizeof(man[0].sta), "GO10");
+        man[0].phase = 'P'; man[0].t = 101.5;
+        snprintf(man[0].chan, sizeof(man[0].chan), "HHZ");
+        nrows = csnhypodbp_statable_build(rows, 1, in, 1, man, 1, NULL);
+        CHECK(nrows == 1 && rows[0].p.origin == 'M' && fabs(rows[0].p.t - 101.5) < 1e-9,
+              "C8: la P manual desplaza a la automatica");
+        CHECK(rows[0].s.origin == 'A' && fabs(rows[0].s.t - 130.0) < 1e-9,
+              "C8: la S automatica sigue igual");
+    }
+
     /* --- C6: filtro de picadas para el localizador --- */
     {
         CsnhypodbpStaRow rows[2];

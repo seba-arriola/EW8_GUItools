@@ -7,6 +7,7 @@
 #include "csnhypodbp_group.h"
 #include "csnhypodbp_locator.h"
 #include "csnhypodbp_manual.h"
+#include "csnhypodbp_magmarks.h"
 
 /*
  * csnhypodbp_locate.c - Pipeline OFFLINE del boton `locate` (headless).
@@ -61,6 +62,21 @@ int csnhypodbp_sol_apply_jsonl(CsnhypodbpSolution *sol, const char *jsonl);
 /* Parsea una linea JSON de csnmags a "%.1f-%d" por tipo ("" si null). */
 int csnhypodbp_mag_parse(const char *json, CsnhypodbpMagOut *mag);
 
+/* Corrida de SOLO magnitudes: recalcula ML/Mwp/Mb/Ms con las ventanas ajustadas a
+ * mano por estacion (`WindowOverridesFile`) sin tocar la localizacion. `kind_mask`
+ * elige que magnitudes llevan ventana ajustada (bit 0=ML, 1=Mwp, 2=Mb, 3=Ms). */
+int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *ew_version,
+                       const char *tmp_root,
+                       const CsnhypodbpSolution *base,
+                       const CsnhypodbpTankTrace *tank, int ntank,
+                       const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
+                       CsnhypodbpMagOut *mag, char *err, size_t errlen);
+
+/* 1 si alguna de las magnitudes de la mascara (bit 0=ML..3=Ms; 0 = las cuatro)
+ * vino con valor. Una corrida que no calculo nada no debe entrar como candidata
+ * (dejaria la barra vacia), asi que se trata como fallo. */
+int csnhypodbp_mag_result_ok(const CsnhypodbpMagOut *mag, unsigned kind_mask);
+
 /* --- Persistencia de soluciones manuales (ManualStateFile) --- */
 int csnhypodbp_manual_state_save(const char *path, const CsnhypodbpSolution *sol,
                                  const CsnhypodbpMagOut *mag);
@@ -84,6 +100,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           const CsnhypodbpSolution *base,
                           const CsnhypodbpManualPick *mp, int nmp,
                           const CsnhypodbpTankTrace *tank, int ntank,
+                          const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                           CsnhypodbpSolution *out, CsnhypodbpMagOut *mag,
                           char *err, size_t errlen);
 

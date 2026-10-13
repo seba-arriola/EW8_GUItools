@@ -19,4 +19,9 @@ CsnhypodbpRow *csnhypodbp_row_new(const char *c0, const char *c1, const char *c2
 
 const char *csnhypodbp_row_col(CsnhypodbpRow *r, int i);   /* celda visible i (0..14) */
 
+/* PK del origen en la BD hipocentral: la necesita la sub-pestaña `magnitudes`
+ * para pedir las magnitudes por estacion de ese origen ("" si no viene de ahi). */
+void csnhypodbp_row_set_origin_id(CsnhypodbpRow *r, const char *id);
+const char *csnhypodbp_row_origin_id(CsnhypodbpRow *r);
+
 #endif /* CSNHYPODBP_ROW_H */

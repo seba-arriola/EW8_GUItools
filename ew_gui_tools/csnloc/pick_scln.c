@@ -105,19 +105,22 @@ int PickSCNL_Parse(const char *msg, int len, Pick *out)
         out->t_epoch = (double)CSLoc_YmdHmsToEpoch(y, mo, d, hh, mi, ss);
     }
 
-    /* Token 11 opcional: fase (P/S). Token 12 opcional: origen (A/M).
-       pick_FP no los emite; pickS emite "S A"; el repick manual de la GUI
-       emite "... P M". Ausentes => P automatica. */
+    /* Token 11 opcional: fase (P/S). Token 12 opcional: origen (A/M). Token 13
+       opcional: magnitud preferida elegida en la GUI (L/W/B/S). pick_FP no los
+       emite; pickS emite "S A"; el repick manual de la GUI emite "... P M L".
+       Ausentes => P automatica y sin preferida. */
     out->phase  = CSLOC_PHASE_P;
     out->manual = 0;
+    out->pref_mag = 0;
     {
-        char phase_tok[8] = "", origin_tok[8] = "";
-        if (sscanf(msg, "%*d %*d %*d %*d %*63s %*15s %*63s %*d %*d %*d %7s %7s",
-                   phase_tok, origin_tok) >= 1) {
+        char phase_tok[8] = "", origin_tok[8] = "", pref_tok[8] = "";
+        if (sscanf(msg, "%*d %*d %*d %*d %*63s %*15s %*63s %*d %*d %*d %7s %7s %7s",
+                   phase_tok, origin_tok, pref_tok) >= 1) {
             int ph = Phase_FromName(phase_tok);
             if (ph >= 0) out->phase = ph;
         }
         if (origin_tok[0] == 'M' || origin_tok[0] == 'm') out->manual = 1;
+        if (pref_tok[0] && pref_tok[0] != '-') out->pref_mag = pref_tok[0];
     }
     strncpy(out->phase_name, Phase_Name(out->phase), sizeof(out->phase_name) - 1);
 

@@ -161,3 +161,74 @@ size_t ewgui_find_data_end(const int32_t *data, size_t n)
     }
     return 0;
 }
+
+/* --- Procesado de la traza de VISTA de magnitudes ------------------------ */
+
+void ewgui_filter_wood_anderson(int32_t *data, size_t n, double fs,
+                                double period, double damp, double gain)
+{
+    double K, w0, a, b, c, d, b0, b1, b2, a1, a2;
+    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+
+    if (!data || n == 0 || fs <= 0.0 || period <= 0.0)
+        return;
+    if (!(damp > 0.0)) damp = 0.70710678;
+    if (!(gain > 0.0)) gain = 1.0;
+    /* Transformada bilineal (s -> K(1-z^-1)/(1+z^-1)) de
+       H(s) = gain * s^2 / (s^2 + 2*damp*w0*s + w0^2). */
+    K = 2.0 * fs;
+    w0 = 2.0 * M_PI / period;
+    a = K * K;
+    b = 2.0 * damp * w0 * K;
+    c = w0 * w0;
+    d = a + b + c;
+    if (d == 0.0)
+        return;
+    b0 = gain * a / d;
+    b1 = -2.0 * b0;
+    b2 = b0;
+    a1 = (-2.0 * a + 2.0 * c) / d;
+    a2 = (a - b + c) / d;
+    for (size_t i = 0; i < n; i++) {
+        double x0, y0;
+        if (data[i] == INT_MAX) {           /* gap: no envenenar el estado */
+            x1 = x2 = y1 = y2 = 0.0;
+            continue;
+        }
+        x0 = (double)data[i];
+        y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = x0;
+        y2 = y1; y1 = y0;
+        data[i] = clamp_i32(y0);
+    }
+}
+
+void ewgui_integrate(const int32_t *in, size_t n, double dt, double *out)
+{
+    double acc = 0.0;
+
+    if (!in || !out || n == 0)
+        return;
+    if (!(dt > 0.0)) dt = 1.0;
+    out[0] = 0.0;
+    for (size_t i = 1; i < n; i++) {
+        if (in[i] == INT_MAX || in[i - 1] == INT_MAX) {
+            out[i] = NAN;
+            continue;
+        }
+        acc += 0.5 * ((double)in[i] + (double)in[i - 1]) * dt;
+        out[i] = acc;
+    }
+}
+
+size_t ewgui_decimate(const int32_t *in, size_t n, int factor, int32_t *out)
+{
+    size_t i, k = 0;
+
+    if (!in || !out || n == 0)
+        return 0;
+    if (factor < 1) factor = 1;
+    for (i = 0; i < n; i += (size_t)factor)
+        out[k++] = in[i];
+    return k;
+}

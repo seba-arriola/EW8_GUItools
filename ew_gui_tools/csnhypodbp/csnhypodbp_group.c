@@ -138,6 +138,10 @@ int csnhypodbp_parse_solution(const char *msg, size_t len, int mod,
 
     out->manual = (len > EWGUI_ARC_MANUAL_OFF &&
                    msg[EWGUI_ARC_MANUAL_OFF] == EWGUI_ARC_MANUAL_CHAR) ? 1 : 0;
+    /* BMTYPI (columna 123): tipo de la magnitud preferida (L/W/B/S); 0 si viene
+       en blanco (ARC de un csnloc viejo, o sin eleccion). */
+    out->pref_mag = (len > EWGUI_ARC_BMTYPI_OFF) ? msg[EWGUI_ARC_BMTYPI_OFF] : 0;
+    if (out->pref_mag == ' ') out->pref_mag = 0;
 
     /* Fases: lineas de >=114 chars que no empiezan por '$'. */
     p = memchr(msg, '\n', len);

@@ -28,6 +28,7 @@ void mag_config_defaults(MagConfig *c)
     strcpy(c->sta_file, "estaciones_107.txt");
     strcpy(c->calib_file, "calib/calib_map.txt");
     strcpy(c->sta_corr_file, "");
+    strcpy(c->win_ovr_file, "");
     strcpy(c->tau_model, "iasp91");
 
     strcpy(c->ws_ip, "127.0.0.1");
@@ -70,6 +71,7 @@ void mag_config_defaults(MagConfig *c)
     c->ms_t = 20.0; c->ms_band_lo = 0.045; c->ms_band_hi = 0.056;
     c->ms_k1 = 1.66; c->ms_k2 = 0.3;
     c->ms_deep_corr = 0;
+    c->ms_window = 400.0;   /* era una constante en el codigo (Ms_Window) */
     c->ms_min_sta = 1;
     c->ms.enabled = 1; c->ms.min_delta = 20.0; c->ms.max_delta = 160.0;
     c->ms.win_pre = 0.0; c->ms.win_post = 0.0;
@@ -119,6 +121,7 @@ int mag_config_load(const char *path, MagConfig *c)
         else if (k_its("StaFile"))     { str = k_str(); if (str) snprintf(c->sta_file, sizeof(c->sta_file), "%s", str); have_sta = 1; }
         else if (k_its("CalibFile"))   { str = k_str(); if (str) snprintf(c->calib_file, sizeof(c->calib_file), "%s", str); }
         else if (k_its("StaCorrFile")) { str = k_str(); if (str) snprintf(c->sta_corr_file, sizeof(c->sta_corr_file), "%s", str); }
+        else if (k_its("WindowOverridesFile")) { str = k_str(); if (str) snprintf(c->win_ovr_file, sizeof(c->win_ovr_file), "%s", str); }
         else if (k_its("TauModel"))    { str = k_str(); if (str) snprintf(c->tau_model, sizeof(c->tau_model), "%s", str); }
 
         else if (k_its("WoodAndersonCoefs")) { c->wa_period = k_val(); c->wa_damp = k_val(); c->wa_gain = k_val(); }
@@ -168,6 +171,7 @@ int mag_config_load(const char *path, MagConfig *c)
         else if (k_its("Ms_Band"))       { c->ms_band_lo = k_val(); c->ms_band_hi = k_val(); }
         else if (k_its("Ms_Coeffs"))     { c->ms_k1 = k_val(); c->ms_k2 = k_val(); }
         else if (k_its("Ms_DeepCorr"))   c->ms_deep_corr = k_int();
+        else if (k_its("Ms_Window"))     c->ms_window = k_val();
         else if (k_its("Ms_MinSta"))     c->ms_min_sta = k_int();
         else if (k_its("Ms_Enable"))     c->ms.enabled = k_int();
         else if (k_its("Ms_MinDelta"))   c->ms.min_delta = k_val();

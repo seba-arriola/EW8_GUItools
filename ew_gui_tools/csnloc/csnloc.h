@@ -126,6 +126,7 @@ typedef struct {
     int    weight;         /* 0..4                              */
     int    used;           /* asignado a un evento (0/1)        */
     int    manual;         /* 1 si el 12.º token fue M/m        */
+    char   pref_mag;       /* 13.er token: L/W/B/S (0 si ausente) */
 } Pick;
 
 typedef struct {

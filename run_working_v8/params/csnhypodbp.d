@@ -76,6 +76,12 @@ MapImageFile    world_map_con_chile.jpg
 # Ancho minimo (grados) del auto-encuadre del mapa de planta: con un grupo de
 # soluciones apretado, la vista no se acerca mas que esto (rueda para acercar).
 MapMinSpanDeg   5.0
+# Zoom por defecto del panel de planta: factor sobre el auto-encuadre (1.0 = el
+# que sale del bbox; 2.0 = el doble de cerca). Con cualquier valor, el mapa queda
+# centrado en la solucion preferida, o en la elegida en Origins (la verde).
+#MapZoom         1.0
+# Reparto vertical planta/perfil: proporcion `arriba/abajo` (7/3 = 70% planta).
+MapSplit        7/3
 # Capas vectoriales de lineas (OPCIONAL, repetible; formato .lines, ver
 # common/tools/OVERLAYS.md). Rutas relativas al cwd (=params/).
 OverlayFile     ../../resources/overlays/placas.lines
@@ -85,6 +91,17 @@ OverlayFile     ../../resources/overlays/fallas.lines
 #OverlayColor    subduccion CC3300         # <capa> <RRGGBB>; repetible
 #OverlayWidth    1.2                       # ancho global (px); 0 = el del archivo
 #OverlayHide     fallas                    # <capa> que no se dibuja; repetible
+
+# --- Magnitudes (sub-pestana `magnitudes`) ---
+# El .d de csnmags que la GUI lee para dibujar: coeficientes Wood-Anderson,
+# bandas de Mb/Ms y las ventanas de ML/Mwp/Mb/Ms. No se duplican valores: la GUI
+# dibuja y csnmags mide con el MISMO archivo.
+MagConfigFile   csnmags.d
+# Ventana temporal pedida por solucion (s). Es larga a proposito: Ms mide su
+# ventana (P + Ms_Window) y la sub-pestana `magnitudes` necesita el dato ya
+# descargado para no re-pedirlo al cambiar de magnitud. Tope: 870 s (el buffer de
+# la traza son 15 min).
+#MagFetchSeconds 700
 
 # Perfiles de profundidad del panel inferior. Cada linea se declara con dos
 # puntos sobre la recta del perfil; se usa SIEMPRE la mas cercana a la solucion

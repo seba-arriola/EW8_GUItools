@@ -36,4 +36,26 @@ void ewgui_demean(const int32_t *in, size_t n, int32_t *out);
 /* Recorta la cola de INT_MAX y devuelve el nuevo largo efectivo. */
 size_t ewgui_find_data_end(const int32_t *data, size_t n);
 
+/*
+ * Procesado de la traza de VISTA de la sub-pestaña `magnitudes`: es el que hace
+ * que la ventana ajustada signifique algo (en Ms, con periodo ~20 s, el pico es
+ * invisible en la traza cruda). Es una vista en CUENTAS: sirve para juzgar la
+ * ventana, no para leer amplitudes (eso lo hace csnmags, que corrige por
+ * respuesta instrumental).
+ */
+
+/* Simulacion Wood-Anderson (2 ceros + 2 polos, transformada bilineal): es lo que
+ * mide ML. `period`/`damp`/`gain` son los WoodAndersonCoefs del .d de csnmags. */
+void ewgui_filter_wood_anderson(int32_t *data, size_t n, double fs,
+                                double period, double damp, double gain);
+
+/* Integra (regla del trapecio) a `out` en double: la rampa del desplazamiento
+ * que mide Mwp. Los gaps (INT_MAX) dejan NaN. */
+void ewgui_integrate(const int32_t *in, size_t n, double dt, double *out);
+
+/* Diezma por decimacion simple (toma 1 de cada `factor`). Devuelve el nuevo
+ * largo. Necesario para Ms/Mwp: a 100 sps, un paso banda de 0.05 Hz es
+ * numericamente inutil. */
+size_t ewgui_decimate(const int32_t *in, size_t n, int factor, int32_t *out);
+
 #endif /* EWGUI_DSP_H */

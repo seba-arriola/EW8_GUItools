@@ -20,6 +20,34 @@ int main(void)
     FILE *fp;
     int n, k;
 
+    /* --- pick_on desde la tabla de magnitudes (`used`) --- */
+    {
+        const int map[3] = { 2, 0, 9 };   /* 9 = fuera de rango */
+        const int used[3] = { 1, 0, 1 };
+        int pon[4][2];
+
+        assert(csnhypodbp_pick_on_from_used(map, used, 3, pon, 4) == 0);
+        assert(pon[2][0] == 1 && pon[2][1] == 1);   /* usada -> entra */
+        assert(pon[0][0] == 0 && pon[0][1] == 0);   /* no usada -> fuera */
+        assert(pon[1][0] == 0 && pon[1][1] == 0);   /* sin fila de magnitudes */
+        assert(pon[3][0] == 0);
+        assert(csnhypodbp_pick_on_from_used(NULL, used, 3, pon, 4) == -1);
+        assert(csnhypodbp_pick_on_from_used(map, used, 3, pon, 0) == -1);
+    }
+
+    /* --- mag_result_ok: una corrida que no calculo nada no es candidata --- */
+    {
+        CsnhypodbpMagOut m;
+
+        memset(&m, 0, sizeof(m));
+        assert(csnhypodbp_mag_result_ok(&m, 1u) == 0);
+        snprintf(m.ml, sizeof(m.ml), "4.5-12");
+        assert(csnhypodbp_mag_result_ok(&m, 1u) == 1);   /* mascara ML */
+        assert(csnhypodbp_mag_result_ok(&m, 2u) == 0);   /* mascara Mwp */
+        assert(csnhypodbp_mag_result_ok(&m, 0u) == 1);   /* 0 = las cuatro */
+        assert(csnhypodbp_mag_result_ok(NULL, 1u) == 0);
+    }
+
     /* --- picks_write (base + overlay manual) --- */
     memset(&base, 0, sizeof(base));
     base.npicks = 1;

@@ -24,6 +24,17 @@ while [ $# -gt 0 ]; do
     esac
 done
 
+# El origen se registra relativo al home cuando se puede: deploy_portable.sh
+# rechaza rutas absolutas /home/ dentro de resources/ (el portable debe ser
+# autocontenido) y PROVENANCE.txt es texto que ese chequeo escanea.
+SRC_DISPLAY="$SRC"
+if [ -n "${HOME:-}" ]; then
+    case "$SRC" in
+        "$HOME"/*) SRC_DISPLAY="~/${SRC#"$HOME"/}" ;;
+        /home/*/*) SRC_DISPLAY="~${SRC#/home/}" ;;
+    esac
+fi
+
 [ -d "$SRC" ] || { echo "ERROR: no existe el directorio de origen $SRC" >&2; exit 1; }
 nfiles=$(ls -1 "$SRC"/slab*.tmp "$SRC"/topo*.tmp 2>/dev/null | wc -l)
 [ "$nfiles" -gt 0 ] || { echo "ERROR: no hay slab*.tmp/topo*.tmp en $SRC" >&2; exit 1; }
@@ -51,7 +62,7 @@ if [ "$DRY" -eq 0 ]; then
     cat > "$DST/PROVENANCE.txt" <<EOF
 Datos de perfil (slab y topografia) del panel de profundidad de csnhypodbp.
 
-Origen:  $SRC
+Origen:  $SRC_DISPLAY
 Copiado: ew_gui_tools/common/tools/import_profiles.sh
 
 Formato: slab<name>.tmp / topo<name>.tmp, 7 columnas separadas por espacio/tab.

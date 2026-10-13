@@ -60,6 +60,10 @@ typedef struct {
     char sta_file[MAG_STR];
     char calib_file[MAG_STR];
     char sta_corr_file[MAG_STR];
+    /* Ventanas por (estacion, magnitud) escritas por la GUI de csnhypodbp: las
+     * franjas que el usuario arrastra. Mandan sobre la ventana derivada de la
+     * config. Formato: `STA KIND T0_EPOCH T1_EPOCH` (KIND alineado con MT_*). */
+    char win_ovr_file[MAG_STR];
     char tau_model[64];
 
     /* Wave server (modo anillo) */
@@ -97,6 +101,7 @@ typedef struct {
     int    ms_variant;                    /* 0 Ms_20, 1 Ms_BB */
     double ms_t, ms_band_lo, ms_band_hi, ms_k1, ms_k2;
     int    ms_deep_corr;
+    double ms_window;             /* ventana de Ms, s (Ms_Window; default 400) */
     int    ms_min_sta;
     MagGate ms;
 

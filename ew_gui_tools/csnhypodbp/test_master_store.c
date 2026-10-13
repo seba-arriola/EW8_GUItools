@@ -84,6 +84,26 @@ int main(void)
     CHECK(csnhypodbp_master_find(store, &g2) >= 0, "find: g2 presente");
     CHECK(csnhypodbp_master_find(store, &g1) == -1, "find: g1 ya no esta");
 
+    /* AC6 (seleccion pegajosa): el upsert reemplaza la fila del grupo pero
+       `find` sigue devolviendo SU indice, y el grupo absorbido desaparece. Con
+       eso el llamante puede devolver la seleccion al evento que el usuario tiene
+       abierto en vez de al que acaba de llegar. */
+    {
+        int g3;
+        CsnhypodbpRow *a = mkrow(900), *b = mkrow(901);
+        int ia, ib;
+
+        ia = csnhypodbp_master_upsert(store, &g3, a);
+        CHECK(ia >= 0, "AC6: el grupo nuevo entra en la maestra");
+        ib = csnhypodbp_master_upsert(store, &g3, b);   /* reemplazo en el sitio */
+        CHECK(ib == ia, "AC6: el reemplazo conserva el indice del grupo");
+        CHECK(csnhypodbp_master_find(store, &g3) == ia,
+              "AC6: find sigue dando el indice del grupo del usuario");
+        CHECK(csnhypodbp_master_remove(store, &g3) == 1, "AC6: remove del absorbido");
+        CHECK(csnhypodbp_master_find(store, &g3) == -1, "AC6: el absorbido ya no esta");
+        g_object_unref(a); g_object_unref(b);
+    }
+
     g_object_unref(store);
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_master_store\n");

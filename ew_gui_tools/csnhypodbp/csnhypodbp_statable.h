@@ -28,6 +28,7 @@ typedef struct {
     char  sta[16];
     int    idx;       /* indice en StaArray (para los checkbox de seleccion) */
     double dist_km;
+    double dist_deg;  /* distancia epicentral en grados (para las puertas por magnitud) */
     int    has_data;
     CsnhypodbpStaPick p;
     CsnhypodbpStaPick s;
@@ -90,5 +91,12 @@ int csnhypodbp_locate_picks(const CsnhypodbpStaRow *rows, int nrows,
                             const int (*pick_on)[2],
                             const CsnhypodbpPickFilter *f,
                             CsnhypodbpPick *out, int max_out);
+
+/* `pick_on` para el envio al localizador desde la pestana de magnitudes: una
+ * estacion entra si su fila de magnitudes esta marcada (`used`); el origen
+ * (A/M/Teo) lo filtra despues csnhypodbp_locate_picks. `mag_sta_idx[i]` = indice
+ * de esa fila de magnitudes en `rows`. Devuelve 0 si OK, -1 con args invalidos. */
+int csnhypodbp_pick_on_from_used(const int *mag_sta_idx, const int *used, int nmag,
+                                 int (*pick_on)[2], int nrows);
 
 #endif /* CSNHYPODBP_STATABLE_H */

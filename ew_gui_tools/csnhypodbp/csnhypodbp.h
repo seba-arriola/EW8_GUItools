@@ -21,6 +21,11 @@
 #include "csnhypodbp_preview.h"
 #include "csnhypodbp_profile.h"
 #include "csnhypodbp_mapview.h"
+#include "csnhypodbp_magcfg.h"
+#include "csnhypodbp_magsta.h"
+#include "csnhypodbp_magitem.h"
+#include "csnhypodbp_magmarks.h"
+#include "csnhypodbp_magview.h"
 #include "ewgui/overlay.h"
 #include "csnhypodbp_tt.h"
 #include "csnhypodbp_view.h"
@@ -143,6 +148,7 @@ extern int     NumEstaciones;
 extern int     selected_qid;
 extern int     selected_mod;
 extern int     selected_version;
+extern int     g_ring_sync;      /* 1 = re-seleccion interna de una llegada */
 extern double  selected_otime;
 extern double  selected_depth;
 extern char    selected_id[32];
@@ -159,7 +165,9 @@ extern GListStore *g_store_detail;            /* detalle: soluciones del evento 
 extern GtkSingleSelection *g_selection_events;
 extern GtkSingleSelection *g_selection_detail;
 extern GtkSingleSelection *g_selection_hypo;  /* (compat) selección de soluciones */
-extern GtkWidget *g_notebook;                 /* pestañas Eventos/Ondas (GTK4) */
+extern GtkWidget *g_notebook;                 /* pestañas raiz: Eventos/Procesar (GTK4) */
+extern GtkWidget *g_page_procesar;            /* pagina raiz "Procesar" (sub-notebook) */
+extern GtkWidget *g_subnotebook;              /* sub-pestañas: picking / magnitudes */
 extern GtkWidget *window_global; 
 
 extern double g_max_dist_km; 
@@ -174,7 +182,11 @@ extern int     g_NumSortedNodes;
 extern gboolean g_history_needs_saving; 
 
 /* --- LISTA DE ESTACIONES (pestaña Ondas) --- */
-#define CSNHYPODBP_BAND_H 480   /* alto de banda: ~1 componente por pantalla */
+#define CSNHYPODBP_BAND_MIN 110       /* alto MINIMO por banda: por debajo, scroll */
+#define CSNHYPODBP_CANVAS_MIN_W 260   /* ancho minimo del canvas (la tabla no lo come) */
+/* La columna de mapas NO lleva `size_request`: su minimo ya lo fijan los dos
+   canvas (300 px) y un minimo propio se suma al de la ventana, que es lo que
+   dejaba la columna sin ancho. La protege `shrink_end_child(FALSE)`. */
 extern char g_selected_station[16];     /* estacion seleccionada ("" = ninguna) */
 extern GtkWidget *g_sta_view;           /* GtkColumnView de la tabla de estaciones */
 extern GListStore *g_sta_store;         /* CSNHYPODBP_TYPE_STA_ITEM, 2 filas/estacion */
@@ -199,9 +211,14 @@ extern GtkSortListModel *g_sort_sta;
 /* --- VISTA DE ONDAS: zoom (2 clics), modo de clic y eje de tiempo --- */
 typedef enum { CSNHYPODBP_CLICK_ZOOM = 0, CSNHYPODBP_CLICK_PICK } CsnhypodbpClickMode;
 extern CsnhypodbpView      g_view;        /* ventana visible relativa + ancla */
+extern CsnhypodbpView      g_mag_zoomview; /* idem para el canvas de magnitudes */
 extern CsnhypodbpClickMode g_click_mode;  /* ZOOM (default) | PICK (tras p/S) */
 extern EwGuiCanvas        *g_axis_canvas; /* eje de tiempo UTC (no scrollea) */
 extern double              g_win_start_cur; /* winStart de la estacion dibujada */
+/* Ancla de la ventana del picking (P de referencia congelada) y su refresco. */
+extern double              g_win_ref_pick;
+extern int                 g_win_ref_has_p;
+void   csnhypodbp_pick_anchor_refresh(void);
 extern double              g_cursor_x, g_cursor_y; /* puntero dentro del canvas */
 extern int                 g_cursor_valid;  /* 1 = puntero sobre el canvas */
 void csnhypodbp_help_dialog_run(GtkWindow *parent);
@@ -215,6 +232,11 @@ extern GtkWidget *g_preview_box;
 extern GtkWidget *g_preview_title;                       /* titulo segun estado */
 extern GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS]; /* fila de valores */
 extern GtkWidget *g_preview_btn_confirm, *g_preview_btn_discard;
+/* Radios de magnitud preferida del cuadro de la candidata. */
+extern GtkWidget *g_preview_radio[CSNHYPODBP_PREVIEW_MAGS];
+extern int        g_preview_pref_kind;    /* 0=ML..3=Ms, -1 = ninguna */
+extern int        g_preview_pref_sync;    /* 1 = la GUI esta sincronizando */
+void on_preview_pref_toggled(GtkCheckButton *b, gpointer data);
 extern CsnhypodbpSolution g_preview_sol;
 extern CsnhypodbpMagOut g_preview_mag;
 extern gboolean g_preview_valid;
@@ -227,6 +249,8 @@ extern CsnhypodbpProfiles g_profiles;
 extern int    g_profile_lon_col, g_profile_val_col;
 extern double g_profile_depth_min_km;
 extern double g_map_min_span_deg;        /* MapMinSpanDeg: ancho minimo del fit */
+extern double g_map_zoom_factor;         /* MapZoom: factor sobre el auto-encuadre */
+extern double g_map_split_frac;          /* MapSplit: fraccion de altura de la planta */
 
 /* --- Columna derecha: panel de planta (arriba) y de perfil (abajo) --- */
 #define CSNHYPODBP_MAX_MAP_PTS 256
@@ -270,6 +294,7 @@ extern double   g_filter_f1;       /* F1 (Hz) */
 extern double   g_filter_f2;       /* F2 (Hz) */
 extern int      g_filter_order;    /* orden IIR (2 o 4) */
 extern double   g_align_lead;      /* segundos de ventana antes de la onda P */
+extern double   g_mag_fetch_sec;   /* ventana pedida por solucion (s) */
 
 /* --- DEBOUNCE DE RECARGA DE WAVEFORMS --- */
 extern gboolean pending_waveform_reload;
@@ -323,7 +348,76 @@ gboolean ew_background_tasks(gpointer user_data);
 
 /* Callbacks de GUI */
 void actualizar_altura_canvas(void);
+/* --- Sub-pestaña `magnitudes` (tabla de una fila por estacion) --- */
+#define CSNHYPODBP_MAG_NKIND 4
+extern CsnhypodbpMagCfg g_magcfg;             /* parametros del .d de csnmags */
+extern int g_mag_kind;                        /* magnitud activa (0=ML..3=Ms) */
+extern CsnhypodbpMagRow g_mag_rows[MAX_ESTA];
+extern int g_mag_rows_n;
+extern int g_mag_sta_idx[MAX_ESTA];       /* fila de magnitudes -> fila de Ondas */
+extern GtkWidget *g_mag_view;
+extern GListStore *g_mag_store;
+extern GtkSingleSelection *g_mag_sel;
+extern GtkSortListModel *g_mag_sort;
+extern GtkWidget *g_mag_radio[CSNHYPODBP_MAG_NKIND];
+extern GtkWidget *g_mag_status;               /* linea de estado de la sub-pestaña */
+extern EwGuiCanvas *g_mag_canvas;             /* traza procesada + franja de ventana */
+extern EwGuiCanvas *g_mag_axis_canvas;        /* eje UTC del canvas de magnitudes */
+extern double       g_mag_cursor_x;           /* puntero en el canvas de magnitudes */
+extern int          g_mag_cursor_valid;       /* 1 = sobre el canvas */
+extern char g_mag_station[16];                /* estacion elegida en la tabla de magnitudes */
+extern CsnhypodbpMagMarks g_mag_marks;        /* ventanas ajustadas por (estacion, magnitud) */
+extern int g_magf_auto, g_magf_manual, g_magf_theo;  /* filtro A/M/Teo de `magnitudes` */
+extern CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];  /* override de distancia */
+extern GtkWidget *g_magf_chk[3];              /* checkboxes A/M/Teo de la barra */
+extern GtkWidget *g_mag_ov_min, *g_mag_ov_max, *g_mag_ov_km;  /* puerta activa */
+extern GtkWidget *g_mag_ov_dmin, *g_mag_ov_depth;             /* prof. min / max */
+extern GtkWidget *g_mag_ov_reset;                             /* reset default */
+extern GtkWidget *g_mag_btn_calc, *g_mag_btn_calc_all;        /* calculate / all */
+/* `calculate` (magnitud activa) y `calculate all` (las cuatro): recalculan con
+   las ventanas ajustadas a mano y sin relocalizar. */
+void on_mag_calc_clicked(GtkWidget *w, gpointer d);
+void on_mag_calc_all_clicked(GtkWidget *w, gpointer d);
+void rebuild_mag_list(void);
+void csnhypodbp_mag_status_update(void);
+void csnhypodbp_mag_canvas_fit(void);
+void csnhypodbp_mag_ov_sync(void);
+void on_mag_filter_toggled(GtkCheckButton *b, gpointer data);
+void on_mag_ov_changed(GtkSpinButton *s, gpointer data);
+void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data);
+/* Devuelve las cuatro magnitudes a la puerta del .d (lo usa `reset default` y
+   el cambio de solucion elegida en Origins). */
+void csnhypodbp_mag_ov_reset_all(void);
+void csnhypodbp_mag_views_invalidate(void);
+void on_draw_mag(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data);
+void on_mag_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data);
+void on_mag_drag_begin(GtkGestureDrag *g, double x, double y, gpointer data);
+void on_mag_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data);
+void on_mag_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data);
+/* Eje temporal del canvas de magnitudes: arrastre = zoom, doble clic = recentrar
+   (vuelve al encuadre automatico del ancla, o sea a la franja entera). */
+void on_draw_mag_axis(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data);
+void on_mag_axis_drag_begin(GtkGestureDrag *g, double sx, double sy, gpointer data);
+void on_mag_axis_drag_update(GtkGestureDrag *g, double ox, double oy, gpointer data);
+void on_mag_axis_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data);
+void on_mag_axis_clicked(GtkGestureClick *g, int n_press, double x, double y, gpointer data);
+void on_mag_canvas_clicked(GtkGestureClick *g, int n_press, double x, double y,
+                           gpointer data);
+/* Puntero del canvas de magnitudes (grab / ew-resize / crosshair). */
+void on_mag_canvas_motion(GtkEventControllerMotion *c, double x, double y, gpointer data);
+void on_mag_canvas_leave(GtkEventControllerMotion *c, gpointer data);
+void on_mag_kind_toggled(GtkCheckButton *b, gpointer data);
+
+/* Magnitudes POR ESTACION de una solucion (fila de la tabla) y una magnitud
+ * (slot 0..3): primero las vivas del anillo y, si no, las del historial (BD).
+ * Devuelve cuantas filas dejo en `out` (0 si no hay). */
+int csnhypodbp_magsta_for(CsnhypodbpRow *row, int slot, CsnhypodbpMagIn *out, int max);
+
 void rebuild_station_list(void);
+/* Recompone Origins del evento visto conservando la solucion elegida (una
+   solucion que llega del anillo no debe mover la vista del usuario). */
+void csnhypodbp_detail_refresh(void);
+void csnhypodbp_show_procesar(void);          /* lleva la ventana a la pestaña Procesar */
 void on_station_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data);
 void on_btn_fetch_clicked(GtkWidget *widget, gpointer data);
 gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data);
@@ -357,7 +451,8 @@ void on_colour_select(GtkWidget *widget, gpointer data);
 void act_colour(GSimpleAction *action, GVariant *param, gpointer user_data);
 int  csnhypodbp_event_group_picks(const EventGroup *g, CsnhypodbpPick *out, int max);
 int  csnhypodbp_event_sol_picks(const CsnhypodbpRow *row, CsnhypodbpPick *out, int max);
-int  csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMagOut *mag);
+int  csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMagOut *mag,
+                               int pref_kind);
 void csnhypodbp_load_manual_state(void);
 
 /* --- Filtro configurable (UI) --- */

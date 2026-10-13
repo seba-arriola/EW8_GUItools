@@ -23,6 +23,61 @@
 #define MT_MWP  1
 #define MT_MB   2
 #define MT_MS   3
+
+/* --- Overrides de ventana por (estacion, magnitud) -------------------------
+   Los escribe la GUI de csnhypodbp: son las franjas de ventana que el usuario
+   arrastra por estacion, y mandan sobre la ventana derivada de la config (unico
+   modo de que un ajuste por estacion llegue al motor). Formato de linea:
+   `STA KIND T0_EPOCH T1_EPOCH`  (KIND: 0=ML 1=Mwp 2=Mb 3=Ms). */
+typedef struct { char sta[32]; int kind; double t0, t1; } MagWinOvr;
+static MagWinOvr g_win_ovr[2048];
+static int       g_win_ovr_n = 0;
+
+static void win_ovr_load(const char *file)
+{
+    FILE *fp;
+    char line[256];
+
+    g_win_ovr_n = 0;
+    if (!file || !file[0]) return;
+    fp = fopen(file, "r");
+    if (!fp) {
+        fprintf(stderr, "csnmags: no se pudo abrir WindowOverridesFile <%s>\n", file);
+        return;
+    }
+    while (fgets(line, sizeof(line), fp)) {
+        char sta[32];
+        int kind;
+        double t0, t1;
+
+        if (line[0] == '#') continue;
+        if (sscanf(line, "%31s %d %lf %lf", sta, &kind, &t0, &t1) < 4) continue;
+        if (kind < MT_ML || kind > MT_MS) continue;
+        if (g_win_ovr_n >= (int)(sizeof(g_win_ovr) / sizeof(g_win_ovr[0]))) break;
+        snprintf(g_win_ovr[g_win_ovr_n].sta, sizeof(g_win_ovr[0].sta), "%s", sta);
+        g_win_ovr[g_win_ovr_n].kind = kind;
+        g_win_ovr[g_win_ovr_n].t0 = t0;
+        g_win_ovr[g_win_ovr_n].t1 = t1;
+        g_win_ovr_n++;
+    }
+    fclose(fp);
+}
+
+/* Sustituye t0/t1 si hay override para esa estacion y esa magnitud. */
+static void win_ovr_apply(const char *sta, int kind, double *t0, double *t1)
+{
+    int i;
+
+    if (!sta || !sta[0] || g_win_ovr_n <= 0) return;
+    for (i = 0; i < g_win_ovr_n; i++) {
+        if (g_win_ovr[i].kind != kind) continue;
+        if (strcmp(g_win_ovr[i].sta, sta) != 0) continue;
+        if (!(g_win_ovr[i].t1 > g_win_ovr[i].t0)) return;   /* ventana invalida */
+        *t0 = g_win_ovr[i].t0;
+        *t1 = g_win_ovr[i].t1;
+        return;
+    }
+}
 #define MT_N    4
 
 /* MAGTYPE_* de EarthWorm (earthworm_defs.h) */
@@ -194,6 +249,7 @@ static void compute_ml(MagCtx *c, MagEvent *ev, const MagStation *st,
     double dist_deg, epi_km, dist_km, best = 0.0;
     double t0 = pick_t + c->cfg.ml_t_a - 2.0;
     double t1 = pick_t + c->cfg.ml_t_b;
+    win_ovr_apply(st->sta, MT_ML, &t0, &t1);
     char chan[8];
     char best_chan[8] = "";
 
@@ -259,6 +315,7 @@ static void compute_mwp(MagCtx *c, MagEvent *ev, const MagStation *st,
     char chan[8];
     t0 = pick_t + c->cfg.mwp_start_off - 2.0;
     t1 = pick_t + c->cfg.mwp_start_off + c->cfg.mwp_t0;
+    win_ovr_apply(st->sta, MT_MWP, &t0, &t1);
     if (chan_try(&c->wave, st->sta, st->net, hz, loc, t0, t1, &tr, chan, sizeof(chan)) != 0) return;
 
     mag_resp_make_disp(&disp, 1.0);
@@ -307,6 +364,7 @@ static void compute_mb(MagCtx *c, MagEvent *ev, const MagStation *st,
     char chan[8];
     t0 = pick_t - 1.0;
     t1 = pick_t + c->cfg.mb_window;
+    win_ovr_apply(st->sta, MT_MB, &t0, &t1);
     if (chan_try(&c->wave, st->sta, st->net, hz, loc, t0, t1, &tr, chan, sizeof(chan)) != 0) return;
 
     mag_resp_make_disp(&disp, 1.0);
@@ -352,7 +410,8 @@ static void compute_ms(MagCtx *c, MagEvent *ev, const MagStation *st,
 
     char chan[8];
     t0 = pick_t;
-    t1 = pick_t + 400.0;
+    t1 = pick_t + c->cfg.ms_window;
+    win_ovr_apply(st->sta, MT_MS, &t0, &t1);
     if (chan_try(&c->wave, st->sta, st->net, hz, loc, t0, t1, &tr, chan, sizeof(chan)) != 0) return;
 
     mag_resp_make_disp(&disp, 1.0);
@@ -652,6 +711,7 @@ int main(int argc, char **argv)
         if (mag_config_load(argv[2], &c.cfg) != 0) { fprintf(stderr, "config?\n"); return 1; }
         mag_sta_load(c.cfg.sta_file, &c.stas);
         mag_sta_apply_corr(&c.stas, c.cfg.sta_corr_file);
+    win_ovr_load(c.cfg.win_ovr_file);
         mag_calib_load(&c.cfg, &c.calib);
         if (wave_open(&c.wave, &c.cfg, argv[4]) != 0) { fprintf(stderr, "tank?\n"); return 1; }
         fp = fopen(arcf, "rb");
@@ -690,6 +750,7 @@ int main(int argc, char **argv)
     if (mag_sta_load(c.cfg.sta_file, &c.stas) < 0)
         fprintf(stderr, "csnmags: advertencia - no cargué %s\n", c.cfg.sta_file);
     mag_sta_apply_corr(&c.stas, c.cfg.sta_corr_file);
+    win_ovr_load(c.cfg.win_ovr_file);
     mag_calib_load(&c.cfg, &c.calib);
 
     /* Aplica las tablas por región a la config global (por ahora el Q global). */

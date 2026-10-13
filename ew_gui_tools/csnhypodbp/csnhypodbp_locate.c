@@ -1,4 +1,5 @@
 #include "csnhypodbp_locate.h"
+#include "csnhypodbp_magmarks.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -483,6 +484,176 @@ static double json_num(const char *json, const char *key, int *found){
     return atof(p);
 }
 
+/* Corrida de SOLO magnitudes: hypos + tank -> csnmags con las ventanas ajustadas
+   a mano por estacion (clave `WindowOverridesFile`). NO localiza: deja la
+   solucion como esta y solo recalcula las magnitudes. `kind_mask` elige que
+   magnitudes llevan ventana ajustada (bit 0=ML, 1=Mwp, 2=Mb, 3=Ms; 0xF = las
+   cuatro). Devuelve 0 si OK. */
+/* Config temporal de csnmags: la del .d tal cual + `WindowOverridesFile` si hay
+   ventanas ajustadas a mano. El cwd sera EW_PARAMS, asi que las rutas relativas
+   del .d siguen resolviendo (csnmags no hace chdir). */
+static int mag_cfg_with_overrides(const char *src, const char *dst, const char *ovr_path)
+{
+    FILE *in, *out;
+    char line[2048];
+
+    if (!src || !dst) return -1;
+    in = fopen(src, "r");
+    if (!in) return -1;
+    out = fopen(dst, "w");
+    if (!out) { fclose(in); return -1; }
+    while (fgets(line, sizeof(line), in)) fputs(line, out);
+    if (ovr_path && ovr_path[0]) {
+        fprintf(out, "\n# anadido por csnhypodbp (GUI): ventanas ajustadas a mano\n");
+        fprintf(out, "WindowOverridesFile %s\n", ovr_path);
+    }
+    fclose(out);
+    fclose(in);
+    return 0;
+}
+
+/* Filas de ventana que van al motor: solo las magnitudes de la mascara (bit
+   0=ML..3=Ms). Devuelve cuantas quedaron. */
+static int mag_ovr_filtered(const CsnhypodbpMagOvrRow *in, int nin, unsigned kind_mask,
+                            CsnhypodbpMagOvrRow *out, int max)
+{
+    int i, n = 0;
+
+    if (!in || !out || max <= 0) return 0;
+    if (kind_mask == 0u) kind_mask = (1u << CSNHYPODBP_MAGMARKS_KIND) - 1u;
+    for (i = 0; i < nin && n < max; i++) {
+        if (in[i].kind < 0 || in[i].kind >= CSNHYPODBP_MAGMARKS_KIND) continue;
+        if (!(kind_mask & (1u << in[i].kind))) continue;
+        out[n++] = in[i];
+    }
+    return n;
+}
+
+/* Primera linea con contenido de `path` (para meterla en el mensaje de error). */
+static void first_line(const char *path, char *out, size_t outn)
+{
+    FILE *fp;
+
+    if (out && outn) out[0] = '\0';
+    if (!path || !out || outn == 0) return;
+    fp = fopen(path, "r");
+    if (!fp) return;
+    while (fgets(out, (int)outn, fp)) {
+        size_t l = strlen(out);
+        while (l > 0 && (out[l - 1] == '\n' || out[l - 1] == '\r')) out[--l] = '\0';
+        if (l > 0) break;
+        out[0] = '\0';
+    }
+    fclose(fp);
+}
+
+int csnhypodbp_mag_result_ok(const CsnhypodbpMagOut *mag, unsigned kind_mask)
+{
+    if (!mag) return 0;
+    if (kind_mask == 0u) kind_mask = (1u << CSNHYPODBP_MAGMARKS_KIND) - 1u;
+    if ((kind_mask & 1u) && mag->ml[0])  return 1;
+    if ((kind_mask & 2u) && mag->mwp[0]) return 1;
+    if ((kind_mask & 4u) && mag->mb[0])  return 1;
+    if ((kind_mask & 8u) && mag->ms[0])  return 1;
+    return 0;
+}
+
+int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *ew_version,
+                       const char *tmp_root,
+                       const CsnhypodbpSolution *base,
+                       const CsnhypodbpTankTrace *tank, int ntank,
+                       const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
+                       CsnhypodbpMagOut *mag, char *err, size_t errlen)
+{
+    char tmp[512], hypos[600], tankf[600], magf[600], ovrf[600], magsd[600], src[600];
+    char mags_bin[512], cmd[8192], buf[262144], erp[600];
+    int rc = -1, novr_used = 0;
+
+    if (err && errlen) err[0] = '\0';
+    if (mag) memset(mag, 0, sizeof(*mag));
+    if (!base || !tank || ntank <= 0) {
+        if (err) snprintf(err, errlen, "no hay trazas para calcular magnitudes");
+        return -1;
+    }
+    /* Sin picadas no hay ventana que anclar: csnmags devolveria todo vacio y la
+       barra se quedaria sin valores (mejor decirlo y no marcar candidata). */
+    if (base->npicks <= 0) {
+        if (err) snprintf(err, errlen, "sin picadas para el calculo (revisa la tabla "
+                                       "de Ondas y los filtros A/M/Teo)");
+        return -1;
+    }
+    if (!ew_params || !ew_params[0]) {
+        if (err) snprintf(err, errlen, "EW_PARAMS sin definir");
+        return -1;
+    }
+
+    snprintf(tmp, sizeof(tmp), "%s/csnhypodbp_mag_XXXXXX",
+             (tmp_root && tmp_root[0]) ? tmp_root : "/tmp");
+    if (!mkdtemp(tmp)) { if (err) snprintf(err, errlen, "mkdtemp fallo en %s", tmp); return -1; }
+    snprintf(hypos, sizeof(hypos), "%s/hypos.jsonl", tmp);
+    snprintf(tankf, sizeof(tankf), "%s/event.tank", tmp);
+    snprintf(magf,  sizeof(magf),  "%s/mags.json", tmp);
+    snprintf(ovrf,  sizeof(ovrf),  "%s/winovr.txt", tmp);
+    snprintf(magsd, sizeof(magsd), "%s/csnmags.d", tmp);
+    snprintf(src,   sizeof(src),   "%s/csnmags.d", ew_params);
+    snprintf(mags_bin, sizeof(mags_bin), "%s/%s/bin/csnmags",
+             ew_home ? ew_home : "", ew_version ? ew_version : "");
+
+    csnhypodbp_hypos_write(hypos, base, tank, ntank);
+    csnhypodbp_tank_write(tankf, tank, ntank);
+
+    /* Ventanas ajustadas: solo las magnitudes de la mascara. */
+    {
+        CsnhypodbpMagOvrRow rows[CSNHYPODBP_MAGMARKS_MAX];
+
+        novr_used = mag_ovr_filtered(ovr, novr, kind_mask, rows, CSNHYPODBP_MAGMARKS_MAX);
+        if (csnhypodbp_mag_ovr_write(ovrf, rows, novr_used) < 0) {
+            if (err) snprintf(err, errlen, "no escribo el archivo de ventanas <%s>", ovrf);
+            goto done;
+        }
+    }
+
+    /* Config temporal: la del .d tal cual + la clave de ventanas ajustadas. */
+    if (mag_cfg_with_overrides(src, magsd, novr_used > 0 ? ovrf : NULL) != 0) {
+        if (err) snprintf(err, errlen, "no escribo la config temporal <%s>", magsd);
+        goto done;
+    }
+
+    snprintf(cmd, sizeof(cmd),
+             "cd '%s' && '%s' '%s' '%s' '%s' --out '%s' 2>'%s/mags.err'",
+             ew_params, mags_bin, magsd, hypos, tankf, magf, tmp);
+    run_capture(cmd, NULL, 0);
+    snprintf(erp, sizeof(erp), "%s/mags.err", tmp);
+    if (read_file(magf, buf, sizeof(buf)) == 0) {
+        csnhypodbp_mag_parse(buf, mag);
+        if (csnhypodbp_mag_result_ok(mag, kind_mask)) {
+            rc = 0;
+        } else if (err) {
+            char e1[160];
+
+            first_line(erp, e1, sizeof(e1));
+            snprintf(err, errlen, "csnmags no calculo las magnitudes pedidas%s%s",
+                     e1[0] ? ": " : "", e1);
+        }
+    } else if (err) {
+        char e1[160];
+
+        first_line(erp, e1, sizeof(e1));
+        snprintf(err, errlen, "csnmags no dejo resultado%s%s (ver %s/mags.err)",
+                 e1[0] ? ": " : "", e1, tmp);
+    }
+
+done:
+    if (!g_keep_tmp) {
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
+        system(cmd);
+    } else if (err && errlen > 0 && rc != 0) {
+        size_t l = strlen(err);
+        if (l < errlen - 1) snprintf(err + l, errlen - l, " [tmp=%s]", tmp);
+    }
+    return rc;
+}
+
 int csnhypodbp_mag_parse(const char *json, CsnhypodbpMagOut *mag)
 {
     struct { const char *name; char *dst; } m[4];
@@ -647,10 +818,12 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           const CsnhypodbpSolution *base,
                           const CsnhypodbpManualPick *mp, int nmp,
                           const CsnhypodbpTankTrace *tank, int ntank,
+                          const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                           CsnhypodbpSolution *out, CsnhypodbpMagOut *mag,
                           char *err, size_t errlen)
 {
     char tmp[512], picks[600], csnlocd[600], arcf[600], hypos[600], tankf[600], magf[600];
+    char ovrf[600], magsd[600], src[600];
     char cmd[8192], buf[262144], logbuf[524288], errbuf[4096], errpath[600];
     char jsonl[65536];
     const CsnhypodbpLocator *csn, *sel;
@@ -757,13 +930,30 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         }
     }
 
-    /* 5) magnitud offline (hypos + tank -> csnmags) */
+    /* 5) magnitud offline (hypos + tank -> csnmags), con las ventanas ajustadas a
+       mano por estacion si las hay: es la misma ruta que usa `calculate`. */
     if (ntank > 0 && tank) {
+        CsnhypodbpMagOvrRow rows[CSNHYPODBP_MAGMARKS_MAX];
+        int nrows = 0;
+
         csnhypodbp_hypos_write(hypos, out, tank, ntank);
         csnhypodbp_tank_write(tankf, tank, ntank);
-        snprintf(cmd, sizeof(cmd),
-                 "cd '%s' && '%s' '%s/csnmags.d' '%s' '%s' --out '%s' 2>'%s/mags.err'",
-                 ew_params, mags_bin, ew_params, hypos, tankf, magf, tmp);
+        snprintf(ovrf,  sizeof(ovrf),  "%s/winovr.txt", tmp);
+        snprintf(magsd, sizeof(magsd), "%s/csnmags.d", tmp);
+        snprintf(src,   sizeof(src),   "%s/csnmags.d", ew_params);
+        if (ovr && novr > 0) {
+            nrows = mag_ovr_filtered(ovr, novr, kind_mask, rows, CSNHYPODBP_MAGMARKS_MAX);
+            if (csnhypodbp_mag_ovr_write(ovrf, rows, nrows) < 0) nrows = 0;
+        }
+        if (mag_cfg_with_overrides(src, magsd, nrows > 0 ? ovrf : NULL) == 0) {
+            snprintf(cmd, sizeof(cmd),
+                     "cd '%s' && '%s' '%s' '%s' '%s' --out '%s' 2>'%s/mags.err'",
+                     ew_params, mags_bin, magsd, hypos, tankf, magf, tmp);
+        } else {
+            snprintf(cmd, sizeof(cmd),
+                     "cd '%s' && '%s' '%s/csnmags.d' '%s' '%s' --out '%s' 2>'%s/mags.err'",
+                     ew_params, mags_bin, ew_params, hypos, tankf, magf, tmp);
+        }
         run_capture(cmd, NULL, 0);
         if (read_file(magf, buf, sizeof(buf)) == 0)
             csnhypodbp_mag_parse(buf, mag);

@@ -270,6 +270,75 @@ int main(void)
         assert(strcmp(b, "01:01:01") == 0);
     }
 
+    /* C15: cursor de cruz sobre el area de trazas, normal sobre el margen. */
+    assert(strcmp(csnhypodbp_view_cursor(1), "crosshair") == 0);
+    assert(strcmp(csnhypodbp_view_cursor(0), "default") == 0);
+    assert(strcmp(csnhypodbp_view_cursor(1), "pointer") != 0);
+    assert(strcmp(csnhypodbp_view_cursor(1), "grab") != 0);
+
+    /* C16: sample_x + margen izquierdo recupera la x del clic (la marca del
+       ancla del zoom tiene que caer exactamente donde se hizo clic). */
+    {
+        const int ml = 44, ncol = 800;
+        CsnhypodbpView w;
+        w.def_span = 50.0; w.t0 = 1000.0; w.t1 = 1050.0;
+        w.active = 0; w.have_anchor = 0; w.anchor = 0.0;
+        for (double x = ml; x <= ml + ncol + 1e-9; x += 97.0) {
+            double t = csnhypodbp_view_x_to_rel(&w, x, ml, ncol);
+            double back = ml + csnhypodbp_view_sample_x(t, w.t0, w.t1 - w.t0, ncol);
+            assert(fabs(back - x) < 1e-6);
+        }
+    }
+
+    /* C17: la ventana del picking solo se re-ancla al deshacer el zoom. */
+    assert(csnhypodbp_view_reanchor_on(CSNHYPODBP_ACT_RESET) == 1);
+    assert(csnhypodbp_view_reanchor_on(CSNHYPODBP_ACT_ANCHOR) == 0);
+    assert(csnhypodbp_view_reanchor_on(CSNHYPODBP_ACT_ZOOM) == 0);
+
+    /* C18: al refrescar manda la P nueva (la manual recien picada); sin P, el
+       respaldo. Picar NO refresca, asi que la marca queda donde se hizo clic. */
+    assert(fabs(csnhypodbp_view_ref_pick(1, 1234.5, 999.0) - 1234.5) < 1e-9);
+    assert(fabs(csnhypodbp_view_ref_pick(0, 1234.5, 999.0) - 999.0) < 1e-9);
+    assert(fabs(csnhypodbp_view_ref_pick(1, 0.0, 999.0) - 999.0) < 1e-9);
+
+    /* C19: una marca fuera de la vista se ancla al borde, no se pierde. */
+    {
+        CsnhypodbpView w;
+        int edge = 7;
+
+        w.def_span = 120.0; w.t0 = 10.0; w.t1 = 20.0;
+        w.active = 0; w.have_anchor = 0; w.anchor = 0.0;
+        assert(fabs(csnhypodbp_view_mark_x(&w, 15.0, 44, 800, &edge) -
+                    (44.0 + (5.0 / 10.0) * 800.0)) < 1e-6);
+        assert(edge == 0);
+        assert(csnhypodbp_view_mark_x(&w, 9.0, 44, 800, &edge) == 46.0 && edge == -1);
+        assert(csnhypodbp_view_mark_x(&w, 25.0, 44, 800, &edge) == 842.0 && edge == 1);
+        assert(csnhypodbp_view_mark_x(NULL, 25.0, 44, 800, &edge) == 44.0 && edge == 0);
+        assert(csnhypodbp_view_mark_x(&w, 15.0, 44, 0, &edge) == 44.0);
+    }
+
+    /* C20: el reset de la vista (zoom, ancla de la P, marcas) solo lo pide el
+       usuario; una llegada del anillo recompone la seleccion con ring_sync=1. */
+    assert(csnhypodbp_view_should_reset(1, 0) == 1);
+    assert(csnhypodbp_view_should_reset(1, 1) == 0);
+    assert(csnhypodbp_view_should_reset(0, 0) == 0);
+    assert(csnhypodbp_view_should_reset(0, 1) == 0);
+
+    /* C21: identidad de una solucion (qid, mod, version), para conservar la
+       elegida al recomponer el detalle. */
+    assert(csnhypodbp_view_solution_same(7, 163, 2, 7, 163, 2) == 1);
+    assert(csnhypodbp_view_solution_same(7, 163, 2, 7, 163, 3) == 0);
+    assert(csnhypodbp_view_solution_same(7, 163, 2, 7, 164, 2) == 0);
+    assert(csnhypodbp_view_solution_same(7, 163, 2, 8, 163, 2) == 0);
+
+    /* C22: politica de borrado de trazas al terminar un fetch. */
+    assert(csnhypodbp_fetch_clear_on(0, 0, 0, 5, 163, 1, 0) == 1);    /* primer render */
+    assert(csnhypodbp_fetch_clear_on(5, 163, 1, 5, 163, 1, 0) == 0);  /* refetch sin datos */
+    assert(csnhypodbp_fetch_clear_on(5, 163, 1, 5, 163, 1, 1) == 1);  /* refetch con datos */
+    assert(csnhypodbp_fetch_clear_on(5, 163, 1, 6, 163, 1, 0) == 1);  /* otro evento */
+    assert(csnhypodbp_fetch_clear_on(5, 163, 1, 5, 164, 1, 0) == 1);  /* otro mod */
+    assert(csnhypodbp_fetch_clear_on(5, 163, 1, 5, 163, 2, 0) == 1);  /* otra version */
+
     printf("test_view OK\n");
     return 0;
 }

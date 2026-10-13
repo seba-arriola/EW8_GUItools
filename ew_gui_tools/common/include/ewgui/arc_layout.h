@@ -52,4 +52,9 @@
 #define EWGUI_ARC_VMODEL_LEGACY_OFF  122
 #define EWGUI_ARC_VMODEL_LEGACY_END  136
 
+/* BMTYPI: columna 123 (offset 122) = tipo de la magnitud preferida, un A1 del
+ * formato de HYPOINVERSE (L=ML, B=Mb, S=Ms, W=Mwp). Es lo unico que se escribe
+ * en ese tramo: BMAGI/TEMPI (124..129) siguen en blanco. */
+#define EWGUI_ARC_BMTYPI_OFF         122
+
 #endif /* EWGUI_ARC_LAYOUT_H */
