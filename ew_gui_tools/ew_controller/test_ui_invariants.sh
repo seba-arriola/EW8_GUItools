@@ -3,7 +3,10 @@
 #   1) las tablas de Modules y Rings ordenan por clic en la cabecera con el helper
 #      compartido ewgui/table_ui.h (mismo contrato que csnhypodbp);
 #   2) con el GtkSortListModel en medio, ningún índice de la VISTA indexa el store;
-#   3) el refresco de estado se ve (se reconstruyen las filas) y no se congela.
+#   3) el refresco de estado se ve (se reconstruyen las filas) y no se congela;
+#   4) la IDENTIDAD de un módulo es su PID: ninguna resolución de objetivo puede
+#      hacerse por nombre (startstop_unix.d tiene dos `Process` llamados csnmags:
+#      csnmags.d y csnmags_raw.d, y por nombre se actuaba siempre sobre la 1.ª).
 # Complementa common/tests/test_ctrl.c (lógica pura) y el arnés GUI de
 # docs/GUI-TESTS.md.
 set -u
@@ -39,7 +42,7 @@ nck "orden: sin popups (WSLg #1299)" 'gtk_popover|gtk_menu_button|gtk_drop_down'
 
 # --- 2) El indice de la VISTA no indexa el store ---------------------------
 ck "seleccion: se resuelve por ITEM" 'gtk_single_selection_get_selected_item' "$gui"
-ck "seleccion: la posicion se busca en el sort model" 'ec_view_pos_of_name' "$gui"
+ck "seleccion: la posicion se busca en el sort model" 'ec_view_pos_of_pid' "$gui"
 nck "seleccion: ningun indice de vista indexa el store" 'g_list_model_get_item\(G_LIST_MODEL\(g_store\), *idx' "$gui"
 
 # --- 3) El estado se ve y no se congela ------------------------------------
@@ -81,6 +84,51 @@ nck "layout: el reparto inicial no se re-aplica al re-mapear" 'g_signal_connect\
 ckn "columnas: las dos tablas tienen columnas que se quedan el ancho" 'gtk_column_view_column_set_expand\(c, TRUE\)' "$main" 2
 ckn "columnas: las dos tablas tienen columnas de ancho fijo" 'gtk_column_view_column_set_fixed_width\(c, ' "$main" 2
 ckn "columnas: las dos tablas son ajustables a mano" 'gtk_column_view_column_set_resizable\(c, TRUE\)' "$main" 2
+
+# --- 6) Propiedad de referencias GObject (use-after-free) ------------------
+# gtk_single_selection_get_selected_item() devuelve un PRESTAMO (GIR de GTK4:
+# transfer-ownership="none"; "the returned data is owned by the instance").
+# Liberarlo finaliza la fila que el GListStore y el GtkSortListModel siguen
+# usando; el siguiente rebuild hace g_object_unref sobre memoria liberada y el
+# proceso muere con SIGSEGV en libgobject (paso en produccion).
+if sed -n '/^void on_row_selected/,/^}/p' "$gui" | grep -q 'g_object_unref *('; then
+   echo "FAIL: on_row_selected libera el item PRESTADO de get_selected_item()"
+   fails=$((fails + 1))
+else
+   echo "ok  : on_row_selected no libera el item prestado de get_selected_item()"
+fi
+# El unref correcto (transfer full) sigue en su sitio, para no perder el arreglo
+# de la resolucion por ITEM (y no por la posicion del modelo ordenado).
+ck "refs: la seleccion se resuelve por item (get_selected_item)" \
+   'gtk_single_selection_get_selected_item\(g_mod_sel\)' "$gui"
+ck "refs: el item del modelo si es transfer-full" 'g_list_model_get_item\(G_LIST_MODEL\(g_mod_sort\)' "$gui"
+
+# --- 7) La identidad de un modulo es su PID (nunca el nombre) --------------
+# Con dos `Process` del mismo nombre (csnmags.d / csnmags_raw.d) resolver por
+# nombre apunta siempre a la primera instancia: reiniciar la fila de la 2.ª
+# mandaba Stop/Restart con el pid de la 1.ª. La identidad se lee del ITEM
+# seleccionado y la memoria de la selección es el pid.
+nck "identidad: la seleccion no se recuerda por nombre" 'g_sel_name' "$gui"
+ck  "identidad: la seleccion se recuerda por pid" 'g_sel_pid' "$gui"
+nck "identidad: el panel de log no se resuelve por nombre" 'g_log_name' "$gui"
+ck  "identidad: el panel de log usa el pid" 'g_log_pid' "$gui"
+ck  "identidad: se busca el modulo por pid" 'ewgui_ctrl_idx_por_pid' "$gui"
+ck  "identidad: el objetivo sale del item (pid)" \
+   'g_object_get\(item, *"pid", *&pid, *"name", *&nm, *"cfgfile", *&cf, *NULL\)' "$gui"
+ck  "identidad: el cuadro de confirmacion nombra el pid y el .d" 'ec_modref_where' "$gui"
+ck  "identidad: los selectores distinguen instancias repetidas" 'ewgui_ctrl_etiqueta_modulo' "$gui"
+if sed -n '/^static EcModRef \*ec_modref_from_sel/,/^}/p' "$gui" | grep -q 'g_status'; then
+   echo "FAIL: ec_modref_from_sel vuelve a resolver el objetivo con g_status (por indice/nombre)"
+   fails=$((fails + 1))
+else
+   echo "ok  : ec_modref_from_sel no toca g_status (lee el item seleccionado)"
+fi
+if sed -n '/^void on_row_selected/,/^}/p' "$gui" | grep -qE 'strcmp|->name'; then
+   echo "FAIL: on_row_selected vuelve a emparejar por nombre"
+   fails=$((fails + 1))
+else
+   echo "ok  : on_row_selected identifica la fila por pid, sin nombres"
+fi
 
 if [ "$fails" -ne 0 ]; then
    echo "ew_controller invariants: $fails fallo(s)"

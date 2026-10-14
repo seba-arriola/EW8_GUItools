@@ -79,10 +79,16 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_arc_layout.sh
 	@echo "== check_table_ui =="
 	@bash tests/test_table_ui.sh
+	@echo "== check_string_ops =="
+	@bash tests/test_string_ops.sh
 	@echo "== check_schema_coverage =="
 	@bash tests/test_schema_coverage.sh
 	@echo "== check_lines =="
 	@bash tests/test_check_lines.sh
+	@echo "== check_build_deps =="
+	@bash tests/test_build_deps.sh
+	@echo "== check_launch_doc =="
+	@bash tests/test_launch_doc.sh
 	@echo "== check_install_bin =="
 	@bash tests/test_install_bin.sh
 	@echo "== check_install =="
@@ -104,3 +110,17 @@ bench: $(LIB)
 
 clean:
 	rm -rf build $(OBJ) $(LIB)
+
+# --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
+# Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda
+# con un layout de structs viejo mientras la libreria se recompila, y la ABI se
+# rompe en silencio (paso con csnhypodbp y libcsnwphase.a: el i_master salia con
+# la memoria del struct equivocado y la inversion de fase W no arrancaba).
+# OJO: los `.d` del modulo NO son dependencias (son configuraciones: el
+# `ew_controller.d` del panel o los `.d` de los tests de csnloc/csnmags), asi que
+# las deps van a `*.dep` para no colisionar nunca con ellos.
+CFLAGS += -MMD -MP -MF $(@).dep
+-include $(wildcard *.dep */*.dep)
+clean: clean-deps
+clean-deps:
+	rm -f *.dep */*.dep

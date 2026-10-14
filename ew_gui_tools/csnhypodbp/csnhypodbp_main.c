@@ -5,6 +5,10 @@
 #include "csnhypodbp_mww.h"
 #include "ewgui/table_ui.h"
 
+/* Hook de diagnostico del maximizado: se define junto a `main` y lo usa el
+   constructor de la ventana (ver AGENTS §7). */
+static void dbg_maximize_hook(void);
+
 /* Definicion de Variables Globales */
 char MyModName[MAX_STR];
 char InRingName[MAX_STR];
@@ -763,6 +767,10 @@ static void add_text_column_sort(GtkWidget *view, const char *title, const char 
                                 gtk_column_view_get_columns(GTK_COLUMN_VIEW(view))) - 1);
     if (col) {
         ewgui_table_column_sortable(col, sort_prop, tie, first_dir);
+        /* Resizable: el usuario ajusta anchos a mano. El minimo de la ventana no
+           lo fijan estas columnas porque el scrolled que las contiene lleva
+           `min_content_width` (AGENTS §7). */
+        gtk_column_view_column_set_resizable(col, TRUE);
         g_object_unref(col);
     }
 }
@@ -1109,17 +1117,26 @@ static void on_toggle_hide_empty(GSimpleAction *action, GVariant *param, gpointe
 }
 
 /* Divide el panel maestro/detalle por la mitad en el primer mapeo (una sola
-   vez, para que luego el usuario pueda arrastrar el separador). */
+   vez, para que luego el usuario pueda arrastrar el separador).
+   El flag por widget evita re-aplicar el reparto en cada `map`/remapeo: cada
+   re-aplicacion mueve la geometria (y el minimo) de la ventana justo cuando el
+   compositor esta negociando el maximizado, y eso es lo que hacia fallar la
+   conexion Wayland (ver AGENTS §7). */
 static gboolean paned_set_half_idle(gpointer data)
 {
     GtkWidget *paned = GTK_WIDGET(data);
     int h = gtk_widget_get_height(paned);
-    if (h > 0) gtk_paned_set_position(GTK_PANED(paned), h / 2);
+    if (h > 0 && !g_object_get_data(G_OBJECT(paned), "csn-split-half")) {
+        g_object_set_data(G_OBJECT(paned), "csn-split-half", GINT_TO_POINTER(1));
+        gtk_paned_set_position(GTK_PANED(paned), h / 2);
+    }
     return G_SOURCE_REMOVE;
 }
 static void paned_map_half(GtkWidget *paned, gpointer data)
 {
     (void)data;
+    if (g_object_get_data(G_OBJECT(paned), "csn-split-half"))
+        return;
     g_idle_add(paned_set_half_idle, paned);
 }
 
@@ -1215,9 +1232,12 @@ static gboolean paned_maps_set_idle(gpointer data) {
     GtkWidget *p = data;
     int w = gtk_widget_get_width(p);
 
+    if (g_object_get_data(G_OBJECT(p), "csn-split-maps"))
+        return G_SOURCE_REMOVE;
     /* El `map` puede llegar con tamano 0 y entonces el reparto se perdia en
        silencio: se reintenta cada 50 ms hasta que haya ancho. */
     if (w <= 0) return G_SOURCE_CONTINUE;
+    g_object_set_data(G_OBJECT(p), "csn-split-maps", GINT_TO_POINTER(1));
     {
         int pos = w - 340;
         /* Suelo: si el ancho medido aun es pequeno, no dejar los mapas en nada. */
@@ -1239,6 +1259,8 @@ static gboolean paned_maps_log_idle(gpointer data) {
 }
 static void paned_maps_map(GtkWidget *paned, gpointer data) {
     (void)data;
+    if (g_object_get_data(G_OBJECT(paned), "csn-split-maps"))
+        return;   /* ya repartido: no volver a moverlo en cada remapeo */
     g_timeout_add(50, paned_maps_set_idle, paned);
 }
 
@@ -1287,10 +1309,14 @@ static void build_maps_column(void)
     GtkWidget *plan_frame, *prof_frame, *plan_w, *prof_w;
     GtkWidget *paned = gtk_paned_new(GTK_ORIENTATION_VERTICAL);
 
+    /* Suelos PEQUENOS: cada pixel de minimo se suma al de la ventana y, si el
+       total supera la geometria maximizada que da el compositor, GTK adjunta un
+       buffer mas grande que el configurado y Wayland corta la conexion (Error 71
+       al maximizar; ver AGENTS §7). 160x140 basta para ver el encuadre. */
     plan_frame = map_panel_new(&g_map_plan, &g_map_plan_cap, on_draw_map_plan,
-                               &plan_w, 300, 240);
+                               &plan_w, 160, 140);
     prof_frame = map_panel_new(&g_map_prof, &g_map_prof_cap, on_draw_map_profile,
-                               &prof_w, 300, 140);
+                               &prof_w, 160, 100);
 
     /* Los dos cuadros se manejan igual: rueda = zoom, arrastre boton 1 = paneo. */
     map_panel_connect(plan_w, G_CALLBACK(on_map_plan_scroll), G_CALLBACK(on_map_plan_press),
@@ -1309,10 +1335,11 @@ static void build_maps_column(void)
     g_signal_connect(paned, "map", G_CALLBACK(paned_vmaps_map), NULL);
 
     g_maps_col = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-    /* Sin `size_request`: su minimo ya lo dan los dos canvas (300 px) y un minimo
+    /* Sin `size_request`: su minimo ya lo dan los dos canvas (160 px) y un minimo
        propio se SUMA al de la ventana, que es lo que dejaba la columna sin ancho
-       (el notebook no cede por debajo de su minimo). La protege el
-       `shrink_end_child(FALSE)` del paned. */
+       (el notebook no cede por debajo de su minimo). El paned deja encoger
+       (`shrink_*` en TRUE) para que el minimo de la ventana quepa en el
+       maximizado del compositor (AGENTS §7). */
     gtk_widget_set_hexpand(g_maps_col, TRUE);
     gtk_widget_set_vexpand(g_maps_col, TRUE);
     gtk_box_append(GTK_BOX(g_maps_col), paned);
@@ -1444,13 +1471,15 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_paned_set_start_child(GTK_PANED(paned_maps), g_notebook);
         gtk_paned_set_end_child(GTK_PANED(paned_maps), g_maps_col);
         /* Ambos `resize_*` en TRUE: el ancho sobrante se reparte y los mapas
-           crecen con la ventana. `shrink_end_child(FALSE)` impide que la columna
-           de mapas baje de su minimo (los dos canvas, 300 px): asi no puede
-           quedar en unos pocos pixeles ni fuera de vista. */
+           crecen con la ventana. Los `shrink_*` quedan en TRUE (el default): con
+           FALSE el hijo no baja de su minimo y ese minimo se SUMA al de la
+           ventana; si el total supera la geometria maximizada que da el
+           compositor, GTK adjunta un buffer mas grande que el configurado y
+           Wayland corta la conexion (Error 71 al maximizar, AGENTS §7). */
         gtk_paned_set_resize_start_child(GTK_PANED(paned_maps), TRUE);
         gtk_paned_set_resize_end_child(GTK_PANED(paned_maps), TRUE);
-        gtk_paned_set_shrink_start_child(GTK_PANED(paned_maps), FALSE);
-        gtk_paned_set_shrink_end_child(GTK_PANED(paned_maps), FALSE);
+        gtk_paned_set_shrink_start_child(GTK_PANED(paned_maps), TRUE);
+        gtk_paned_set_shrink_end_child(GTK_PANED(paned_maps), TRUE);
         gtk_widget_set_vexpand(paned_maps, TRUE);
         g_signal_connect(paned_maps, "map", G_CALLBACK(paned_maps_map), NULL);
         gtk_box_append(GTK_BOX(vbox), paned_maps);
@@ -1542,11 +1571,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
 
     GtkWidget *sw_master = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_master), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    /* min_content_width acota el MINIMO aunque el contenido pida mas: sin esto
+       las 16 columnas de la tabla fijan el minimo de TODA la ventana y el
+       maximizado del compositor no lo satisface (AGENTS §7). */
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_master), 320);
     gtk_widget_set_vexpand(sw_master, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_master), tree_global);
 
     GtkWidget *sw_detail = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_detail), GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_detail), 320);
     gtk_widget_set_vexpand(sw_detail, TRUE);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw_detail), tree_detail);
 
@@ -1642,6 +1676,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_vexpand(list_frame, TRUE);
     GtkWidget *sw_list = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_list), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_list), 240);
     gtk_widget_set_vexpand(sw_list, TRUE);
     g_sta_store = g_list_store_new(CSNHYPODBP_TYPE_STA_ITEM);
     g_sort_sta = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_sta_store)), NULL);
@@ -1891,6 +1926,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_widget_set_vexpand(mag_frame, TRUE);
         gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_mag),
                                        GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+        gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw_mag), 240);
         gtk_widget_set_vexpand(sw_mag, TRUE);
         g_mag_store = g_list_store_new(CSNHYPODBP_TYPE_MAG_ITEM);
         g_mag_sort = gtk_sort_list_model_new(G_LIST_MODEL(g_object_ref(g_mag_store)), NULL);
@@ -2154,10 +2190,42 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     csnhypodbp_sta_sel_reset();
     rebuild_station_list();
     gtk_window_present(GTK_WINDOW(window_global));
+    dbg_maximize_hook();
 
     g_timeout_add(1000, ew_background_tasks, NULL);
     g_timeout_add(500, escuchar_anillo_earthworm, tree_global);
     g_timeout_add(1000, waveform_reload_timer, NULL);
+}
+
+/* -------------------------------------------------------------------------
+ * Hook de diagnostico del maximizado (ver AGENTS §7).
+ * `CSNHYPODBP_MAXIMIZE_MS=<ms>` maximiza/des-maximiza 5 ciclos y deja la ventana
+ * maximizada: reproduce y verifica, sin clics, el cierre por `Error 71` que
+ * sufren los modulos GTK4 bajo WSLg cuando el minimo de la ventana no cabe en la
+ * geometria maximizada. Sin la variable no hace absolutamente nada.
+ * ------------------------------------------------------------------------- */
+static int g_dbg_max_toggles;
+static gboolean dbg_maximize_toggle(gpointer data)
+{
+    GtkWindow *w = GTK_WINDOW(data);
+
+    if (g_dbg_max_toggles++ >= 10) {          /* 5 ciclos = 10 toggles */
+        gtk_window_maximize(w);               /* termina en el estado peligroso */
+        return G_SOURCE_REMOVE;
+    }
+    if (gtk_window_is_maximized(w))
+        gtk_window_unmaximize(w);
+    else
+        gtk_window_maximize(w);
+    return G_SOURCE_CONTINUE;
+}
+static void dbg_maximize_hook(void)
+{
+    const char *ms = getenv("CSNHYPODBP_MAXIMIZE_MS");
+    int v = ms ? atoi(ms) : 0;
+
+    if (v > 0 && window_global)
+        g_timeout_add((guint)v, dbg_maximize_toggle, window_global);
 }
 
 int main(int argc, char *argv[]) {

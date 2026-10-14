@@ -129,6 +129,18 @@ int csnwphase_gfdir_guard(const CsnwphaseCfg *cfg, const char *rundir,
 /* Contenido de i_master y CMTSOLUTION (byte-exacto con el generador del CSN). */
 int csnwphase_i_master_text(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
                             char *out, size_t outsz);
+
+/* Verifica que el `i_master` recien generado coincida con la config. Es la
+ * guarda contra los objetos desfasados: la ABI rota se ve AQUI, no en el motor
+ * (que falla mas tarde con `fc=-nan` y un rc!=0 opaco). */
+int csnwphase_i_master_selfcheck(const CsnwphaseCfg *cfg, const char *text,
+                                 char *err, size_t errlen);
+
+/* Guardia de ABI: el consumidor pasa SUS `sizeof` y se comparan con los de la
+ * libreria. 0 = coinciden; -1 = compilo con otro `csnwphase.h`. */
+int csnwphase_abi_check(size_t cfg_size, size_t in_size);
+size_t csnwphase_cfg_size(void);
+size_t csnwphase_input_size(void);
 int csnwphase_cmt_text(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
                        char *out, size_t outsz);
 

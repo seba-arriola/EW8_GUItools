@@ -29,7 +29,7 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
        csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
        csnhypodbp_magsta.o csnhypodbp_magitem.o \
-        csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o
+        csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o csnhypodbp_mwwerr.o
 
 all: csnhypodbp install
 
@@ -98,6 +98,10 @@ test_station_order: test_station_order.c csnhypodbp_station.o
 test_view: test_view.c csnhypodbp_view.o ../common/src/ewgui_config.o
 	$(CC) $(CFLAGS) -o test_view test_view.c csnhypodbp_view.o ../common/src/ewgui_config.o \
 	      $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm -lpthread
+
+# Logica pura (solo stdio): no necesita GTK ni las librerias de EarthWorm.
+test_mww_error: test_mww_error.c csnhypodbp_mwwerr.o
+	$(CC) $(CFLAGS) -o test_mww_error test_mww_error.c csnhypodbp_mwwerr.o
 
 ../common/src/ewgui_config.o:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_config.o
@@ -191,7 +195,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
       test_master_store test_mag_msg test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
       test_preview test_profile test_mapview test_magcfg test_magrow test_magsta \
-      test_magitem test_magmarks test_magview
+      test_magitem test_magmarks test_magview test_mww_error
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -219,8 +223,14 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_magitem
 	./test_magmarks
 	./test_magview
+	./test_mww_error
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
+
+# Prueba LIVE del cierre al maximizar (necesita entorno, DISPLAY y EarthWorm
+# arriba; se SALTA sola si falta cualquiera de los tres). Ver AGENTS §7.
+test-live: csnhypodbp
+	sh ./test_maximize.sh
 
 clean:
 	rm -f csnhypodbp test_filter test_group test_parse_solution test_magstore \
@@ -228,5 +238,19 @@ clean:
 	      test_locator test_manual test_locate test_fetch_span test_view test_search \
 	      test_sds_read test_statable test_staitem test_preview test_profile \
 	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
-	      test_magmarks test_magview \
+	      test_magmarks test_magview test_mww_error \
 	      locate_chain *.o
+
+# --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
+# Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda
+# con un layout de structs viejo mientras la libreria se recompila, y la ABI se
+# rompe en silencio (paso con csnhypodbp y libcsnwphase.a: el i_master salia con
+# la memoria del struct equivocado y la inversion de fase W no arrancaba).
+# OJO: los `.d` del modulo NO son dependencias (son configuraciones: el
+# `ew_controller.d` del panel o los `.d` de los tests de csnloc/csnmags), asi que
+# las deps van a `*.dep` para no colisionar nunca con ellos.
+CFLAGS += -MMD -MP -MF $(@).dep
+-include $(wildcard *.dep */*.dep)
+clean: clean-deps
+clean-deps:
+	rm -f *.dep */*.dep

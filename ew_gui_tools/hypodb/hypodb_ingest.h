@@ -32,6 +32,25 @@ int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len);
 /* Registra un pick de PICK_RING (solo para marcar pick_status manual). */
 int hypodb_feed_pick(HypodbState *st, const char *msg, size_t len);
 
+/*
+ * Entradas que `rd_chan_mag` escribe DE VERDAD con este TYPE_MAGNITUDE.
+ * Es lo que hay que dimensionar: el motor NO acota sus escrituras contra el
+ * tamano que se le pasa (solo lo usa para el memset inicial) y ademas parsea
+ * IN-PLACE (destruye el buffer), asi que esta funcion trabaja sobre una copia y
+ * no toca el mensaje del llamante. Contar '\n' no vale de proxy. Devuelve -1 si
+ * no parsea.
+ */
+int hypodb_mag_station_count(const char *msg, size_t len);
+
+/*
+ * Rellena y escribe las magnitudes por estacion de un TYPE_MAGNITUDE.
+ * Exportada para poder testear el dimensionado del array sin BD ni anillos:
+ * con `st->db == NULL` no toca la BD.
+ */
+int hypodb_write_station_magnitudes(HypodbState *st, const char *magnitude_id,
+                                    const char *type, const char *msg,
+                                    size_t len);
+
 /* Reconstruye grupos desde la BD (eventos recientes). Llamar al arrancar. */
 int hypodb_load_from_db(HypodbState *st);
 

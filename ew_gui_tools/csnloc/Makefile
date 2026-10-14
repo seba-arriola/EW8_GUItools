@@ -279,3 +279,17 @@ asan-synth: iasp91.tbl iasp91.hed
 	./test/test_synth_asan 2>&1 | head -60
 
 .PHONY: all clean test check check-grids check-offline asan-csnloc
+
+# --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
+# Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda
+# con un layout de structs viejo mientras la libreria se recompila, y la ABI se
+# rompe en silencio (paso con csnhypodbp y libcsnwphase.a: el i_master salia con
+# la memoria del struct equivocado y la inversion de fase W no arrancaba).
+# OJO: los `.d` del modulo NO son dependencias (son configuraciones: el
+# `ew_controller.d` del panel o los `.d` de los tests de csnloc/csnmags), asi que
+# las deps van a `*.dep` para no colisionar nunca con ellos.
+CFLAGS += -MMD -MP -MF $(@).dep
+-include $(wildcard *.dep */*.dep)
+clean: clean-deps
+clean-deps:
+	rm -f *.dep */*.dep

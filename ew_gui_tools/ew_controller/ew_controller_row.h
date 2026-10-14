@@ -7,7 +7,10 @@
 
 #define EC_TYPE_MOD_ROW (ec_mod_row_get_type())
 G_DECLARE_FINAL_TYPE(EcModRow, ec_mod_row, EC, MOD_ROW, GObject)
-EcModRow *ec_mod_row_new(const char *name, int pid, const char *status, const char *details);
+/* `cfgfile` es el .d del módulo: se muestra para poder distinguir instancias con
+   el mismo nombre (p. ej. csnmags.d y csnmags_raw.d). */
+EcModRow *ec_mod_row_new(const char *name, int pid, const char *status, const char *details,
+                         const char *cfgfile);
 
 #define EC_TYPE_RING_ROW (ec_ring_row_get_type())
 G_DECLARE_FINAL_TYPE(EcRingRow, ec_ring_row, EC, RING_ROW, GObject)

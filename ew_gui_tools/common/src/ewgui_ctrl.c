@@ -59,6 +59,49 @@ void ewgui_ctrl_extraer_cfgfile(char *detalle, char *cfgfile, size_t n)
     cfgfile[n - 1] = '\0';
 }
 
+int ewgui_ctrl_idx_por_pid(const EwCtrlStatus *st, int pid)
+{
+    int i;
+
+    if (!st || pid <= 0) return -1;
+    for (i = 0; i < st->nmods; i++)
+        if (st->mods[i].pid == pid) return i;
+    return -1;
+}
+
+void ewgui_ctrl_cfgfile_por_nombre(const char *name, char *cfgfile, size_t n)
+{
+    if (!cfgfile || n == 0) return;
+    if (!name || !*name) { cfgfile[0] = '\0'; return; }
+    /* snprintf trunca pero SIEMPRE cierra el buffer: nunca desborda. La precision
+       reserva el hueco de ".d" (3 bytes: dos + NUL) para no perder el sufijo. */
+    snprintf(cfgfile, n, "%.*s.d", (n > 3) ? (int) (n - 3) : 0, name);
+}
+
+void ewgui_ctrl_etiqueta_modulo(const EwCtrlStatus *st, int idx, char *out, size_t n)
+{
+    int i, reps = 0, cfg_distingue = 0;
+
+    if (!out || n == 0) return;
+    out[0] = '\0';
+    if (!st || idx < 0 || idx >= st->nmods) return;
+
+    for (i = 0; i < st->nmods; i++)
+        if (!strcmp(st->mods[i].name, st->mods[idx].name)) reps++;
+    if (reps <= 1) { snprintf(out, n, "%s", st->mods[idx].name); return; }
+
+    /* Nombre repetido: la etiqueta TIENE que distinguir las instancias. */
+    if (st->mods[idx].cfgfile[0]) {
+        cfg_distingue = 1;
+        for (i = 0; i < st->nmods && cfg_distingue; i++)
+            if (i != idx && !strcmp(st->mods[i].name, st->mods[idx].name) &&
+                !strcmp(st->mods[i].cfgfile, st->mods[idx].cfgfile))
+                cfg_distingue = 0;
+    }
+    if (cfg_distingue) snprintf(out, n, "%s (%s)", st->mods[idx].name, st->mods[idx].cfgfile);
+    else               snprintf(out, n, "%s (pid %d)", st->mods[idx].name, st->mods[idx].pid);
+}
+
 void ewgui_ctrl_parse_status(char *buf, EwCtrlStatus *st)
 {
     char *save = NULL;
@@ -109,11 +152,10 @@ void ewgui_ctrl_parse_status(char *buf, EwCtrlStatus *st)
                 strncpy(st->mods[st->nmods].config, st->mods[st->nmods].name, sizeof(st->mods[st->nmods].config) - 1);
 
             ewgui_ctrl_extraer_cfgfile(rest, st->mods[st->nmods].cfgfile, sizeof(st->mods[st->nmods].cfgfile));
-            if (st->mods[st->nmods].cfgfile[0] == '\0') {
-                strncpy(st->mods[st->nmods].cfgfile, st->mods[st->nmods].name, sizeof(st->mods[st->nmods].cfgfile) - 1);
-                strncat(st->mods[st->nmods].cfgfile, ".d", sizeof(st->mods[st->nmods].cfgfile) - 1);
-                st->mods[st->nmods].cfgfile[sizeof(st->mods[st->nmods].cfgfile) - 1] = '\0';
-            }
+            if (st->mods[st->nmods].cfgfile[0] == '\0')
+                ewgui_ctrl_cfgfile_por_nombre(st->mods[st->nmods].name,
+                                              st->mods[st->nmods].cfgfile,
+                                              sizeof(st->mods[st->nmods].cfgfile));
             if (!strcmp(st->mods[st->nmods].name, "startstop"))
                 strncpy(st->mods[st->nmods].cfgfile, "startstop_unix.d", sizeof(st->mods[st->nmods].cfgfile) - 1);
             st->nmods++;

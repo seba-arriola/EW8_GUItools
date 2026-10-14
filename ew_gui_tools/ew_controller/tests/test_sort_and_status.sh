@@ -13,6 +13,8 @@
 #   test_sort_and_status.sh --dump   calibracion: cabeceras, filas reales, filas
 #                                    tras inyectar el estado sintetico y arbol
 #   test_sort_and_status.sh --layout comprueba el reparto de espacio (layout)
+#   test_sort_and_status.sh --select selecciona una fila y sobrevive al rebuild
+#   test_sort_and_status.sh --dup    nombres repetidos: la fila apunta a su PID
 #   test_sort_and_status.sh          corre las aserciones de tabla/estado
 #
 # Nota: el TYPE_STATUS sintetico tambien lo ven los demas clientes del anillo
@@ -27,7 +29,16 @@ TMP=${EWGUI_GUI_TMP:-/tmp/opencode/ew_controller_gui}
 PARAMS="$TMP/params"
 FIX="$MOD_DIR/tests/fixtures"
 
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+# El cliente de prueba (escribe TYPE_STATUS en el anillo) lo construye el Makefile
+# con el target tests/fake_status. Sin el, la inyeccion falla y el test aborta: se
+# avisa aqui para que el motivo no quede enterrado en fake.out.
+if [ ! -x "$MOD_DIR/tests/fake_status" ]; then
+    echo "FALLO: falta $MOD_DIR/tests/fake_status" >&2
+    echo "       construyelo con: make -C $MOD_DIR tests/fake_status" >&2
+    exit 1
+fi
+
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 
 make_fixture() {
     rm -rf "$TMP"; mkdir -p "$PARAMS" "$TMP/log"
@@ -135,6 +146,203 @@ if [ "$EWGUI_MODE" = "--layout" ]; then
     exit "$rcx"
 fi
 
+# --- modo --select: seleccionar una fila y sobrevivir a la reconstruccion ----
+# Reproduce el use-after-free de on_row_selected: liberaba el item PRESTADO de
+# gtk_single_selection_get_selected_item() (transfer none), asi que la fila
+# quedaba finalizada mientras el GListStore y el sort model seguian usandola, y
+# el siguiente rebuild hacia g_object_unref sobre memoria liberada -> SIGSEGV en
+# libgobject (muerte subita de la ventana; en produccion se veia al pulsar
+# Restart, con el cuadro abierto o al pulsar Yes).
+if [ "$EWGUI_MODE" = "--select" ]; then
+    rcx=0
+
+    # 1) La tabla tiene filas: estado sintetico (AA_probe 200 / ZZ_probe 33).
+    inject status_alive.txt || { echo "FALLO: no pude inyectar status_alive"; exit 1; }
+    if ! wait_rows "$EWGUI_LOG/rows_s0.txt" 'AA_probe'; then
+        echo "FALLO: la tabla no muestra AA_probe"; cat "$EWGUI_LOG/rows_s0.txt"; exit 1
+    fi
+
+    # 2) Seleccionar una fila con TECLADO (Tab hasta la tabla + Down). En Xvfb,
+    #    sin gestor de ventanas, los clics por XTEST no se entregan y las
+    #    celdas/filas de GtkColumnView solo exponen la accion AT-SPI
+    #    'listitem.scroll-to' (bug #8354), asi que el raton no sirve.
+    #    La barra de estado ("target: <modulo> (<estado>)") confirma la
+    #    seleccion: se refresca al inyectar un TYPE_STATUS, sin tocar el anillo
+    #    de control.
+    wid=$(xdotool search --name 'Earthworm Controller' 2>/dev/null | head -1)
+    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null
+    sel=0
+    for _i in $(seq 1 14); do
+        xdotool key --clearmodifiers Tab 2>/dev/null
+        xdotool key --clearmodifiers Down 2>/dev/null
+        inject status_alive.txt
+        sleep 0.6
+        if probe --assert-text 'target: ' --timeout 2 >/dev/null 2>&1; then sel=1; break; fi
+    done
+    if [ "$sel" -ne 1 ]; then echo "FALLO: no consegui seleccionar una fila por teclado"; exit 1; fi
+    echo "ok  : fila seleccionada por teclado (la barra de estado marca el target)"
+
+    # 3) Armar el use-after-free: mover la seleccion (el modelo suelta la fila
+    #    anterior, ya finalizada por el unref indebido) y provocar VARIOS
+    #    rebuilds (cada uno desenlaza/enlaza las filas visibles). Con la memoria
+    #    de la fila liberada ya reutilizada, el siguiente rebuild revienta.
+    inject status_dead.txt || { echo "FALLO: no pude inyectar status_dead"; exit 1; }
+    for _j in 1 2 3; do
+        xdotool key --clearmodifiers Down 2>/dev/null
+        sleep 0.5
+    done
+    for _j in 1 2 3 4; do
+        inject status_alive.txt; sleep 1
+        inject status_dead.txt;  sleep 1
+    done
+    sleep 4
+
+    # 4) ¿Sigue vivo? (un hijo muerto queda ZOMBIE y `kill -0` daria falso OK.)
+    st=$(ps -o stat= -p "$app" 2>/dev/null | tr -d ' \n')
+    if [ -n "$st" ] && [ "${st#Z}" = "$st" ]; then
+        echo "ok  : ew_controller sobrevive al rebuild con una fila seleccionada"
+    else
+        echo "FALLO: ew_controller murio al reconstruir las filas (estado '${st:-ausente}')"
+        tail -n 5 "$EWGUI_LOG/app.out" 2>/dev/null
+        rcx=1
+    fi
+
+    printf 'RESULTADO_SELECT=%s\n' "$rcx"
+    exit "$rcx"
+fi
+
+# --- modo --dup: dos modulos con el MISMO nombre ------------------------------
+# La identidad de un modulo es su PID. Antes se resolvia por nombre, asi que con
+# dos `csnmags` (csnmags.d / csnmags_raw.d) la fila de la 2.ª instancia mandaba
+# Stop/Restart al pid de la 1.ª: se mataba el modulo equivocado.
+if [ "$EWGUI_MODE" = "--dup" ]; then
+    rcx=0
+
+    # 1) Dos filas con el mismo nombre: AA_probe pid 200 (Alive) y 201 (Dead).
+    inject status_dup_a.txt || { echo "FALLO: no pude inyectar status_dup_a"; exit 1; }
+    if ! wait_rows "$EWGUI_LOG/rows_d0.txt" 'AA_probe.*Dead'; then
+        echo "FALLO: la tabla no muestra las dos instancias"; cat "$EWGUI_LOG/rows_d0.txt"; exit 1
+    fi
+
+    # 2) Seleccionar por TECLADO (en Xvfb los clics no se entregan) la fila del
+    #    pid 201. Testigo: la barra de estado muestra el estado del seleccionado,
+    #    "target: AA_probe (Dead)".
+    wid=$(xdotool search --name 'Earthworm Controller' 2>/dev/null | head -1)
+    [ -n "$wid" ] && xdotool windowfocus --sync "$wid" 2>/dev/null
+    got=0
+    for _i in $(seq 1 14); do
+        xdotool key --clearmodifiers Tab 2>/dev/null
+        xdotool key --clearmodifiers Down 2>/dev/null
+        inject status_dup_a.txt
+        sleep 0.6
+        if probe --assert-text 'target: ' --timeout 2 >/dev/null 2>&1; then got=1; break; fi
+    done
+    [ "$got" -eq 1 ] || { echo "FALLO: no llegue a la tabla por teclado"; exit 1; }
+
+    ok201=0
+    for _i in $(seq 1 3); do
+        if probe --assert-text 'target: AA_probe (Dead)' --timeout 2 >/dev/null 2>&1; then ok201=1; break; fi
+        xdotool key --clearmodifiers Down 2>/dev/null
+        inject status_dup_a.txt
+        sleep 0.6
+    done
+    if [ "$ok201" -eq 1 ]; then
+        echo "ok  : la fila seleccionada es la del pid 201 (barra: target AA_probe (Dead))"
+    else
+        echo "FALLO: la seleccion apunta a la OTRA instancia (resolucion por nombre)"
+        rcx=1
+    fi
+
+    # 3) Rebuild con esa fila seleccionada (Dead -> Stop): la seleccion debe seguir
+    #    en el pid 201 y no saltar a la 1.ª instancia.
+    inject status_dup_b.txt || { echo "FALLO: no pude inyectar status_dup_b"; exit 1; }
+    sleep 2
+    if probe --assert-text 'target: AA_probe (Stop)' --timeout 5 >/dev/null 2>&1; then
+        echo "ok  : el rebuild mantiene la seleccion en su instancia (pid 201)"
+    else
+        echo "FALLO: tras el rebuild la seleccion se movio a la otra instancia"
+        echo "--- filas ---"; rows
+        echo "--- barra de estado ---"
+        probe --dump --limit 40 2>/dev/null | grep -a 'target' | head -3
+        rcx=1
+    fi
+
+    # 4) Panel de Log: la lista distingue las dos instancias y al elegir la 2.ª se
+    #    lee SU log (el prefijo sale de su .d, no del nombre del modulo).
+    printf 'LOG_A\n' > "$EWGUI_LOG/probe_a_20260101.log"
+    printf 'LOG_B\n' > "$EWGUI_LOG/probe_b_20260101.log"
+    logbtn=0; focos=""
+    for _i in $(seq 1 24); do
+        foco=$(probe --focused 2>/dev/null || true)
+        case "$foco" in *'|AA_probe '*) logbtn=1; break ;; esac
+        focos="${focos}${foco%% *}|"
+        xdotool key --clearmodifiers Tab 2>/dev/null
+        sleep 0.3
+    done
+    if [ "$logbtn" -eq 1 ]; then
+        xdotool key --clearmodifiers space 2>/dev/null
+        sleep 1
+        if probe --assert-text 'AA_probe (probe_b.d)' --timeout 5 >/dev/null 2>&1; then
+            echo "ok  : el selector de log distingue las instancias repetidas (nombre + .d)"
+        else
+            echo "FALLO: el selector de log no distingue las instancias repetidas"
+            probe --dump --limit 30 2>/dev/null | grep -a 'probe_b' | head -4
+            rcx=1
+        fi
+        xdotool key --clearmodifiers Down 2>/dev/null
+        sleep 0.3
+        xdotool key --clearmodifiers Return 2>/dev/null
+        sleep 1.5
+        if probe --assert-text 'LOG_B' --timeout 5 >/dev/null 2>&1; then
+            echo "ok  : el panel de log lee el log de la instancia elegida (probe_b)"
+        else
+            echo "FALLO: el panel de log no lee el log de la instancia elegida"
+            rcx=1
+        fi
+    else
+        echo "AVISO: no pude enfocar el selector de log por teclado; no verifico el panel"
+        echo "  cadena de foco (Tab): ${focos:0:500}"
+    fi
+
+    # 5) El cuadro de confirmacion debe nombrar el pid/.d de la fila seleccionada.
+    #    Solo se pulsa Space si el foco esta en Restart (con --focused): pulsar a
+    #    ciegas podria mandar un TYPE_RECONFIG real a startstop.
+    btn=0; focos2=""
+    for _i in $(seq 1 24); do
+        foco=$(probe --focused 2>/dev/null || true)
+        case "$foco" in *'|Restart '*) btn=1; break ;; esac
+        focos2="${focos2}${foco%% *}|"
+        xdotool key --clearmodifiers shift+Tab 2>/dev/null
+        sleep 0.3
+    done
+    if [ "$btn" -eq 1 ]; then
+        xdotool key --clearmodifiers space 2>/dev/null
+        sleep 1
+        if probe --assert-text 'pid 201' --timeout 5 >/dev/null 2>&1; then
+            echo "ok  : el cuadro de Restart nombra el pid 201 y su .d"
+        else
+            echo "FALLO: el cuadro de Restart no nombra el pid de la fila seleccionada"
+            rcx=1
+        fi
+    else
+        echo "AVISO: no pude enfocar el boton Restart por teclado; no verifico el cuadro"
+        echo "  cadena de foco (shift+Tab): ${focos2:0:500}"
+    fi
+
+    # 6) Y sigue vivo tras los rebuilds.
+    st=$(ps -o stat= -p "$app" 2>/dev/null | tr -d ' \n')
+    if [ -n "$st" ] && [ "${st#Z}" = "$st" ]; then
+        echo "ok  : ew_controller sobrevive a los rebuilds con nombres repetidos"
+    else
+        echo "FALLO: ew_controller murio (estado '${st:-ausente}')"
+        tail -n 5 "$EWGUI_LOG/app.out" 2>/dev/null
+        rcx=1
+    fi
+
+    printf 'RESULTADO_DUP=%s\n' "$rcx"
+    exit "$rcx"
+fi
+
 rc=0
 expect_order() {  # archivo-de-filas, orden esperado, descripcion
     local got; got=$(mod_order "$1")
@@ -207,6 +415,8 @@ INNER
 case "${1:-}" in
     --dump)    make_fixture; run_check --dump; exit $? ;;
     --layout)  make_fixture; run_check --layout; exit $? ;;
+    --select)  make_fixture; run_check --select; exit $? ;;
+    --dup)     make_fixture; run_check --dup; exit $? ;;
     --help|-h) usage 0 ;;
     "")        make_fixture; run_check run; exit $? ;;
     *)         printf 'test_sort_and_status.sh: opcion desconocida: %s\n' "$1" >&2; usage 2 ;;

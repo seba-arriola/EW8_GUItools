@@ -94,6 +94,76 @@ int main(void)
         assert(ewgui_ctrl_sync_plan(&a, &b) == EWCTRL_SYNC_VALUES);
     }
 
+    /* Identidad por PID: el nombre NO identifica (dos instancias de csnmags). */
+    {
+        EwCtrlStatus d;
+        char lbl0[128], lbl1[128];
+        memset(&d, 0, sizeof(d));
+        d.nmods = 2;
+        snprintf(d.mods[0].name, sizeof(d.mods[0].name), "csnmags");
+        d.mods[0].pid = 200;
+        snprintf(d.mods[0].cfgfile, sizeof(d.mods[0].cfgfile), "csnmags.d");
+        snprintf(d.mods[1].name, sizeof(d.mods[1].name), "csnmags");
+        d.mods[1].pid = 201;
+        snprintf(d.mods[1].cfgfile, sizeof(d.mods[1].cfgfile), "csnmags_raw.d");
+
+        assert(ewgui_ctrl_idx_por_pid(&d, 200) == 0);
+        assert(ewgui_ctrl_idx_por_pid(&d, 201) == 1);   /* el 2.º, no el 1.º */
+        assert(ewgui_ctrl_idx_por_pid(&d, 999) == -1);
+        assert(ewgui_ctrl_idx_por_pid(&d, 0) == -1);
+        assert(ewgui_ctrl_idx_por_pid(&d, -7) == -1);
+        assert(ewgui_ctrl_idx_por_pid(NULL, 200) == -1);
+
+        ewgui_ctrl_etiqueta_modulo(&d, 0, lbl0, sizeof(lbl0));
+        ewgui_ctrl_etiqueta_modulo(&d, 1, lbl1, sizeof(lbl1));
+        assert(strcmp(lbl0, "csnmags (csnmags.d)") == 0);
+        assert(strcmp(lbl1, "csnmags (csnmags_raw.d)") == 0);
+
+        /* nombre único -> etiqueta limpia, sin ruido */
+        d.nmods = 1;
+        ewgui_ctrl_etiqueta_modulo(&d, 0, lbl0, sizeof(lbl0));
+        assert(strcmp(lbl0, "csnmags") == 0);
+
+        /* mismo nombre y mismo .d -> hay que caer al pid */
+        d.nmods = 2;
+        snprintf(d.mods[1].cfgfile, sizeof(d.mods[1].cfgfile), "csnmags.d");
+        ewgui_ctrl_etiqueta_modulo(&d, 1, lbl1, sizeof(lbl1));
+        assert(strcmp(lbl1, "csnmags (pid 201)") == 0);
+
+        /* índice fuera de rango -> vacío (no lee basura) */
+        lbl0[0] = 'X'; lbl0[1] = '\0';
+        ewgui_ctrl_etiqueta_modulo(&d, -1, lbl0, sizeof(lbl0));
+        assert(lbl0[0] == '\0');
+    }
+
+    /* cfgfile de respaldo: acotado y conservando el sufijo ".d". */
+    {
+        char longname[96], normal[64], arena[80], small[8], one[1];
+        int i;
+        snprintf(longname, sizeof(longname),
+                 "modulo_con_nombre_larguisimo_que_no_cabe_en_el_buffer_de_64_bytes");
+
+        memset(arena, 'X', sizeof(arena));
+        ewgui_ctrl_cfgfile_por_nombre(longname, arena, 64);
+        assert(arena[63] == '\0');
+        assert(strlen(arena) < 64);
+        assert(strlen(arena) >= 2 && strcmp(arena + strlen(arena) - 2, ".d") == 0);
+        for (i = 64; i < 80; i++) assert(arena[i] == 'X');   /* canario intacto */
+
+        memset(small, 'X', sizeof(small));
+        ewgui_ctrl_cfgfile_por_nombre("csntvp", small, sizeof(small));
+        assert(small[sizeof(small) - 1] == '\0');
+        assert(strlen(small) < sizeof(small));
+        assert(strcmp(small + strlen(small) - 2, ".d") == 0);
+
+        one[0] = 'X';
+        ewgui_ctrl_cfgfile_por_nombre("x", one, sizeof(one));
+        assert(one[0] == '\0');
+
+        ewgui_ctrl_cfgfile_por_nombre("csntvp", normal, sizeof(normal));
+        assert(strcmp(normal, "csntvp.d") == 0);
+    }
+
     printf("ALL CTRL TESTS PASSED\n");
     return 0;
 }

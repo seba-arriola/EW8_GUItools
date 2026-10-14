@@ -58,6 +58,22 @@ void ewgui_ctrl_campo_despues(char *line, const char *label, char *out, size_t n
 void ewgui_ctrl_extraer_config(char *detalle, char *config, size_t n);
 void ewgui_ctrl_extraer_cfgfile(char *detalle, char *cfgfile, size_t n);
 
+/* Identidad de un módulo: el PID. El NOMBRE no identifica: startstop_unix.d puede
+   tener dos `Process` con el mismo nombre (las dos instancias de csnmags, con
+   csnmags.d y csnmags_raw.d), y resolver por nombre apunta siempre a la primera.
+   Índice en st->mods, o -1 si pid <= 0 o no está. */
+int  ewgui_ctrl_idx_por_pid(const EwCtrlStatus *st, int pid);
+
+/* Rellena cfgfile con "<name>.d" acotado a n. El sufijo ".d" se reserva siempre
+   (se recorta el nombre antes que perderlo: identifica el archivo de config);
+   nunca escribe más de n bytes y siempre termina en NUL. */
+void ewgui_ctrl_cfgfile_por_nombre(const char *name, char *cfgfile, size_t n);
+
+/* Etiqueta de un módulo para los selectores: el nombre, y SÓLO cuando ese nombre
+   está repetido en st, "nombre (cfgfile)" (o "nombre (pid N)" si el .d tampoco
+   distingue). Acotada a n. */
+void ewgui_ctrl_etiqueta_modulo(const EwCtrlStatus *st, int idx, char *out, size_t n);
+
 /* Envía un mensaje al CONTROL_RING (payload + '\n'). 0 si OK, -1 si falla. */
 int  ewgui_ctrl_send(SHM_INFO *region, unsigned char instid, unsigned char modid,
                      unsigned char type, const char *payload);

@@ -79,6 +79,102 @@ static double half_duration(double magnitude)
 /* i_master y CMTSOLUTION                                               */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Guardas de preparacion: ABI y coherencia del i_master               */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Guardia de ABI. El consumidor (p. ej. el panel `Mww`) compila sus objetos con
+ * el `csnwphase.h` que tenga a mano; si es mas viejo que el de esta libreria, los
+ * structs tienen OTRO layout y aqui se lee memoria ajena: el i_master salia con
+ * los `int` del evento (ano/mes/dia/hora) leidos como `double` y con lat/lon/prof
+ * en WP_WIN, y el motor moria mas tarde con un error opaco (`fc=-nan` ->
+ * `coeffs_rec_lut` vacio -> `run.sh` rc!=0). El consumidor llama aqui con SUS
+ * tamanos y se compara.
+ */
+int csnwphase_abi_check(size_t cfg_size, size_t in_size)
+{
+    return (cfg_size == sizeof(CsnwphaseCfg)
+            && in_size == sizeof(CsnwphaseInput)) ? 0 : -1;
+}
+
+size_t csnwphase_cfg_size(void)   { return sizeof(CsnwphaseCfg); }
+size_t csnwphase_input_size(void) { return sizeof(CsnwphaseInput); }
+
+static int near_val(double a, double b)
+{
+    double d = a - b;
+
+    if (d < 0)
+        d = -d;
+    return d <= 1e-6 * (1.0 + (b < 0 ? -b : b));
+}
+
+static const char *imaster_line(const char *text, const char *tag)
+{
+    const char *p = text;
+    size_t n = strlen(tag);
+
+    while (p && *p) {
+        if (strncmp(p, tag, n) == 0)
+            return p;
+        p = strchr(p, '\n');
+        if (p)
+            p++;
+    }
+    return NULL;
+}
+
+static int imaster_bad(char *err, size_t errlen, const char *what)
+{
+    if (err && errlen)
+        snprintf(err, errlen,
+                 "i_master inconsistente: %s (¿objetos desfasados? recompila el "
+                 "modulo con `make clean && make`)", what);
+    return -1;
+}
+
+/*
+ * Compara los valores numericos del i_master recien generado con la config. Si no
+ * coinciden, el texto NO salio de esta config (memoria ajena) y no tiene sentido
+ * correr el motor: fallaria mucho despues y sin explicacion.
+ */
+int csnwphase_i_master_selfcheck(const CsnwphaseCfg *cfg, const char *text,
+                                 char *err, size_t errlen)
+{
+    const char *line;
+    double a, b, c;
+    int nf;
+
+    if (err && errlen)
+        err[0] = '\0';
+    if (!cfg || !text)
+        return imaster_bad(err, errlen, "sin configuracion");
+
+    line = imaster_line(text, "IDEC_2:");
+    if (!line || sscanf(line, "IDEC_2: %lf %lf %lf", &a, &b, &c) != 3)
+        return imaster_bad(err, errlen, "IDEC_2 ilegible");
+    if (!near_val(a, cfg->idec2_idtr) || !near_val(b, cfg->idec2_preevent)
+        || !near_val(c, cfg->idec2_fend))
+        return imaster_bad(err, errlen, "IDEC_2 no coincide con el .d");
+
+    line = imaster_line(text, "IDEC_3:");
+    if (!line || sscanf(line, "IDEC_3: %lf %lf %d %lf", &a, &b, &nf, &c) != 4)
+        return imaster_bad(err, errlen, "IDEC_3 ilegible");
+    if (!near_val(a, cfg->idec3_fl) || !near_val(b, cfg->idec3_fh)
+        || nf != cfg->idec3_nf || !near_val(c, cfg->idec3_tol))
+        return imaster_bad(err, errlen, "IDEC_3 no coincide con el .d");
+
+    line = imaster_line(text, "WP_WIN:");
+    if (!line || sscanf(line, "WP_WIN: %lf %lf %lf", &a, &b, &c) != 3)
+        return imaster_bad(err, errlen, "WP_WIN ilegible");
+    if (!near_val(a, cfg->wpwin[0]) || !near_val(b, cfg->wpwin[1])
+        || !near_val(c, cfg->wpwin[2]))
+        return imaster_bad(err, errlen, "WP_WIN no coincide con el .d");
+
+    return 0;
+}
+
 int csnwphase_i_master_text(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
                             char *out, size_t outsz)
 {
@@ -349,6 +445,8 @@ int csnwphase_prep_write(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
             snprintf(err, errlen, "i_master demasiado largo");
         return -1;
     }
+    if (csnwphase_i_master_selfcheck(cfg, text, err, errlen) != 0)
+        return -1;
     snprintf(path, sizeof(path), "%s/i_master", rundir);
     if (write_text(path, text) != 0) {
         if (err && errlen)

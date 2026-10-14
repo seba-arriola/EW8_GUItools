@@ -146,7 +146,7 @@ ck  "magnitudes: banda sin traza"           'cairo_show_text\(cr, "sin traza"\);
 ck  "fetch: asegura componentes de todas"   'ensure_all_station_channels\(\);'           csnhypodbp_ws.c
 ck  "layout: canvas con alto minimo"        'CSNHYPODBP_BAND_MIN'                        csnhypodbp_gui.c
 ck  "layout: canvas con ancho minimo"       'CSNHYPODBP_CANVAS_MIN_W'                    csnhypodbp_main.c
-ck  "layout: columna de mapas con suelo"    'shrink_end_child\(GTK_PANED\(paned_maps\), FALSE\)' csnhypodbp_main.c
+ck  "layout: el paned de mapas deja encoger" 'set_shrink_end_child\(GTK_PANED\(paned_maps\), TRUE\)' csnhypodbp_main.c
 ck  "layout: barra en scrolled window"      'gtk_scrolled_window_set_child\(GTK_SCROLLED_WINDOW\(barsw\), bar\)' csnhypodbp_main.c
 ck  "barra: grupo a la derecha"             'gtk_widget_set_hexpand\(spacer, TRUE\)'      csnhypodbp_main.c
 ck  "barra: reset en vez de auto"           'g_mag_ov_reset'                             csnhypodbp_main.c
@@ -272,6 +272,28 @@ ck  "mapas: marcador de la candidata"       'kind == 2'                         
 ck  "mapas: caption del perfil"             'slab \+ %d topo'                             csnhypodbp_gui.c
 ck  "mapas: perfil con x = lon e y = -depth" 'frame_project\(&f, p->lon, -p->depth'        csnhypodbp_gui.c
 nck "mapas: sin columna duplicada por pestaña" 'build_maps_column\(\);.*build_maps_column' csnhypodbp_main.c
+
+# --- Ventana: el minimo debe caber en el maximizado (AGENTS §7) --------------
+# Si el minimo de la ventana supera la geometria maximizada que da el compositor,
+# GTK adjunta un buffer mas grande que el configurado y Wayland corta la conexion
+# (`Error 71`): el modulo se CIERRA al maximizar. Nada de suelos grandes, ni de
+# `shrink_*(FALSE)`; el minimo de las tablas lo acota `min_content_width`.
+ck  "ventana: el panel Mww no infla el minimo"   'mww_scrolled\(g_mww\.grid, 90\)'    csnhypodbp_mww.c
+ck  "ventana: idem para la salida del motor"     'mww_scrolled\(g_mww\.view, 90\)'    csnhypodbp_mww.c
+nck "ventana: sin size_request en mww_scrolled"  'gtk_widget_set_size_request\(sw, -1, h\)' csnhypodbp_mww.c
+ck  "ventana: la playera con suelo pequeno"      'gtk_widget_set_size_request\(vbox, 120, 120\)' csnhypodbp_mww.c
+ck  "ventana: suelo pequeno del canvas de planta" '&plan_w, 160, 140'                 csnhypodbp_main.c
+ck  "ventana: suelo pequeno del canvas de perfil" '&prof_w, 160, 100'                 csnhypodbp_main.c
+nck "ventana: sin suelos de 300 px"              '&(plan|prof)_w, 300, [0-9]+'         csnhypodbp_main.c
+nck "ventana: ya no fija el minimo de los mapas" 'set_shrink_end_child\(GTK_PANED\(paned_maps\), FALSE\)' csnhypodbp_main.c
+ck  "ventana: min_content_width en Events"       'set_min_content_width\(GTK_SCROLLED_WINDOW\(sw_master\), 320\)' csnhypodbp_main.c
+ck  "ventana: min_content_width en Origins"      'set_min_content_width\(GTK_SCROLLED_WINDOW\(sw_detail\), 320\)' csnhypodbp_main.c
+ck  "ventana: min_content_width en estaciones"   'set_min_content_width\(GTK_SCROLLED_WINDOW\(sw_list\), 240\)'   csnhypodbp_main.c
+ck  "ventana: min_content_width en magnitudes"   'set_min_content_width\(GTK_SCROLLED_WINDOW\(sw_mag\), 240\)'    csnhypodbp_main.c
+ck  "ventana: columnas de texto redimensionables" 'gtk_column_view_column_set_resizable\(col, TRUE\)' csnhypodbp_main.c
+ck  "ventana: reparto diferido una sola vez (maps)"   'csn-split-maps'                csnhypodbp_main.c
+ck  "ventana: reparto diferido una sola vez (maestro)" 'csn-split-half'               csnhypodbp_main.c
+ck  "ventana: hook de diagnostico del maximizado" 'CSNHYPODBP_MAXIMIZE_MS'            csnhypodbp_main.c
 
 # --- Puntero (solo clic) y solucion seleccionada ---
 ck  "puntero: hit test puro"                 'csnhypodbp_map_hit'                         csnhypodbp_mapview.c

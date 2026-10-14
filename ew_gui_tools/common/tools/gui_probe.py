@@ -11,6 +11,7 @@ Acciones (se ejecutan en este orden si se combinan):
   --headers              lista los encabezados de columna (nombre + rect)
   --rows                 imprime una linea por fila de tabla con el texto de sus celdas
   --dump                 vuelca el arbol accesible (rol, nombre, rect)
+  --focused              imprime "rol|nombre x y w h" del objeto con el foco
   --assert-text TEXTO    falla si ningun objeto contiene TEXTO en su nombre
   --assert-desc TEXTO    falla si ningun objeto lo lleva en su descripcion accesible
   --descs                lista rol|nombre|descripcion de los objetos con descripcion
@@ -242,6 +243,26 @@ def wait_for_desc(text, timeout):
         time.sleep(0.2)
 
 
+def find_focused():
+    """(obj, x, y) del primer objeto con el estado FOCUSED. Un GtkWindow tambien
+    lo expone, asi que se prefiere un widget y solo se devuelve el frame si no hay
+    nada mas (en el arnes sirve para saber donde esta el foco antes de mandar
+    teclas: pulsar a ciegas puede activar el boton equivocado)."""
+    fallback = None
+    for obj, _d, x, y in walk():
+        try:
+            if not obj.getState().contains(pyatspi.STATE.FOCUSED):
+                continue
+        except Exception:
+            continue
+        if _role(obj) in ("frame", "window", "application", "desktop frame"):
+            if fallback is None:
+                fallback = (obj, x, y)
+            continue
+        return (obj, x, y)
+    return fallback
+
+
 def rect_of(name, root=None):
     """(x, y, w, h) del primer objeto con ese nombre, o None."""
     for obj, _d, x, y in walk(root):
@@ -289,14 +310,15 @@ def main(argv):
     ap.add_argument("--headers", action="store_true")
     ap.add_argument("--rows", action="store_true")
     ap.add_argument("--rect", metavar="NAME")
+    ap.add_argument("--focused", action="store_true")
     ap.add_argument("--click-by-name", metavar="NAME")
     ap.add_argument("--assert-text", metavar="TEXT")
     ap.add_argument("--assert-desc", metavar="TEXT")
     ap.add_argument("--descs", action="store_true")
     a = ap.parse_args(argv)
 
-    if not any([a.dump, a.headers, a.rows, a.rect, a.click_by_name, a.assert_text,
-                a.assert_desc, a.descs]):
+    if not any([a.dump, a.headers, a.rows, a.rect, a.focused, a.click_by_name,
+                a.assert_text, a.assert_desc, a.descs]):
         ap.print_help()
         return 2
 
@@ -333,6 +355,20 @@ def main(argv):
             print("gui_probe: FALLO, sin geometria para %r" % a.rect)
             return 1
         print("%d %d %d %d" % r)
+
+    if a.focused:
+        got = None
+        for _i in range(int(max(a.timeout, 0.1) * 5)):
+            got = find_focused()
+            if got:
+                break
+            time.sleep(0.2)
+        if not got:
+            print("gui_probe: FALLO, ningun objeto con el foco")
+            return 1
+        o, x, y = got
+        s = _size(o) or (0, 0)
+        print("%s|%s %d %d %d %d" % (_role(o), _label(o), x, y, s[0], s[1]))
 
     if a.headers:
         hs = [(o, x, y) for o, _d, x, y in walk(root)

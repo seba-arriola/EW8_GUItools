@@ -7,9 +7,13 @@ static int  g_status_prev_valid = 0;
 /* 1 mientras startstop no responde: la columna Status muestra "?" en TODAS las
    filas, porque el último "Alive" conocido ya no es cierto. */
 static int  g_no_reply = 0;
-/* Identidad de la selección: el NOMBRE del módulo (estable ante reinicios),
-   no el pid (que cambia al reiniciar). */
-static char g_sel_name[64] = "";
+/* Identidad de la selección: el PID del módulo, NUNCA el nombre.
+   startstop_unix.d puede tener dos `Process` con el mismo nombre (las dos
+   instancias de csnmags: csnmags.d y csnmags_raw.d) y resolver por nombre apunta
+   siempre a la primera -> se reiniciaría el módulo equivocado. Al reiniciar un
+   módulo cambia su pid, así que la selección se pierde: es el precio de no
+   emparejar por nombre. */
+static int  g_sel_pid = -1;
 static int  g_row_sel_suppress = 0;
 /* Tamano del array g_cfg_entries (config ANTERIOR). Necesario porque al recargar
    otro modulo g_cfg.nlines ya es el NUEVO y g_cfg_entries aun el viejo. */
@@ -17,28 +21,27 @@ static int  g_cfg_entries_n = 0;
 /* Texto del log ya pintado, para no reescribir el buffer si no cambió. */
 static char *g_log_last = NULL;
 
-/* Nombre del modulo seleccionado para los logs (selector sin popup). */
-static char g_log_name[64] = "";
+/* PID del modulo cuyos logs se muestran (selector sin popup). Por pid y no por
+   nombre: dos instancias pueden compartir nombre (csnmags / csnmags_raw). */
+static int g_log_pid = -1;
 
 static char *tail_file(const char *path, long maxbytes);
 static void ec_rebuild_rows(void);
 
 /* Índice, dentro del MODELO ORDENADO (el que ve GtkSingleSelection), de la fila
-   con ese nombre; -1 si no está. Con un GtkSortListModel en medio el índice de
-   la vista NO es ni el del store ni el de g_status.mods. */
-static int ec_view_pos_of_name(const char *name)
+   con ese pid; -1 si no está. Con un GtkSortListModel en medio el índice de la
+   vista NO es ni el del store ni el de g_status.mods. */
+static int ec_view_pos_of_pid(int pid)
 {
-   if (!name || !*name || !g_mod_sort) return -1;
+   if (pid <= 0 || !g_mod_sort) return -1;
    guint n = g_list_model_get_n_items(G_LIST_MODEL(g_mod_sort));
    for (guint i = 0; i < n; i++) {
       GObject *row = g_list_model_get_item(G_LIST_MODEL(g_mod_sort), i);
       if (!row) continue;
-      char *nm = NULL;
-      g_object_get(row, "name", &nm, NULL);
-      int hit = (nm && !strcmp(nm, name));
-      g_free(nm);
+      int rpid = 0;
+      g_object_get(row, "pid", &rpid, NULL);
       g_object_unref(row);
-      if (hit) return (int) i;
+      if (rpid == pid) return (int) i;
    }
    return -1;
 }
@@ -49,17 +52,16 @@ static int ec_view_pos_of_name(const char *name)
    de la fila, así que actualizar la fila in situ no se vería nunca. */
 static void ec_rebuild_rows(void)
 {
-   char want[64];
+   int want = g_sel_pid;
    int i;
-
-   snprintf(want, sizeof(want), "%s", g_sel_name);
 
    g_row_sel_suppress = 1;
    g_list_store_remove_all(g_store);
    for (i = 0; i < g_status.nmods; i++) {
       EcModRow *row = ec_mod_row_new(g_status.mods[i].name, g_status.mods[i].pid,
                                      g_no_reply ? "?" : g_status.mods[i].status,
-                                     g_status.mods[i].detalle);
+                                     g_status.mods[i].detalle,
+                                     g_status.mods[i].cfgfile);
       g_list_store_append(g_store, row);
       g_object_unref(row);
    }
@@ -72,18 +74,19 @@ static void ec_rebuild_rows(void)
    g_row_sel_suppress = 0;
 
    /* g_sel_idx es el índice del módulo en g_status.mods (lo usan los botones y
-      el log); la POSICIÓN de esa fila en la vista se resuelve por nombre dentro
-      del modelo ordenado. */
-   g_sel_idx = -1;
-   for (i = 0; i < g_status.nmods; i++)
-      if (want[0] && !strcmp(g_status.mods[i].name, want)) { g_sel_idx = i; break; }
-   int pos = (want[0] && g_sel_idx >= 0) ? ec_view_pos_of_name(want) : -1;
+      el log); la POSICIÓN de esa fila en la vista se resuelve por PID dentro del
+      modelo ordenado (nunca por nombre: puede haber dos módulos con el mismo).
+      Si el pid ya no está (módulo reiniciado o desaparecido) la selección se
+      pierde a propósito. */
+   g_sel_idx = ewgui_ctrl_idx_por_pid(&g_status, want);
+   if (g_sel_idx < 0) g_sel_pid = -1;
+   int pos = (g_sel_idx >= 0) ? ec_view_pos_of_pid(want) : -1;
    if (pos >= 0 && g_mod_sel) {
       g_row_sel_suppress = 1;
       gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_mod_sel), (guint) pos, TRUE);
       g_row_sel_suppress = 0;
    } else {
-      g_sel_name[0] = '\0';
+      g_sel_pid = -1;
    }
 }
 
@@ -121,7 +124,8 @@ void poblar_listas(void)
 
 void aplicar_botones(void)
 {
-   gboolean sel_ok = (g_sel_idx >= 0 && g_sel_idx < g_status.nmods);
+   /* El pid > 0 es parte del contrato: sin pid no hay objetivo posible. */
+   gboolean sel_ok = (g_sel_idx >= 0 && g_sel_idx < g_status.nmods && g_sel_pid > 0);
    gboolean es_startstop = sel_ok && !strcmp(g_status.mods[g_sel_idx].name, "startstop");
    const char *st = sel_ok ? g_status.mods[g_sel_idx].status : "";
 
@@ -131,26 +135,54 @@ void aplicar_botones(void)
                             (!strcmp(st, "Stop") || !strcmp(st, "Dead")));
 }
 
+/* Recupera la fila del pid recordado si el modelo dejó la selección vacía sin
+   que el usuario tocara nada (el GtkSortListModel de GTK ordena/avisa en
+   diferido: al reconstruir las filas la selección se puede caer sola). Diferido
+   para no reentrar en la señal de selección. */
+static gboolean ec_restaurar_sel_idle(gpointer d)
+{
+   (void)d;
+   if (g_row_sel_suppress || !g_mod_sel || g_sel_pid <= 0) return G_SOURCE_REMOVE;
+   if (gtk_single_selection_get_selected_item(g_mod_sel)) return G_SOURCE_REMOVE;   /* ya está */
+   int pos = ec_view_pos_of_pid(g_sel_pid);
+   if (pos < 0) { g_sel_pid = -1; g_sel_idx = -1; aplicar_botones(); return G_SOURCE_REMOVE; }
+   g_row_sel_suppress = 1;
+   gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_mod_sel), (guint) pos, TRUE);
+   g_row_sel_suppress = 0;
+   return G_SOURCE_REMOVE;
+}
+
 void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data)
 {
    (void)sel; (void)pspec; (void)data;
    if (g_row_sel_suppress) return;   /* transitorio de reconstrucción */
-   g_sel_idx = -1;
-   g_sel_name[0] = '\0';
    if (g_mod_sel) {
       /* El ITEM seleccionado, no la posición: la posición es la del modelo
-         ORDENADO y no indexa g_store. */
+         ORDENADO y no indexa g_store. La identidad es el PID: con dos módulos
+         del mismo nombre, resolver por nombre apuntaría siempre al primero. */
       GObject *item = gtk_single_selection_get_selected_item(g_mod_sel);
       if (item) {
-         char *nm = NULL;
-         g_object_get(item, "name", &nm, NULL);
-         for (int i = 0; i < g_status.nmods; i++)
-            if (nm && !strcmp(g_status.mods[i].name, nm)) { g_sel_idx = i; break; }
-         if (g_sel_idx >= 0)
-            snprintf(g_sel_name, sizeof(g_sel_name), "%s", g_status.mods[g_sel_idx].name);
-         g_free(nm);
-         g_object_unref(item);
+         int pid = 0;
+         g_object_get(item, "pid", &pid, NULL);
+         int idx = ewgui_ctrl_idx_por_pid(&g_status, pid);
+         if (idx >= 0) { g_sel_idx = idx; g_sel_pid = pid; }
+         else          { g_sel_idx = -1; g_sel_pid = -1; }
+         /* OJO: gtk_single_selection_get_selected_item() devuelve un PRESTAMO
+            (transfer none; GIR de GTK4 <return-value transfer-ownership="none">,
+            doc: "the returned data is owned by the instance"). NO se libera:
+            finalizaria la fila que el GListStore y el GtkSortListModel siguen
+            usando, y el siguiente rebuild hace g_object_unref sobre memoria ya
+            liberada -> SIGSEGV en libgobject (visto en produccion). */
+      } else if (g_sel_pid > 0) {
+         /* Sin item pero con memoria: el modelo se está reconstruyendo, no es una
+            deselección del usuario. Se recupera la fila. */
+         g_idle_add(ec_restaurar_sel_idle, NULL);
+      } else {
+         g_sel_idx = -1;
       }
+   } else {
+      g_sel_idx = -1;
+      g_sel_pid = -1;
    }
    aplicar_botones();
 }
@@ -184,17 +216,36 @@ void ec_confirmar(const char *msg, EcConfirmCb cb, gpointer user_data)
    g_object_unref(dlg);
 }
 
-/* Referencia a un módulo, capturada al abrir la confirmación (el índice puede
-   cambiar entre el diálogo y la respuesta). */
-typedef struct { int pid; char name[64]; } EcModRef;
+/* Referencia a un módulo, capturada al abrir la confirmación (el pid y el índice
+   pueden cambiar entre el diálogo y la respuesta). */
+typedef struct { int pid; char name[64]; char cfgfile[64]; } EcModRef;
 
+/* El objetivo es EXACTAMENTE la fila seleccionada: se lee del item (pid, nombre
+   y .d), no del índice de g_status.mods y nunca por nombre. Devuelve NULL si no
+   hay selección o si el pid no es utilizable (pid <= 0). */
 static EcModRef *ec_modref_from_sel(void)
 {
-   if (g_sel_idx < 0 || g_sel_idx >= g_status.nmods) return NULL;
+   if (!g_mod_sel) return NULL;
+   GObject *item = gtk_single_selection_get_selected_item(g_mod_sel);
+   if (!item) return NULL;
+   int pid = 0;
+   char *nm = NULL, *cf = NULL;
+   g_object_get(item, "pid", &pid, "name", &nm, "cfgfile", &cf, NULL);
+   if (pid <= 0) { g_free(nm); g_free(cf); return NULL; }
    EcModRef *r = g_new0(EcModRef, 1);
-   r->pid = g_status.mods[g_sel_idx].pid;
-   snprintf(r->name, sizeof(r->name), "%s", g_status.mods[g_sel_idx].name);
+   r->pid = pid;
+   snprintf(r->name, sizeof(r->name), "%s", nm ? nm : "");
+   snprintf(r->cfgfile, sizeof(r->cfgfile), "%s", cf ? cf : "");
+   g_free(nm); g_free(cf);
    return r;
+}
+
+/* "pid N, fichero.d" (o sólo "pid N" si no hay .d): distingue en los cuadros de
+   confirmación las instancias que comparten nombre. */
+static void ec_modref_where(const EcModRef *r, char *out, size_t n)
+{
+   if (r->cfgfile[0]) snprintf(out, n, "pid %d, %s", r->pid, r->cfgfile);
+   else               snprintf(out, n, "pid %d", r->pid);
 }
 
 static void do_stop(gboolean ok, gpointer data)
@@ -235,8 +286,9 @@ void on_btn_stop(GtkWidget *w, gpointer data)
    (void)w; (void)data;
    EcModRef *r = ec_modref_from_sel();
    if (!r) return;
-   char msg[256];
-   snprintf(msg, sizeof(msg), "Stop the module '%s' (pid %d)?", r->name, r->pid);
+   char msg[256], where[128];
+   ec_modref_where(r, where, sizeof(where));
+   snprintf(msg, sizeof(msg), "Stop the module '%s' (%s)?", r->name, where);
    ec_confirmar(msg, do_stop, r);
 }
 
@@ -245,8 +297,9 @@ void on_btn_restart(GtkWidget *w, gpointer data)
    (void)w; (void)data;
    EcModRef *r = ec_modref_from_sel();
    if (!r) return;
-   char msg[256];
-   snprintf(msg, sizeof(msg), "Restart the module '%s' (pid %d)?", r->name, r->pid);
+   char msg[256], where[128];
+   ec_modref_where(r, where, sizeof(where));
+   snprintf(msg, sizeof(msg), "Restart the module '%s' (%s)?", r->name, where);
    ec_confirmar(msg, do_restart, r);
 }
 
@@ -255,8 +308,9 @@ void on_btn_start(GtkWidget *w, gpointer data)
    (void)w; (void)data;
    EcModRef *r = ec_modref_from_sel();
    if (!r) return;
-   char msg[256];
-   snprintf(msg, sizeof(msg), "Start the module '%s'?", r->name);
+   char msg[256], where[128];
+   ec_modref_where(r, where, sizeof(where));
+   snprintf(msg, sizeof(msg), "Start the module '%s' (%s)?", r->name, where);
    ec_confirmar(msg, do_start, r);
 }
 
@@ -277,9 +331,12 @@ void on_btn_refresh(GtkWidget *w, gpointer data)
 static void ec_cfg_set_label(void)
 {
    if (!g_cfg_combo) return;
-   const char *nm = (g_cfg_modidx >= 0 && g_cfg_modidx < g_status.nmods)
-                    ? g_status.mods[g_cfg_modidx].name : "(none)";
-   gtk_button_set_label(GTK_BUTTON(g_cfg_combo), nm);
+   char lbl[128];
+   if (g_cfg_modidx >= 0 && g_cfg_modidx < g_status.nmods)
+      ewgui_ctrl_etiqueta_modulo(&g_status, g_cfg_modidx, lbl, sizeof(lbl));
+   else
+      snprintf(lbl, sizeof(lbl), "(none)");
+   gtk_button_set_label(GTK_BUTTON(g_cfg_combo), lbl);
 }
 
 /* Los selectores ya no son GtkDropDown (su popup queda detras de la ventana
@@ -287,17 +344,18 @@ static void ec_cfg_set_label(void)
    que aqui solo se refresca su etiqueta. */
 void populate_combo(void)
 {
-   int i;
-
    if (g_combo) {
-      if (g_log_name[0] == '\0' && g_status.nmods > 0)
-         snprintf(g_log_name, sizeof(g_log_name), "%s", g_status.mods[0].name);
-      int found = 0;
-      for (i = 0; i < g_status.nmods; i++)
-         if (!strcmp(g_status.mods[i].name, g_log_name)) { found = 1; break; }
-      if (!found && g_status.nmods > 0)
-         snprintf(g_log_name, sizeof(g_log_name), "%s", g_status.mods[0].name);
-      gtk_button_set_label(GTK_BUTTON(g_combo), g_log_name[0] ? g_log_name : "(none)");
+      char lbl[128];
+      int k;
+      /* La identidad es el pid: si el módulo ya no está, se cae al primero. */
+      k = ewgui_ctrl_idx_por_pid(&g_status, g_log_pid);
+      if (k < 0) {
+         g_log_pid = (g_status.nmods > 0) ? g_status.mods[0].pid : -1;
+         k = ewgui_ctrl_idx_por_pid(&g_status, g_log_pid);
+      }
+      if (k >= 0) ewgui_ctrl_etiqueta_modulo(&g_status, k, lbl, sizeof(lbl));
+      else        snprintf(lbl, sizeof(lbl), "(none)");
+      gtk_button_set_label(GTK_BUTTON(g_combo), lbl);
    }
 
    ec_cfg_set_label();
@@ -315,23 +373,18 @@ static void log_set(const char *txt)
 
 void actualizar_log(void)
 {
-   const char *sel = g_log_name;
-   if (!sel || !*sel) return;
+   /* El módulo cuyo log se muestra se resuelve por PID (el nombre no identifica:
+      hay dos `csnmags`); el prefijo del fichero sale de su .d. */
+   int k = ewgui_ctrl_idx_por_pid(&g_status, g_log_pid);
+   if (k < 0) return;
    char base[64];
-   strncpy(base, sel, sizeof(base) - 1);
-   base[sizeof(base) - 1] = '\0';
+   snprintf(base, sizeof(base), "%s", g_status.mods[k].name);
 
    /* startstop names its log with the executable name (argv[0]),
       not with the config file (it makes a second logit_init with argv[0]) */
-   if (!strcmp(base, "startstop")) strcpy(base, "startstop");
-   else {
-      int k = -1;
-      for (int i = 0; i < g_status.nmods; i++)
-         if (!strcmp(g_status.mods[i].name, base)) { k = i; break; }
-      if (k >= 0 && g_status.mods[k].config[0])
-         strncpy(base, g_status.mods[k].config, sizeof(base) - 1);
-      base[sizeof(base) - 1] = '\0';
-   }
+   if (!strcmp(base, "startstop")) snprintf(base, sizeof(base), "startstop");
+   else if (g_status.mods[k].config[0])
+      snprintf(base, sizeof(base), "%s", g_status.mods[k].config);
 
    DIR *d = opendir(LogDir);
    if (!d) {
@@ -423,7 +476,10 @@ static void ec_module_picker(const char *title, int current, EcPickCb cb, gpoint
       doble clic / Enter (activate_on_single_click = FALSE). */
    gtk_list_box_set_activate_on_single_click(GTK_LIST_BOX(lb), FALSE);
    for (int i = 0; i < g_status.nmods; i++) {
-      GtkWidget *lbl = gtk_label_new(g_status.mods[i].name);
+      char ltxt[128];
+      /* Con nombres repetidos la lista TIENE que poder distinguirlos. */
+      ewgui_ctrl_etiqueta_modulo(&g_status, i, ltxt, sizeof(ltxt));
+      GtkWidget *lbl = gtk_label_new(ltxt);
       gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
       gtk_widget_set_margin_start(lbl, 6); gtk_widget_set_margin_end(lbl, 6);
       GtkWidget *row = gtk_list_box_row_new();
@@ -461,17 +517,19 @@ static void ec_log_pick(int idx, gpointer user_data)
 {
    (void)user_data;
    if (idx < 0 || idx >= g_status.nmods) return;
-   snprintf(g_log_name, sizeof(g_log_name), "%s", g_status.mods[idx].name);
-   if (g_combo) gtk_button_set_label(GTK_BUTTON(g_combo), g_log_name);
+   g_log_pid = g_status.mods[idx].pid;
+   if (g_combo) {
+      char lbl[128];
+      ewgui_ctrl_etiqueta_modulo(&g_status, idx, lbl, sizeof(lbl));
+      gtk_button_set_label(GTK_BUTTON(g_combo), lbl);
+   }
    actualizar_log();
 }
 
 void on_log_combo_clicked(GtkWidget *w, gpointer data)
 {
    (void)w; (void)data;
-   int cur = -1;
-   for (int i = 0; i < g_status.nmods; i++)
-      if (!strcmp(g_status.mods[i].name, g_log_name)) { cur = i; break; }
+   int cur = ewgui_ctrl_idx_por_pid(&g_status, g_log_pid);
    ec_module_picker("Select module (logs)", cur, ec_log_pick, NULL);
 }
 
@@ -677,7 +735,10 @@ void on_btn_cfg_reconfig(GtkWidget *w, gpointer data)
    EcModRef *r = g_new0(EcModRef, 1);
    r->pid = g_status.mods[g_cfg_modidx].pid;
    snprintf(r->name, sizeof(r->name), "%s", g_status.mods[g_cfg_modidx].name);
-   snprintf(msg, sizeof(msg), "Restart '%s' to apply the saved config?", r->name);
+   snprintf(r->cfgfile, sizeof(r->cfgfile), "%s", g_status.mods[g_cfg_modidx].cfgfile);
+   char where[128];
+   ec_modref_where(r, where, sizeof(where));
+   snprintf(msg, sizeof(msg), "Restart '%s' (%s) to apply the saved config?", r->name, where);
    ec_confirmar(msg, do_cfg_reconfig, r);
 }
 

@@ -20,6 +20,8 @@
 
 #include <rw_mag.h>
 
+#include "earthworm.h"      /* logit(): el modulo tiene log propio (ver el main) */
+
 #include "hypodb_ids.h"
 
 #include "ewgui/arc_layout.h"
@@ -29,7 +31,6 @@
 #define HYPODB_MAX_MAGS         16
 #define HYPODB_MAX_PENDING_MAGS 256
 #define HYPODB_MAX_MANUAL_PICKS 1024
-#define HYPODB_MAX_CHAN         512
 
 typedef struct {
     int      mod;
@@ -67,7 +68,7 @@ typedef struct {
     double error;
     int    nsta;
     char   algorithm[64];
-    char   msg[512];
+    char  *msg;         /* copia COMPLETA del TYPE_MAGNITUDE (no truncar) */
     int    msg_len;
 } HypodbPendingMag;
 
@@ -237,6 +238,10 @@ HypodbState *hypodb_state_new(const HypodbConfig *cfg)
 
 void hypodb_state_free(HypodbState *st)
 {
+    if (!st)
+        return;
+    for (int i = 0; i < HYPODB_MAX_PENDING_MAGS; i++)
+        free(st->pmag[i].msg);
     free(st);
 }
 
@@ -330,6 +335,12 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
                         char *event_id_out, size_t n)
 {
     int idx[HYPODB_MAX_GROUPS];
+    /* `csnhypodbp_group_matches` indexa `groups[i]` con `sizeof(CsnhypodbpGroupKey)`,
+       pero `st->groups` es un array de `HypodbGroup` (mas grande): pasarlo
+       casteado hacia que comparase contra bytes desplazados dentro de otro grupo
+       y luego se escribia la solucion en el grupo equivocado (contaminacion
+       entre eventos). Hay que darle una copia real de las claves. */
+    CsnhypodbpGroupKey keys[HYPODB_MAX_GROUPS];
     int nm;
     HypodbGroup *g;
     char qb[16];
@@ -337,7 +348,9 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
     if (!st || !sol || !event_id_out || n == 0)
         return -1;
 
-    nm = csnhypodbp_group_matches((const CsnhypodbpGroupKey *)st->groups,
+    for (int i = 0; i < st->ngroups; i++)
+        keys[i] = st->groups[i].key;
+    nm = csnhypodbp_group_matches(keys,
                                   st->ngroups, sol->qid, sol->picks, sol->npicks,
                                   st->cfg.group_pick_tol_sec,
                                   st->cfg.group_min_match_picks,
@@ -377,23 +390,73 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
 /* Escritura                                                                  */
 /* ------------------------------------------------------------------------- */
 
-static int write_station_magnitudes(HypodbState *st, const char *magnitude_id,
+/* Parsea el mensaje sobre una COPIA (el motor lo destruye: `tmpMsg = msg` en
+   rw_mag.c:119 y `line[len] = '\0'` en :134) y devuelve cuantas entradas quedo en
+   `out`, o -1 si no hay memoria. `cap` debe cubrir las entradas posibles: el
+   motor nunca escribe mas de `msglen-1` (avanza `index += len + 1` con `len >= 0`,
+   rw_mag.c:135).
+   El rc del motor se IGNORA a proposito: devuelve -1 cuando una linea queda
+   partida (mensajes truncados a 511 por store_pending_mag) aunque las entradas
+   completas YA esten escritas; descartarlas seria perder esas magnitudes. */
+static int parse_channels(const char *msg, size_t len, MAG_CHAN_INFO *out,
+                          int cap)
+{
+    /* Copia con HOLGURA y a CERO: el motor lee 1 byte mas alla del mensaje
+       (tokenlength -> strchr/strlen, rw_mag.c:384-385, medido con valgrind), y
+       con el bloque a ceros esa lectura se corta en el primer NUL del relleno en
+       vez de seguir por el heap. */
+    char *copy = calloc(len + 64, 1);
+    int n = 0;
+
+    if (!copy)
+        return -1;
+    memcpy(copy, msg, len);
+    (void)rd_chan_mag(copy, (int)len, out, (int)((size_t)cap * sizeof(*out)));
+    free(copy);
+    while (n < cap && out[n].sta[0])
+        n++;
+    return n;
+}
+
+/* Entradas que `rd_chan_mag` escribe DE VERDAD con este mensaje: es el
+ * dimensionado correcto. El motor NO acota sus escrituras contra el tamano que se
+ * le pasa (el 4.o argumento solo alimenta su memset inicial, rw_mag.c:114), asi
+ * que quedarse corto escribe fuera del heap y glibc lo detecta mas tarde con
+ * SIGABRT (signal 6), sin dejar log. Y contar '\n' NO vale de proxy: el formato
+ * no parte solo por '\n' (2 '\n' para 3 estaciones con wr_mag_scnl).
+ * NO destructivo (parsea sobre copia). Devuelve -1 si no hay memoria. */
+int hypodb_mag_station_count(const char *msg, size_t len)
+{
+    MAG_CHAN_INFO *probe;
+    int cap, n;
+
+    if (!msg || len == 0)
+        return -1;
+    cap = (int)len;
+    probe = calloc((size_t)cap, sizeof(*probe));
+    if (!probe)
+        return -1;
+    n = parse_channels(msg, len, probe, cap);
+    free(probe);
+    return n;
+}
+
+int hypodb_write_station_magnitudes(HypodbState *st, const char *magnitude_id,
                                     const char *type, const char *msg,
                                     size_t len)
 {
-    int lines = 0, nchan, n = 0;
+    int nchan, n = 0;
     MAG_CHAN_INFO *ch;
     EwGuiStaMagRow *rows;
-    const char *p;
 
-    for (p = msg; *p; p++)
-        if (*p == '\n')
-            lines++;
-    nchan = lines - 1;   /* sin la línea resumen */
+    if (!st || !msg || len == 0)
+        return -1;
+    /* Dimensiona con lo que el motor va a escribir DE VERDAD. Sin recorte: si
+       se recortara aqui, la segunda llamada al motor volveria a desbordar. El
+       tope real lo pone el tamano del mensaje (ver hypodb_mag_station_count). */
+    nchan = hypodb_mag_station_count(msg, len);
     if (nchan <= 0)
         return 0;
-    if (nchan > HYPODB_MAX_CHAN)
-        nchan = HYPODB_MAX_CHAN;
 
     ch = calloc((size_t)nchan, sizeof(*ch));
     rows = calloc((size_t)nchan, sizeof(*rows));
@@ -403,8 +466,11 @@ static int write_station_magnitudes(HypodbState *st, const char *magnitude_id,
         return -1;
     }
 
-    if (rd_chan_mag((char *)msg, (int)len, ch,
-                    (int)((size_t)nchan * sizeof(*ch))) == 0) {
+    /* Parsea sobre copia (el motor destruye el buffer) y usa las entradas aunque
+       el motor devuelva -1: lo hace cuando una linea queda partida y las
+       entradas completas YA estan escritas (mensajes truncados a 511 por
+       store_pending_mag); descartarlas seria perder esas magnitudes. */
+    if (parse_channels(msg, len, ch, nchan) > 0) {
         for (int i = 0; i < nchan; i++) {
             char chan[64];
 
@@ -463,7 +529,7 @@ static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
         m.station_count = nsta;
         if (ewguidb_upsert_magnitude(st->db, &m) != 0)
             return -1;
-        write_station_magnitudes(st, mid, type, msg, len);
+        hypodb_write_station_magnitudes(st, mid, type, msg, len);
     }
 
     update_mag_meta(g, mid, type, value);
@@ -638,6 +704,8 @@ static void flush_pending_mags(HypodbState *st, HypodbGroup *g, int mod)
             continue;
         apply_magnitude(st, g, pm->mod, pm->type, pm->value, pm->error,
                         pm->nsta, pm->algorithm, pm->msg, (size_t)pm->msg_len);
+        free(pm->msg);
+        pm->msg = NULL;
         pm->used = 0;
     }
 }
@@ -660,10 +728,17 @@ static void store_pending_mag(HypodbState *st, int qid, int mod,
         pm->nsta = nsta;
         snprintf(pm->algorithm, sizeof pm->algorithm, "%s",
                  (algorithm && algorithm[0]) ? algorithm : "");
-        pm->msg_len = (len < sizeof(pm->msg)) ? (int)len
-                                              : (int)sizeof(pm->msg) - 1;
-        memcpy(pm->msg, msg, (size_t)pm->msg_len);
-        pm->msg[pm->msg_len] = '\0';
+        /* Copia COMPLETA: truncar el mensaje hacia que `rd_chan_mag` escribiera
+           menos entradas de las que hay (y antes, directamente fuera del array).
+           El tamano lo fija el mensaje, no un buffer fijo. */
+        pm->msg = malloc(len + 1);
+        if (!pm->msg) {
+            pm->used = 0;
+            return;
+        }
+        pm->msg_len = (int)len;
+        memcpy(pm->msg, msg, len);
+        pm->msg[len] = '\0';
         return;
     }
 }
@@ -681,8 +756,12 @@ int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
 
     if (!st || !msg)
         return -1;
-    if (csnhypodbp_parse_solution(msg, len, mod, &sol) != 0)
+    if (csnhypodbp_parse_solution(msg, len, mod, &sol) != 0) {
+        if (st->cfg.debug)
+            logit("et", "hypodb_ingest: ARC ilegible, descartado (len=%zu, mod=%d)\n",
+                  len, mod);
         return -1;
+    }
     if (hypodb_assign_event(st, &sol, eid, sizeof eid) != 0)
         return -1;
 
@@ -723,14 +802,22 @@ int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len)
 
     setlocale(LC_NUMERIC, "C");
     memset(&mag, 0, sizeof mag);
-    if (rd_mag((char *)msg, (int)len, &mag) != 0)
+    if (rd_mag((char *)msg, (int)len, &mag) != 0) {
+        if (st->cfg.debug)
+            logit("et", "hypodb_ingest: TYPE_MAGNITUDE ilegible, descartado (len=%zu)\n",
+                  len);
         return -1;
+    }
 
     qid = atoi(mag.qid);
     mod = (int)mag.origin_version;
     type = mag.szmagtype;
-    if (!type[0])
+    if (!type[0]) {
+        if (st->cfg.debug)
+            logit("et", "hypodb_ingest: TYPE_MAGNITUDE sin tipo, descartado (qid=%d)\n",
+                  qid);
         return -1;
+    }
 
     g = find_group_by_qid(st, qid);
     if (g && find_origin_meta(g, mod)) {

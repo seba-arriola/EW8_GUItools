@@ -144,12 +144,52 @@ static void test_gfdir_guard(void)
     printf("  guard ok (base intacta)\n");
 }
 
+static void test_abi_and_selfcheck(void)
+{
+    CsnwphaseCfg cfg, other;
+    CsnwphaseInput in;
+    char text[4096], bad[4096], err[256];
+
+    /* ABI: los tamanos del consumidor deben ser los de la libreria. */
+    assert(csnwphase_abi_check(sizeof(CsnwphaseCfg), sizeof(CsnwphaseInput)) == 0);
+    assert(csnwphase_abi_check(sizeof(CsnwphaseCfg) - 8,
+                               sizeof(CsnwphaseInput)) != 0);
+    assert(csnwphase_cfg_size() == sizeof(CsnwphaseCfg));
+    assert(csnwphase_input_size() == sizeof(CsnwphaseInput));
+
+    /* El i_master de esta config pasa el selfcheck... */
+    csnwphase_cfg_defaults(&cfg);
+    memset(&in, 0, sizeof in);
+    in.magnitude = 7.4;
+    assert(csnwphase_i_master_text(&cfg, &in, text, sizeof text) > 0);
+    assert(csnwphase_i_master_selfcheck(&cfg, text, err, sizeof err) == 0);
+
+    /* ...y el de OTRA config se rechaza (equivale a leer memoria ajena). */
+    csnwphase_cfg_defaults(&other);
+    other.idec3_fl = 0.004;
+    other.wpwin[1] = 30.0;
+    assert(csnwphase_i_master_text(&other, &in, bad, sizeof bad) > 0);
+    assert(csnwphase_i_master_selfcheck(&cfg, bad, err, sizeof err) != 0);
+    assert(err[0] != '\0');
+
+    /* El caso REAL del bug: IDEC_3 con los int del evento leidos como double y
+       WP_WIN con lat/lon/prof (asi salia el i_master con los objetos
+       desfasados de csnhypodbp contra libcsnwphase.a). */
+    err[0] = '\0';
+    assert(csnwphase_i_master_selfcheck(&cfg,
+        "IDEC_2:  2 280  0.1\n"
+        "IDEC_3:  2.122e-313  4.88059e-313  26  55\n"
+        "WP_WIN:  -23.2126. -67.8 101.9\n", err, sizeof err) != 0);
+    assert(err[0] != '\0');
+}
+
 int main(void)
 {
     printf("csnwphase: tests de configuracion\n");
     test_defaults();
     test_load();
     test_gfdir_guard();
+    test_abi_and_selfcheck();
     printf("ALL CSNWPHASE CFG TESTS PASSED\n");
     return 0;
 }

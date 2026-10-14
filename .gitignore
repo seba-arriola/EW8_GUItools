@@ -12,6 +12,8 @@ tank_repo/
 replay/
 picks/
 runs/
+report_images/
+run_working_v8/wstore/
 
 # --- 2. Runtime de EarthWorm ------------------------------------------------
 run_working_v8/tanks/
@@ -129,6 +131,11 @@ tank_tools/tests/tmp/
 tmp/
 # Datos grandes requeridos en runtime (nlloc, hyp2000, csnmags): no se versionan.
 /resources/
+
+# Dependencias de cabeceras que genera el build (-MMD -MF $(@).dep).
+# OJO: *.d NO se ignora: los .d de los modulos son configuraciones versionadas
+# (ew_controller.d, test/csnloc_offline.d, test/csnmags_test.d).
+*.dep
 
 # --- csnmags (motor de magnitudes) ---
 /run_working_v8/params/responses/

@@ -47,7 +47,7 @@ int main(int argc, char **argv)
     SHM_INFO       r[2], r_pick;
     MSG_LOGO       logos[2], plogo, logo;
     const char    *ring_names[2];
-    long           bufsz = 65536, size;
+    long           bufsz = 65536 + 1, size;   /* +1: los parsers exigen NUL final */
     char          *buf;
     time_t         last_retry;
 
@@ -59,10 +59,17 @@ int main(int argc, char **argv)
         fprintf(stderr, "hypodb_ingest: error de config %s\n", argv[1]);
         return 1;
     }
+    /* Log propio en EW_LOG (`hypodb_ingest_<fecha>.log`), con el modo que pide
+       `LogFile` en el .d. Mismo patron que csnhypodbp/csnrv/csntvp
+       (`logit_init(argv[1], 0, 1024, LogFile)`). Sin esto el modulo era MUDO: sus
+       mensajes iban a stderr, que startstop comparte y `ew_monitor.sh` trunca en
+       cada arranque, asi que un fallo (p. ej. el SIGABRT por desbordar el array
+       de canales) no dejaba ni una linea que mirar. */
+    logit_init(argv[1], 0, 1024, cfg.log_file);
     if (GetType("TYPE_HYP2000ARC", &t_arc) != 0 ||
         GetType("TYPE_MAGNITUDE", &t_mag) != 0 ||
         GetType("TYPE_PICK_SCNL", &t_pick) != 0) {
-        fprintf(stderr, "hypodb_ingest: tipos EW desconocidos\n");
+        logit("e", "hypodb_ingest: tipos EW desconocidos\n");
         return 1;
     }
 
@@ -71,8 +78,8 @@ int main(int argc, char **argv)
     for (int i = 0; i < 2; i++) {
         long key = GetKey((char *)ring_names[i]);
         if (key == -1) {
-            fprintf(stderr, "hypodb_ingest: anillo invalido <%s>\n",
-                    ring_names[i]);
+            logit("e", "hypodb_ingest: anillo invalido <%s>\n",
+                  ring_names[i]);
             return 1;
         }
         tport_attach(&r[i], key);
@@ -80,8 +87,8 @@ int main(int argc, char **argv)
     {
         long key = GetKey(cfg.in_pick_ring);
         if (key == -1) {
-            fprintf(stderr, "hypodb_ingest: anillo invalido <%s>\n",
-                    cfg.in_pick_ring);
+            logit("e", "hypodb_ingest: anillo invalido <%s>\n",
+                  cfg.in_pick_ring);
             return 1;
         }
         tport_attach(&r_pick, key);
@@ -103,7 +110,8 @@ int main(int argc, char **argv)
 
     /* Purga inicial de los anillos hypo: arrancamos en el presente. */
     for (int i = 0; i < 2; i++)
-        while (tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz) == GET_OK)
+        while (tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
+                   == GET_OK)
             ;
 
     st = hypodb_state_new(&cfg);
@@ -117,17 +125,17 @@ int main(int argc, char **argv)
             hypodb_state_set_db(st, db);
             hypodb_load_from_db(st);
         } else {
-            fprintf(stderr, "hypodb_ingest: no conecta a la BD: %s\n",
-                    ewguidb_last_error(db));
+            logit("e", "hypodb_ingest: no conecta a la BD: %s\n",
+                  ewguidb_last_error(db));
             ewguidb_close(db);
             db = NULL;
         }
     } else {
-        fprintf(stderr, "hypodb_ingest: no se pudo leer %s\n", cfg.db_env_file);
+        logit("e", "hypodb_ingest: no se pudo leer %s\n", cfg.db_env_file);
     }
 
-    fprintf(stderr, "hypodb_ingest: %s + %s + %s -> BD\n",
-            cfg.in_ring, cfg.in_ring_ref, cfg.in_pick_ring);
+    logit("et", "hypodb_ingest: %s + %s + %s -> BD\n",
+          cfg.in_ring, cfg.in_ring_ref, cfg.in_pick_ring);
 
     last_retry = time(NULL);
     while (tport_getflag(&r[0]) != TERMINATE) {
@@ -136,8 +144,11 @@ int main(int argc, char **argv)
         for (int i = 0; i < 2; i++) {
             int n = 0;
             while (n < MAX_PER_RING &&
-                   tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz)
+                   tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
                        == GET_OK) {
+                /* El buffer del anillo NO viene terminado en NUL, y los parsers
+                   lo exigen (rd_mag, sscanf, csnhypodbp_parse_solution). */
+                buf[size] = '\0';
                 dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163, buf,
                          size);
                 any = 1;
@@ -147,8 +158,9 @@ int main(int argc, char **argv)
         {
             int n = 0;
             while (n < MAX_PER_RING &&
-                   tport_getmsg(&r_pick, &plogo, 1, &logo, &size, buf, bufsz)
+                   tport_getmsg(&r_pick, &plogo, 1, &logo, &size, buf, bufsz - 1)
                        == GET_OK) {
+                buf[size] = '\0';
                 hypodb_feed_pick(st, buf, (size_t)size);
                 any = 1;
                 n++;
@@ -161,7 +173,7 @@ int main(int argc, char **argv)
                 ewguidb_open(&dbcfg, &db) == 0) {
                 hypodb_state_set_db(st, db);
                 hypodb_load_from_db(st);
-                fprintf(stderr, "hypodb_ingest: BD conectada\n");
+                logit("et", "hypodb_ingest: BD conectada\n");
             } else {
                 ewguidb_close(db);
                 db = NULL;

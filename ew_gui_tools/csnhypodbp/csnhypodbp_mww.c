@@ -25,6 +25,7 @@
 
 #include "csnhypodbp.h"
 #include "csnhypodbp_mww.h"
+#include "csnhypodbp_mwwerr.h"
 #include "csnwphase.h"
 #include "ewgui/db.h"
 #include "ewgui/view.h"
@@ -59,6 +60,7 @@ typedef struct {
     int            seed_syncing; /* evita recursion al sincronizar el spin */
     long long      sig_seed;     /* firma de la semilla ya volcada a la tabla */
     char           last_err[256];/* error real del hilo (se muestra SIEMPRE) */
+    int            abi_bad;      /* 1 = la libreria de fase W tiene otro layout */
     guint          tick_id;
     time_t         t_start;
     CsnwphaseCfg   cfg;
@@ -398,6 +400,26 @@ static void mww_params_fill(void)
     }
 }
 
+/*
+ * Motivo real del fallo, en orden de fidelidad: lo que reporto el hilo de trabajo,
+ * lo que dijo el parser y, si no hay nada, la primera linea de error del propio log
+ * del motor (`run.sh` abortado solo deja un rc generico).
+ */
+static void mww_why(char *out, size_t n)
+{
+    if (g_mww.last_err[0]) {
+        snprintf(out, n, "%s", g_mww.last_err);
+        return;
+    }
+    if (g_mww.out.err[0]) {
+        snprintf(out, n, "%s", g_mww.out.err);
+        return;
+    }
+    if (csnhypodbp_mww_first_error(g_mww.rundir, out, n) == 0)
+        return;
+    snprintf(out, n, "revisa la salida completa");
+}
+
 void csnhypodbp_mww_update(void)
 {
     char txt[1200];
@@ -425,7 +447,7 @@ void csnhypodbp_mww_update(void)
     /* --- botones y estado --- */
     /* La magnitud NO es una compuerta: es la semilla de la banda (editable). */
     gtk_widget_set_sensitive(g_mww.btn_calc,
-                             !g_mww.running && g_mww.have_cfg
+                             !g_mww.running && g_mww.have_cfg && !g_mww.abi_bad
                              && selected_id[0] != '\0' && selected_otime > 0.0);
     gtk_widget_set_sensitive(g_mww.btn_cancel, g_mww.running);
     gtk_widget_set_sensitive(g_mww.btn_save,
@@ -452,6 +474,11 @@ void csnhypodbp_mww_update(void)
                      "Falta config: no se pudo leer MwwConfigFile <%s>", MwwConfigFile);
             gtk_label_set_text(GTK_LABEL(g_mww.status), txt);
             gtk_widget_add_css_class(g_mww.status, "mww-error");
+        } else if (g_mww.abi_bad) {
+            gtk_label_set_text(GTK_LABEL(g_mww.status),
+                "Librería de fase W incompatible (objetos desfasados): "
+                "recompila con `make clean && make`");
+            gtk_widget_add_css_class(g_mww.status, "mww-error");
         } else if (selected_id[0] == '\0' || selected_otime <= 0.0) {
             gtk_label_set_text(GTK_LABEL(g_mww.status),
                                "Selecciona una solucion en *Eventos* para calcular Mww");
@@ -466,9 +493,12 @@ void csnhypodbp_mww_update(void)
             gtk_label_set_text(GTK_LABEL(g_mww.status), txt);
             gtk_widget_add_css_class(g_mww.status, "mww-ok");
         } else {
-            /* El error REAL primero: si fallo la preparacion, `out.err` esta vacio. */
-            const char *why = g_mww.last_err[0] ? g_mww.last_err
-                            : (g_mww.out.err[0] ? g_mww.out.err : "revisa la salida completa");
+            /* Motivo real: lo que reporto el hilo, lo que dijo el parser o la
+               primera linea de error del log del motor (un `run.sh` abortado solo
+               deja un rc generico: asi nunca queda un "sin resultado" mudo). */
+            char why[512];
+
+            mww_why(why, sizeof why);
             snprintf(txt, sizeof txt, "Sin solucion: %s", why);
             gtk_label_set_text(GTK_LABEL(g_mww.status), txt);
             gtk_widget_add_css_class(g_mww.status, "mww-error");
@@ -494,10 +524,10 @@ void csnhypodbp_mww_update(void)
                  o->n_used, o->global_rms);
         gtk_label_set_text(GTK_LABEL(g_mww.summary), txt);
     } else if (g_mww.have_out) {
-        snprintf(txt, sizeof txt, "sin resultado\n%s",
-                 g_mww.last_err[0] ? g_mww.last_err
-                                   : (g_mww.out.err[0] ? g_mww.out.err
-                                                       : "revisa la salida completa"));
+        char why[512];
+
+        mww_why(why, sizeof why);
+        snprintf(txt, sizeof txt, "sin resultado\n%s", why);
         gtk_label_set_text(GTK_LABEL(g_mww.summary), txt);
     } else {
         gtk_label_set_text(GTK_LABEL(g_mww.summary),
@@ -738,12 +768,17 @@ static void on_mww_save(GtkButton *btn, gpointer data)
 /* Construccion del panel                                               */
 /* ------------------------------------------------------------------ */
 
+/* El alto es un SUELO PEQUENO, no un minimo grande: cada pixel de minimo se SUMA
+   al de la ventana y, si el total supera la geometria maximizada que da el
+   compositor, GTK adjunta un buffer mas grande que el configurado y Wayland corta
+   la conexion (`Error 71` al maximizar; ver AGENTS §7). El reparto fino lo hace
+   `vexpand` (la salida del motor se lleva el alto sobrante). */
 static GtkWidget *mww_scrolled(GtkWidget *child, int h)
 {
     GtkWidget *sw = gtk_scrolled_window_new();
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
                                    GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-    gtk_widget_set_size_request(sw, -1, h);
+    gtk_scrolled_window_set_min_content_height(GTK_SCROLLED_WINDOW(sw), h);
     gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(sw), child);
     return sw;
 }
@@ -760,6 +795,13 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     if (!g_mww.have_cfg)
         g_mww.have_cfg = (csnwphase_cfg_load(&g_mww.cfg, MwwConfigFile) == 0);
 
+    /* Guardia de ABI: si este modulo se compilo contra un `csnwphase.h` mas viejo
+       que el de la libreria, los structs tienen otro layout y la libreria lee
+       memoria ajena (el i_master salia con los `int` del evento leidos como
+       `double` y la fase W no arrancaba). Se compara con NUESTROS tamanos. */
+    g_mww.abi_bad = (csnwphase_abi_check(sizeof(CsnwphaseCfg),
+                                         sizeof(CsnwphaseInput)) != 0);
+
     root = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
     gtk_widget_set_margin_top(root, 6);
     gtk_widget_set_margin_bottom(root, 6);
@@ -771,7 +813,7 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_grid_set_column_spacing(GTK_GRID(g_mww.grid), 14);
     gtk_grid_set_row_spacing(GTK_GRID(g_mww.grid), 2);
     frame = gtk_frame_new("Parámetros de la inversión de fase W");
-    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.grid, 170));
+    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.grid, 90));
     gtk_box_append(GTK_BOX(root), frame);
 
     /* 2. semilla de magnitud: decide la banda del filtro y la half-duration */
@@ -835,7 +877,8 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     g_mww.ball = ewgui_canvas_new();
     ewgui_canvas_set_draw(g_mww.ball, on_draw_mww, &g_mww);
     vbox = ewgui_canvas_widget(g_mww.ball);
-    gtk_widget_set_size_request(vbox, 200, 200);
+    /* Suelo pequeno (ver mww_scrolled): 120 px bastan para leer la playera. */
+    gtk_widget_set_size_request(vbox, 120, 120);
     frame = gtk_frame_new("Mecanismo focal (WCMT)");
     gtk_frame_set_child(GTK_FRAME(frame), vbox);
     gtk_box_append(GTK_BOX(row), g_mww.summary);
@@ -850,7 +893,7 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_widget_add_css_class(g_mww.view, "mww-output");
     g_mww.buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_mww.view));
     frame = gtk_frame_new("Salida completa del motor (fase W)");
-    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.view, 260));
+    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.view, 90));
     gtk_widget_set_vexpand(frame, TRUE);
     gtk_box_append(GTK_BOX(root), frame);
 

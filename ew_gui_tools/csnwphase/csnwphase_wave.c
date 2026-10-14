@@ -90,6 +90,18 @@ void csnwphase_wave_close(CsnwphaseWave *w)
     w->have_store = 0;
 }
 
+/* El motor nombra los GF como `<STA>.<NET>.<CHAN>.<LOC>` y `wpinversion` los
+ * busca con el MISMO location que trae la traza: para el location nulo usa `--`,
+ * NO vacio. La lista de estaciones normaliza `--` -> "" para pedir al SDS (que
+ * escribe `NET.STA..CHAN`), asi que aqui hay que devolver `--` al escribir la
+ * traza; si no, la inversion muere con
+ * `ERROR opening ./GF/gf_rr/STA.NET.CHAN..SAC.sac.bp` (visto 2026-10-13 con
+ * CX.PB16, la estacion que solo aparece con el hipocentro de la BD). */
+static void set_loc(char *dst, size_t n, const char *loc)
+{
+    snprintf(dst, n, "%s", (loc && loc[0]) ? loc : "--");
+}
+
 static int store_get(CsnwphaseWave *w, const char *net, const char *sta,                     const char *chan, const char *loc, double t0, double t1,
                      CsnwphaseTrace *out)
 {
@@ -116,7 +128,7 @@ static int store_get(CsnwphaseWave *w, const char *net, const char *sta,        
     snprintf(out->sta, sizeof(out->sta), "%s", st.sta);
     snprintf(out->net, sizeof(out->net), "%s", st.net);
     snprintf(out->chan, sizeof(out->chan), "%s", st.chan);
-    snprintf(out->loc, sizeof(out->loc), "%s", st.loc);
+    set_loc(out->loc, sizeof(out->loc), st.loc);
     out->t0 = st.t0;
     out->samprate = st.samprate;
     out->n = st.n;
@@ -209,7 +221,7 @@ static int sds_get(CsnwphaseWave *w, const char *net, const char *sta,
     snprintf(out->sta, sizeof(out->sta), "%s", sta);
     snprintf(out->net, sizeof(out->net), "%s", net);
     snprintf(out->chan, sizeof(out->chan), "%s", chan);
-    snprintf(out->loc, sizeof(out->loc), "%s", loc);
+    set_loc(out->loc, sizeof(out->loc), loc);
     out->t0 = t0;
     out->samprate = rate;
     out->n = filled;
@@ -328,7 +340,12 @@ int csnwphase_sta_select(const CsnwphaseCfg *cfg, double evla, double evlo,
         cpystr(s->sta, sizeof(s->sta), sta);
         cpystr(s->net, sizeof(s->net), net);
         cpystr(s->chan, sizeof(s->chan), chan);
-        cpystr(s->loc, sizeof(s->loc), (strcmp(loc, "--") == 0) ? "" : loc);
+        /* El location `--` se CONSERVA: `ewgui_sds_path` ya lo traduce a vacio para el
+       SDS y el store lo quiere tal cual (`--`). Ademas, asi la traza sale con `--`
+       y el motor nombra los GF `<STA>.<NET>.<CHAN>.--` igual que los busca
+       `wpinversion`; con vacio, la inversion muere con
+       `ERROR opening ./GF/gf_rr/STA.NET.CHAN..SAC.sac.bp` (visto 2026-10-13). */
+    cpystr(s->loc, sizeof(s->loc), loc);
         s->lat = lat;
         s->lon = lon;
         s->elev_m = elev;

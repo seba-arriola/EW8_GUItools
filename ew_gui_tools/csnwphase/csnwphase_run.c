@@ -176,6 +176,28 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
     fprintf(f, "# Generado por csnwphase: inversión de fase W (motor eost/wphase).\n");
     fprintf(f, "# Datos: DATA_org/*.SAC + DATA_org/SAC_PZs_*  ->  WCMTSOLUTION\n");
     fprintf(f, "set -e\n");
+    fprintf(f, "# Cada paso deja su marca y su codigo en el log: un fallo del motor NUNCA\n");
+    fprintf(f, "# queda mudo (antes solo se veia el `rc` del script, sin decir que paso).\n");
+    fprintf(f, "# `set +e` dentro de `run` es imprescindible: si no, `set -e` mataria el\n");
+    fprintf(f, "# script en la propia orden fallida y la marca no llegaria a escribirse.\n");
+    fprintf(f, "n=0\n");
+    fprintf(f, "run() { n=$((n+1)); echo \"##### paso $n: $* #####\"; set +e; \"$@\"; rc=$?; \\\n");
+    fprintf(f, "        set -e; echo \"##### paso $n: rc=$rc #####\"; return $rc; }\n");
+    fprintf(f, "# Para las ordenes que ESCRIBEN un fichero: el `>` va DENTRO del envoltorio,\n");
+    fprintf(f, "# o el eco de la marca se colaria en el fichero y el motor leeria `#####`\n");
+    fprintf(f, "# como si fuera una estacion (visto 2026-10-13 en pz_fil_list).\n");
+    fprintf(f, "run_out() { out=$1; shift; n=$((n+1)); \\\n");
+    fprintf(f, "        echo \"##### paso $n: $* > $out #####\"; set +e; \"$@\" >\"$out\"; rc=$?; \\\n");
+    fprintf(f, "        set -e; echo \"##### paso $n: rc=$rc #####\"; return $rc; }\n");
+    fprintf(f, "# `make_resp_lookup_table` del motor del CSN devuelve 1 SIEMPRE (incluso con\n");
+    fprintf(f, "# una sola estacion o lista vacia) aunque la LUT salga completa: su script\n");
+    fprintf(f, "# original no usa `set -e`. Se tolera ese 1 SOLO si la LUT quedo escrita y con\n");
+    fprintf(f, "# contenido; si no, el fallo es real y aborta. (Medido 2026-10-13.)\n");
+    fprintf(f, "lut() { n=$((n+1)); echo \"##### paso $n: $* #####\"; set +e; \"$@\"; rc=$?; set -e; \\\n");
+    fprintf(f, "        if [ $rc -ne 0 ] && [ -s coeffs_rec_lut ]; then \\\n");
+    fprintf(f, "          echo \"##### paso $n: aviso: el motor devolvio $rc con la LUT completa (se tolera) #####\"; \\\n");
+    fprintf(f, "          rc=0; fi; \\\n");
+    fprintf(f, "        echo \"##### paso $n: rc=$rc #####\"; return $rc; }\n");
     fprintf(f, "cd \"%s\"\n", rundir);
     fprintf(f, "export WPHASE_HOME='%s'\n", cfg->wphase_home);
     fprintf(f, "export GF_PATH='%s'\n", cfg->gf_dir);
@@ -193,29 +215,29 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
     fprintf(f, "done\n");
     fprintf(f, "ls DATA/*.SAC > DATA/_sac_files_list\n");
     fprintf(f, "\n# 3. ventanas W (usa P_tt_JB de $WPHASE_HOME y DMIN/DMAX/WP_WIN de i_master)\n");
-    fprintf(f, "\"$WBIN/trim_sac_files\" i_master DATA/_sac_files_list scr_dat_fil_list -u\n");
+    fprintf(f, "run \"$WBIN/trim_sac_files\" i_master DATA/_sac_files_list scr_dat_fil_list -u\n");
     fprintf(f, "\n# 4. LUT de respuesta (id NET_STA_LOC_CHAN)\n");
-    fprintf(f, "ls DATA/SAC_PZs* > pz_fil_list\n");
-    fprintf(f, "\"$WBIN/make_resp_lookup_table\" pz_fil_list i_master coeffs_rec_lut\n");
+    fprintf(f, "run_out pz_fil_list ls DATA/SAC_PZs*\n");
+    fprintf(f, "lut \"$WBIN/make_resp_lookup_table\" pz_fil_list i_master coeffs_rec_lut\n");
     fprintf(f, "\n# 5. deconvolucion + filtrado de datos, y kernels de las GF\n");
-    fprintf(f, "\"$WBIN/rec_dec_filt\" coeffs_rec_lut i_master scr_dat_fil_list dec_bp_dat_fil_list\n");
-    fprintf(f, "\"$WBIN/prep_kernels\" scr_dat_fil_list l\n");
-    fprintf(f, "cut -d' ' -f1 dec_bp_dat_fil_list > i_wpinversion\n");
+    fprintf(f, "run \"$WBIN/rec_dec_filt\" coeffs_rec_lut i_master scr_dat_fil_list dec_bp_dat_fil_list\n");
+    fprintf(f, "run \"$WBIN/prep_kernels\" scr_dat_fil_list l\n");
+    fprintf(f, "run_out i_wpinversion cut -d' ' -f1 dec_bp_dat_fil_list\n");
     fprintf(f, "\n# 6. inversion: screening de mediana y luego por RMS\n");
-    fprintf(f, "\"$WBIN/wpinversion\" -log LOG/wpinversion.noth.log -osyndir SYNTH \\\n");
+    fprintf(f, "run \"$WBIN/wpinversion\" -log LOG/wpinversion.noth.log -osyndir SYNTH \\\n");
     fprintf(f, "  -pdata fort.15.noth -med\n");
     fprintf(f, "cp -f o_wpinversion o_wpinv\n");
     fprintf(f, "cp -f WCMTSOLUTION WCMTSOLUTION.noth 2>/dev/null || true\n");
     fprintf(f, "cp -f p_wpinversion p_wpinversion.noth 2>/dev/null || true\n");
     fprintf(f, "for th in %g %g %g; do\n", cfg->screen_th[0], cfg->screen_th[1],
             cfg->screen_th[2]);
-    fprintf(f, "  \"$WBIN/wpinversion\" -th $th -ifil o_wpinversion -ofil o_wpinv.th_$th \\\n");
+    fprintf(f, "  run \"$WBIN/wpinversion\" -th $th -ifil o_wpinversion -ofil o_wpinv.th_$th \\\n");
     fprintf(f, "    -log LOG/wpinversion.th_$th.log -osyndir SYNTH -pdata fort.15.th_$th \\\n");
     fprintf(f, "    -ocmtf WCMTSOLUTION.th_$th -old\n");
     fprintf(f, "  cp -f o_wpinv.th_$th o_wpinversion\n");
     fprintf(f, "done\n");
     fprintf(f, "\n# 7. screening por razon de amplitudes\n");
-    fprintf(f, "\"$WBIN/wpinversion\" -nr %g -ifil o_wpinversion -ofil o_wpinv.r_%g \\\n",
+    fprintf(f, "run \"$WBIN/wpinversion\" -nr %g -ifil o_wpinversion -ofil o_wpinv.r_%g \\\n",
             cfg->screen_nr, cfg->screen_nr);
     fprintf(f, "  -log LOG/wpinversion.r_%g.log -osyndir SYNTH -pdata fort.15.r_%g \\\n",
             cfg->screen_nr, cfg->screen_nr);
@@ -232,7 +254,7 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
          * (la que prefiere el parser), `LOG/gs_o_wpinversion.log` y `gs_SYNTH/`. */
         fprintf(f, "\n# 8. grid search del centroide (wpinversion_gs)\n");
         fprintf(f, "mkdir -p gs_SYNTH\n");
-        fprintf(f, "\"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
+        fprintf(f, "run \"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
         fprintf(f, "  -icmtf %s -log LOG/gs_o_wpinversion.log -osyndir gs_SYNTH \\\n",
                 cfg->cmtfile);
         fprintf(f, "  -ts %g %g %g -ts_Nit %d -otsgsf grid_search_ts_out \\\n",

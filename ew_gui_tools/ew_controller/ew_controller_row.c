@@ -3,19 +3,19 @@
 /* ---------------- EcModRow ---------------- */
 struct _EcModRow {
     GObject parent_instance;
-    char *name, *status, *details;
+    char *name, *status, *details, *cfgfile;
     int   pid;
 };
 
 G_DEFINE_TYPE(EcModRow, ec_mod_row, G_TYPE_OBJECT)
 
-enum { M_PROP_0, M_PROP_NAME, M_PROP_PID, M_PROP_STATUS, M_PROP_DETAILS, M_N_PROPS };
+enum { M_PROP_0, M_PROP_NAME, M_PROP_PID, M_PROP_STATUS, M_PROP_DETAILS, M_PROP_CFGFILE, M_N_PROPS };
 static GParamSpec *m_props[M_N_PROPS];
 
 static void ec_mod_row_finalize(GObject *o)
 {
     EcModRow *r = EC_MOD_ROW(o);
-    g_free(r->name); g_free(r->status); g_free(r->details);
+    g_free(r->name); g_free(r->status); g_free(r->details); g_free(r->cfgfile);
     G_OBJECT_CLASS(ec_mod_row_parent_class)->finalize(o);
 }
 static void ec_mod_row_set_property(GObject *o, guint id, const GValue *v, GParamSpec *p)
@@ -27,6 +27,7 @@ static void ec_mod_row_set_property(GObject *o, guint id, const GValue *v, GPara
         case M_PROP_PID:     r->pid = g_value_get_int(v); break;
         case M_PROP_STATUS:  g_free(r->status);  r->status  = g_value_dup_string(v); break;
         case M_PROP_DETAILS: g_free(r->details); r->details = g_value_dup_string(v); break;
+        case M_PROP_CFGFILE: g_free(r->cfgfile); r->cfgfile = g_value_dup_string(v); break;
     }
 }
 static void ec_mod_row_get_property(GObject *o, guint id, GValue *v, GParamSpec *p)
@@ -38,6 +39,7 @@ static void ec_mod_row_get_property(GObject *o, guint id, GValue *v, GParamSpec 
         case M_PROP_PID:     g_value_set_int(v, r->pid);        break;
         case M_PROP_STATUS:  g_value_set_string(v, r->status);  break;
         case M_PROP_DETAILS: g_value_set_string(v, r->details); break;
+        case M_PROP_CFGFILE: g_value_set_string(v, r->cfgfile); break;
     }
 }
 static void ec_mod_row_class_init(EcModRowClass *k)
@@ -50,14 +52,17 @@ static void ec_mod_row_class_init(EcModRowClass *k)
     m_props[M_PROP_PID]     = g_param_spec_int("pid", "pid", NULL, G_MININT, G_MAXINT, 0, G_PARAM_READWRITE);
     m_props[M_PROP_STATUS]  = g_param_spec_string("status", "status", NULL, NULL, G_PARAM_READWRITE);
     m_props[M_PROP_DETAILS] = g_param_spec_string("details", "details", NULL, NULL, G_PARAM_READWRITE);
+    m_props[M_PROP_CFGFILE] = g_param_spec_string("cfgfile", "cfgfile", NULL, NULL, G_PARAM_READWRITE);
     g_object_class_install_properties(o, M_N_PROPS, m_props);
 }
 static void ec_mod_row_init(EcModRow *r) { (void)r; }
 
-EcModRow *ec_mod_row_new(const char *name, int pid, const char *status, const char *details)
+EcModRow *ec_mod_row_new(const char *name, int pid, const char *status, const char *details,
+                         const char *cfgfile)
 {
     return g_object_new(EC_TYPE_MOD_ROW, "name", name, "pid", pid,
-                        "status", status, "details", details, NULL);
+                        "status", status, "details", details,
+                        "cfgfile", cfgfile, NULL);
 }
 
 /* ---------------- EcRingRow ---------------- */

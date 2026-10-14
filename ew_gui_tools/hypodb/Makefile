@@ -19,7 +19,7 @@ LIB     = libhypodb.a
 LIBOBJS = hypodb_ids.o hypodb_config.o hypodb_ingest.o \
           csnhypodbp_group.o ewgui_config.o ewgui_db.o
 
-TESTS = test_ids test_group_events test_ingest_db
+TESTS = test_ids test_group_events test_ingest_db test_mag_lines
 
 all: $(LIB) install
 
@@ -54,15 +54,40 @@ test_group_events: test_group_events.c $(LIB)
 test_ingest_db: test_ingest_db.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ test_ingest_db.c $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
 
+test_mag_lines: test_mag_lines.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ test_mag_lines.c $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
+
 test: $(TESTS)
 
 check: $(TESTS)
 	@echo "=== test_ids ===";          ./test_ids
 	@echo "=== test_group_events ==="; ./test_group_events
 	@echo "=== test_ingest_db ===";    ./test_ingest_db
+	@echo "=== test_mag_lines ===";    ./test_mag_lines
+	@echo "=== invariantes de fuente ==="; sh ./test_source_invariants.sh
 	@echo "TODOS LOS TESTS OK"
+
+# El desbordamiento del array de canales ocurre DENTRO de `rd_chan_mag`, que es
+# codigo de EarthWorm sin instrumentar: ASan no lo veria (solo instrumenta lo que
+# compila). Valgrind si, porque sigue todo el espacio de direcciones.
+check-valgrind: test_mag_lines
+	valgrind --error-exitcode=1 --quiet ./test_mag_lines
 
 clean:
 	rm -f *.o $(LIB) $(TESTS) hypodb_ingest
 
-.PHONY: all test check clean install
+.PHONY: all test check check-valgrind clean install
+
+# --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
+# Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda
+# con un layout de structs viejo mientras la libreria se recompila, y la ABI se
+# rompe en silencio (paso con csnhypodbp y libcsnwphase.a: el i_master salia con
+# la memoria del struct equivocado y la inversion de fase W no arrancaba).
+# OJO: los `.d` del modulo NO son dependencias (son configuraciones: el
+# `ew_controller.d` del panel o los `.d` de los tests de csnloc/csnmags), asi que
+# las deps van a `*.dep` para no colisionar nunca con ellos.
+CFLAGS += -MMD -MP -MF $(@).dep
+-include $(wildcard *.dep */*.dep)
+clean: clean-deps
+clean-deps:
+	rm -f *.dep */*.dep
