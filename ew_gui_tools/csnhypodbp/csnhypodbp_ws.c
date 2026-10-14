@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_magchan.h"
 #include "csnhypodbp_sds.h"
 #include "wstore.h"
 
@@ -1094,23 +1095,20 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
 
     /* Magnitudes POR ESTACION del propio mensaje: las muestra la sub-pestaña
        `magnitudes`. Se guardan por (qid,mod,magnitud); si la tabla no las tiene
-       (p. ej. la solucion viene del historial), cae a la BD. El numero de canales
-       se deduce del mensaje (lineas - 1), igual que hace hypodb. */
+       (p. ej. la solucion viene del historial), cae a la BD. */
     {
         static CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];
-        MAG_CHAN_INFO *ch;
-        const char *p;
+        MAG_CHAN_INFO *ch = NULL;
         size_t len = strlen(payload);
-        int nch = 0, i, n = 0;
+        int nch, i, n = 0;
 
-        for (p = payload; *p; p++) if (*p == '\n') nch++;
-        if (len > 0 && payload[len - 1] != '\n') nch++;
-        nch -= 1;                       /* sin la linea resumen */
-        if (nch > CSNHYPODBP_MAGSTA_MAX) nch = CSNHYPODBP_MAGSTA_MAX;
-        if (nch > 0 && (ch = calloc((size_t)nch, sizeof(*ch))) != NULL) {
-            if (rd_chan_mag((char *)payload, (int)len, ch,
-                            (int)((size_t)nch * sizeof(*ch))) == 0) {
-                for (i = 0; i < nch; i++) {
+        /* Dimensionado y parseo en el helper compartido con hypodb: `rd_chan_mag`
+           NO acota sus escrituras contra el tamaño que se le pasa y además destruye
+           el mensaje (parsea in-place), así que contar '\n' dejaba el array corto y
+           se escribía fuera del heap. Ver csnhypodbp_magchan.c. */
+        nch = csnhypodbp_magchan_parse(payload, len, &ch);
+        if (nch > 0) {
+                for (i = 0; i < nch && n < CSNHYPODBP_MAGSTA_MAX; i++) {
                     if (ch[i].sta[0] == '\0') continue;
                     memset(&vals[n], 0, sizeof(vals[n]));
                     snprintf(vals[n].sta, sizeof(vals[n].sta), "%s", ch[i].sta);
@@ -1120,7 +1118,6 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
                     vals[n].period = (double)ch[i].Period1;
                     n++;
                 }
-            }
             free(ch);
             if (n > 0) csnhypodbp_magsta_put(&g_magsta_live, qid, mod, slot, vals, n);
         }

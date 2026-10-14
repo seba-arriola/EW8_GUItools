@@ -18,6 +18,13 @@
 #define EWGUI_ARC_MANUAL_OFF   174
 #define EWGUI_ARC_MANUAL_CHAR  'M'
 #define EWGUI_ARC_AUTO_CHAR    'A'
+/* Campos que `csnhypodbp_parse_solution` lee por offset: hay que comprobar que
+   caben en `len` ANTES de tocarlos (ver csnhypodbp_group.c). */
+#define EWGUI_ARC_QID_OFF       136
+#define EWGUI_ARC_QID_LEN        10
+#define EWGUI_ARC_QID_LEGACY_OFF 161
+#define EWGUI_ARC_QVER_OFF      178
+#define EWGUI_ARC_QVER_LEN        4
 
 /*
  * Modelo de velocidades / curvas de tiempos de llegada que uso el localizador

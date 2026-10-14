@@ -129,9 +129,18 @@ int csnhypodbp_parse_solution(const char *msg, size_t len, int mod,
 
     {
         char b[11];
-        memcpy(b, msg + 136, 10); b[10] = 0; qid = atoi(b);
-        memcpy(b, msg + 178, 4);  b[4] = 0;  qver = atoi(b);
-        if (qver == 0) { b[0] = msg[161]; b[1] = 0; qver = atoi(b); }
+        memcpy(b, msg + EWGUI_ARC_QID_OFF, EWGUI_ARC_QID_LEN);
+        b[EWGUI_ARC_QID_LEN] = 0; qid = atoi(b);
+        qver = 0;   /* si los 4 bytes de version no caben, decide el byte heredado */
+        /* La version va en 178..181: con `len` entre 162 y 181 el memcpy leia
+           FUERA del mensaje (inofensivo dentro del buffer de anillo de 64 KB, pero
+           mal). Si no caben esos 4 bytes, se cae al byte heredado de 161. */
+        if (len >= EWGUI_ARC_QVER_OFF + EWGUI_ARC_QVER_LEN) {
+            memcpy(b, msg + EWGUI_ARC_QVER_OFF, EWGUI_ARC_QVER_LEN);
+            b[EWGUI_ARC_QVER_LEN] = 0;
+            qver = atoi(b);
+        }
+        if (qver == 0) { b[0] = msg[EWGUI_ARC_QID_LEGACY_OFF]; b[1] = 0; qver = atoi(b); }
     }
     out->qid = qid;
     out->version = (unsigned)(qver < 0 ? 0 : qver);

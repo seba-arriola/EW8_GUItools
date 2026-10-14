@@ -17,7 +17,7 @@ EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
 
 LIB     = libhypodb.a
 LIBOBJS = hypodb_ids.o hypodb_config.o hypodb_ingest.o \
-          csnhypodbp_group.o ewgui_config.o ewgui_db.o
+          csnhypodbp_group.o csnhypodbp_magchan.o ewgui_config.o ewgui_db.o
 
 TESTS = test_ids test_group_events test_ingest_db test_mag_lines
 
@@ -28,6 +28,9 @@ $(LIB): $(LIBOBJS)
 
 # Fuentes reutilizadas (compiladas en local para no depender de GTK).
 csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+csnhypodbp_magchan.o: ../csnhypodbp/csnhypodbp_magchan.c ../csnhypodbp/csnhypodbp_magchan.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 ewgui_config.o: ../common/src/ewgui_config.c ../common/include/ewgui/config.h

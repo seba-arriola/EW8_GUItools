@@ -7,7 +7,16 @@
 #
 # exit 0 = todo instalado y al día (los módulos sin compilar se saltan)
 # exit 1 = hay binarios FALTANTES o DESACTUALIZADOS
-# exit 2 = no existe el directorio de instalación
+# exit 2 = no existe el directorio de instalación, o no hay ninguna receta de
+#          instalación que mirar (no se puede comprobar nada)
+#
+# El inventario NO está escrito aquí: se DERIVA de la receta de instalación de
+# cada Makefile de módulo (la misma que usa `make install`,
+# `sh ../common/tools/install_bin.sh <dst> <bin...>`), resolviendo
+# $(TARGET)/$(MODULE) con las variables del propio Makefile. Así, añadir un
+# módulo, renombrar un binario o cambiarle el directorio no obliga a tocar este
+# script. Antes era una lista literal "módulo:binarios" que se quedaba vieja (y
+# que AGENTS.md documentaba como espejo de startstop_unix.d).
 #
 # Por qué existe: el `cp` de los Makefiles podía no ejecutarse nunca (cuando el
 # binario local ya estaba al día, `make` decía "Nothing to be done"), y el
@@ -28,26 +37,31 @@ if [ ! -d "$dst" ]; then
     exit 2
 fi
 
-# Inventario módulo:binarios (el mismo que arranca startstop_unix.d).
-entries="csnmags:csnmags
-csnhypodbp:csnhypodbp
-csnloc:csnloc
-csnrv:csnrv
-csnstaevdisp:csnstaevdisp
-csntvp:csntvp
-csnwphase:csnwphase
-ew_controller:ew_controller
-hyp2000_ring:hyp2000_ring
-hypodb:hypodb_ingest
-nlloc_ring:nlloc_ring
-pickS:pickS
-wavestore:wstore_ingest,tank2store,store2tank,wstore_query"
+# Binarios que instala un módulo: se leen de SU Makefile (la receta de
+# `make install`), resolviendo $(TARGET)/$(MODULE) con sus propias variables.
+mk_bins() {
+    mkf=$1
+    line=$(grep -E '^[[:space:]]*sh[[:space:]].*install_bin\.sh' "$mkf" 2>/dev/null | head -n1)
+    [ -n "$line" ] || return 0
+    bins=$(printf '%s\n' "$line" | sed -n 's/.*install_bin\.sh[[:space:]]*[^[:space:]]*[[:space:]]*//p')
+    tgt=$(sed -n 's/^[[:space:]]*TARGET[[:space:]]*=[[:space:]]*//p' "$mkf" | head -n1)
+    mvar=$(sed -n 's/^[[:space:]]*MODULE[[:space:]]*=[[:space:]]*//p' "$mkf" | head -n1)
+    for b in $bins; do
+        case "$b" in
+            '$(TARGET)') b=$tgt ;;
+            '$(MODULE)') b=$mvar ;;
+        esac
+        [ -n "$b" ] && printf '%s\n' "$b"
+    done
+}
 
 bad=0
-for entry in $entries; do
-    mod=${entry%%:*}
-    bins=$(printf '%s' "${entry#*:}" | tr ',' ' ')
-    for b in $bins; do
+nbin=0
+for mkf in "$root"/ew_gui_tools/*/Makefile; do
+    [ -f "$mkf" ] || continue
+    mod=$(basename "$(dirname "$mkf")")
+    for b in $(mk_bins "$mkf"); do
+        nbin=$((nbin + 1))
         src="$root/ew_gui_tools/$mod/$b"
         ins="$dst/$b"
         if [ ! -f "$src" ]; then
@@ -69,5 +83,10 @@ for entry in $entries; do
         fi
     done
 done
+
+if [ "$nbin" -eq 0 ]; then
+    echo "check_install: ningún Makefile de $root/ew_gui_tools declara una receta de instalación" >&2
+    exit 2
+fi
 
 exit $bad

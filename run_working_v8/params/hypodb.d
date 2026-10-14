@@ -12,4 +12,4 @@ EventLoadHours 24
 PickMatchTolSec 0.05
 HeartBeatInt 30
 LogFile 1
-Debug 0
+Debug 1

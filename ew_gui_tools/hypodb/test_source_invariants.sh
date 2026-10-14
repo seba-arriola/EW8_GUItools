@@ -17,10 +17,12 @@ nck() { # nck <descripcion> <patron ERE> <archivo>   (no debe aparecer)
 }
 
 # --- Dimensionado del array de canales: rd_chan_mag NO acota contra el tamano ---
-ck  "canales: dimensiona con lo que escribe el motor"  'nchan = hypodb_mag_station_count' hypodb_ingest.c
+ck  "canales: usa el helper compartido con csnhypodbp"  'nchan = csnhypodbp_magchan_parse' hypodb_ingest.c
 nck "canales: ya no cuenta '\\n' como proxy"           'nchan = lines - 1'                hypodb_ingest.c
 nck "canales: ya no recorre hasta NUL (sin cota)"      'for \(p = msg; \*p; p\+\+\)'      hypodb_ingest.c
-ck  "canales: parsea sobre copia con holgura"          'calloc\(len \+ 64, 1\)'           hypodb_ingest.c
+nck "canales: sin parseo local de canales"             'static int parse_channels'        hypodb_ingest.c
+nck "canales: sin contador local de canales"           'hypodb_mag_station_count'         hypodb_ingest.c
+ck  "canales: el helper compartido parsea sobre copia" 'calloc\(len \+ 64, 1\)'           ../csnhypodbp/csnhypodbp_magchan.c
 
 # --- Agrupacion: el matcher indexa claves, no structs de grupo ---
 nck "grupos: ya no castea HypodbGroup[] a claves"      '\(const CsnhypodbpGroupKey \*\)st->groups' hypodb_ingest.c
@@ -30,6 +32,11 @@ ck  "grupos: pasa claves reales al matcher"            'csnhypodbp_group_matches
 ck  "anillo: el buffer se termina en NUL"              'buf\[size\] = .\\0.'              hypodb_ingest_main.c
 ck  "anillo: se reserva 1 byte para el NUL"            'bufsz = 65536 \+ 1'               hypodb_ingest_main.c
 ck  "anillo: se pasa bufsz - 1 a tport_getmsg"         'buf, bufsz - 1'                   hypodb_ingest_main.c
+
+# --- Parada: TERMINATE y el pid, tambien dentro del drenado ---
+ck  "parada: mira TERMINATE y el pid del modulo"       'terminate_requested\('                          hypodb_ingest_main.c
+ck  "parada: se comprueba dentro del drenado"          'terminate_requested\(&r\[0\], mypid\) &&'        hypodb_ingest_main.c
+nck "parada: ya no mira solo TERMINATE"                'tport_getflag\(&r\[0\]\) != TERMINATE\)'        hypodb_ingest_main.c
 
 # --- Que un fallo no vuelva a ser mudo ---
 ck  "log: el modulo tiene log propio (logit_init)"     'logit_init\('                     hypodb_ingest_main.c

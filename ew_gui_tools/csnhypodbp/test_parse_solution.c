@@ -4,6 +4,7 @@
  */
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <time.h>
 #include "csnhypodbp_group.h"
@@ -80,6 +81,25 @@ int main(void)
     t.tm_year = 126; t.tm_mon = 2; t.tm_mday = 9;
     t.tm_hour = 16; t.tm_min = 37; t.tm_sec = 56;
     base = (double)timegm(&t);
+
+    /* Mensaje CORTO (162 <= len < 182): la version de solucion vive en 178..181 y
+       antes se leia con un memcpy aunque no cupiera en `len`. El buffer va en el
+       heap con el tamano EXACTO: con el `buf` de 4096 de arriba la lectura queda
+       dentro de la asignacion y valgrind no la ve. */
+    {
+        char *corto = malloc(170);
+        CsnhypodbpSolution s2;
+
+        CHECK(corto != NULL, "malloc del mensaje corto");
+        if (corto) {
+            memcpy(corto, buf, 170);
+            memset(&s2, 0, sizeof s2);
+            csnhypodbp_parse_solution(corto, 170, 163, &s2);
+            CHECK(s2.version == 3,
+                  "mensaje corto: cae al byte heredado (version 3)");
+            free(corto);
+        }
+    }
 
     CHECK(csnhypodbp_parse_solution(buf, strlen(buf), 163, &sol) == 0, "parsea");
     CHECK(sol.qid == 42, "qid=42");

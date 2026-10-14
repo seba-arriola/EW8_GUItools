@@ -130,6 +130,15 @@ else
    echo "ok  : on_row_selected identifica la fila por pid, sin nombres"
 fi
 
+# --- 8) El arnes en vivo usa SU propio anillo ------------------------------
+# El CONTROL_RING de produccion lo comparten startstop y la instancia real de
+# ew_controller, y el puntero de lectura de un anillo es UNO SOLO: los TYPE_STATUS
+# sinteticos se los llevaba otro lector y el test era intermitente (y ensuciaba la
+# GUI del usuario con modulos falsos).
+ck  "arnes: el test inyecta en su propio anillo" 'EWGUI_FAKE" TEST_CTRL_RING' "$dir/tests/test_sort_and_status.sh"
+nck "arnes: el test no inyecta en el CONTROL_RING de produccion" 'EWGUI_FAKE" CONTROL_RING' "$dir/tests/test_sort_and_status.sh"
+ck  "arnes: el fixture crea el anillo antes de arrancar el modulo" 'fake_status" --create TEST_CTRL_RING' "$dir/tests/test_sort_and_status.sh"
+
 if [ "$fails" -ne 0 ]; then
    echo "ew_controller invariants: $fails fallo(s)"
    exit 1

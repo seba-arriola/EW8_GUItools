@@ -117,7 +117,10 @@ ck  "magnitudes: Ms diezmado antes del paso banda" 'ewgui_decimate'             
 ck  "magnitudes: Wood-Anderson del .d"      'WoodAndersonCoefs'                           csnhypodbp_magcfg.c
 ck  "magnitudes: una fila por estacion"     'csnhypodbp_magrow_build'                     csnhypodbp_magrow.c
 ck  "magnitudes: residual contra la red"    'r->res = v->mag - red'                       csnhypodbp_magrow.c
-ck  "magnitudes: captura por estacion del mensaje" 'rd_chan_mag'                         csnhypodbp_ws.c
+ck  "magnitudes: canales por el helper compartido" 'csnhypodbp_magchan_parse\(payload, len, &ch\)' csnhypodbp_ws.c
+ck  "magnitudes: el bucle respeta el tope de vals"  'n < CSNHYPODBP_MAGSTA_MAX; i\+\+'              csnhypodbp_ws.c
+nck "magnitudes: ya no deduce canales restando la linea resumen" 'nch -= 1'                      csnhypodbp_ws.c
+nck "magnitudes: sin rd_chan_mag con tamano propio" 'rd_chan_mag\(\(char \*\)payload'            csnhypodbp_ws.c
 ck  "magnitudes: cache por solucion y magnitud" 'csnhypodbp_magsta_put'                   csnhypodbp_ws.c
 ck  "magnitudes: cae a la BD si no hay vivo" 'ewguidb_query_station_magnitudes'           csnhypodbp_ws.c
 ck  "magnitudes: prefiere la ajustada"      'CSNHYPODBP_MAG_MANUAL_ALGO'                  csnhypodbp_ws.c

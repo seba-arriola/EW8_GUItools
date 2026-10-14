@@ -37,6 +37,23 @@ static void dispatch(HypodbState *st, const MSG_LOGO *logo, unsigned char t_arc,
     }
 }
 
+/*
+ * startstop pide la parada de DOS maneras: pone `TERMINATE` en el anillo, o pone
+ * el PID del modulo para pararlo solo a el. Hay que mirar las dos (es lo que
+ * hacen csnloc, csnmags, hyp2000_ring y nlloc_ring), y hay que mirarlas TAMBIEN
+ * dentro del drenado: el cuerpo de este bucle puede procesar hasta 3x1000
+ * mensajes con escrituras a la BD, y startstop solo espera 5 s antes de matar el
+ * proceso a la fuerza ("did not self-terminate in 5 sec; terminating it!").
+ * Medido 2026-10-14: con solo `!= TERMINATE` y el chequeo al tope, un reinicio
+ * del modulo acababa en SIGKILL.
+ */
+static int terminate_requested(SHM_INFO *r, long mypid)
+{
+    int flag = tport_getflag(r);
+
+    return flag == TERMINATE || flag == (int)mypid;
+}
+
 int main(int argc, char **argv)
 {
     HypodbConfig   cfg;
@@ -50,6 +67,7 @@ int main(int argc, char **argv)
     long           bufsz = 65536 + 1, size;   /* +1: los parsers exigen NUL final */
     char          *buf;
     time_t         last_retry;
+    long           mypid = (long)getpid();
 
     if (argc != 2) {
         fprintf(stderr, "Uso: hypodb_ingest <hypodb.d>\n");
@@ -138,12 +156,13 @@ int main(int argc, char **argv)
           cfg.in_ring, cfg.in_ring_ref, cfg.in_pick_ring);
 
     last_retry = time(NULL);
-    while (tport_getflag(&r[0]) != TERMINATE) {
+    while (!terminate_requested(&r[0], mypid)) {
         int any = 0;
 
         for (int i = 0; i < 2; i++) {
             int n = 0;
             while (n < MAX_PER_RING &&
+                   !terminate_requested(&r[0], mypid) &&
                    tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
                        == GET_OK) {
                 /* El buffer del anillo NO viene terminado en NUL, y los parsers
@@ -158,6 +177,7 @@ int main(int argc, char **argv)
         {
             int n = 0;
             while (n < MAX_PER_RING &&
+                   !terminate_requested(&r[0], mypid) &&
                    tport_getmsg(&r_pick, &plogo, 1, &logo, &size, buf, bufsz - 1)
                        == GET_OK) {
                 buf[size] = '\0';

@@ -116,8 +116,21 @@ Parada:
 ### Control de servicios
 
 ```bash
-./ew_monitor.sh {status|start|stop|restart}
+./ew_monitor.sh status                    # startstop + módulos vivos
+./ew_monitor.sh list                      # módulos del .d de startstop (pid y estado)
+./ew_monitor.sh start | stop | restart    # todo el stack
+./ew_monitor.sh restart csnrv             # solo un módulo
 ```
+
+`list` y los selectores salen de la configuración de `startstop` (`EW_MONITOR_CFG`, por defecto
+`$EW_PARAMS/startstop_unix.d`): **no hay ninguna lista de módulos escrita en el script**. Un
+`<módulo>` puede ser el binario (`csnrv`), el tallo de su `.d` (cuando binario y `.d` no se llaman
+igual) o el pid. Un nombre **ambiguo** (dos módulos con el mismo binario, como las dos instancias de
+`csnmags`) se rechaza mostrando los candidatos: nunca se reinicia "el primero". Las acciones por
+módulo van por **pid** a los binarios de EarthWorm `restart`/`stopmodule` (la consola de `startstop`
+no sirve cuando corre desacoplado, porque su `fgets(stdin)` sale sin tty) y el script **verifica**
+que el módulo haya vuelto (`Alive` con pid nuevo) o muerto antes de darlo por hecho: si no lo
+confirma, sale con 4 y te dice dónde mirar. `--dry-run` enseña el comando sin enviarlo.
 
 ### Verificación
 

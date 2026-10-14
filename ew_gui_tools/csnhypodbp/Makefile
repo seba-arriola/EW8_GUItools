@@ -23,7 +23,7 @@ EWLIBS = ../common/libewgui_gtk4.a \
 
 # Objetos modulares (el DSP vive ahora en libewgui)
 OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
-       csnhypodbp_group.o csnhypodbp_trace.o csnhypodbp_tt.o csnhypodbp_master.o \
+       csnhypodbp_group.o csnhypodbp_magchan.o csnhypodbp_trace.o csnhypodbp_tt.o csnhypodbp_master.o \
        csnhypodbp_station.o csnhypodbp_locator.o csnhypodbp_manual.o csnhypodbp_locate.o \
        csnhypodbp_view.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
        csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
@@ -191,8 +191,15 @@ test_sds_read: test_sds_read.c csnhypodbp_sds.o ../common/src/ewgui_sds.o
 	$(CC) $(CFLAGS) -o test_sds_read test_sds_read.c csnhypodbp_sds.o \
 	      ../common/src/ewgui_sds.o $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a -lm
 
+# Canales por estación de un TYPE_MAGNITUDE: rd_chan_mag NO acota sus escrituras
+# contra el tamaño que se le pasa (solo lo usa para su memset inicial).
+test_magchan: test_magchan.c csnhypodbp_magchan.o
+	$(CC) $(CFLAGS) -o test_magchan test_magchan.c csnhypodbp_magchan.o \
+	      $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
+	      $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm
+
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
-      test_master_store test_mag_msg test_station_order test_locator test_manual test_locate \
+      test_master_store test_mag_msg test_magchan test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
       test_preview test_profile test_mapview test_magcfg test_magrow test_magsta \
       test_magitem test_magmarks test_magview test_mww_error
@@ -204,6 +211,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_tt
 	./test_master_store
 	./test_mag_msg
+	./test_magchan
 	./test_station_order
 	./test_locator
 	./test_manual
@@ -226,6 +234,14 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_mww_error
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
+
+# El motor (rd_chan_mag) no acota sus escrituras y ademas lee 1 byte mas alla del
+# mensaje: eso solo lo ve valgrind (ASan no instrumenta el codigo de EarthWorm).
+# `test_parse_solution` va aqui porque `csnhypodbp_parse_solution` lee campos por
+# offset y hay que comprobar que no se sale con mensajes cortos.
+check-valgrind: test_magchan test_parse_solution
+	valgrind --error-exitcode=1 --quiet ./test_magchan
+	valgrind --error-exitcode=1 --quiet ./test_parse_solution
 
 # Prueba LIVE del cierre al maximizar (necesita entorno, DISPLAY y EarthWorm
 # arriba; se SALTA sola si falta cualquiera de los tres). Ver AGENTS §7.

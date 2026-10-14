@@ -23,6 +23,7 @@
 #include "earthworm.h"      /* logit(): el modulo tiene log propio (ver el main) */
 
 #include "hypodb_ids.h"
+#include "csnhypodbp_magchan.h"   /* canales del TYPE_MAGNITUDE (compartido) */
 
 #include "ewgui/arc_layout.h"
 
@@ -390,87 +391,35 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
 /* Escritura                                                                  */
 /* ------------------------------------------------------------------------- */
 
-/* Parsea el mensaje sobre una COPIA (el motor lo destruye: `tmpMsg = msg` en
-   rw_mag.c:119 y `line[len] = '\0'` en :134) y devuelve cuantas entradas quedo en
-   `out`, o -1 si no hay memoria. `cap` debe cubrir las entradas posibles: el
-   motor nunca escribe mas de `msglen-1` (avanza `index += len + 1` con `len >= 0`,
-   rw_mag.c:135).
-   El rc del motor se IGNORA a proposito: devuelve -1 cuando una linea queda
-   partida (mensajes truncados a 511 por store_pending_mag) aunque las entradas
-   completas YA esten escritas; descartarlas seria perder esas magnitudes. */
-static int parse_channels(const char *msg, size_t len, MAG_CHAN_INFO *out,
-                          int cap)
-{
-    /* Copia con HOLGURA y a CERO: el motor lee 1 byte mas alla del mensaje
-       (tokenlength -> strchr/strlen, rw_mag.c:384-385, medido con valgrind), y
-       con el bloque a ceros esa lectura se corta en el primer NUL del relleno en
-       vez de seguir por el heap. */
-    char *copy = calloc(len + 64, 1);
-    int n = 0;
-
-    if (!copy)
-        return -1;
-    memcpy(copy, msg, len);
-    (void)rd_chan_mag(copy, (int)len, out, (int)((size_t)cap * sizeof(*out)));
-    free(copy);
-    while (n < cap && out[n].sta[0])
-        n++;
-    return n;
-}
-
-/* Entradas que `rd_chan_mag` escribe DE VERDAD con este mensaje: es el
- * dimensionado correcto. El motor NO acota sus escrituras contra el tamano que se
- * le pasa (el 4.o argumento solo alimenta su memset inicial, rw_mag.c:114), asi
- * que quedarse corto escribe fuera del heap y glibc lo detecta mas tarde con
- * SIGABRT (signal 6), sin dejar log. Y contar '\n' NO vale de proxy: el formato
- * no parte solo por '\n' (2 '\n' para 3 estaciones con wr_mag_scnl).
- * NO destructivo (parsea sobre copia). Devuelve -1 si no hay memoria. */
-int hypodb_mag_station_count(const char *msg, size_t len)
-{
-    MAG_CHAN_INFO *probe;
-    int cap, n;
-
-    if (!msg || len == 0)
-        return -1;
-    cap = (int)len;
-    probe = calloc((size_t)cap, sizeof(*probe));
-    if (!probe)
-        return -1;
-    n = parse_channels(msg, len, probe, cap);
-    free(probe);
-    return n;
-}
+/* El parseo de canales de un TYPE_MAGNITUDE lo hace el helper compartido con
+   csnhypodbp (`csnhypodbp_magchan.c`): `rd_chan_mag` no acota sus escrituras,
+   destruye el mensaje y no se puede llamar dos veces sobre el mismo buffer. */
 
 int hypodb_write_station_magnitudes(HypodbState *st, const char *magnitude_id,
                                     const char *type, const char *msg,
                                     size_t len)
 {
     int nchan, n = 0;
-    MAG_CHAN_INFO *ch;
+    MAG_CHAN_INFO *ch = NULL;
     EwGuiStaMagRow *rows;
 
     if (!st || !msg || len == 0)
         return -1;
-    /* Dimensiona con lo que el motor va a escribir DE VERDAD. Sin recorte: si
-       se recortara aqui, la segunda llamada al motor volveria a desbordar. El
-       tope real lo pone el tamano del mensaje (ver hypodb_mag_station_count). */
-    nchan = hypodb_mag_station_count(msg, len);
+    /* Dimensionado y parseo en el helper compartido con csnhypodbp: `rd_chan_mag`
+       NO acota sus escrituras contra el tamano que se le pasa y ademas destruye el
+       mensaje (parsea in-place), asi que el array tiene que cubrir exactamente lo
+       que escribe. Ver csnhypodbp_magchan.c. */
+    nchan = csnhypodbp_magchan_parse(msg, len, &ch);
     if (nchan <= 0)
         return 0;
 
-    ch = calloc((size_t)nchan, sizeof(*ch));
     rows = calloc((size_t)nchan, sizeof(*rows));
-    if (!ch || !rows) {
+    if (!rows) {
         free(ch);
-        free(rows);
         return -1;
     }
 
-    /* Parsea sobre copia (el motor destruye el buffer) y usa las entradas aunque
-       el motor devuelva -1: lo hace cuando una linea queda partida y las
-       entradas completas YA estan escritas (mensajes truncados a 511 por
-       store_pending_mag); descartarlas seria perder esas magnitudes. */
-    if (parse_channels(msg, len, ch, nchan) > 0) {
+    if (nchan > 0) {
         for (int i = 0; i < nchan; i++) {
             char chan[64];
 

@@ -135,27 +135,12 @@ void aplicar_botones(void)
                             (!strcmp(st, "Stop") || !strcmp(st, "Dead")));
 }
 
-/* Recupera la fila del pid recordado si el modelo dejó la selección vacía sin
-   que el usuario tocara nada (el GtkSortListModel de GTK ordena/avisa en
-   diferido: al reconstruir las filas la selección se puede caer sola). Diferido
-   para no reentrar en la señal de selección. */
-static gboolean ec_restaurar_sel_idle(gpointer d)
-{
-   (void)d;
-   if (g_row_sel_suppress || !g_mod_sel || g_sel_pid <= 0) return G_SOURCE_REMOVE;
-   if (gtk_single_selection_get_selected_item(g_mod_sel)) return G_SOURCE_REMOVE;   /* ya está */
-   int pos = ec_view_pos_of_pid(g_sel_pid);
-   if (pos < 0) { g_sel_pid = -1; g_sel_idx = -1; aplicar_botones(); return G_SOURCE_REMOVE; }
-   g_row_sel_suppress = 1;
-   gtk_selection_model_select_item(GTK_SELECTION_MODEL(g_mod_sel), (guint) pos, TRUE);
-   g_row_sel_suppress = 0;
-   return G_SOURCE_REMOVE;
-}
-
 void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data)
 {
    (void)sel; (void)pspec; (void)data;
    if (g_row_sel_suppress) return;   /* transitorio de reconstrucción */
+   g_sel_idx = -1;
+   g_sel_pid = -1;
    if (g_mod_sel) {
       /* El ITEM seleccionado, no la posición: la posición es la del modelo
          ORDENADO y no indexa g_store. La identidad es el PID: con dos módulos
@@ -164,25 +149,15 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data)
       if (item) {
          int pid = 0;
          g_object_get(item, "pid", &pid, NULL);
-         int idx = ewgui_ctrl_idx_por_pid(&g_status, pid);
-         if (idx >= 0) { g_sel_idx = idx; g_sel_pid = pid; }
-         else          { g_sel_idx = -1; g_sel_pid = -1; }
+         g_sel_idx = ewgui_ctrl_idx_por_pid(&g_status, pid);
+         if (g_sel_idx >= 0) g_sel_pid = pid;
          /* OJO: gtk_single_selection_get_selected_item() devuelve un PRESTAMO
             (transfer none; GIR de GTK4 <return-value transfer-ownership="none">,
             doc: "the returned data is owned by the instance"). NO se libera:
             finalizaria la fila que el GListStore y el GtkSortListModel siguen
             usando, y el siguiente rebuild hace g_object_unref sobre memoria ya
             liberada -> SIGSEGV en libgobject (visto en produccion). */
-      } else if (g_sel_pid > 0) {
-         /* Sin item pero con memoria: el modelo se está reconstruyendo, no es una
-            deselección del usuario. Se recupera la fila. */
-         g_idle_add(ec_restaurar_sel_idle, NULL);
-      } else {
-         g_sel_idx = -1;
       }
-   } else {
-      g_sel_idx = -1;
-      g_sel_pid = -1;
    }
    aplicar_botones();
 }

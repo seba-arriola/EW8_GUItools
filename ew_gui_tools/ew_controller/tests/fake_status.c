@@ -1,12 +1,17 @@
 /* fake_status - publica un TYPE_STATUS sintetico en un anillo de EarthWorm.
  *
  *   fake_status <anillo> <archivo-de-estado>
+ *   fake_status --create <anillo> [KB]     (crea el anillo si no existe: idempotente)
  *
  * Sirve para probar ew_controller sin startstop (o sin esperar su respuesta):
  * el archivo es el cuerpo del mensaje, tal cual lo leeria el parser.
  *
- * Solo ESCRIBE en el anillo; no lo crea ni lo destruye. Necesita EW_PARAMS con
- * earthworm.d (GetKey/GetType/GetModId) y que el anillo ya exista.
+ * El arnes de tests usa un anillo PROPIO (TEST_CTRL_RING) porque el CONTROL_RING
+ * de produccion lo comparten startstop y la instancia real de ew_controller y su
+ * puntero de lectura es UNO SOLO: el que llega primero se lleva el mensaje, lo que
+ * hacia intermitentes los tests (y metia modulos falsos en la GUI del usuario).
+ *
+ * Necesita EW_PARAMS con earthworm.d (GetKey/GetType/GetModId).
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,8 +33,30 @@ int main(int argc, char *argv[])
     size_t n;
     FILE *fp;
 
+    if (argc >= 3 && !strcmp(argv[1], "--create")) {
+        const char *ring = argv[2];
+        int kb = (argc >= 4) ? atoi(argv[3]) : 512;
+        key = GetKey(ring);
+        if (key == -1) {
+            fprintf(stderr, "fake_status: el anillo <%s> no esta en earthworm.d\n", ring);
+            return 1;
+        }
+        if (shmget(key, 0, 0) >= 0) {
+            fprintf(stderr, "fake_status: <%s> ya existe (key %ld)\n", ring, key);
+            return 0;
+        }
+        tport_create(&region, 1024L * kb, key);
+        if (shmget(key, 0, 0) < 0) {
+            fprintf(stderr, "fake_status: no pude crear <%s> (key %ld)\n", ring, key);
+            return 1;
+        }
+        fprintf(stderr, "fake_status: creado <%s> %d KB (key %ld)\n", ring, kb, key);
+        return 0;
+    }
+
     if (argc != 3) {
         fprintf(stderr, "Uso: %s <anillo> <archivo-de-estado>\n", argv[0]);
+        fprintf(stderr, "     %s --create <anillo> [KB]\n", argv[0]);
         return 2;
     }
 

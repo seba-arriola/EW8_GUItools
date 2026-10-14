@@ -93,6 +93,14 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_install_bin.sh
 	@echo "== check_install =="
 	@bash tests/test_install_check.sh
+	@echo "== check_ew_monitor =="
+	@bash tests/test_ew_monitor.sh
+	@echo "== check_ew_monitor_module =="
+	@bash tests/test_ew_monitor_module.sh
+	@echo "== check_agent_permissions =="
+	@bash tests/test_agent_permissions.sh
+	@echo "== check_diag =="
+	@bash tests/test_diag.sh
 	@echo "== make_overlays =="
 	@python3 tests/test_make_overlays.py
 	@rc=0; for t in $(TESTS); do \
