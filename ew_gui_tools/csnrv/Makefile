@@ -17,14 +17,20 @@ EWLIBS = ../common/libewgui_gtk4.a \
          $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
-all: csnrv
+all: csnrv install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: csnrv
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csnrv
 
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
 
 csnrv: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csnrv $(OBJS) $(EWLIBS) $(LDFLAGS)
-	cp csnrv $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Test headless de configuracion (no requiere DISPLAY)
 test: csnrv

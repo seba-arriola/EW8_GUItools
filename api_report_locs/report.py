@@ -473,6 +473,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Ejemplo:\n  python3 -m api_report_locs.report --runs runs --format all\n",
     )
     p.add_argument("--runs", default="runs", help="directorio de resultados de run_events.sh (def: runs)")
+    p.add_argument("--tank-repo", default=os.environ.get("EW_TANK_REPO", "/mnt/d/tank_repo"),
+                   help="repo de tanks (para <slug>/manifest.json); def: $EW_TANK_REPO o /mnt/d/tank_repo")
     p.add_argument("--slug", action="append", default=None,
                    help="filtrar por slug de evento (repetible)")
     p.add_argument("--format", choices=["table", "csv", "json", "all"], default="table",
@@ -517,7 +519,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     for s in sessions:
         if s.slug in slug_to_source:
             continue
-        mf = os.path.normpath(os.path.join(args.runs, s.slug, "..", "..", "tank_repo", s.slug, "manifest.json"))
+        mf = os.path.join(args.tank_repo, s.slug, "manifest.json")
         meta = _read_json(mf) if os.path.isfile(mf) else None
         if meta and meta.get("source"):
             slug_to_source[s.slug] = str(meta["source"])

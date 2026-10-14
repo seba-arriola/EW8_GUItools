@@ -64,7 +64,7 @@ archivo si se quiere conservar.
 
 ## Datos incluidos y cómo regenerarlos
 
-`resources/overlays/` (no versionado; lo copia `deploy_portable.sh`):
+`resources/overlays/` (no versionado; se generan con `make_overlays.py`):
 
 | archivo | contenido |
 |---|---|

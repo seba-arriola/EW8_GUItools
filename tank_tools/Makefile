@@ -7,7 +7,7 @@
 #     make clean       borra tests/tmp
 #
 #     make tank-repo   construye el repo de tanks desde mseed/  (~2 min por fichero)
-#     make events-plan planifica las sesiones de TARGET   (TARGET=tank_repo por def)
+#     make events-plan planifica las sesiones de TARGET   (def: EW_TANK_REPO|/mnt/d/tank_repo)
 #     make events      ejecuta las sesiones de TARGET
 #     make report      reporte de resultados (api_report_locs)
 #     make py-test     pruebas del paquete api_report_locs
@@ -20,8 +20,11 @@
 
 SHELL     := /bin/bash
 TESTS_DIR := tests
-TARGET    ?= tank_repo
-TANKS     ?= tank_repo
+# Repo de tanks: disco de datos, NO vive en el repo (override: EW_TANK_REPO o
+# `make TANK_REPO_DIR=/otro`).
+TANK_REPO_DIR ?= $(if $(EW_TANK_REPO),$(EW_TANK_REPO),/mnt/d/tank_repo)
+TARGET    ?= $(TANK_REPO_DIR)
+TANKS     ?= $(TANK_REPO_DIR)
 PICKS     ?= picks
 PICKS_S   ?= picks_s
 PICKS_PS  ?= picks_ps

@@ -5,6 +5,8 @@
 #   - calibrate_refiners.py --selftest (materializacion aislada de .d/.hyp/ctrl)
 #   - --dry-run no escribe nada
 #   - smoke: 1 variante por refinador sobre el suelo real -> reportes A y B
+#     (el de nlloc es LENTO con las tablas 3D de tiempos en disco lento:
+#      TANK_TESTS_SLOW=1; mira REFINE_TIMEOUT_SEC)
 #   - invariante: los .d/.hyp/plantillas de produccion NO cambian
 set -u
 
@@ -24,9 +26,12 @@ echo "=== selftest calibrate_refiners ==="
 python3 "$ROOT/tank_tools/calibrate_refiners.py" --selftest || fail=1
 
 PARAMS="$ROOT/run_working_v8/params"
+RES="${EW_RESOURCES_ROOT:-/mnt/d/resources}"
+# Tope por ARC del smoke: nlloc lee TODAS las tablas 3D de tiempos de la banda.
+REFINE_TIMEOUT_SEC="${REFINE_TIMEOUT_SEC:-900}"
 PROT=("$PARAMS/csnloc.d" "$PARAMS/hyp2000_ring.d" "$PARAMS/hyp2000_ring.hyp" \
-      "$PARAMS/nlloc_ring.d" "$ROOT/resources/hyp2000/hyp2000_ring.hyp" \
-      "$ROOT/resources/nlloc/ctrl/N18-26_1.5k.in")
+      "$PARAMS/nlloc_ring.d" "$RES/hyp2000/hyp2000_ring.hyp" \
+      "$RES/nlloc/ctrl/N18-26_1.5k.in")
 declare -A BEFORE
 for f in "${PROT[@]}"; do
     [ -f "$f" ] && BEFORE["$f"]="$(sha256sum "$f" | cut -d' ' -f1)"
@@ -61,10 +66,16 @@ else
     for R in hyp2000 nlloc; do
         echo
         echo "=== smoke $R (1 variante x $S1) ==="
+        if [ "$R" = nlloc ] && [ "${TANK_TESTS_SLOW:-0}" != "1" ]; then
+            echo "  SKIP: smoke nlloc (exporta TANK_TESTS_SLOW=1: con las tablas"
+            echo "        3D de tiempos en $RES un ARC puede tardar minutos)"
+            continue
+        fi
         if [ "$R" = hyp2000 ]; then TAG=h_bandas; else TAG=n_bandas; fi
         if python3 "$ROOT/tank_tools/calibrate_refiners.py" --refiner "$R" \
                 --baseline "$BASE" --catalog "$ROOT/tests_soluciones_publicadas.dat" \
                 --work "$TMP/$R" --only "$S1" --tags "$TAG" \
+                --timeout "$REFINE_TIMEOUT_SEC" \
                 > "$TMP/$R.txt" 2>&1; then
             for f in "val/$TAG/refine_report.txt" "val/$TAG/catalog_report.txt" \
                      "cfg/$TAG/$TAG.d" "calibration.json"; do
@@ -95,8 +106,22 @@ import json,sys
 m=json.load(open('$TMP/$R/val/$TAG/manifest.json'))
 sys.exit(0 if m['n_in']>0 and m['n_ok']>0 else 1)"; then
                 echo "ok  : el refinador trabajo (n_in>0, n_ok>0)"
+                python3 -c "
+import json
+m = json.load(open('$TMP/$R/val/$TAG/manifest.json'))
+print('      tiempo por ARC: total=%s s  max=%s s  p50=%s s  (tope %s s)'
+      % (m.get('sec_total'), m.get('sec_arc_max'), m.get('sec_arc_p50'),
+         m.get('timeout_sec')))"
             else
                 echo "FAIL: el smoke no refino nada ($R)"; fail=1
+                echo "      --- $TMP/$R/val/$TAG/errors.txt"
+                sed -n '1,8p' "$TMP/$R/val/$TAG/errors.txt" 2>/dev/null \
+                    | sed 's/^/      /'
+                python3 -c "
+import json
+m = json.load(open('$TMP/$R/val/$TAG/manifest.json'))
+print('      n_in=%s n_ok=%s n_error=%s timeout=%s s'
+      % (m.get('n_in'), m.get('n_ok'), m.get('n_error'), m.get('timeout_sec')))" 2>/dev/null
             fi
         else
             echo "FAIL: smoke $R (rc!=0)"; tail -5 "$TMP/$R.txt"; fail=1

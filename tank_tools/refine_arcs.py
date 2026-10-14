@@ -11,7 +11,15 @@ Dos trabajos, siempre OFFLINE (no arranca anillos ni servicios):
   2) --refiner    corre un refinador sobre CADA ARC del suelo:
      <out>/arcs_ref/<slug>_<NN>.arc   ARC refinado (salida del binario)
      <out>/json/<slug>.jsonl          una solucion por linea (esquema offline_report)
-     <out>/manifest.json              config, filtros y conteos
+     <out>/manifest.json              config, filtros, conteos y tiempos
+     <out>/arcs_times.tsv             segundos por ARC (y su estado)
+
+     --timeout S     tope por ARC (default: $REFINE_TIMEOUT_SEC o 900). Con nlloc
+                     y las tablas 3D de tiempos en disco lento (drvfs) un solo ARC
+                     puede tardar minutos: lee TODAS las tablas por estacion de la
+                     banda elegida.
+     --arcs-dir DIR  se absolutiza siempre: el refinador hace chdir(WorkDir) y un
+                     ARC en ruta relativa se resolveria contra el cwd equivocado.
 
 El layout del ARC es el de `ew_gui_tools/csnloc/hypo_out.c` (y el que parsea
 `hyp2000_ring.c:169-198`):
@@ -52,6 +60,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -63,7 +72,17 @@ RE_END = re.compile(r"csnloc: --- fin HYP2000ARC evento \d+-\d+ ---\s*$")
 ARC_HEADER_MIN = 190
 ARC_HEADER_LEN = 197
 ARC_PHASE_LEN = 114
-ARC_TIMEOUT_SEC = 180.0
+def _env_float(name, default):
+    """Float de entorno tolerante (ignora valores vacios o invalidos)."""
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
+
+
+# Tope por ARC. Con las tablas de tiempos en disco lento (drvfs) un ARC de nlloc
+# puede tardar minutos: se sube por REFINE_TIMEOUT_SEC o --timeout.
+ARC_TIMEOUT_SEC = _env_float("REFINE_TIMEOUT_SEC", 900.0)
 
 
 # --------------------------------------------------------------------------
@@ -368,6 +387,9 @@ def run_refiner(refiner_bin, refiner_d, arcs_dir, out_dir, only="*",
     out_dir = os.path.abspath(out_dir)
     refiner_bin = os.path.abspath(refiner_bin)
     refiner_d = os.path.abspath(refiner_d)
+    # El refinador hace chdir(WorkDir): con un ARC en ruta relativa acaba
+    # buscandolo en el cwd equivocado. Absolutizamos siempre.
+    arcs_dir = os.path.abspath(arcs_dir)
     ref_dir = os.path.join(out_dir, "arcs_ref")
     json_dir = out_dir
     logs_dir = os.path.join(out_dir, "logs")
@@ -406,7 +428,8 @@ def run_refiner(refiner_bin, refiner_d, arcs_dir, out_dir, only="*",
             r = subprocess.run([refiner_bin, cfgs[w], ap],
                                capture_output=True, env=env, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return (base, "err", None, "timeout de %s" % refiner_bin)
+            return (base, "err", None,
+                    "timeout de %s (%gs)" % (refiner_bin, timeout))
         if r.returncode == 0 and r.stdout:
             return (base, "ok", r.stdout, "")
         err = (r.stderr or b"").decode("latin-1", "replace").strip()
@@ -414,18 +437,26 @@ def run_refiner(refiner_bin, refiner_d, arcs_dir, out_dir, only="*",
             return (base, "noloc", None, err)
         return (base, "err", None, err or ("rc=%d" % r.returncode))
 
+    def timed(item):
+        t0 = time.perf_counter()
+        res = one(item)
+        return res + (round(time.perf_counter() - t0, 3),)
+
     items = list(enumerate(targets))
     if jobs > 1:
         with ThreadPoolExecutor(max_workers=jobs) as ex:
-            results = list(ex.map(one, items))
+            results = list(ex.map(timed, items))
     else:
-        results = [one(it) for it in items]
+        results = [timed(it) for it in items]
 
     n_ok = n_drop = n_noloc = n_err = 0
     per_slug, seen = {}, []
     errs = {}
-    for base, status, out, err in results:
+    times = []
+    for base, status, out, err, secs in results:
         slug = base.rsplit("_", 1)[0]
+        if status != "drop":
+            times.append((base, secs, status))
         if slug not in seen:
             seen.append(slug)
         if status == "ok":
@@ -448,6 +479,17 @@ def run_refiner(refiner_bin, refiner_d, arcs_dir, out_dir, only="*",
             if err:
                 errs[err] = errs.get(err, 0) + 1
     n_in = len(targets)
+
+    secs_list = sorted(s for _, s, _ in times)
+    sec_total = round(sum(secs_list), 3)
+    sec_max = round(secs_list[-1], 3) if secs_list else 0.0
+    sec_p50 = round(secs_list[len(secs_list) // 2], 3) if secs_list else 0.0
+    if times:
+        with open(os.path.join(out_dir, "arcs_times.tsv"), "w",
+                  encoding="utf-8") as fh:
+            fh.write("# arc\tsec\tstatus\n")
+            for arc, secs, status in times:
+                fh.write("%s\t%.3f\t%s\n" % (arc, secs, status))
 
     if errs:
         with open(os.path.join(out_dir, "errors.txt"), "w",
@@ -477,6 +519,8 @@ def run_refiner(refiner_bin, refiner_d, arcs_dir, out_dir, only="*",
         "filters": {"MinPhases": minphases, "MaxRMS": maxrms},
         "n_in": n_in, "n_ok": n_ok, "n_dropped": n_drop,
         "n_noloc": n_noloc, "n_error": n_err, "arc_jobs": jobs,
+        "timeout_sec": timeout,
+        "sec_total": sec_total, "sec_arc_max": sec_max, "sec_arc_p50": sec_p50,
         "tanks": [{"slug": s} for s in seen],
     }
     with open(os.path.join(out_dir, "manifest.json"), "w",
@@ -495,6 +539,7 @@ def preflight(refiner_bin, refiner_d, arcs_dir, out_dir=None, only="*"):
         fails.append("binario inexistente: %s" % refiner_bin)
     if not os.path.isfile(refiner_d):
         fails.append("config inexistente: %s" % refiner_d)
+    arcs_dir = os.path.abspath(arcs_dir)
     arcs = sorted(glob.glob(os.path.join(arcs_dir, "*.arc")))
     if not arcs:
         fails.append("sin ARC en %s" % arcs_dir)
@@ -559,7 +604,9 @@ def main(argv=None):
     ap.add_argument("--maxrms", type=float, default=0.0)
     ap.add_argument("--arc-jobs", type=int, default=1,
                     help="ARC en paralelo dentro de la corrida (WorkDir por worker)")
-    ap.add_argument("--timeout", type=float, default=ARC_TIMEOUT_SEC)
+    ap.add_argument("--timeout", type=float, default=ARC_TIMEOUT_SEC,
+                    help="tope por ARC en segundos (default: REFINE_TIMEOUT_SEC "
+                         "o %g)" % ARC_TIMEOUT_SEC)
     a = ap.parse_args(argv)
 
     if a.selftest:

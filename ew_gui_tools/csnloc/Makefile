@@ -25,11 +25,17 @@ EWLIBS = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
 TARGET = csnloc
 
-all: $(TARGET)
+all: $(TARGET) install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: $(TARGET)
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(TARGET)
 
 $(TARGET): $(OBJS) $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(TAUOBJS) $(EWLIBS) $(LIBS)
-	cp $(TARGET) $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Libreria estatica minima del motor de tiempos de viaje, para reutilizarlo
 # desde otros modulos (p. ej. csnhypodbp). No incluye stations.o: TTModel_Init/

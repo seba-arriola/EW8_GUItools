@@ -6,6 +6,7 @@
 #include "ewgui/ring.h"
 #include "ewgui/actions.h"
 #include "ewgui/config.h"
+#include "ewgui/db.h"
 #include "ewgui/geo.h"
 #include "ewgui/menu_ui.h"
 #include "ewgui/wave.h"
@@ -341,6 +342,7 @@ const char *ModLabel(int mod);
 void cargar_sismos_db(void);
 int  csnhypodbp_db_init(const char *envfile, int hours);
 int  csnhypodbp_db_ready(void);   /* 1 si la BD esta conectada */
+EwGuiDb *csnhypodbp_db(void);     /* handle de la conexion (NULL si no hay BD) */
 void csnhypodbp_db_reconnect(void);  /* reabre la conexion a la BD */
 
 gboolean escuchar_anillo_earthworm(gpointer user_data);

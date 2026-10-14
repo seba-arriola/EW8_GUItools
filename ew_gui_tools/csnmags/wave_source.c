@@ -5,14 +5,25 @@
 #include <ws_clientII.h>
 #include <socket_ew.h>
 #include <wstore.h>
+#include <libmseed2.h>
+#include <ewgui/sds.h>
+
+#include <math.h>
+#include <time.h>
+#include <unistd.h>
 
 /*
  * wave_source.c - Abstracción de la fuente de onda.
  *
  *   WSRC_WS    : wave_serverV por TCP (modo anillo).
  *   WSRC_TANK  : lectura directa del tank (modo offline), patrón de pickS.
- *   WSRC_STORE : store indexado (wstore).
- *   WSRC_AUTO  : intenta el store y, si no hay datos, cae a wave_serverV.
+ *   WSRC_STORE : store indexado (wstore); si no tiene la traza, va al SDS.
+ *   WSRC_AUTO  : store -> wave_serverV -> SDS.
+ *
+ * QUE fuentes se usan es CONFIGURACION (WaveBackend/SdsEnabled/SdsRoot/
+ * SdsFallbackHours del .d), no codigo: con `WaveBackend store` no se abre la
+ * conexion a wave_serverV (esta fuera de la configuracion: lo reemplaza el
+ * store) y el archivo SDS cubre lo mas antiguo que la retencion local.
  *
  * En offline se construye un índice (SCNL + offset) recorriendo el tank una sola
  * vez; wave_get lee sólo los paquetes del SCNL pedido, sin volver a barrer todo.
@@ -228,6 +239,122 @@ static int store_get(WaveSource *w, const char *sta, const char *net, const char
     return 0;
 }
 
+/* ------------------------------ SDS ------------------------------ */
+
+#define SDS_DAY_SECONDS 86400.0
+
+static void sds_close(MSFileParam **msfp, MSRecord **msr)
+{
+    if (*msfp || *msr)
+        ms_readmsr_r(msfp, msr, NULL, 0, NULL, NULL, 0, 0, 0);
+    *msr = NULL;
+}
+
+/* Lo mas antiguo que SdsFallbackHours se pide al SDS (mismo criterio que
+ * csnhypodbp_sds_prefer). Sin SdsRoot o con horas 0, el SDS no se usa. */
+static int sds_prefer(WaveSource *w, double t0)
+{
+    double age_hours;
+
+    if (!w->sds_enabled || !w->sds_root[0] || w->sds_fallback_hours <= 0)
+        return 0;
+    age_hours = ((double)time(NULL) - t0) / 3600.0;
+    return age_hours > (double)w->sds_fallback_hours;
+}
+
+/* Lee la ventana [t0,t1] del archivo SDS (layout SeisComP) con libmseed2 y la
+ * convierte a MagTrace. Devuelve 0 con datos, -1 si no hay (dia ausente o
+ * ventana fuera): el llamante decide la siguiente fuente. */
+static int sds_get(WaveSource *w, const char *sta, const char *net, const char *chan,
+                   const char *loc, double t0, double t1, MagTrace *out)
+{
+    MSFileParam *msfp = NULL;
+    MSRecord *msr = NULL;
+    char path[MAG_STR * 4];
+    double rate = 0.0, day;
+    long cap = 0, filled = 0, i;
+    double *samples = NULL;
+
+    out->x = NULL; out->n = 0; out->t0 = 0; out->dt = 0; out->samprate = 0;
+    if (!w->sds_enabled || !w->sds_root[0] || t1 <= t0)
+        return -1;
+
+    for (day = floor(t0 / SDS_DAY_SECONDS) * SDS_DAY_SECONDS;
+         day <= t1; day += SDS_DAY_SECONDS) {
+
+        if (ewgui_sds_path(path, sizeof path, w->sds_root, net, sta,
+                           loc ? loc : "", chan, day) != 0)
+            continue;
+        /* Dia ausente: no se abre el fichero (evita el "Cannot open file" de
+         * libmseed2 en estaciones sin dato). */
+        if (access(path, R_OK) != 0)
+            continue;
+
+        while (ms_readmsr_r(&msfp, &msr, path, 0, NULL, NULL, 1, 1, 0) == MS_NOERROR) {
+            double rstart, rend, rsrate;
+            long rn;
+
+            if (!msr || !msr->datasamples || msr->samplecnt <= 0)
+                continue;
+
+            rstart = MS_HPTIME2EPOCH(msr_starttime(msr));
+            if (rstart > t1)
+                break;              /* registros en orden: fin de la ventana */
+            rsrate = msr->samprate;
+            rn = (long)msr->samplecnt;
+            if (rsrate <= 0.0)
+                continue;
+
+            rend = rstart + (double)(rn - 1) / rsrate;
+            if (rend < t0 || rstart > t1)
+                continue;
+
+            if (rate <= 0.0) {
+                rate = rsrate;
+                cap = (long)((t1 - t0) * rate) + 2;
+                if (cap <= 0)
+                    cap = 1;
+                samples = calloc((size_t)cap, sizeof(double));
+                if (!samples) {
+                    sds_close(&msfp, &msr);
+                    return -1;
+                }
+            }
+            if (fabs(rsrate - rate) > 1e-6)
+                continue;           /* tasa distinta: se ignora el registro */
+
+            {
+                long off = lround((rstart - t0) * rate);
+                for (i = 0; i < rn; i++) {
+                    long k = off + i;
+                    if (k < 0 || k >= cap)
+                        continue;
+                    if (msr->sampletype == 'f')
+                        samples[k] = (double)((float *)msr->datasamples)[i];
+                    else if (msr->sampletype == 'd')
+                        samples[k] = ((double *)msr->datasamples)[i];
+                    else
+                        samples[k] = (double)((int32_t *)msr->datasamples)[i];
+                }
+                if (off + rn > filled)
+                    filled = off + rn;
+            }
+        }
+        sds_close(&msfp, &msr);
+    }
+
+    if (!samples || rate <= 0.0 || filled <= 0) {
+        free(samples);
+        return -1;
+    }
+    out->x = samples;
+    out->n = filled;
+    out->t0 = t0;
+    out->samprate = rate;
+    out->dt = 1.0 / rate;
+    return 0;
+}
+
 /* ------------------------------ API ------------------------------ */
 
 int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
@@ -236,13 +363,19 @@ int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
     w->ws_timeout = cfg->ws_timeout;
     scnl_copy(w->ws_ip, sizeof(w->ws_ip), cfg->ws_ip);
     scnl_copy(w->ws_port, sizeof(w->ws_port), cfg->ws_port);
+    w->sds_enabled = cfg->sds_enabled;
+    w->sds_fallback_hours = cfg->sds_fallback_hours;
+    scnl_copy(w->sds_root, sizeof(w->sds_root), cfg->sds_root);
 
-    if (!tank_or_null && cfg->store_root[0]) {
-        /* AUTO: store primero, wave_serverV como red de seguridad. */
-        w->mode = WSRC_AUTO;
+    if (!tank_or_null && cfg->store_root[0] && cfg->wave_backend != 0) {
+        /* store (+ SDS segun la ventana). Con wave_backend=1 (store) NO se abre
+         * el menu de wave_serverV; con 2 (auto) queda como red de seguridad. */
+        w->mode = (cfg->wave_backend == 1) ? WSRC_STORE : WSRC_AUTO;
         if (wstore_open((WStore **)&w->store, cfg->store_root, NULL) != 0) return -1;
-        w->ws_menu = calloc(1, sizeof(WS_MENU_QUEUE_REC));
-        if (!w->ws_menu) { wstore_close((WStore *)w->store); w->store = NULL; return -1; }
+        if (w->mode == WSRC_AUTO) {
+            w->ws_menu = calloc(1, sizeof(WS_MENU_QUEUE_REC));
+            if (!w->ws_menu) { wstore_close((WStore *)w->store); w->store = NULL; return -1; }
+        }
         return 0;
     }
 
@@ -280,11 +413,17 @@ int wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,
              const char *loc, double t0, double t1, MagTrace *out)
 {
     if (!w) return -1;
-    if (w->mode == WSRC_STORE) return store_get(w, sta, net, chan, loc, t0, t1, out);
     if (w->mode == WSRC_TANK) return tank_get(w, sta, net, chan, loc, t0, t1, out);
-    if (w->mode == WSRC_AUTO) {
+    if (w->mode == WSRC_STORE || w->mode == WSRC_AUTO) {
+        /* Politica de fuentes (toda por .d): lo reciente del store y lo mas
+         * antiguo que SdsFallbackHours del archivo SDS. */
+        int pref = sds_prefer(w, t0);
+        if (pref && sds_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
         if (store_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
-        return ws_get(w, sta, net, chan, loc, t0, t1, out);
+        if (!pref && sds_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
+        if (w->mode == WSRC_AUTO)
+            return ws_get(w, sta, net, chan, loc, t0, t1, out);
+        return -1;
     }
     return ws_get(w, sta, net, chan, loc, t0, t1, out);
 }

@@ -27,14 +27,20 @@ EW_OBJS = $(EW_SRC_UNIX)/transport.o \
 
 LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 
-all: $(MODULE)
+all: $(MODULE) install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: $(MODULE)
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(MODULE)
 
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
 
 $(MODULE): $(MODULE).c ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o $(MODULE) $(MODULE).c ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
-	cp $(MODULE) $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 	@echo "======================================================"
 	@echo " EXITO: $(MODULE) compilado y copiado a EW bin!"
 	@echo "======================================================"

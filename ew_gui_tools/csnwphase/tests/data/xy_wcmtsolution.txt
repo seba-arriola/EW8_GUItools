@@ -1,0 +1,17 @@
+# fixture SINTETICO: reconstruccion del formato que escribe wpinversion_sub.c
+# (write_cmtf) tras el grid search. F0.4 lo reemplaza por la salida de una
+# corrida real del motor. Los campos son los mismos que extrae el parser del
+# CSN (report.py:22-95).
+ PDE 2015  9 16 22 54 32.00 -31.5730  -71.6740  25.0 8.3 8.3 Chile
+event name:            Chile
+time shift:  39.2809
+half duration:  39.2809
+latitude:  -30.9120
+longitude:  -71.8900
+depth:  22.5000
+Mrr:   8.400000e+27
+Mtt:  -2.100000e+27
+Mpp:  -6.300000e+27
+Mrt:  -4.700000e+27
+Mrp:   1.900000e+27
+Mtp:  -3.400000e+27

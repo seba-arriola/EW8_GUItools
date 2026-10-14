@@ -51,7 +51,7 @@ EW8_GUItools/
 │   └── libsrc/             # Legacy WC/ATWC (sin consumidores activos)
 ├── run_working_v8/         # Runtime de EarthWorm (params, log, tanks)
 ├── ew8_unix.sh             # Inicialización del entorno
-├── deploy_portable.sh      # Copia portable incremental (rsync) a otra máquina
+├── ew8_gtk_env.sh          # Entorno GTK4/WSLg (fuente única; la carga ew8_unix.sh)
 └── ew_monitor.sh           # Control del servicio EarthWorm
 ```
 
@@ -131,45 +131,6 @@ earthworm_8.0/bin/sniffring -n HYPO_RING
 ```
 
 ---
-
-## 📦 Despliegue portable (otra máquina)
-
-Genera una copia autónoma y **con rutas relativas** en `~/ew8portable` (o `--dst DIR`):
-
-```bash
-./deploy_portable.sh                 # incremental (rsync); purga obsoletos
-./deploy_portable.sh --dry-run -v    # muestra lo que haria sin escribir
-./deploy_portable.sh --verify-only   # valida un destino ya existente
-```
-
-- Copia **solo** el whitelist: binarios necesarios, params activos, `grids/` y tablas de tiempos de
-  viaje (`iasp91.tbl/.hed`).
-- Es **idempotente**: una segunda corrida sin cambios no transfiere nada (`cambiados=0`).
-- `wave_serverV.d` se **regenera** con las rutas de tanks relativas (`../tanks/…`); ninguna config
-  conserva rutas absolutas `/home/...`.
-- `hyp2000_ring.d` y `nlloc_ring.d` usan rutas relativas (`WorkDir ../../resources/…`, y el resto
-  relativo al WorkDir). El deploy **sí** copia `resources/` (grillas 3D de tiempos de `nlloc`, datos
-  de `hyp2000` y de `csnmags`), así que el portable queda autocontenido. `resources/` es grande
-  (decenas de GB) y está en `.gitignore`; se sincroniza de forma incremental.
-- Excluye `_legacy_atwc/`, `response/`, `hyp2000_output/`, respaldos, logs y tanks. El **estado en
-  vivo** de los módulos (`*.state`, `*.ndx`, `*.queue`) se excluye de la copia pero queda
-  **protegido** de la purga: `slink2ew`/`pick_FP` lo recrean mientras operan y borrarlo les quita
-  la posición de SeedLink y el índice de picks.
-- Por defecto el portable es un **espejo completo**: incluye `ew_monitor.sh` (copia literal del
-  repo) y los params de replay (`startstop_replay.d`, `tankplayer.d.tmpl`), para que no diverjan
-  en silencio. Opciones: `--no-monitor` y `--no-replay` (los excluyen) y `--no-delete` (no purga
-  obsoletos). `--with-monitor`/`--with-replay` se aceptan por compatibilidad y ya no cambian nada.
-
-En la máquina destino basta copiar la carpeta completa y arrancar:
-
-```bash
-cd ew8portable
-source ./ew8_unix.sh
-startstop
-```
-
-Requisitos en el destino: Linux x86_64, `rsync`, y `GTK4` + `libadwaita` + `DISPLAY` si se usan las
-GUIs.
 
 ### Coherencia de estaciones
 

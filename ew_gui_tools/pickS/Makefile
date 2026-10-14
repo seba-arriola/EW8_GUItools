@@ -16,14 +16,24 @@ EWLIBS = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 TARGET = pickS
 
 # Todos los objetos dependen del header (evita layouts de struct inconsistentes).
+# El primer target del fichero es esta regla de dependencias: sin fijar el goal,
+# `make` a secas compilaria objetos y NUNCA enlazaria ni instalaria el binario.
+.DEFAULT_GOAL := all
+
 $(OBJS): pickS.h
 $(TESTS): pickS.h
 
-all: $(TARGET)
+all: $(TARGET) install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: $(TARGET)
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(TARGET)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(EWLIBS) $(LIBS)
-	cp $(TARGET) $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 TESTS = test/test_filter test/test_stalta test/test_aic \
         test/test_polarization test/test_quality test/test_ring3c \

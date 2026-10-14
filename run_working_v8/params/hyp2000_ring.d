@@ -14,8 +14,9 @@ SourceCode      W
 # Fichero de arranque de HYPOINVERSE (.hyp): modelo + estaciones.
 CommandFile     hyp2000_ring.hyp
 
-# Directorio de trabajo (hypoinverse escribe arcIn/arcOut aqui).
-WorkDir         ../../resources/hyp2000
+# Directorio de trabajo (hypoinverse escribe arcIn/arcOut aqui). ABSOLUTO y fuera
+# del repo: disco de datos (EW_RESOURCES_ROOT), debe existir y ser ESCRIBIBLE.
+WorkDir         /mnt/d/resources/hyp2000
 
 # Region opcional (mismo formato .grid que csnloc): solo se refinan eventos
 # dentro del bbox. Vacio = sin filtro.

@@ -2,6 +2,7 @@
 
 #include "csnhypodbp.h"
 #include "csnhypodbp_locator.h"
+#include "csnhypodbp_mww.h"
 #include "ewgui/table_ui.h"
 
 /* Definicion de Variables Globales */
@@ -12,6 +13,8 @@ char OutRingName[MAX_STR];
 char InRingPickName[MAX_STR];  /* anillo de picks a leer (TYPE_PICK_SCNL) */
 char DbEnvFile[MAX_STR];       /* credenciales PostgreSQL (historial) */
 char MagConfigFile[MAX_STR] = "csnmags.d";  /* .d de csnmags: defaults de magnitud */
+char MwwConfigFile[MAX_STR] = "csnwphase.d";          /* .d de csnwphase (panel Mww) */
+char MwwWorkDir[MAX_STR]    = "/tmp/csnhypodbp_mww";  /* run dirs de las corridas Mww */
 CsnhypodbpMagCfg g_magcfg;     /* parametros de magnitud (se llenan al leer el .d) */
 int  g_db_hours = 24;          /* ventana de historial de la BD (horas) */
 char TauModel[MAX_STR];        /* modelo de tiempos de viaje (default iasp91) */
@@ -304,6 +307,8 @@ int ReadConfig(char *configfile) {
         else if (k_its("GroupMaxSolutions")) { g_group_max_solutions = k_int(); }
         else if (k_its("DbEnvFile")) { str = k_str(); if (str) strcpy(DbEnvFile, str); }
         else if (k_its("MagConfigFile")) { str = k_str(); if (str) strcpy(MagConfigFile, str); }
+        else if (k_its("MwwConfigFile")) { str = k_str(); if (str) strcpy(MwwConfigFile, str); }
+        else if (k_its("MwwWorkDir")) { str = k_str(); if (str) strcpy(MwwWorkDir, str); }
         else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
         else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
         else if (k_its("WaveBackend")) {
@@ -481,6 +486,10 @@ static int maps_print_config(void) {
     /* Parametros de magnitud: los lee la sub-pestaña `magnitudes` para dibujar la
        traza de vista y las franjas de ventana. */
     printf("MagConfigFile %s\n", MagConfigFile[0] ? MagConfigFile : "(none)");
+    /* Panel `Mww` (inversion de fase W): mismo .d que el CLI csnwphase y su
+       directorio de corridas. */
+    printf("MwwConfigFile %s\n", MwwConfigFile[0] ? MwwConfigFile : "(none)");
+    printf("MwwWorkDir %s\n", MwwWorkDir[0] ? MwwWorkDir : "(none)");
     printf("MagWindow ML %.3f %.3f\n", g_magcfg.ml_ta, g_magcfg.ml_tb);
     printf("MagWindow Mwp %.3f %.3f\n", g_magcfg.mwp_start,
            g_magcfg.mwp_start + g_magcfg.mwp_t0);
@@ -1310,6 +1319,23 @@ static void build_maps_column(void)
     csnhypodbp_maps_refresh();   /* estado inicial (sin seleccion) */
 }
 
+/* El eje de tiempo y la barra inferior son de *magnitudes*: al mirar la pagina
+   `Mww` se ocultan, para que sus botones no se confundan con los de fase W. */
+static GtkWidget *g_mag_bar_w = NULL;
+
+static void on_mag_stack_changed(GObject *stack, GParamSpec *pspec, gpointer data)
+{
+    const char *nm = gtk_stack_get_visible_child_name(GTK_STACK(stack));
+    int mww = (nm != NULL && strcmp(nm, "mww") == 0);
+
+    (void)pspec;
+    (void)data;
+    if (g_mag_axis_canvas)
+        gtk_widget_set_visible(ewgui_canvas_widget(g_mag_axis_canvas), !mww);
+    if (g_mag_bar_w)
+        gtk_widget_set_visible(g_mag_bar_w, !mww);
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     static gboolean css_done = FALSE;
     (void)user_data;
@@ -1826,11 +1852,22 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         GtkWidget *mag_frame = gtk_frame_new(NULL);
         GtkWidget *sw_mag = gtk_scrolled_window_new();
         GtkWidget *mag_hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
+        GtkWidget *mag_stack = gtk_stack_new();
         int k;
+
+        gtk_widget_set_vexpand(mag_stack, TRUE);
 
         gtk_widget_set_margin_start(hbox_mag, 10);
         gtk_widget_set_margin_end(hbox_mag, 10);
         gtk_widget_set_margin_bottom(hbox_mag, 5);
+        /* Selector del area central: `Estaciones` (tabla + traza por magnitud) y
+           `Mww` (inversion de fase W, ON-DEMAND: no corre nada hasta Calculate). */
+        {
+            GtkWidget *mag_sw = gtk_stack_switcher_new();
+            gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(mag_sw), GTK_STACK(mag_stack));
+            gtk_widget_add_css_class(mag_sw, "mww-switcher");
+            gtk_box_append(GTK_BOX(hbox_mag), mag_sw);
+        }
         gtk_box_append(GTK_BOX(hbox_mag), gtk_label_new("magnitud:"));
         for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++) {
             GtkWidget *r = gtk_check_button_new_with_label(csnhypodbp_magcfg_name(k));
@@ -1927,7 +1964,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             }
         }
         gtk_widget_set_vexpand(mag_hbox, TRUE);
-        gtk_box_append(GTK_BOX(page_mags), mag_hbox);
+        /* Area central = pila: la pagina `Mww` trae su propio panel (parametros,
+           Calculate/Cancel, resumen + playera y la salida completa del motor). */
+        gtk_stack_add_titled(GTK_STACK(mag_stack), mag_hbox, "mag", "Estaciones");
+        gtk_stack_add_titled(GTK_STACK(mag_stack), csnhypodbp_mww_panel_new(), "mww", "Mww");
+        gtk_box_append(GTK_BOX(page_mags), mag_stack);
 
         /* Eje temporal abajo (mismo patron que el de `picking`): ticks UTC y
            arrastre para acercar; doble clic recentra la franja entera. */
@@ -1965,6 +2006,10 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(barsw),
                                            GTK_POLICY_AUTOMATIC, GTK_POLICY_NEVER);
             gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(barsw), bar);
+            /* La barra (y el eje, mas arriba) se ocultan en la pagina Mww. */
+            g_mag_bar_w = barsw;
+            g_signal_connect(mag_stack, "notify::visible-child-name",
+                             G_CALLBACK(on_mag_stack_changed), NULL);
             gtk_widget_set_margin_start(bar, 10);
             gtk_widget_set_margin_end(bar, 10);
             gtk_widget_set_margin_bottom(bar, 6);

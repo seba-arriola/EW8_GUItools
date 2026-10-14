@@ -127,8 +127,7 @@ __pycache__/
 tank_tools/tests/tmp/
 # Carpeta de pruebas de integracion de localizadores (NLL, HYP2000, etc.)
 tmp/
-# Datos grandes requeridos en runtime (nlloc, hyp2000, csnmags). Los copia
-# deploy_portable.sh; no se versionan.
+# Datos grandes requeridos en runtime (nlloc, hyp2000, csnmags): no se versionan.
 /resources/
 
 # --- csnmags (motor de magnitudes) ---

@@ -15,14 +15,20 @@ EWLIBS = ../common/libewgui_gtk4.a \
          $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
-all: csntvp
+all: csntvp install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: csntvp
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csntvp
 
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
 
 csntvp: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csntvp $(OBJS) $(EWLIBS) $(LIBS)
-	cp csntvp $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Unit tests (standalone, no EW/GTK deps)
 test: test_filter test_util

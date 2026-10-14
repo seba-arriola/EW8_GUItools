@@ -4,13 +4,14 @@ CC = gcc
 GUI_PKG = gtk4 libadwaita-1
 
 # Flags de compilacion para GTK4 y Earthworm
-CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -I../csnloc -I../wavestore -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
+CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -I../csnloc -I../wavestore -I../csnwphase -D_LINUX -D_REENTRANT -fno-stack-protector -U_FORTIFY_SOURCE
 
 # Librerias y enlazador
 LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 
 # Librerias nativas de Earthworm 8
 EWLIBS = ../common/libewgui_gtk4.a \
+         ../csnwphase/libcsnwphase.a \
          ../csnloc/libcsnloc_tt.a \
          ../wavestore/libwavestore.a \
          $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a \
@@ -28,12 +29,22 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
        csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
        csnhypodbp_magsta.o csnhypodbp_magitem.o \
-        csnhypodbp_magmarks.o csnhypodbp_magview.o
+        csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o
 
-all: csnhypodbp
+all: csnhypodbp install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: csnhypodbp
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csnhypodbp
 
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+
+# Panel Mww: la GUI enlaza la MISMA libreria headless que el CLI csnwphase.
+../csnwphase/libcsnwphase.a:
+	$(MAKE) -C ../csnwphase libcsnwphase.a
 
 ../csnloc/libcsnloc_tt.a:
 	$(MAKE) -C ../csnloc libcsnloc_tt.a
@@ -41,9 +52,9 @@ all: csnhypodbp
 ../wavestore/libwavestore.a:
 	$(MAKE) -C ../wavestore libwavestore.a
 
-csnhypodbp: $(OBJS) ../common/libewgui_gtk4.a ../csnloc/libcsnloc_tt.a ../wavestore/libwavestore.a
+csnhypodbp: $(OBJS) ../common/libewgui_gtk4.a ../csnwphase/libcsnwphase.a ../csnloc/libcsnloc_tt.a ../wavestore/libwavestore.a
 	$(CC) $(CFLAGS) -o csnhypodbp $(OBJS) $(EWLIBS) $(LDFLAGS)
-	cp csnhypodbp $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Test unitario del filtro IIR y manejo de gaps (DSP puro, sin GTK/EW link)
 test_filter: test_filter.c ../common/libewgui_gtk4.a

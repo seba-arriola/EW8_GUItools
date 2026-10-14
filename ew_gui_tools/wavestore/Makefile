@@ -35,9 +35,10 @@ wavesource.o: wavesource.h
 wstore_ingest: wstore_ingest_main.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ wstore_ingest_main.o $(LIB) $(EWLIB) $(LIBS)
 
-# Instala en EW_HOME/bin (para el deploy portable). No lo hace `check`.
+# Instala en EW_HOME/bin de forma atómica y SIEMPRE. No lo hace `check`.
+.PHONY: install
 install: wstore_ingest $(CONVBINS)
-	cp -p wstore_ingest tank2store store2tank wstore_query $(EW_HOME)/$(EW_VERSION)/bin/
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin wstore_ingest tank2store store2tank wstore_query
 
 tank2store: tank2store.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ tank2store.c $(LIB) $(LIBS)

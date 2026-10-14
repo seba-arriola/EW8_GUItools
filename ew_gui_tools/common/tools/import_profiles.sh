@@ -3,7 +3,7 @@
 #
 #   ./import_profiles.sh [--dry-run] [--src DIR] [--dst DIR]
 #
-# Copia slab<name>.tmp y topo<name>.tmp a resources/profiles/ y deja
+# Copia slab<name>.tmp y topo<name>.tmp a <EW_RESOURCES_ROOT>/profiles/ y deja
 # PROVENANCE.txt con el origen y el significado de las columnas. Idempotente:
 # no recopia lo que ya esta identico. El modulo solo usa las columnas 3 (lon) y
 # 7 (valor) -> ProfileCols 3 7 en csnhypodbp.d.
@@ -11,7 +11,7 @@ set -u
 
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 SRC="${EWGUI_PROFILES_SRC:-/home/seba/Dev/test_db/scriptmapas/grillas}"
-DST="${ROOT}/resources/profiles"
+DST="${EW_RESOURCES_ROOT:-/mnt/d/resources}/profiles"
 DRY=0
 
 while [ $# -gt 0 ]; do
@@ -24,9 +24,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-# El origen se registra relativo al home cuando se puede: deploy_portable.sh
-# rechaza rutas absolutas /home/ dentro de resources/ (el portable debe ser
-# autocontenido) y PROVENANCE.txt es texto que ese chequeo escanea.
+# El origen se registra relativo al home cuando se puede, para que
+# PROVENANCE.txt no arrastre rutas absolutas de esta maquina.
 SRC_DISPLAY="$SRC"
 if [ -n "${HOME:-}" ]; then
     case "$SRC" in

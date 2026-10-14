@@ -21,7 +21,7 @@ Entradas aceptadas (autodetecta):
 Uso:
     python3 tank_tools/depth_report.py <dir> [--grids DIR]
     python3 tank_tools/depth_report.py picks/<cap>/csnlocvalidate_<ts>
-    python3 tank_tools/depth_report.py /home/seba/ew8portable/run_working_v8/log
+    python3 tank_tools/depth_report.py run_working_v8/log
 
 Opciones:
     --grids DIR    directorio con los .grid (default: run_working_v8/params/grids)

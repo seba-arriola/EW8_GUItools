@@ -7,13 +7,17 @@
 # Respuesta instrumental autocontenida (lector PZ + FFT propia): no enlaza
 # transfer.o. Enlaza contra libew_mt.a como el resto de los csn*.
 
-CFLAGS = -O2 -g -Wall -I. -I../wavestore -I$(EW_HOME)/$(EW_VERSION)/include \
-         -D_LINUX -D_REENTRANT
+CFLAGS = -O2 -g -Wall -I. -I../common/include -I../wavestore \
+         -I$(EW_HOME)/$(EW_VERSION)/include -D_LINUX -D_REENTRANT
 
 LIBS = -lm -lpthread
 
 OBJS = csnmags.o mag_config.o mag_sta.o mag_formula.o mag_amp.o \
        mag_calib.o mag_response.o mag_io.o mag_out.o wave_source.o mag_key.o
+
+# Fuente SDS compartida (`ewgui_sds_path`) + libmseed2 estatica: la misma que usa
+# csnhypodbp para leer el archivo SeisComP.
+SDSOBJ = ewgui_sds.o $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a
 
 # Objetos sueltos de EarthWorm que no viven en libew_mt.a
 EWLIB  = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
@@ -25,17 +29,31 @@ EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
 
 TARGET = csnmags
 
+# El primer target del fichero es esta regla de dependencias: sin fijar el goal,
+# `make` a secas compilaria objetos y NUNCA enlazaria ni instalaria el binario.
+.DEFAULT_GOAL := all
+
 $(OBJS): csnmags.h
 $(TESTS): csnmags.h
 
-all: $(TARGET)
+all: $(TARGET) install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: $(TARGET)
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(TARGET)
 
 ../wavestore/libwavestore.a:
 	$(MAKE) -C ../wavestore libwavestore.a
 
-$(TARGET): $(OBJS) ../wavestore/libwavestore.a
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(WSLIB) $(EWOBJ) $(EWLIB) $(LIBS)
-	cp $(TARGET) $(EW_HOME)/$(EW_VERSION)/bin/
+$(TARGET): $(OBJS) $(SDSOBJ) ../wavestore/libwavestore.a
+	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS) $(WSLIB) $(EWOBJ) $(EWLIB) $(SDSOBJ) $(LIBS)
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
+
+# Lector SDS compartido (common/src/ewgui_sds.c): se compila aqui, en local.
+ewgui_sds.o: ../common/src/ewgui_sds.c
+	$(CC) $(CFLAGS) -c -o $@ ../common/src/ewgui_sds.c
 
 # ---- tests headless (sin anillos ni Earthworm en ejecución) ----
 TESTS = test/test_formula test/test_amp test/test_pz test/test_config \

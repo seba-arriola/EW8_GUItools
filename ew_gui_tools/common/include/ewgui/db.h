@@ -97,6 +97,18 @@ typedef struct {
 } EwGuiMagRow;
 
 typedef struct {
+    char   tensor_id[64];
+    char   origin_id[64];
+    char   method[64];        /* de donde sale el mecanismo (p.ej. WPHASE) */
+    char   mechanism[64];     /* texto libre (p.ej. WCMT) */
+    double strike1, dip1, rake1;
+    double strike2, dip2, rake2;
+    double m_rr, m_tt, m_pp, m_rt, m_rp, m_tp;
+    double scalar_moment;
+    int    have_planes;       /* 0 = sin planos nodales: se escriben NULL */
+} EwGuiTensorRow;
+
+typedef struct {
     char   station_magnitude_id[64];
     char   magnitude_id[64];
     char   channel[64];
@@ -111,6 +123,8 @@ typedef struct {
 int ewguidb_upsert_event(EwGuiDb *db, const EwGuiEventRow *row);
 int ewguidb_upsert_origin(EwGuiDb *db, const EwGuiOriginRow *row);
 int ewguidb_upsert_magnitude(EwGuiDb *db, const EwGuiMagRow *row);
+/* Mecanismo focal + tensor de momento de un origen (fila de `tensor`). */
+int ewguidb_upsert_tensor(EwGuiDb *db, const EwGuiTensorRow *row);
 
 /* Reemplaza todas las filas hijas de `parent_id` (DELETE + INSERT). */
 int ewguidb_replace_picks(EwGuiDb *db, const char *origin_id,

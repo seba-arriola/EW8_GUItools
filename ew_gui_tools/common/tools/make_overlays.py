@@ -29,7 +29,9 @@ from xml.etree import ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_SRC = Path(os.environ.get("OVERLAY_SRC", "/tmp/opencode/overlay_src"))
-DEFAULT_OUT = ROOT / "resources" / "overlays"
+# Los datos de runtime NO viven en el repo: disco de datos (EW_RESOURCES_ROOT).
+RESOURCES_ROOT = Path(os.environ.get("EW_RESOURCES_ROOT", "/mnt/d/resources"))
+DEFAULT_OUT = RESOURCES_ROOT / "overlays"
 
 KML_NS = "http://www.opengis.net/kml/2.2"
 

@@ -1,0 +1,15 @@
+EVNAME:     Chile
+SEED:       -
+DMIN:       5.0
+DMAX:       50.0
+CMTFILE:    CMTSOLUTION
+
+filt_order: 4
+filt_cf1:   0.001
+filt_cf2:   0.005
+filt_pass:  1
+IDEC_2:  2 280  0.1
+IDEC_3:  0.001  0.1  100  0.03
+
+GFDIR:   ./GF
+WP_WIN:  0. 15.0 12.0

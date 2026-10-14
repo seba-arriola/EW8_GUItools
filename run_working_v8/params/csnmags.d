@@ -17,16 +17,23 @@ WsIP              127.0.0.1
 WsPort            16022
 WsTimeout         10000
 StoreRoot         ../wstore
+# Fuente de ondas (TODO por .d): store para lo reciente y SDS para lo antiguo.
+#   store = store + SDS (sin wave_serverV: no se despliega) | auto = + wave_serverV
+WaveBackend       store
+# Archivo SDS (SeisComP). SdsFallbackHours 0 = SDS desactivado.
+SdsEnabled        1
+SdsRoot           /mnt/sds/archive
+SdsFallbackHours  168
 
 # --- Respuesta instrumental ---
 StaFile           estaciones_107.txt
-ResponseDir       ../../resources/csnmags/responses
+ResponseDir       /mnt/d/resources/csnmags/responses
 ResponsePattern   %S_%C_%N.pz
 ResponseInMeters  0
 
 # --- Calibración regional (grillas + tablas) ---
-CalibFile         ../../resources/csnmags/calib/calib_map.txt
-StaCorrFile       ../../resources/csnmags/calib/station_corr.txt
+CalibFile         /mnt/d/resources/csnmags/calib/calib_map.txt
+StaCorrFile       /mnt/d/resources/csnmags/calib/station_corr.txt
 TauModel          iasp91
 
 # --- ML (Magnitud local) ---
@@ -59,7 +66,7 @@ Mwp_MinSta        1
 Mb_Enable         1
 Mb_Period         1.0
 Mb_Window         30.0
-Mb_QTable         ../../resources/csnmags/calib/mb_Q.tab
+Mb_QTable         /mnt/d/resources/csnmags/calib/mb_Q.tab
 Mb_Band           0.5 2.0
 Mb_MinDelta       5.0
 Mb_MaxDelta       105.0

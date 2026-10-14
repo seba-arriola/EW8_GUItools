@@ -3,12 +3,10 @@
 #  ew8_gtk_env.sh - entorno GTK4 de las GUI (WSLg)
 #
 #  FUENTE UNICA. No contiene rutas del proyecto ni variables de EarthWorm: solo
-#  los dos `export` que necesitan los visores GTK4. Lo hacen `source` tanto el
-#  `ew8_unix.sh` del repo como el del portable (deploy_portable.sh lo copia tal
-#  cual junto al env generado).
+#  los dos `export` que necesitan los visores GTK4. Lo hace `source` `ew8_unix.sh`.
 #
-#  Por que existe: `deploy_portable.sh` REGENERA `ew8_unix.sh` y no copiaba este
-#  bloque, asi que cada deploy borraba las dos variables en silencio (incidente
+#  Por que existe: cuando este bloque vivia dentro de `ew8_unix.sh`, duplicarlo o
+#  reescribir ese archivo lo borraba en silencio (incidente
 #  2026-10-08: volvieron los avisos de libEGL/MESA y cambio la decoracion de las
 #  ventanas). Con una sola copia no hay forma de que divergan.
 #

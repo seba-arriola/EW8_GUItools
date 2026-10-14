@@ -29,7 +29,8 @@ EMPTY_BY_DESIGN=(
     origin.error_ellipse
     pick.polarity                  # el ARC no lleva primer movimiento
     pick.probability               # no hay picker probabilistico publicando
-    tensor.*                       # sin productor
+    # `tensor.*` YA NO va aqui: lo escribe ewguidb_upsert_tensor (panel Mww,
+    # boton `Save to DB`), con el mecanismo focal de la inversion de fase W.
 )
 
 fail=0

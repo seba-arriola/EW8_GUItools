@@ -423,7 +423,7 @@ Si `csnloc` no cambió, los `.jsonl` son idénticos byte a byte y lo dice:
 
 ```bash
 python3 tank_tools/depth_report.py picks/<cap>/csnlocvalidate_<ts>       # desde los .jsonl
-python3 tank_tools/depth_report.py /home/seba/ew8portable/run_working_v8/log  # desde los logs
+python3 tank_tools/depth_report.py run_working_v8/log  # desde los logs
 ```
 
 Reporta: histograma de profundidades, **offset al nodo de profundidad más cercano**
@@ -453,20 +453,14 @@ make -C tank_tools report-offline VALIDATION=<A> CONTRA=<B>  # comparación
 
 ---
 
-## 9. Mantenimiento: config portable y coherencia de estaciones
+## 9. Mantenimiento: coherencia de estaciones
 
-Cuando lleves el sistema a otra máquina (pruebas en tiempo real con datos reales):
+Todo el sistema vive en este repo (no hay copia portable ni sincronización con otra máquina):
+`source ./ew8_unix.sh` y `startstop`. Tras compilar, deja el árbol sano con:
 
 ```bash
-./deploy_portable.sh --dst ~/ew8portable --dry-run -v   # ver el plan
-./deploy_portable.sh --dst ~/ew8portable                # copiar (incremental)
+sh ew_gui_tools/common/tools/check_install.sh -v   # binarios instalados y al día (lo cubre `common check`)
 ```
-
-Copia solo lo necesario, con **rutas relativas** (`wave_serverV.d`, `hyp2000_ring.d` y
-`nlloc_ring.d` se regeneran con `../tanks/…` y `../../tmp/…`).
-En el destino: `cd ew8portable && source ./ew8_unix.sh && startstop`.
-Validación del árbol copiado: `./deploy_portable.sh --dst DIR --verify-only` (exit 2 si falla).
-Su prueba offline vive en `tank_tools/tests/test_deploy_portable.sh` (dentro de `make test`).
 
 Para que las magnitudes (ML/Mwp) usen todas las estaciones posibles, elimina los SCNL presentes en
 `pick_FP.sta`/`wave_serverV.d` pero **ausentes** en `estaciones_107.txt`:
@@ -721,10 +715,35 @@ Cada variante usa un **WorkDir aislado** (el refiner hace `chdir` ahí) y **ruta
 (relativas se resuelven contra el cwd equivocado tras el `chdir`). Con `--arc-jobs N` se replica el
 WorkDir por worker para correr ARC en paralelo.
 
-Coste medido (1777 ARC): **hyp2000 ~20 ms/ARC** (≈35 s por variante); **nlloc ~7 s/ARC** (≈3,5 h
-por variante: dominan las tablas 3D de tiempos por estación; escalar `LOCGRID` no cambia ni el
-resultado ni el tiempo). Para nlloc, cribar en un subconjunto (`--only`) antes de la corrida
-completa.
+OJO: las **rutas de datos** de la variante (`ControlFile`, `TtimeRoot` y el `ttroot`/plantilla de cada
+`ModelBand` y del `ModelFallback`) se escriben **absolutas contra `SRC_WORKDIR[nlloc]`**
+(`$EW_RESOURCES_ROOT/nlloc`). Si quedan relativas al WorkDir aislado —que sólo tiene `loc/`— NLLoc no
+encuentra la plantilla y aborta con `nlloc_ring: la plantilla <ctrl/…> no tiene LOCFILES`, y sin banda
+que cubra tampoco hay tablas. `tmp/ext_data/inspect_matnlloc.py` comprueba variante a variante que
+queden absolutas, con tablas y que el WorkDir/OutRoot sigan dentro del `--work`.
+
+Coste medido (1777 ARC, tablas de tiempos en disco local): **hyp2000 ~20 ms/ARC** (≈35 s por
+variante); **nlloc ~7 s/ARC** (≈3,5 h por variante: dominan las tablas 3D de tiempos por estación;
+escalar `LOCGRID` no cambia ni el resultado ni el tiempo). Para nlloc, cribar en un subconjunto
+(`--only`) antes de la corrida completa.
+
+**Con las tablas en `/mnt/d` (drvfs) nlloc es ~40× más lento** (medido 2026-10-13 sobre `test100`:
+`n_in=4 n_ok=4`, `sec_arc_max` 261 s, ≈5 min/ARC): NLLoc lee *todas* las tablas por estación de la
+banda elegida (`time3d/<banda>/time/<banda>.{P,S}.<STA>.time.{hdr,buf}`; 104-272 ficheros por banda,
+`CHILE_4k` ~120 MB por estación). Lectura secuencial de `/mnt/d` ≈ 105 MB/s. Consecuencias:
+
+- el tope por ARC del arnés es `ARC_TIMEOUT_SEC` (**900 s**; `REFINE_TIMEOUT_SEC` o `--timeout`): los
+  180 s históricos mataban cualquier ARC de nlloc desde `/mnt/d`;
+- `refine_arcs.py` deja `<out>/arcs_times.tsv` (segundos por ARC) y `manifest.json` con
+  `sec_total`/`sec_arc_max`/`sec_arc_p50`/`timeout_sec`; el mensaje de timeout cita el tope;
+- `--arcs-dir` se absolutiza siempre (el refiner hace `chdir`);
+- en **producción** `nlloc_ring` corre con `NllIntervalSec 60` y `NllMaxPending 64`: con minutos por
+  evento la cola se satura y **se descartan versiones**. Para refinado por evento con nlloc, las
+  tablas 3D tienen que estar en disco local (o subir esos topes y asumir el retraso).
+
+El smoke de `test_calibrate_refiners.sh` corre **hyp2000 siempre** y **nlloc sólo con
+`TANK_TESTS_SLOW=1`** (`make -C tank_tools test-slow`): desde `/mnt/d` son ~10-15 min (los ARC del
+primer slug). El suelo se construye con `make -C tank_tools refine-baseline`.
 
 ### 11.3 Resultados
 
@@ -789,8 +808,8 @@ que el volumen de búsqueda es lo único que le dice dónde mirar. Con el LOCGRI
 El módulo re-centra el `LOCGRID` en el epicentro de entrada (600 km, recortado al modelo), lo que
 además quita el pegado al borde de las bandas finas.
 
-**Portabilidad**: las grillas de `CHILE_4k` (~12 GB) no las copia `deploy_portable.sh`; van a mano
-como el resto de `tmp/`.
+**Datos grandes**: las grillas de `CHILE_4k` (~12 GB) y el resto de `tmp/` viven fuera del repo (no
+se versionan).
 
 ## 12. Grillas de nucleacion de `csnloc`
 

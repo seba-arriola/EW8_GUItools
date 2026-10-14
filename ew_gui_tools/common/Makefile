@@ -83,6 +83,10 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_schema_coverage.sh
 	@echo "== check_lines =="
 	@bash tests/test_check_lines.sh
+	@echo "== check_install_bin =="
+	@bash tests/test_install_bin.sh
+	@echo "== check_install =="
+	@bash tests/test_install_check.sh
 	@echo "== make_overlays =="
 	@python3 tests/test_make_overlays.py
 	@rc=0; for t in $(TESTS); do \

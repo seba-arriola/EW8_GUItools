@@ -72,6 +72,16 @@ typedef struct {
     int  ws_timeout;
     char store_root[MAG_STR];   /* modo store (wstore) */
 
+    /* Fuente de ondas (todo por configuracion, nada en el codigo):
+     *   wave_backend 1 = store (+SDS)  2 = auto (store->ws->SDS)  0 = wave_serverV
+     * El archivo SDS (SeisComP) es la fuente para lo antiguo: los eventos mas
+     * viejos que sds_fallback_hours se piden al SDS en vez de a la retencion local.
+     * sds_fallback_hours 0 = SDS desactivado. */
+    int  wave_backend;
+    int  sds_enabled;
+    char sds_root[MAG_STR];
+    int  sds_fallback_hours;
+
     /* ML */
     double wa_period, wa_damp, wa_gain;   /* Wood-Anderson */
     int    ml_dist_type;                  /* 0 hipocentral, 1 epicentral */
@@ -194,6 +204,10 @@ typedef struct {
     MagTankIndex *idx;             /* índice del tank (offline) */
     int   nidx;
     void *store;                   /* WStore* (modo store) */
+    /* Fuente SDS (archivo SeisComP): copia de la config en wave_open. */
+    int   sds_enabled;
+    char  sds_root[MAG_STR];
+    int   sds_fallback_hours;
 } WaveSource;
 
 /* ============================ Fórmulas ============================ */

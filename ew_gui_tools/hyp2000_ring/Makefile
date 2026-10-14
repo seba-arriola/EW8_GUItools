@@ -15,7 +15,13 @@ HYPOLIB = hypoinverse/libhypoinverse.a
 
 TARGET = hyp2000_ring
 
-all: $(TARGET)
+all: $(TARGET) install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: $(TARGET)
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(TARGET)
 
 $(HYPOLIB):
 	$(MAKE) -C hypoinverse
@@ -23,7 +29,7 @@ $(HYPOLIB):
 $(TARGET): hyp2000_ring.o $(HYPOLIB)
 	$(CC) $(CFLAGS) -o $(TARGET) hyp2000_ring.o $(HYPOLIB) $(EWLIBS) \
 	      -lgfortran $(LIBS)
-	cp $(TARGET) $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 clean:
 	-$(MAKE) -C hypoinverse clean

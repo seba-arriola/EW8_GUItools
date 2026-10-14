@@ -20,7 +20,8 @@ SourceCode      W
 # Raiz de la salida (LOCFILES). El modulo reemplaza la linea LOCFILES.
 OutRoot         loc/ev
 
-WorkDir         ../../resources/nlloc
+# ABSOLUTO y fuera del repo: disco de datos (EW_RESOURCES_ROOT), ESCRIBIBLE.
+WorkDir         /mnt/d/resources/nlloc
 
 # Filtro grueso por bbox (reusa el .grid de csnloc).
 GridFile        grids/chile_regional.grid

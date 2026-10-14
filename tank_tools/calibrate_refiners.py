@@ -58,9 +58,11 @@ BASE_D = {
     "nlloc": os.path.join(PARAMS, "nlloc_ring.d"),
 }
 BASE_HYP = os.path.join(PARAMS, "hyp2000_ring.hyp")
+# Disco de datos: los WorkDir de los refinadores NO viven en el repo.
+RESOURCES_ROOT = os.environ.get("EW_RESOURCES_ROOT", "/mnt/d/resources")
 SRC_WORKDIR = {
-    "hyp2000": os.path.join(REPO, "resources", "hyp2000"),
-    "nlloc": os.path.join(REPO, "resources", "nlloc"),
+    "hyp2000": os.path.join(RESOURCES_ROOT, "hyp2000"),
+    "nlloc": os.path.join(RESOURCES_ROOT, "nlloc"),
 }
 DEFAULT_CATALOG = os.path.join(REPO, "tests_soluciones_publicadas.dat")
 
@@ -256,8 +258,23 @@ def materialize_hyp2000(variant, cfg_dir):
     return rewrite_d(BASE_D["hyp2000"], os.path.join(vdir, tag + ".d"), over)
 
 
-def materialize_nlloc(variant, cfg_dir):
-    """WorkDir/OutRoot aislados y, si el set cambia la plantilla, copia del ctrl."""
+def _abs_data_path(path, src_workdir):
+    """Ruta de datos (plantilla/grillas) resuelta contra el WorkDir origen.
+
+    El .d de la variante usa un WorkDir aislado: si la plantilla de control y las
+    tablas de tiempos se dejan relativas, el refinador (que hace chdir(WorkDir))
+    no las encuentra y no localiza nada (nlloc_ring: "la plantilla <> no tiene
+    LOCFILES"). Absolutas contra SRC_WORKDIR es la unica forma de que la variante
+    sea autosuficiente sin copiar decenas de GB de grillas.
+    """
+    if not path or path.startswith("/"):
+        return path
+    return os.path.normpath(os.path.join(src_workdir, path))
+
+
+def materialize_nlloc(variant, cfg_dir, src_workdir=None):
+    """WorkDir/OutRoot aislados y rutas de datos ABSOLUTAS contra el origen."""
+    src_workdir = src_workdir or SRC_WORKDIR.get("nlloc") or ""
     tag = variant["tag"]
     vdir = os.path.join(cfg_dir, tag)
     wd = os.path.join(vdir, "wd")
@@ -270,6 +287,10 @@ def materialize_nlloc(variant, cfg_dir):
     drop = () if bands else ("ModelBand",)
     ctrl_over = dict(variant.get("ctrl") or {})
     grid_scale = int(variant.get("ctrl_grid_scale") or 0)
+
+    base = dict(refine_arcs.read_d(BASE_D["nlloc"]))
+    for k in ("ControlFile", "TtimeRoot"):
+        over[k] = _abs_data_path(over.get(k) or base.get(k, ""), src_workdir)
 
     src_ctls = []
     for k, v in refine_arcs.read_d(BASE_D["nlloc"]):
@@ -285,10 +306,11 @@ def materialize_nlloc(variant, cfg_dir):
         cdir = os.path.join(vdir, "ctrl")
         os.makedirs(cdir, exist_ok=True)
         for i, c in enumerate(dict.fromkeys(src_ctls)):
-            if not os.path.isfile(c):
+            srcf = _abs_data_path(c, src_workdir)
+            if not os.path.isfile(srcf):
                 continue
             dst = os.path.join(cdir, "%02d_%s" % (i, os.path.basename(c)))
-            apply_ctrl(c, dst, ctrl_over, grid_scale)
+            apply_ctrl(srcf, dst, ctrl_over, grid_scale)
             ctl_map[c] = dst
 
     out = os.path.join(vdir, tag + ".d")
@@ -299,10 +321,13 @@ def materialize_nlloc(variant, cfg_dir):
             k = _key_of(line)
             if k and k in drop:
                 continue
-            if k == "ModelBand" and ctl_map:
+            if k in ("ModelBand", "ModelFallback"):
                 parts = line.strip().split()
-                if len(parts) >= 7 and parts[-1] in ctl_map:
-                    parts[-1] = ctl_map[parts[-1]]
+                need = 8 if k == "ModelBand" else 3
+                if len(parts) >= need:
+                    parts[-2] = _abs_data_path(parts[-2], src_workdir)
+                    parts[-1] = ctl_map.get(parts[-1],
+                                            _abs_data_path(parts[-1], src_workdir))
                     fo.write(" ".join(parts) + "\n")
                     seen.add(k)
                     continue
@@ -323,7 +348,7 @@ def materialize(refiner, variant, cfg_dir):
     cfg_dir = os.path.abspath(cfg_dir)
     if refiner == "hyp2000":
         return materialize_hyp2000(variant, cfg_dir)
-    return materialize_nlloc(variant, cfg_dir)
+    return materialize_nlloc(variant, cfg_dir, SRC_WORKDIR.get("nlloc"))
 
 
 # --------------------------------------------------------------------------
@@ -331,7 +356,7 @@ def materialize(refiner, variant, cfg_dir):
 # --------------------------------------------------------------------------
 def sweep(refiner, variants, baseline, work, catalog_path, only="*", jobs=1,
           force=False, reports=True, T=30.0, D=1.0, bands=(25.0, 50.0, 100.0),
-          arc_jobs=1):
+          arc_jobs=1, timeout=refine_arcs.ARC_TIMEOUT_SEC):
     arcs_dir = os.path.join(baseline, "arcs")
     cfg_dir = os.path.join(work, "cfg")
     os.makedirs(cfg_dir, exist_ok=True)
@@ -356,7 +381,8 @@ def sweep(refiner, variants, baseline, work, catalog_path, only="*", jobs=1,
         maxrms = float(dmap.get("MaxRMS", 0.0) or 0.0)
         if force or not os.path.isfile(os.path.join(val, "manifest.json")):
             refine_arcs.run_refiner(BIN[refiner], cfg, arcs_dir, val, only,
-                                    minph, maxrms, arc_jobs=arc_jobs)
+                                    minph, maxrms, arc_jobs=arc_jobs,
+                                    timeout=timeout)
         try:
             with open(os.path.join(val, "manifest.json"), "r",
                       encoding="utf-8") as fh:
@@ -434,6 +460,8 @@ def main(argv=None):
                     help="variantes en paralelo")
     ap.add_argument("--arc-jobs", type=int, default=1,
                     help="ARC en paralelo dentro de cada variante")
+    ap.add_argument("--timeout", type=float, default=refine_arcs.ARC_TIMEOUT_SEC,
+                    help="tope por ARC en segundos (default: REFINE_TIMEOUT_SEC)")
     ap.add_argument("--time-window", type=float, default=30.0)
     ap.add_argument("--dist-deg", type=float, default=1.0)
     ap.add_argument("--bands", default="25,50,100")
@@ -497,7 +525,7 @@ def main(argv=None):
 
     results = sweep(a.refiner, variants, a.baseline, work, a.catalog, a.only,
                     max(1, a.jobs), a.force, a.reports, a.time_window,
-                    a.dist_deg, bands, max(1, a.arc_jobs))
+                    a.dist_deg, bands, max(1, a.arc_jobs), a.timeout)
 
     out = os.path.join(work, "calibration.json")
     os.makedirs(work, exist_ok=True)

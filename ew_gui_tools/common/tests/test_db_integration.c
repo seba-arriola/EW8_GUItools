@@ -131,6 +131,27 @@ int main(void)
     snprintf(sm[1].amplitude_type, sizeof sm[1].amplitude_type, "AML");
     assert(ewguidb_replace_station_magnitudes(db, mg.magnitude_id, sm, 2) == 0);
 
+    /* --- tensor: mecanismo focal de la fase W (panel Mww -> Save to DB) --- */
+    EwGuiTensorRow tn;
+    memset(&tn, 0, sizeof tn);
+    snprintf(tn.tensor_id, sizeof tn.tensor_id, "%s/tensor/WPHASE", O1);
+    snprintf(tn.origin_id, sizeof tn.origin_id, "%s", O1);
+    snprintf(tn.method, sizeof tn.method, "WPHASE");
+    snprintf(tn.mechanism, sizeof tn.mechanism, "WCMT");
+    tn.have_planes = 1;
+    tn.strike1 = 209.4; tn.dip1 = 20.9; tn.rake1 = -46.4;
+    tn.strike2 = 343.8; tn.dip2 = 75.0; tn.rake2 = -104.8;
+    tn.m_rr = -1.112437e27; tn.m_tt = -3.869568e26; tn.m_pp = 1.499394e27;
+    tn.m_rt =  2.920828e26; tn.m_rp = -1.626447e27; tn.m_tp = -2.521048e26;
+    tn.scalar_moment = 1.35e27;
+    assert(ewguidb_upsert_tensor(db, &tn) == 0);
+    /* idempotente: el mismo tensor_id PISA la fila (no duplica) */
+    tn.m_rr = -1.0e27;
+    assert(ewguidb_upsert_tensor(db, &tn) == 0);
+    /* sin planos nodales: van como NULL, no como 0 ni como "nan" (NaN -> NULL) */
+    tn.have_planes = 0;
+    assert(ewguidb_upsert_tensor(db, &tn) == 0);
+
     /* --- preferred --- */
     assert(ewguidb_set_preferred(db, EID, O2, mg.magnitude_id) == 0);
 
@@ -150,11 +171,19 @@ int main(void)
     EwGuiOriginRow *ors = NULL;
     int nor = 0;
     assert(ewguidb_query_origins(db, EID, &ors, &nor) == 2);
-    assert(strcmp(ors[0].origin_id, O1) == 0);
-    assert(fabs(ors[0].latitude + 33.45) < 1e-6);
-    assert(ors[0].station_count == 8);
-    assert(fabs(ors[0].standard_error - 0.35) < 1e-6);
-    assert(strcmp(ors[1].status, "REVISED") == 0);
+    /* El ORDER BY de la consulta es `creation_time DESC` (lo nuevo primero, que
+       es el orden por defecto de la tabla *Origins*), asi que el arreglo NO viene
+       en orden de insercion: se busca por id. */
+    int i1 = -1, i2 = -1;
+    for (int k = 0; k < nor; k++) {
+        if (strcmp(ors[k].origin_id, O1) == 0) i1 = k;
+        if (strcmp(ors[k].origin_id, O2) == 0) i2 = k;
+    }
+    assert(i1 >= 0 && i2 >= 0);
+    assert(fabs(ors[i1].latitude + 33.45) < 1e-6);
+    assert(ors[i1].station_count == 8);
+    assert(fabs(ors[i1].standard_error - 0.35) < 1e-6);
+    assert(strcmp(ors[i2].status, "REVISED") == 0);
     ewguidb_rows_free(ors);
 
     EwGuiPickRow *pks = NULL;
@@ -194,8 +223,13 @@ int main(void)
     o.depth = 15.0;
     assert(ewguidb_upsert_origin(db, &o) == 0);
     assert(ewguidb_query_origins(db, EID, &ors, &nor) == 2);
-    assert(fabs(ors[0].depth - 15.0) < 1e-6);
-    assert(ors[0].creation_time[0] != '\0');   /* default de la BD */
+    i1 = -1;
+    for (int k = 0; k < nor; k++)
+        if (strcmp(ors[k].origin_id, O1) == 0)
+            i1 = k;
+    assert(i1 >= 0);
+    assert(fabs(ors[i1].depth - 15.0) < 1e-6);
+    assert(ors[i1].creation_time[0] != '\0');   /* default de la BD */
     ewguidb_rows_free(ors);
 
     cleanup(db);

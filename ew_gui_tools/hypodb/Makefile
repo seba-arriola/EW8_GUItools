@@ -41,8 +41,9 @@ hypodb_ingest.o: hypodb_ingest.h hypodb_config.h hypodb_ids.h
 hypodb_ingest: hypodb_ingest_main.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ hypodb_ingest_main.o $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
 
+.PHONY: install
 install: hypodb_ingest
-	cp -p hypodb_ingest $(EW_HOME)/$(EW_VERSION)/bin/
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin hypodb_ingest
 
 test_ids: test_ids.c hypodb_ids.o
 	$(CC) $(CFLAGS) -o $@ test_ids.c hypodb_ids.o $(LIBS)

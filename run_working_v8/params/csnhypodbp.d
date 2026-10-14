@@ -42,22 +42,26 @@ ModuleLabel     162  csnloc
 ModuleLabel     163  hyp2000
 ModuleLabel     164  nlloc
 
-# Configuracion del Wave Server para descargar ondas historicas al hacer clic
+# Wave server: solo lo usan los modos WaveBackend que lo pidan (ver abajo).
 WsIP            127.0.0.1
 WsPort          16022
 WsTimeout       10000
 
-# Backend de ondas: store primero, wave_serverV como fallback (auto)
-WaveBackend     auto
+# Backend de ondas (TODO por configuracion, nada en el codigo):
+#   store = store (wstore_ingest -> StoreRoot) + SDS; NO abre conexion a
+#           wave_serverV, que ya no se despliega (lo reemplaza el store).
+#   auto  = store -> wave_serverV -> SDS (comportamiento historico).
+#   otro  = wave_serverV.
+WaveBackend     store
 StoreRoot       ../wstore
 DbEnvFile       db.env
 
 # Busqueda hipocentral (pestaña Eventos): tope de eventos a entregar.
 SearchMaxEvents  1000
 
-# Backend SDS (archivo SeisComP). Los eventos mas antiguos que SdsFallbackHours
-# se consultan en SdsRoot (layout <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/...) en vez
-# de la retencion local (store/wave_serverV).
+# Archivo SDS (SeisComP). Los eventos mas antiguos que SdsFallbackHours se
+# consultan en SdsRoot (layout <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/...) en vez de
+# la retencion local del store. SdsFallbackHours 0 = SDS desactivado.
 SdsEnabled        1
 SdsRoot           /mnt/sds/archive
 SdsFallbackHours  168
@@ -83,11 +87,12 @@ MapMinSpanDeg   5.0
 # Reparto vertical planta/perfil: proporcion `arriba/abajo` (7/3 = 70% planta).
 MapSplit        7/3
 # Capas vectoriales de lineas (OPCIONAL, repetible; formato .lines, ver
-# common/tools/OVERLAYS.md). Rutas relativas al cwd (=params/).
-OverlayFile     ../../resources/overlays/placas.lines
-OverlayFile     ../../resources/overlays/subduccion.lines
-OverlayFile     ../../resources/overlays/regiones.lines
-OverlayFile     ../../resources/overlays/fallas.lines
+# common/tools/OVERLAYS.md). Rutas ABSOLUTAS: los datos viven en el disco de datos
+# (EW_RESOURCES_ROOT = /mnt/d/resources), NO dentro del repo.
+OverlayFile     /mnt/d/resources/overlays/placas.lines
+OverlayFile     /mnt/d/resources/overlays/subduccion.lines
+OverlayFile     /mnt/d/resources/overlays/regiones.lines
+OverlayFile     /mnt/d/resources/overlays/fallas.lines
 #OverlayColor    subduccion CC3300         # <capa> <RRGGBB>; repetible
 #OverlayWidth    1.2                       # ancho global (px); 0 = el del archivo
 #OverlayHide     fallas                    # <capa> que no se dibuja; repetible
@@ -97,6 +102,10 @@ OverlayFile     ../../resources/overlays/fallas.lines
 # bandas de Mb/Ms y las ventanas de ML/Mwp/Mb/Ms. No se duplican valores: la GUI
 # dibuja y csnmags mide con el MISMO archivo.
 MagConfigFile   csnmags.d
+# Panel `Mww` (inversión de fase W, on-demand): el mismo .d que el CLI csnwphase y
+# el directorio de sus corridas (se crea solo, con padres, en la primera corrida).
+MwwConfigFile   csnwphase.d
+MwwWorkDir      /tmp/csnhypodbp_mww
 # Ventana temporal pedida por solucion (s). Es larga a proposito: Ms mide su
 # ventana (P + Ms_Window) y la sub-pestana `magnitudes` necesita el dato ya
 # descargado para no re-pedirlo al cambiar de magnitud. Tope: 870 s (el buffer de
@@ -115,7 +124,7 @@ MagConfigFile   csnmags.d
 #   topo<name>.tmp  (columna 3 = lon, columna 7 = elevacion en m)
 # Alternativa: ProfileFile <archivo> declara las lineas en un archivo aparte
 # (misma sintaxis "Profile ...") y reemplaza a las claves Profile.
-ProfileDataDir  ../../resources/profiles
+ProfileDataDir  /mnt/d/resources/profiles
 ProfileCols     3 7                       # columnas 1-based (lon, valor)
 ProfileDepthMinKm 200                     # fondo del panel (margen +30 km)
 Profile P01  -72 -20.011086  -66 -18.356226

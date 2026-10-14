@@ -1,10 +1,10 @@
 # wavestore.d — ingester del store de formas de onda indexado
 #
 # `wstore_ingest` lee SLINK_RING con su PROPIO cursor (varios procesos pueden
-# leer el mismo anillo: convive con wave_serverV y csntvp) y escribe segmentos
-# diarios por canal en StoreRoot. NO reemplaza a wave_serverV.
+# leer el mismo anillo: convive con csntvp) y escribe segmentos diarios por canal
+# en StoreRoot. ES la fuente de ondas local: wave_serverV ya no se despliega.
 #
-# Para arrancarlo con EarthWorm, añade en startstop_unix.d (junto a wave_serverV):
+# Arranque (ya esta en startstop_unix.d y startstop_replay.d):
 #     Process       "wstore_ingest wavestore.d"
 #     Class/Priority    OTHER 0
 #

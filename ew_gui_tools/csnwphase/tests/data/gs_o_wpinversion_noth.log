@@ -1,0 +1,5 @@
+# fixture SINTETICO: log SIN convergencia (no aparece Wmag). El parser debe
+# dejarlo marcado como converged=0 y sin planes nodales.
+ wpinversion: RMS screening agotado
+ n_used_rec:       3
+stat:  AF02  12.3  45.6

@@ -16,14 +16,20 @@ OBJS = ew_controller_main.o ew_controller_gui.o ew_controller_row.o
 EWLIBS = ../common/libewgui_gtk4.a \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
-all: ew_controller
+all: ew_controller install
+
+# Instalación en el bin de EarthWorm: atómica y SIEMPRE (aunque el binario esté
+# corriendo o ya esté al día). Ver common/tools/install_bin.sh y AGENTS.md §7.
+.PHONY: install
+install: ew_controller
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin ew_controller
 
 ../common/libewgui_gtk4.a:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
 
 ew_controller: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o ew_controller $(OBJS) $(EWLIBS) $(LDFLAGS)
-	cp ew_controller $(EW_HOME)/$(EW_VERSION)/bin/
+	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Invariantes de fuente (grep, sin GTK ni display): tablas ordenables y refresco
 # de estado. Ver test_ui_invariants.sh.

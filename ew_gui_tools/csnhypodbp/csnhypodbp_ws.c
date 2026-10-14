@@ -604,6 +604,13 @@ int csnhypodbp_db_ready(void)
     return g_db != NULL;
 }
 
+/* Handle de la conexion, para los escritores que viven en otros archivos (el
+   boton `Save to DB` del panel Mww). NULL si no hay BD. */
+EwGuiDb *csnhypodbp_db(void)
+{
+    return g_db;
+}
+
 /* Reabre la conexion (p. ej. tras reiniciar el contenedor de la BD). */
 void csnhypodbp_db_reconnect(void)
 {

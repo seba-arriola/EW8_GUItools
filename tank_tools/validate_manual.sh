@@ -15,7 +15,7 @@
 #   ./tank_tools/validate_manual.sh [opciones]
 #
 #   --dat FILE        .dat de picadas manuales (default: picks_por_tests410.dat)
-#   --tanks DIR       repo de tanks (default: tank_repo)
+#   --tanks DIR       repo de tanks (default: $EW_TANK_REPO o /mnt/d/tank_repo)
 #   --work DIR        directorio de trabajo (default: /tmp/opencode/picks_manual)
 #   --only GLOB       procesar solo slugs que casen (default: *)
 #   --mode both|ind|hyb  qué capturas hacer (default: both)
@@ -33,7 +33,7 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PARAMS_DIR="$ROOT_DIR/run_working_v8/params"
 
 DAT="$ROOT_DIR/picks_por_tests410.dat"
-TANKS="$ROOT_DIR/tank_repo"
+TANKS="${EW_TANK_REPO:-/mnt/d/tank_repo}"
 WORK="${TMPDIR:-/tmp}/opencode/picks_manual"
 ONLY="*"
 RANGE=""

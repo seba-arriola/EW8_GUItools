@@ -3,9 +3,8 @@
 #  ew_monitor.sh - Control de EarthWorm 8 (startstop + modulos)
 #  Proyecto: EW8_GUItools
 #
-#  Mismo archivo en el repo y en el portable: SCRIPT_DIR resuelve a la carpeta
-#  que lo contiene, de modo que EW_UNIX/EW_LOG apuntan a cada instancia.
-#  deploy_portable.sh lo copia TAL CUAL (no se mantiene una copia aparte).
+#  SCRIPT_DIR resuelve a la carpeta que lo contiene, de modo que EW_UNIX/EW_LOG
+#  apuntan a la instancia de este repo (no se mantiene una copia aparte).
 #
 #  Uso:
 #     ./ew_monitor.sh status

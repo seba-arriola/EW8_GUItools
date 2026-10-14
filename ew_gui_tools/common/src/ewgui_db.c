@@ -340,6 +340,46 @@ int ewguidb_upsert_magnitude(EwGuiDb *db, const EwGuiMagRow *row)
     return run_params(db, sql, 7, v);
 }
 
+int ewguidb_upsert_tensor(EwGuiDb *db, const EwGuiTensorRow *row)
+{
+    if (!db || !db->conn || !row)
+        return -1;
+
+    static const char *sql =
+        "INSERT INTO tensor (tensor_id,origin_id,method,mechanism,"
+        "strike1,dip1,rake1,strike2,dip2,rake2,"
+        "m_rr,m_tt,m_pp,m_rt,m_rp,m_tp,scalar_moment) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) "
+        "ON CONFLICT (tensor_id) DO UPDATE SET "
+        "method=EXCLUDED.method,mechanism=EXCLUDED.mechanism,"
+        "strike1=EXCLUDED.strike1,dip1=EXCLUDED.dip1,rake1=EXCLUDED.rake1,"
+        "strike2=EXCLUDED.strike2,dip2=EXCLUDED.dip2,rake2=EXCLUDED.rake2,"
+        "m_rr=EXCLUDED.m_rr,m_tt=EXCLUDED.m_tt,m_pp=EXCLUDED.m_pp,"
+        "m_rt=EXCLUDED.m_rt,m_rp=EXCLUDED.m_rp,m_tp=EXCLUDED.m_tp,"
+        "scalar_moment=EXCLUDED.scalar_moment";
+    char s1[32], d1[32], r1[32], s2[32], d2[32], r2[32];
+    char rr[32], tt[32], pp[32], rt[32], rp[32], tp[32], mo[32];
+    const char *v[17] = {
+        row->tensor_id, row->origin_id, nn(row->method), nn(row->mechanism),
+        /* Los planos nodales son opcionales: NULL si el mecanismo no los trae
+           (NAN es el "sin valor" de la casa, igual que el residual de un pick). */
+        dbl_or_null(row->have_planes ? row->strike1 : NAN, s1, sizeof s1),
+        dbl_or_null(row->have_planes ? row->dip1 : NAN, d1, sizeof d1),
+        dbl_or_null(row->have_planes ? row->rake1 : NAN, r1, sizeof r1),
+        dbl_or_null(row->have_planes ? row->strike2 : NAN, s2, sizeof s2),
+        dbl_or_null(row->have_planes ? row->dip2 : NAN, d2, sizeof d2),
+        dbl_or_null(row->have_planes ? row->rake2 : NAN, r2, sizeof r2),
+        dbl_fmt(row->m_rr, rr, sizeof rr),
+        dbl_fmt(row->m_tt, tt, sizeof tt),
+        dbl_fmt(row->m_pp, pp, sizeof pp),
+        dbl_fmt(row->m_rt, rt, sizeof rt),
+        dbl_fmt(row->m_rp, rp, sizeof rp),
+        dbl_fmt(row->m_tp, tp, sizeof tp),
+        dbl_or_null(row->scalar_moment, mo, sizeof mo),
+    };
+    return run_params(db, sql, 17, v);
+}
+
 int ewguidb_replace_picks(EwGuiDb *db, const char *origin_id,
                           const EwGuiPickRow *rows, int n)
 {

@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_mww.h"
 #include "csnhypodbp_statable.h"
 #include <adwaita.h>
 
@@ -2822,6 +2823,9 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
             selected_otime = otime; selected_qid = qid; selected_lat = lat; selected_lon = lon;
             selected_depth = depth;
             selected_mod = mod; selected_version = ver;
+            /* Panel Mww (fase W): su tabla de parametros y su estado siguen a la
+               solucion elegida. No dispara nada: solo re-renderiza. */
+            csnhypodbp_mww_update();
             /* Picadas de la solucion elegida: candidatas A/M de la tabla. */
             g_base_npicks = csnhypodbp_event_group_picks(csnhypodbp_event_group_of(row),
                                                           g_base_picks, CSNHYPODBP_MAX_PICKS);

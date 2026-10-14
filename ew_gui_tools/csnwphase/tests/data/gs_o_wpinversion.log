@@ -1,0 +1,11 @@
+# fixture SINTETICO: reconstruccion del log del grid search con las marcas que
+# extrae el parser del CSN (report.py:25-32,75): Wmag, Wmom, n_used_rec,
+# W_eigenvalues, W_bestnodal planes y una linea stat: por estacion usada.
+# F0.4 lo reemplaza por LOG/gs_o_wpinversion.log de una corrida real.
+ Wmag:       8.83 ;
+ ;Wmom  2.240000e+29 ; W_eigenvalues:   8.400000e+27  -2.100000e+27  -6.300000e+27
+ n_used_rec:      42
+ W_bestnodal planes:   12.30   22.40  -85.60  195.70   70.20  -95.30
+ global_rms  0.0421
+stat:  AF02  12.3  45.6
+stat:  AC06   9.8  51.2
