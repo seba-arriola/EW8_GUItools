@@ -164,7 +164,7 @@ plan@@deny@@ls -1 . >> /tmp/opencode/x
 plan@@deny@@tee /tmp/opencode/x
 plan@@deny@@sed -i s/a/b/ f
 plan@@deny@@make -C ew_gui_tools/common
-plan@@deny@@cd /home/seba/Dev/EW8_GUItools && ls -1 .
+plan@@deny@@cd /tmp && ls -1 .
 plan@@deny@@git add -A
 plan@@deny@@git commit -m x
 plan@@deny@@git push

@@ -61,6 +61,10 @@ db/test_schema.sh                      # verifica las 6 tablas
 
 # Reset total (BORRA los datos y reaplica el esquema, con confirmación)
 ./ew8_db.sh reset
+
+# Borrado definitivo de una instancia (contenedor + volumen + red, sin recrear)
+./ew8_db.sh -i 2 destroy --yes
+./ew8_db.sh instances                  # qué instancias hay (y cuáles quedaron huérfanas)
 ```
 
 ### Instancias (worktrees)
@@ -73,9 +77,13 @@ contenedor y volumen propios, y otro puerto.
 ```
 
 - Requiere que el `db.env` de ese worktree declare `DB_PORT=5437`; el script **aborta** si no
-  coincide (si no, los módulos apuntarían a otra base).
+  coincide (si no, los módulos apuntarían a otra base). Solo para `up`/`psql`/`reset`: mirar o
+  borrar la base de otra instancia —o la de un worktree ya borrado, que no tiene `db.env`— no lo
+  exige (avisa por stderr y sigue).
 - Las instancias ≥1 usan `restart: no`: no se auto-arrancan al bootear.
-- Se gestionan por separado: `./ew8_db.sh -i 2 status|down|reset`.
+- Se gestionan por separado: `./ew8_db.sh -i 2 status|down|reset|destroy`, y `./ew8_db.sh instances`
+  lista lo que hay (marca las huérfanas). `down` **detiene** (conserva el volumen); `destroy [--yes]`
+  **borra** contenedor+volumen+red sin recrear.
 - Por debajo son `COMPOSE_PROJECT_NAME`/`DB_PORT`/`DB_RESTART`; también vale
   `EWGUI_INSTANCE=2 ./ew8_db.sh up`.
 

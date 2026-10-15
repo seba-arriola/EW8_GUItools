@@ -38,6 +38,8 @@ need  "consola: se añade con >>"          '>>"$STARTSTOP_CONSOLE"'
 nneedre "consola: ya no se trunca con >"  '[^>]>"\$STARTSTOP_CONSOLE"'
 need  "consola: cabecera por arranque"    'arranque de startstop'
 need  "consola: cabecera con fecha UTC"   "date -u '+%Y-%m-%dT%H:%M:%SZ'"
+need  "status: resuelve la ruta de params" 'params="$(ewmon_params_dir 2>/dev/null)"'
+need  "status: imprime la ruta resuelta"   'echo "  EW_PARAMS : ${params:-<no definido>}"'
 
 # --- funcional: dos arranques y la salida del primero debe seguir ahí ---
 TMP="$(mktemp -d)" || exit 1
@@ -105,6 +107,49 @@ if [ -f "$CONSOLE" ]; then
     fi
 else
     echo "FAIL: consola: no se creó $CONSOLE"
+    fail=1
+fi
+
+# --- funcional: `status` resuelve la ruta de params -------------------------
+# Imprimir la variable del shell que invoca daba "<no definido>" siempre que el
+# entorno no estuviera cargado, aunque el script SI sepa de qué instancia habla.
+# EW_MONITOR_CFG apunta a un fichero que no existe: `ewmon_status_modules`
+# termina enseguida y no hace falta el binario de fábrica `status`.
+params_line() {   # params_line <ew_unix> [ew_params]
+    if [ -n "${2:-}" ]; then
+        env -u EW_PARAMS "EW_PARAMS=$2" "EW_UNIX=$1" "PATH=$TMP/bin:$PATH" \
+            "EW_LOG_DIR=$TMP/log" "EWMON_PIDFILE=$TMP/nopid.pid" \
+            "EWMON_PID_SCOPE=loose" "EW_MONITOR_CFG=$TMP/nocfg.d" \
+            bash "$MON" status 2>/dev/null | sed -n 's/^  EW_PARAMS : //p'
+    else
+        env -u EW_PARAMS "EW_UNIX=$1" "PATH=$TMP/bin:$PATH" \
+            "EW_LOG_DIR=$TMP/log" "EWMON_PIDFILE=$TMP/nopid.pid" \
+            "EWMON_PID_SCOPE=loose" "EW_MONITOR_CFG=$TMP/nocfg.d" \
+            bash "$MON" status 2>/dev/null | sed -n 's/^  EW_PARAMS : //p'
+    fi
+}
+
+got="$(params_line "$ROOT/ew8_unix.sh")"
+if [ "$got" = "$ROOT/run_working_v8/params" ]; then
+    echo "ok  : status: resuelve el EW_PARAMS del repo"
+else
+    echo "FAIL: status: EW_PARAMS dio '$got' (esperaba $ROOT/run_working_v8/params)"
+    fail=1
+fi
+
+got="$(params_line "$TMP/unix.sh")"
+if [ "$got" = "<no definido>" ]; then
+    echo "ok  : status: si no puede deducirlo, dice '<no definido>'"
+else
+    echo "FAIL: status: sin deducción dio '$got' (esperaba <no definido>)"
+    fail=1
+fi
+
+got="$(params_line "$TMP/unix.sh" "/tmp/x-params")"
+if [ "$got" = "/tmp/x-params" ]; then
+    echo "ok  : status: respeta el EW_PARAMS del llamante"
+else
+    echo "FAIL: status: el override del llamante dio '$got'"
     fail=1
 fi
 

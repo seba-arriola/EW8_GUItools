@@ -28,6 +28,20 @@ docker compose -f db/docker-compose.yml down        # detener (conserva datos)
 docker compose -f db/docker-compose.yml down -v     # borrar datos y reaplicar esquema
 ```
 
+Lo mismo con la instancia explícita, que es lo que usan los worktrees (`ew8_db.sh`):
+
+| comando | qué hace |
+|---|---|
+| `./ew8_db.sh [-i N] up` | levanta la base y espera al healthcheck |
+| `./ew8_db.sh [-i N] down` | **detiene**: quita contenedor y red, **conserva el volumen** con los datos |
+| `./ew8_db.sh [-i N] reset` | `down -v` **y vuelve a levantarla** (borra los datos y reaplica el esquema) |
+| `./ew8_db.sh [-i N] destroy [--yes]` | **BORRA** contenedor + volumen + red y **no recrea** nada |
+| `./ew8_db.sh instances` | lista las instancias que existen, marcando las **huérfanas** (su worktree ya se borró) |
+
+`instances` y `destroy` funcionan aunque el worktree de esa instancia ya no exista y aunque el
+`db.env` local declare otro `DB_PORT` (solo avisan por stderr). `up`, `psql` y `reset` sí exigen
+que el `DB_PORT` cuadre, y `destroy` de la instancia 0 (la principal) exige `--yes`.
+
 El `schema.sql` se aplica **solo la primera vez** que se crea el volumen
 (`/docker-entrypoint-initdb.d`). Tras editar `schema.sql` hay que hacer
 `down -v` + `up` para reaplicarlo.

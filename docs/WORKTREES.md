@@ -14,7 +14,7 @@ stacks vivos a la vez.
 
 ```bash
 # 0) El repo principal, con todo commiteado (un worktree materializa un COMMIT).
-cd /home/seba/Dev/EW8_GUItools
+cd <ruta-del-repo>
 git status                      # limpio
 
 # 1) Carpeta + rama (git comparte .git; el árbol se materializa completo)
@@ -43,10 +43,20 @@ source ./ew8_unix.sh
 ./ew_monitor.sh status          # sólo los módulos de ESTA instancia
 #  … o un módulo suelto:  cd run_working_v8/params && csnhypodbp csnhypodbp.d
 
-# 6) Parar y, cuando ya no haga falta, borrar
+# 6) Parar
 ./ew_monitor.sh stop
-./ew8_db.sh -i 1 down           # conserva los datos;  `-i 1 reset` los borra
-cd /home/seba/Dev/EW8_GUItools
+
+# 7) La base se resuelve ANTES de borrar el worktree: después ya no hay un
+#    db.env de esa instancia desde donde correr ew8_db.sh.
+./ew8_db.sh -i 1 down            # la DETIENE (conserva el volumen y los datos)
+./ew8_db.sh -i 1 destroy --yes   # la BORRA de verdad (contenedor+volumen+red)
+#
+#    ¿Ya borraste el worktree y quedó huérfana? Desde el principal:
+#      ./ew8_db.sh instances            # qué N quedó y si está huérfana
+#      ./ew8_db.sh -i 1 destroy --yes
+
+# 8) Recién entonces, el worktree
+cd <ruta-del-repo>
 git worktree remove ../EW8_wt_featureA
 ```
 
@@ -136,6 +146,8 @@ ew_gui_tools/common/tools/worktree_bootstrap.sh [<carpeta>] [--instance N]
 #   en un worktree (colisiona con el principal: solo si no corren a la vez).
 ```
 
+- `./ew8_db.sh instances` y `./ew8_db.sh -i N destroy [--yes]` (desde el repo principal) listan y
+  borran la base de una instancia **aunque su worktree ya no exista**.
 - Tras editar `earthworm.d.base` hay que regenerar: `worktree_bootstrap.sh . --refresh`.
 - Los tests de `common check` usan pids sintéticos y por eso corren con
   `EWMON_PID_SCOPE=loose` / `DIAG_PID_SCOPE=loose`; el invariante real del aislamiento es

@@ -105,8 +105,12 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_agent_permissions.sh
 	@echo "== check_diag =="
 	@bash tests/test_diag.sh
+	@echo "== check_ew8_db =="
+	@bash tests/test_ew8_db.sh
 	@echo "== check_params_clean =="
 	@bash tests/test_params_stays_clean.sh
+	@echo "== check_no_repo_path =="
+	@bash tests/test_no_repo_path.sh
 	@echo "== make_overlays =="
 	@python3 tests/test_make_overlays.py
 	@rc=0; for t in $(TESTS); do \

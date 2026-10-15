@@ -198,7 +198,11 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   `run_working_v8/params/db.env` (solo se versiona `db.env.example`). Se levanta con
   `./ew8_db.sh up` (instancia 0, puerto 5435); cada worktree puede tener la suya con
   `./ew8_db.sh -i N up` (proyecto `ew8_hypodb_<N>`, puerto `5435+N`, volumen propio, sin
-  auto-arranque). Ver `docs/HYPODB.md`.
+  auto-arranque). `-i N down` **detiene** (conserva el volumen); `-i N reset` borra los datos y
+  vuelve a crear la base; `-i N destroy [--yes]` **borra** contenedor+volumen+red **sin recrear**
+  y `instances` lista lo que hay (marca las huérfanas de un worktree ya borrado). `destroy` e
+  `instances` funcionan aunque el `db.env` local declare otro `DB_PORT` (solo avisan); `up`,
+  `psql` y `reset` sí lo exigen. Ver `docs/HYPODB.md`.
 - `ew8_unix.sh`: script de inicialización del entorno (variables de EarthWorm).
 - `ew_monitor.sh`: script de control de EarthWorm (`status|list|start|stop|restart`; `start/stop/restart`
   aceptan `<módulo> ...` para operar sobre uno solo, y `status`/`list` muestran el estado de cada
@@ -326,7 +330,7 @@ done
 Los módulos **no** se pueden lanzar desde cualquier carpeta. La receta, **en una terminal independiente** (no desde la GUI ni desde un agente):
 
 ```bash
-cd /home/seba/Dev/EW8_GUItools     # 1. raíz del repo (donde está ew8_unix.sh)
+cd <ruta-del-repo>                 # 1. raíz del repo (donde está ew8_unix.sh)
 source ./ew8_unix.sh               # 2. entorno EarthWorm
 cd run_working_v8/params           # 3. carpeta donde están TODOS los .d
 csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.d

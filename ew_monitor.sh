@@ -565,13 +565,18 @@ EOF
 }
 
 status() {
-    local pid; pid="$(get_startstop_pid)"
+    local pid params
+    pid="$(get_startstop_pid)"
     if [ -n "$pid" ]; then
         echo "EarthWorm: RUNNING (startstop pid $pid)"
     else
         echo "EarthWorm: STOPPED (no hay startstop)"
     fi
-    echo "  EW_PARAMS : ${EW_PARAMS:-<no definido>}"
+    # La ruta de params se RESUELVE (ewmon_params_dir): imprimir la variable a
+    # secas daba "<no definido>" siempre que el shell que invoca no tuviera el
+    # entorno cargado, aunque el script ya supiera de que instancia habla.
+    params="$(ewmon_params_dir 2>/dev/null)"
+    echo "  EW_PARAMS : ${params:-<no definido>}"
     echo "  log dir   : $EW_LOG_DIR"
     # Un modulo muerto ya no es hijo de startstop (queda reparentado al ser
     # cosechado), asi que el `pgrep -P`/`ps` de antes lo perdia en silencio: el

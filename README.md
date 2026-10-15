@@ -173,7 +173,10 @@ db/test_schema.sh
 
 Cada worktree puede tener su base **aislada**: `./ew8_db.sh -i N up` levanta
 `ew8_hypodb_<N>` en el puerto `5435+N`, con contenedor y volumen propios (y sin auto-arranque).
-El `db.env` de ese worktree debe declarar el mismo `DB_PORT`; el script lo verifica.
+El `db.env` de ese worktree debe declarar el mismo `DB_PORT` para `up`/`psql`/`reset`; para
+**detener** (`down`), **listar** (`instances`) o **borrar** (`destroy [--yes]`) una instancia no
+hace falta, así que la base de un worktree ya borrado también se puede limpiar (queda marcada como
+huérfana en `instances`).
 
 Ver `docs/HYPODB.md` y `db/README.md`.
 
