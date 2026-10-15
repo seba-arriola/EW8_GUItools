@@ -28,7 +28,7 @@
 set -u
 
 root=${EWGUI_REPO_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}
-dst=${EWGUI_INSTALL_DST:-$root/earthworm_8.0/bin}
+dst=${EWGUI_INSTALL_DST:-$root/ew_8.0/bin}
 verbose=0
 [ "${1:-}" = "-v" ] && verbose=1
 

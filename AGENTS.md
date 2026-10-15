@@ -11,14 +11,15 @@ hace **`csnloc`** localmente.
 
 ### Indicaciones:
 - ESTAMOS EN UN AMBIENTE DE PRUEBAS, NADA AQUÍ ES PRODUCCIÓN REAL.
-- REGLA ESTRICTA QUE NMINGÚN AGENTE NI SUBAGENTE SE OUEDE SALTAR: PROHIBIDO LEER DE `mseed`, carpeta con archivos de varios cientos de MBs. solo inspeccionar nombre de archivo, header y líneas muy limitadas.
-- Los agentes principales (`plan`, `build`) NO DEBEN leer dentro de `earthworm_8.0/` (solo si el
-  usuario lo pide explícitamente). Delega siempre en `@explore`. El subagente `@explore` sí puede
-  leer esa ruta cuando se lo pidan.
+- `ew_8.0/` es la instalación EarthWorm 8 **vendorizada** (headers, librerías estáticas y los
+  binarios de fábrica, todos versionados; ver `ew_8.0/VENDORED.md`). No es un árbol de fuentes:
+  no busques ahí código de módulos ni intentes regenerarlo.
 
 ### Estructura de directorios
-- `earthworm_8.0/`: instalación base de EarthWorm 8 (librerías, headers, binarios principales,
-  configuraciones de ejemplo).
+- `ew_8.0/`: instalación base de EarthWorm 8 versionada (headers, `.a`/`.o` para enlazar y los
+  binarios de fábrica: `startstop`, `status`, `restart`, `stopmodule`, `slink2ew`, `pick_FP`,
+  `sniffring`, `putpick`). Los binarios de nuestros módulos se instalan aquí con `make install` y
+  **no** se versionan (`.gitignore` §3b).
 - `ew_gui_tools/`: módulos y herramientas GUI de desarrollo propio:
   - `csnmags/`: módulo de cálculo de magnitud (ML/Mwp/Mb/Ms).
   - `csnhypodbp/`: base de datos de hipocentros y utilidades GUI/procesamiento. Agrupa las
@@ -136,7 +137,7 @@ hace **`csnloc`** localmente.
     Credenciales en `run_working_v8/params/db.env` (`DbEnvFile`). Mapeo campo a campo (ida y vuelta)
     y contrato de orden de las tablas: `docs/DATA-MAPPING.md`; lo que falta decidir:
     `docs/DATA-MAPPING-PENDIENTES.md`. Ver también `docs/HYPODB.md` y `db/README.md`.
-  - `csnloc/`: módulo nativo (C) de asociación de fases + localización rápida. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). El bucle para mejorarlo es `capture_picks.sh` → `validate_csnloc.sh` → `offline_report.py` (comparación tank-contra-tank; ver sección 6). Para localizar con las S automáticas en offline se combinan P+S con `capture_picks_ps.sh`/`merge_picks.py` (`picks_ps/`; ver `tank_tools/RUNBOOK.md` §9). Ver `csnloc/README.md` y `tank_tools/RUNBOOK.md` §8.
+  - `csnloc/`: módulo nativo (C) de asociación de fases + localización rápida. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
   - `pickS/`: picker nativo (C) de **onda S**. Lee ondas `TYPE_TRACEBUF2` de
     `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `PICK_RING`, y publica
     picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en `PICK_RING`. Algoritmo
@@ -150,8 +151,7 @@ hace **`csnloc`** localmente.
     `GateIncidMaxDeg` (Max≤Min = off) son una compuerta dura de incidencia.
     Modo **offline**
     (`pickS <pickS.d> <tank> [ppicks]`) análogo a `pick_FP`, con config
-    `pickS.d` y lista `pickS.sta`. Herramientas: `tank_tools/capture_picks_s.sh`,
-    `tank_tools/add_horizontal_config.sh`. Tests con `make check` (unitarios) y
+    `pickS.d` y lista `pickS.sta`. Tests con `make check` (unitarios) y
     `make check-offline` (integrado determinista). Ver `pickS/README.md`.
   - `csnwphase/`: inversión de **fase W** (motor `eost/wphase` vendorizado) como cálculo
     **on-demand**: NO es módulo de anillos (no se declara en `startstop_unix.d`) y se
@@ -181,46 +181,11 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   - `_legacy_atwc/`: herramientas WC/ATWC archivadas (`loc_wcatwc`, `pick_wcatwc`, `disk_wcatwc`); solo referencia histórica.
   - `libsrc/`: **legacy WC/ATWC** (EarlyBird). Ya no lo usa ningún módulo activo; se conserva solo como referencia histórica. Las tablas de tiempos de viaje IASP91 viven ahora en `csnloc/` (vendorizadas).
 - `run_working_v8/`: directorio activo de configuración y logs en ejecución para EarthWorm:
-  - `params/`: archivos de configuración (`startstop_unix.d`, archivos `.d` de los módulos) y los
-    específicos del modo replay (`startstop_replay.d`, `tankplayer.d.tmpl`). `wave_serverV.d` queda
-    como **legado** del arnés de tanks (`wave_serverV` no se despliega; lo reemplaza el `store`).
+  - `params/`: archivos de configuración (`startstop_unix.d`, `earthworm.d`, archivos `.d` de los
+    módulos), las tablas IASP91 de `csnloc` (`iasp91.tbl`/`iasp91.hed`), las grillas (`grids/`) y
+    los mapas base de los visores. `db.env` (credenciales PostgreSQL) **no** se versiona: se copia
+    de `db.env.example`.
   - `log/`: archivos de log de ejecución.
-  - `tanks/`: archivos tank del ring buffer de formas de onda (se crean en ejecución).
-- `tank_tools/`: utilidades del **modo replay** con datos reales:
-  - `mk_tank.sh`: miniSEED → tank (con chequeo de orden y `--remux`).
-  - `tank_replay.sh`: arranca EarthWorm sin `slink2ew` y reproduce el tank con `tankplayer`.
-  - `align_channels.sh`: alinea el código de canal (`HHZ`/`BHZ`) de la configuración.
-  - `tank_lib.sh`: helpers puros compartidos (medidas de tanks, recortes, copia de params).
-  - `build_tank_repo.sh`: construye el **repo de tanks** desde `mseed/` (una vez, reutilizable).
-  - `run_events.sh`: runner de eventos (`plan`/`run`/`report`) sobre un tank o un directorio.
-  - `capture_picks.sh`: captura picks de los tanks con `pick_FP` offline → `picks/<marca de tiempo>/`.
-  - `validate_csnloc.sh`: corre el **modo offline de `csnloc`** sobre una captura → `csnlocvalidate_<marca de tiempo>/`.
-  - `capture_picks_ps.sh` + `merge_picks.py`: barrido **P+S** combinado e idempotente (`--phases P|S|PS`, `--only`, `--force`, `--dry-run`, reanudable) → `picks_ps/<marca de tiempo>/`, entrada de `csnloc` offline con S.
-  - `offline_report.py`: reporte de una corrida y **comparación tank-contra-tank** entre corridas.
-  - `loc_report.py`: reporte en texto plano de UNA corrida (`<validacion>/loc_report.txt`): parámetros de `csnloc.d`, grillas (densidad: bbox, `NodeKm`, capas de profundidad, nº de nodos) y **todos** los eventos localizados.
-  - `catalog_report.py`: cruce de una corrida con el catálogo de referencia (`tests_soluciones_publicadas.dat`): una fila por evento del archivo con la solución localizada más parecida, los **adicionales** como "plus a revisar" y un resumen. Es una referencia para mirar a ojo, **no** una métrica. Ver `tank_tools/RUNBOOK.md` §10.
-  - `mk_csnloc_grids.py`: genera los `.grid` de `csnloc` (nucleación) desde una tabla declarativa, con `--check` de nodos vs `MaxNodes` y de cobertura geométrica (regresiones contra producción). Tilings: `current`, `reg31`, `A`. Ver `tank_tools/RUNBOOK.md` §10.6.
-  - `calibrate_csnloc.py` + `calib/csnloc_variants.json`: barrido de parámetros de `csnloc.d` en copias **aisladas** (nunca la de producción); deja `loc_report.txt` + `catalog_report.txt` por set y los compara. Resultados: `calib/RESULTS.md`.
-  - `refine_arcs.py`: suelo de **ARC** (crudo de `csnloc` con `DumpHypo 1`) y arnés OFFLINE de los refinadores (`hyp2000_ring`/`nlloc_ring`), con WorkDir aislado por variante y `--arc-jobs` para paralelizar ARC. Ver `tank_tools/RUNBOOK.md` §11.
-  - `refine_report.py`: reporte A de una corrida de refinador (claves del `.d` + `.hyp`/plantilla de control y **todos** los ARC con el crudo al lado y `dz`/`dd`/`drms`).
-  - `calibrate_refiners.py` + `calib/{hyp2000,nlloc}_variants.json`: barrido de los refinadores; `catalog_report.py --baseline` pone el crudo junto al refinado. Se decide con tres familias de métricas (epicentral, profundidad contra la publicada, RMS). Resultados: `calib/RESULTS_REFINERS.md`; inventario de parámetros: `calib/PARAMETROS.md`.
-  - `ew_gui_tools/nlloc_ring/mk_mod_merge.py`: fusiona los trozos 3D de Potin en un modelo único de todo Chile (`CHILE_4k`, 4 km, con relleno de 3°). Es la red de seguridad de `nlloc_ring` para eventos con estaciones repartidas en varias bandas. Ver `tank_tools/RUNBOOK.md` §11.5.
-  - `tests/`: pruebas (`make test` offline, `make test-live` con EarthWorm).
-  Ver "Modo replay con tankplayer", "Validación rápida con picks OFFLINE" y "Pruebas con eventos reales" en la sección 6.
-- `api_report_locs/`: reporte en Python (solo stdlib) de las localizaciones de `csnloc` y
-  las magnitudes de `csnmags` leídas de los logs de `runs/`. Ver su `README.md`.
-- `mseed/`: datos miniSEED de entrada (`test2.mseed` = ventana del 2015-09-16 22:49–23:59 UTC
-  con el sismo de Illapel; ~280 MB) más los ficheros de eventos por lugar+fecha
-  (`simulacionN_<Lugar><AAAAMMDD>_mpd.mseed`, `Cuya20260722_020349_mpd.mseed`, …).
-  **No versionar** y **no leer con agentes**: son de cientos de MB.
-- `tank_repo/`: **repo de tanks** generado una sola vez desde `mseed/`, con
-  `<slug>/master.tank` + `<slug>/manifest.json` (span, inventario SCNL, `remux`, ventana HH).
-  Es la entrada del runner: evita reconvertir en cada prueba. **No versionar** (~20-25 GB).
-- `replay/tanks/`: tanks sueltos de pruebas (**no versionar**; ~630 MB de tank por cada
-  280 MB de miniSEED).
-- `runs/`: resultados de `run_events.sh` (`<slug>/<NNN>/session.json` + `logs/`). **No versionar**.
-- `picks/`: capturas de picks (`<marca de tiempo>/<slug>.picks`) y sus validaciones de `csnloc`
-  (`<captura>/csnlocvalidate_<marca de tiempo>/`). **No versionar**.
 - `resources/`: **datos grandes requeridos en runtime**, con rutas relativas: `nlloc/` (grillas 3D
   de tiempos + control files), `hyp2000/` (`.hyp`, `.sta`, `.crh`), `csnmags/` (`responses/`,
   `calib/`), `profiles/` (datos de perfil `slab*.tmp`/`topo*.tmp` del panel inferior de
@@ -229,8 +194,11 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   se validan con su subcomando `check`/`check-lines`). **No versionar** (`/resources/` en
   `.gitignore`; decenas de GB).
 - `db/`: esquema SQL de la **base hipocentral** (`schema.sql`, copia literal de `test_db`),
-  `docker-compose.yml` (PostgreSQL 16 en `:5435`) y `README.md`. Credenciales en
-  `run_working_v8/params/db.env` (solo se versiona `db.env.example`). Ver `docs/HYPODB.md`.
+  `docker-compose.yml` (PostgreSQL 16) y `README.md`. Credenciales en
+  `run_working_v8/params/db.env` (solo se versiona `db.env.example`). Se levanta con
+  `./ew8_db.sh up` (instancia 0, puerto 5435); cada worktree puede tener la suya con
+  `./ew8_db.sh -i N up` (proyecto `ew8_hypodb_<N>`, puerto `5435+N`, volumen propio, sin
+  auto-arranque). Ver `docs/HYPODB.md`.
 - `ew8_unix.sh`: script de inicialización del entorno (variables de EarthWorm).
 - `ew_monitor.sh`: script de control de EarthWorm (`status|list|start|stop|restart`; `start/stop/restart`
   aceptan `<módulo> ...` para operar sobre uno solo, y `status`/`list` muestran el estado de cada
@@ -368,7 +336,7 @@ csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.
 
 1. **Raíz del repo**: es donde vive `ew8_unix.sh`.
 2. **`source ./ew8_unix.sh`**: sin esto no hay `PATH` hacia los binarios instalados
-   (`earthworm_8.0/bin/`), ni `EW_PARAMS`/`EW_LOG`; además carga `ew8_gtk_env.sh` (fija
+   (`ew_8.0/bin/`), ni `EW_PARAMS`/`EW_LOG`; además carga `ew8_gtk_env.sh` (fija
    `GSK_RENDERER=cairo` y el backend Wayland/X11 de los módulos GUI). Sin cargarlo, o el comando no
    existe, o el módulo arranca sin su entorno.
 3. **`cd run_working_v8/params`**: **ahí viven todos los `.d` y los ficheros que ellos referencian**
@@ -403,7 +371,7 @@ csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.
   terminal. (`hypodb_ingest` sí lo usa desde 2026-10-14: antes era mudo y por eso un fallo suyo no
   dejaba ni una línea que mirar.)
 - **Qué binario estás usando**: `command -v <binario>` debe apuntar a
-  `earthworm_8.0/bin/<binario>`; el estado de todos los instalados:
+  `ew_8.0/bin/<binario>`; el estado de todos los instalados:
   `sh ew_gui_tools/common/tools/check_install.sh -v`.
 
 **Casos de uso** (todos los comandos de esta tabla se ejecutaron una vez al escribirla; si cambias
@@ -420,12 +388,12 @@ uno, pruébalo)
 | **Ver avisos internos de GTK/GLib** | `G_MESSAGES_DEBUG=all csnhypodbp csnhypodbp.d` | mensajes extra en la terminal |
 | **Cortar en el primer warning** (backtrace con `gdb`) | `G_DEBUG=fatal-warnings csnhypodbp csnhypodbp.d` | aborta justo donde aparece el warning |
 | **No ensuciar los logs de producción** | `EW_LOG=/tmp/opencode/log csnhypodbp csnhypodbp.d` | el log del módulo va a ese directorio |
-| **Probar un `.d` sin tocar el de producción** (lo que hace `tank_replay.sh`) | `EW_PARAMS=/tmp/opencode/params csnhypodbp /tmp/opencode/params/csnhypodbp.d` | el módulo lee la copia aislada |
+| **Probar un `.d` sin tocar el de producción** | `EW_PARAMS=/tmp/opencode/params csnhypodbp /tmp/opencode/params/csnhypodbp.d` | el módulo lee la copia aislada |
 | **Comprobar que arranca y se puede matar** | `/usr/bin/timeout 20 csnhypodbp csnhypodbp.d` | corre 20 s y sale solo |
 | **Validar la configuración sin abrir ventana** (sirve sin `DISPLAY`) | `csnhypodbp --print-config csnhypodbp.d` · `csnhypodbp --check-profiles csnhypodbp.d` · `csnrv --print-config csnrv.d` · `csnrv --check-overlays csnrv.d` · `csnstaevdisp --check-overlays csnstaevdisp.d` | reporte a stdout; ⚠ **el flag va ANTES del `.d`** |
 | **Depurar los módulos de anillos** (headless) | `csnloc csnloc.d` · `pickS pickS.d` · `csnmags csnmags.d` · `hypodb_ingest hypodb.d` · `wstore_ingest wavestore.d` · `hyp2000_ring hyp2000_ring.d` · `nlloc_ring nlloc_ring.d` | salida en la terminal; `Ctrl-C` para parar. ⚠ Si `startstop` ya los corre, **no** los lances (duplicas la salida) |
 | **La inversión de fase W** (on-demand: **no** es módulo de anillos) | `csnwphase csnwphase.d --print-config` · `csnwphase csnwphase.d --prep <rundir> <t0> <lat> <lon> <prof> <mag>` · `csnwphase csnwphase.d --run <rundir> … [--dry-run]` | escribe en el rundir (`run.log`, `wphase.json`); ⚠ **el subcomando va DESPUÉS del `.d`** |
-| **Reprocesar offline** (sin anillos ni `tankplayer`) | ver "Validación rápida con picks OFFLINE" (§6) y `tank_tools/RUNBOOK.md` §8/§9/§11 | JSON de `csnloc` / ARC de los refinadores |
+| **Reprocesar offline** (sin anillos) | `csnloc <csnloc.d> <picksfile>` (reloj virtual; ver `csnloc/README.md`) | un JSON por evento localizado |
 | **Inspeccionar los anillos** | `/usr/bin/timeout 5 sniffring -n PICK_RING` | lo que **ya** está en el anillo; sin `-n` lo drena primero (§7) |
 
 ### Recetas para agentes
@@ -565,7 +533,7 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   falló, para que ningún fallo del motor vuelva a quedar mudo. Ver `docs/WPHASE.md`.
 - **`rd_chan_mag`/`rd_mag` (EarthWorm) no acotan sus escrituras y DESTRUYEN el mensaje**: el 4.º
   argumento de `rd_chan_mag` solo alimenta el `memset` inicial
-  (`earthworm_8.0/src/libsrc/util/rw_mag.c:114`) y el bucle escribe `pMci[nchan++]` sin comprobar
+  (`rw_mag.c:114` de EarthWorm 8) y el bucle escribe `pMci[nchan++]` sin comprobar
   nada ⇒ si el array se dimensiona con un conteo menor que las entradas que el motor escribe,
   **escribe fuera del heap** y glibc lo detecta minutos después con `SIGABRT` (signal 6), sin log.
   Y contar `'\n'` **no** vale de proxy: el formato no parte solo por `'\n'` (medido: 2 `'\n'` para 3
@@ -581,8 +549,8 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   `hypodb_ingest`). Invariante: `common/tests/test_ew_monitor.sh` (`make -C ew_gui_tools/common
   check`).
 - **Los módulos de `ew_monitor.sh` salen del `.d` y las acciones van por pid**: `list` combina los
-  `Process` de `$EW_PARAMS/startstop_unix.d` (`EW_MONITOR_CFG` lo sobreescribe, p. ej. para el
-  stack de replay) con la tabla que imprime el binario de fábrica **`status`**. Esa tabla trae
+  `Process` de `$EW_PARAMS/startstop_unix.d` (`EW_MONITOR_CFG` lo sobreescribe) con la tabla que
+  imprime el binario de fábrica **`status`**. Esa tabla trae
   **antes** de los procesos la lista de anillos (`Ring  1 name/key/size:  …`, cuya 2.ª columna es un
   número) y la fila del propio `startstop` (va como fila del *padre*, no en la tabla de hijos): hay
   que anclarse al separador `-------` y descartar el pid de `startstop`, o `list` inventa módulos.
@@ -622,7 +590,7 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   pulsar *Yes*: el que revienta es el rebuild siguiente). Cubierto por `test_ui_invariants.sh`
   (`on_row_selected` no debe llamar a `g_object_unref`) y por el modo `--select` de
   `tests/test_sort_and_status.sh`. Si dudas de si está compilado en el binario instalado:
-  `objdump -d --disassemble=on_row_selected earthworm_8.0/bin/ew_controller | grep g_object_unref`.
+  `objdump -d --disassemble=on_row_selected ew_8.0/bin/ew_controller | grep g_object_unref`.
 - **La consola de `startstop` resuelve `restart <algo>`/`stop <algo>` como `nombre || pid` con el
   PRIMER match** (`startstop_unix_generic.c:2478`/`:2497`): con dos `Process` del mismo nombre
   (`csnmags` y `csnmags_raw`) `restart csnmags` reinicia **siempre el primero**. Desde la consola
@@ -638,15 +606,12 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   matarlo: después quedan reparentados y no se enumeran) y `pgrep -x` con los binarios **derivados
   del `.d`** (nombre exacto de proceso, nunca `-f`). Si necesitas parar EarthWorm desde otro script,
   sigue siendo preferible la parada acotada (SIGTERM a `startstop` y a sus hijos vía `pgrep -P`),
-  como hace `tank_replay.sh` con `TANK_REPLAY_PARAMS` definido.
+  nunca `ew_monitor.sh stop` (mata por nombre en todo el sistema).
 - **`sniffring` sin `-n` drena el ring**: `sniffring.c:242` vacía el ring antes de mostrar nada, así
   que parece vacío aunque tenga datos. Usa `sniffring -n <ring>` para inspeccionar lo que ya hay.
   No termina solo: córtalo con `Ctrl-C` o `/usr/bin/timeout 10 ... | head`.
-- **`remux_tracebufs` enmascara errores**: devuelve 0 aunque falle la lectura/escritura
-  (`remux_code.c:241`, `goto done; return(0)`). No te fíes del código de salida: compara el número
-  de mensajes antes y después (`tanksniff | wc -l`).
 - **`tport_getmsg`: `GET_MISS`/`GET_NOTRACK` sí traen mensaje**: el mensaje **ya está copiado** en el
-  buffer del llamante (`earthworm_8.0/src/libsrc/unix/transport.c:844-865`) y el salto de secuencia
+  buffer del llamante (`transport.c:844-865` de EarthWorm 8) y el salto de secuencia
   se marca *después* (`:903`), así que hay que parsearlos y **seguir drenando** — si no, un anillo
   con mensajes desincronizados se vacía a un mensaje por tick. Sólo `GET_NONE` (nada casó) y
   `GET_TOOBIG` (casó pero **no** hubo copia: `*length = hd.size`, `:832-834`) no son un mensaje: por
@@ -678,9 +643,8 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   (`hyphs.for`), así que rechazaba **todas** las S con `*** SKIP PHASE CARD WITH UNKNOWN STATION`
   (visible sólo con `PRT`/`KPR` en el `.hyp`) y la S nunca entraba a la solución — lo que además
   hacía inerte `POS`/`PSM` (Vp/Vs). `mk_sta.py` ahora emite las tres componentes por estación.
-  Ojo con **dónde** vive el `.sta`: el modo anillo usa el de `params/`, pero el arnés de
-  refinadores (`calibrate_refiners.py`) copia a su WorkDir el `.sta` de `params/` **sólo si falta**
-  allí — un WorkDir viejo esconde el cambio.
+  Ojo con **dónde** vive el `.sta`: el modo anillo usa el de `params/`, y un arnés de
+  refinadores que copie el `.sta` a su WorkDir **sólo si falta** esconde el cambio.
 - **La línea-1 del ARC no admite texto en 122..135**: HYPOINVERSE la lee como su resumen
   (`hypoinverse/hyphs.for`, `FORMAT 1212 = T123,2(A1,F3.2,F3.1)`) y en ese tramo espera las
   magnitudes (`BMTYPI/BMAGI/TEMPI`). Escribir ahí el modelo de velocidades (como hacía `csnloc` con
@@ -732,15 +696,10 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   `--.--` HYPOINVERSE no empareja la estación contra `estaciones_hyp.sta` (`LET 5 2 3 0 0`) y
   **rechaza todas las fases** (`hyp2000_ring` → `sin localizacion`); (2) el log de `csnloc` trae
   **varios** bloques `HYP2000ARC` (uno por pasada de la ventana deslizante) y hay que quedarse con el
-  **último** — el representante, igual que en `offline_report.py` — porque el primero suele ser una
+  **último** — el representante — porque el primero suele ser una
   solución parcial; (3) los refinadores en modo offline imprimen el ARC por **stdout**, así que
   `hyp2000_ring`/`nlloc_ring` corren con `freopen("/dev/null","w",stdout)` — sin eso HYPOINVERSE
   antepone `NNN STATIONS READ IN.` y nadie puede parsear el ARC (la cadena de `csnhypodbp` no lanza
   el motor: salta el preámbulo con `csnhypodbp_arc_skip_preamble`). Para diagnosticar:
   `LocateKeepTmp 1` (no borra el temporal y lo pone en el error como `[tmp=…]`) y el arnés
   `make -C ew_gui_tools/csnhypodbp chain` + `./locate_chain <arc> [refinador] [tmp_root]`.
-- **`startstop_replay.d` no era idéntico a `startstop_unix.d`**: le faltaban `hyp2000_ring` y
-  `nlloc_ring`, así que el modo replay reproducía la cadena sólo hasta `csnloc` y nadie consumía
-  `HYPO_RING` (los ARC se acumulaban sin refinar). Ya están añadidos. La otra diferencia era
-  `wave_serverV` (activo en replay, comentado en producción): también quedó comentado al retirarse
-  ese módulo. Si el replay vuelve a divergir, compara la lista de `Process` con la de producción.

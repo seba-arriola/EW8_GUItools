@@ -83,9 +83,8 @@ fi
 # --- (a) barrido de fuentes ------------------------------------------------
 HITS="$(
     find "$ROOT" \
-        \( -path '*/.git' -o -path '*/.opencode' -o -path '*/earthworm_8.0' \
-           -o -path '*/mseed' -o -path '*/tank_repo' -o -path '*/resources' \
-           -o -path '*/runs' -o -path '*/picks' -o -path '*/replay' \
+        \( -path '*/.git' -o -path '*/.opencode' -o -path '*/ew_8.0' \
+           -o -path '*/resources' \
            -o -path '*/build' \) -prune -o \
         -type f \( -name '*.sh' -o -name 'Makefile' -o -name '*.mk' \) -print |
     while IFS= read -r f; do

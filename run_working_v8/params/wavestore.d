@@ -2,9 +2,9 @@
 #
 # `wstore_ingest` lee SLINK_RING con su PROPIO cursor (varios procesos pueden
 # leer el mismo anillo: convive con csntvp) y escribe segmentos diarios por canal
-# en StoreRoot. ES la fuente de ondas local: wave_serverV ya no se despliega.
+# en StoreRoot. ES la fuente de ondas local.
 #
-# Arranque (ya esta en startstop_unix.d y startstop_replay.d):
+# Arranque (ya esta en startstop_unix.d):
 #     Process       "wstore_ingest wavestore.d"
 #     Class/Priority    OTHER 0
 #

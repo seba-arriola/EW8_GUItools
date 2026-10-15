@@ -47,7 +47,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 | `latitude` / `longitude` | ARC `16..22` (+`S`) / `23..30` (+`W`) | `csnhypodbp_group.c:106-116` |
 | `depth` | ARC `31..35` ÷ 100 (km) | `csnhypodbp_group.c:118-120` |
 | `author` | `'csnhypodbp'` (constante: el módulo que revisa/produce el registro) | `hypodb_ingest.c:547` |
-| `software` | `getenv("EW_VERSION")` en el arranque; fallback `"earthworm_8.0"` | `hypodb_ingest.c:548` |
+| `software` | `getenv("EW_VERSION")` en el arranque; fallback `"ew_8.0"` | `hypodb_ingest.c:548` |
 | `location_algorithm` | `csnloc` \| `HYPOINVERSE` \| `NLLoc` (por `mod`) | `hypodb_ingest.c:161-167`, `:549` |
 | `velocity_model` | ARC `182..194` (13 chars) o NULL si vacío | `hypodb_ingest.c:505-517`, `arc_layout.h:44` |
 | `azimuthal_gap` | ARC `42..44`; **NULL si 0** | `hypodb_ingest.c:553` |
@@ -180,7 +180,7 @@ inserción en la BD, `csnhypodbp_ws.c:701`): son fuentes distintas para la misma
 
 | Defecto | Antes | Ahora |
 |---|---|---|
-| D2 · `author`/`software` | `author == software == mod_author(mod)` (`csnloc`/`hyp2000`/`nlloc`) | `author = 'csnhypodbp'`; `software = $EW_VERSION` (fallback `earthworm_8.0`); `location_algorithm` sin cambios |
+| D2 · `author`/`software` | `author == software == mod_author(mod)` (`csnloc`/`hyp2000`/`nlloc`) | `author = 'csnhypodbp'`; `software = $EW_VERSION` (fallback `ew_8.0`); `location_algorithm` sin cambios |
 | D3 · `calculation_method` | `"CSNNet"` fijo (ignoraba el mensaje) | `MAG_INFO.algorithm` (`CSNNet`/`CSNMan`), así la magnitud ajustada a mano se reconoce al releer |
 | D5 · `event_id` | `E<qid>` (el rango se repetía cada ~27,7 h y colisionaba entre sesiones) | `E<qid>-<yyyymmddhhmmss>`; además el atajo de agrupación por qid exige `|Δotime| ≤ EventMaxDtSec` |
 | D10 · orden | `ORDER BY` sin desempate; default de *Origins* desalineado | desempates explícitos por tabla (§5) |

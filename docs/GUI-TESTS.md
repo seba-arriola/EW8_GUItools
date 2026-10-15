@@ -21,7 +21,7 @@ AT-SPI publica el bus de accesibilidad a partir de él. La aplicación y la sond
 esa sesión, así que la sonda ve el árbol de accesibilidad del proceso que se acaba de lanzar.
 
 No toca `run_working_v8/params` ni los logs reales: el llamante decide qué params usar
-(copia aislada, como hace `run_working_v8` en los ensayos de `tank_tools`).
+(copia aislada vía `EW_PARAMS`).
 
 ## Dependencias
 

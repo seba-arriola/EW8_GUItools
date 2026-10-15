@@ -57,8 +57,6 @@ OutRing         RING_OUT
 HeartBeatInt    30
 LogFile         1
 StaFile         estaciones.txt
-WsIP            127.0.0.1
-WsPort          16022
 StateFile       state.events
 MapImageFile    mapa.jpg
 OverlayFile     ov1.lines
@@ -140,8 +138,8 @@ rc=$?
 [ "$rc" -ne 0 ] && echo "ok  : datos ausentes -> rc != 0" || { echo "FAIL: datos ausentes rc=$rc"; fails=$((fails+1)); }
 ck  "check-profiles: slab FALLA"    'slab FALLA'                          "$TMP/cpn.txt"
 
-# Falta una clave obligatoria (WsPort).
-grep -v '^WsPort' "$TMP/ok.d" > "$TMP/nomiss.d"
+# Falta una clave obligatoria (StateFile).
+grep -v '^StateFile' "$TMP/ok.d" > "$TMP/nomiss.d"
 "$BIN" --print-config "$TMP/nomiss.d" > "$TMP/nom.txt" 2>&1
 rc=$?
 [ "$rc" -ne 0 ] && echo "ok  : falta clave obligatoria -> rc != 0" || { echo "FAIL: falta clave rc=$rc"; fails=$((fails+1)); }

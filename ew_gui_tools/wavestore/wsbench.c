@@ -35,7 +35,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--repeat") && i + 1 < argc) repeat = atoi(argv[++i]);
     }
     if (!scnl || t0 < 0 || t1 < 0 || repeat < 1) {
-        fprintf(stderr, "Uso: wsbench --mode store|tank|ws [--store R | --tank F] "
+        fprintf(stderr, "Uso: wsbench --mode store|tank [--store R | --tank F] "
                         "--scnl NET.STA.LOC.CHAN --start <e> --end <e> [--repeat N]\n");
         return 1;
     }
@@ -47,12 +47,9 @@ int main(int argc, char **argv)
     memset(&cfg, 0, sizeof(cfg));
     if (!strcmp(mode, "store"))      cfg.mode = WSRC_STORE;
     else if (!strcmp(mode, "tank"))  cfg.mode = WSRC_TANK;
-    else                             cfg.mode = WSRC_WS;
+    else { fprintf(stderr, "wsbench: --mode invalido <%s> (store|tank)\n", mode); return 1; }
     cfg.store_root = store;
     cfg.tank_or_null = tank;
-    snprintf(cfg.ws_ip, sizeof(cfg.ws_ip), "127.0.0.1");
-    snprintf(cfg.ws_port, sizeof(cfg.ws_port), "16022");
-    cfg.ws_timeout = 10000;
 
     if (wave_open(&w, &cfg) != 0) {
         fprintf(stderr, "wsbench: no abro la fuente (%s)\n", mode);

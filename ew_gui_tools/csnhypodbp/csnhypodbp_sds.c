@@ -32,8 +32,8 @@ static void sds_close(MSFileParam **msfp, MSRecord **msr)
         ms_readmsr_r(msfp, msr, NULL, 0, NULL, NULL, 0, 0, 0);
 }
 
-/* 1 si el evento es tan antiguo que la retencion local (store/wave_serverV) ya
- * no lo tiene: conviene consultar el SDS primero y omitir wave_serverV. */
+/* 1 si el evento es tan antiguo que la retencion local (el store) ya
+ * no lo tiene: conviene consultar el SDS primero. */
 int csnhypodbp_sds_prefer(double age_hours, int enabled, const char *root,
                           int fallback_hours)
 {

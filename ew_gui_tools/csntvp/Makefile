@@ -10,9 +10,6 @@ OBJS = csntvp_main.o csntvp_data.o csntvp_gui.o csntvp_util.o
 
 # Dejamos que libew_mt.a maneje kom, logit, getutil, transport, etc.
 EWLIBS = ../common/libewgui_gtk4.a \
-         $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
 all: csntvp install

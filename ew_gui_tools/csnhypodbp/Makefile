@@ -15,9 +15,6 @@ EWLIBS = ../common/libewgui_gtk4.a \
          ../csnloc/libcsnloc_tt.a \
          ../wavestore/libwavestore.a \
          $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a \
-         $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
          $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
          $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 

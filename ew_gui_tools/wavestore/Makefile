@@ -1,18 +1,14 @@
 # Makefile para wavestore — store de formas de onda indexado (headless).
 #
-# La libreria core (wstore*.c) NO usa libew_mt; el ingester/config y
-# wavesource (modo WS) si. Como es un archivo .a, el linker solo arrastra lo
-# referenciado: los tests del core no necesitan Earthworm.
+# La libreria core (wstore*.c) NO usa libew_mt; solo el ingester/config lo hace.
+# Como es un archivo .a, el linker solo arrastra lo referenciado: los tests del
+# core no necesitan Earthworm.
 
 CFLAGS = -O2 -g -Wall -Wextra -I. -I$(EW_HOME)/$(EW_VERSION)/include \
          -D_LINUX -D_REENTRANT
 
 LIBS   = -lm -lpthread
 EWLIB  = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
-EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
 
 LIB     = libwavestore.a
 LIBOBJS = wstore.o wstore_index.o wstore_io.o wstore_writer.o \
@@ -53,7 +49,7 @@ gen_tank: gen_tank.c
 	$(CC) $(CFLAGS) -o $@ gen_tank.c $(LIBS)
 
 wsbench: wsbench.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ wsbench.c $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
+	$(CC) $(CFLAGS) -o $@ wsbench.c $(LIB) $(EWLIB) $(LIBS)
 
 test_wstore: test_wstore.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ test_wstore.c $(LIB) $(LIBS)
@@ -65,7 +61,7 @@ test_ingest: test_ingest.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ test_ingest.c $(LIB) $(EWLIB) $(LIBS)
 
 test_wavesource: test_wavesource.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ test_wavesource.c $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
+	$(CC) $(CFLAGS) -o $@ test_wavesource.c $(LIB) $(EWLIB) $(LIBS)
 
 test: $(TESTS) $(CONVBINS)
 

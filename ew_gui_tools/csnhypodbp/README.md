@@ -225,9 +225,8 @@ Detalles de la cadena que importan si vuelve a fallar:
   texto de la celda es `"mag-nst"` y no es un número. El calendario del buscador es una ventana modal
   con `GtkCalendar` (`day-selected` guarda la fecha: el widget se destruye con la ventana).
 - Del log de `csnloc` (que puede traer **varios** bloques `HYP2000ARC`, uno por pasada de la ventana
-  deslizante) se toma el **último**, que es el representante (mismo criterio que `offline_report.py`
-  y que el JSONL). El primero suele ser una solución parcial y con ella los refinadores se quedan sin
-  fases.
+  deslizante) se toma el **último**, que es el representante (mismo criterio que el JSONL). El
+  primero suele ser una solución parcial y con ella los refinadores se quedan sin fases.
 - Los refinadores **silencian su stdout** mientras corren el motor (`freopen /dev/null`), porque
   HYPOINVERSE imprime `NNN STATIONS READ IN.` antes del ARC y contaminaría el ARC que se parsea;
   `csnhypodbp_arc_skip_preamble()` además salta cualquier preámbulo por si acaso.
@@ -312,16 +311,12 @@ cae a la hora origen sin romper el arranque.
 
 ### Diagnóstico del fetch de ondas
 
-Cada descarga deja traza en el log de `csnhypodbp` (el camino GUI → `ws_clientII` → `wave_serverV`,
-**legado y no desplegado** — hoy las ondas salen del store, es mudo por diseño; estas líneas lo
-hacen observable):
+Cada descarga deja traza en el log de `csnhypodbp` (las ondas salen del store y del SDS):
 
 - `fetch inicio sta=… ventana=[…] …s nsta=…` al lanzar el worker.
-- `fetch <sta>.<chan>.<net>.<loc> res=<código> actLen=<bytes>` por SCNL pedido: `res=0` con
-  `actLen>0` ⇒ hay datos; `res=-4` ⇒ SCNL fuera del menú del server; `res=-11/-10` ⇒ conexión
-  rota/timeout (se reinicia el menú).
+- `fetch sds <sta>.<chan>.<net>.<loc> res=<código> len=<bytes>` por SCNL pedido al SDS:
+  `res=0` con `len>0` ⇒ hay datos.
 - `fetch fin sta=… con_datos=N/M` y `fetch descartado (stale)` si cambió la selección.
-- `fetch: wsAppendMenu fallo (ip:puerto)` si no se pudo construir el menú SCNL.
 
 La traza fija su ancla con `ewgui_trace_set_span` (`oldest`+`rate`+`length` de una vez), **también
 en la primera descarga** (cuando la traza se crea perezosa); el draw usa `oldest` para mapear las
@@ -344,8 +339,8 @@ SeisComP**. Con `SdsEnabled 1`, un evento más antiguo que `SdsFallbackHours` (d
 días, alineado con la retención del `wstore`) se consulta **directo al SDS** (`SdsRoot`, def.
 `/mnt/sds/archive`), porque la retención local ya no lo tiene. En ese caso (**evento antiguo**) el
 orden es **SDS → store**, y si ninguno tiene datos la estación queda sin traza. Para eventos
-recientes el SDS es el **último recurso**. `wave_serverV` está **retirado** (lo reemplaza el store):
-`WsIP`/`WsPort`/`WsTimeout` y `WaveBackend ws|auto` quedan por compatibilidad.
+recientes el SDS es el **último recurso**. El backend TCP (`wave_serverV`) se **eliminó** del
+código: solo quedan el store y el SDS.
 
 La ruta se arma con `ewgui_sds_path` (`common`):
 `<root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>`, y

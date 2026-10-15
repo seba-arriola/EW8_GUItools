@@ -44,7 +44,6 @@
 #include <transport.h>
 #include <trace_buf.h>
 #include <kom.h>
-#include <ws_clientII.h>
 #include <rw_mag.h> 
 
 #define MAX_STR 256
@@ -113,10 +112,6 @@ extern char TauModel[MAX_STR];        /* modelo de tiempos de viaje (default ias
 extern char StaFile[MAX_STR];
 extern char DbEnvFile[MAX_STR];   /* credenciales PostgreSQL (historial/busqueda) */
 extern char StateFile[MAX_STR];   /* archivo de estado de csnloc (recuperacion) */
-extern char WsIP[MAX_STR];
-extern char WsPort[MAX_STR];
-extern int  WsTimeout;
-extern int  g_wave_backend;    /* 0=wave_serverV, 1=store, 2=auto */
 extern char g_store_root[512]; /* StoreRoot del wstore */
 extern int  g_fetch_threads;   /* hilos de fetch (reservado) */
 extern int  HeartBeatInt;
@@ -155,7 +150,6 @@ extern double  selected_depth;
 extern char    selected_id[32];
 extern double  g_pick_window_sec;      /* ventana de asociacion de picks capturados */
 extern char    g_pick_phase;           /* fase a picar en modo Repick ('P'|'S') */
-extern WS_MENU_QUEUE_REC ws_menu; 
 
 extern EwGuiCanvas *canvas_global;
 extern GtkWidget *tree_global;                /* GtkColumnView maestro (eventos) */

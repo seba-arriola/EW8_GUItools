@@ -11,19 +11,11 @@ GUI_PKG = gtk4 libadwaita-1
 # Flags GTK4 + Earthworm
 CFLAGS = -Wall -O2 -g $(shell pkg-config --cflags $(GUI_PKG)) $(shell pkg-config --cflags libpq) -I$(EW_HOME)/$(EW_VERSION)/include -I../common/include -fcommon -D_LINUX -D_REENTRANT -D_INTEL -Wno-format
 
-# Librerias base de Earthworm necesarias (objetos ya compilados)
-EW_SRC_UTIL = $(EW_HOME)/$(EW_VERSION)/src/libsrc/util
-EW_SRC_UNIX = $(EW_HOME)/$(EW_VERSION)/src/libsrc/unix
-
-EW_OBJS = $(EW_SRC_UNIX)/transport.o \
-          $(EW_SRC_UTIL)/getutil.o \
-          $(EW_SRC_UTIL)/kom.o \
-          $(EW_SRC_UNIX)/sleep_ew.o \
-          $(EW_SRC_UNIX)/time_ew.o \
-          $(EW_SRC_UTIL)/logit_mt.o \
-          $(EW_SRC_UNIX)/sema_ew.o \
-          $(EW_SRC_UNIX)/threads_ew.o \
-          $(EW_SRC_UTIL)/swap.c
+# Librerias base de Earthworm: la vendorizada libew_mt.a ya trae los objetos
+# que antes se tomaban de src/libsrc/{util,unix} (transport, getutil, kom,
+# sleep_ew, time_ew, logit_mt, sema_ew, threads_ew). No hace falta src/ ni
+# compilar swap.c al vuelo (libew_mt.a no referencia ningun simbolo swap).
+EW_OBJS = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 
 LDFLAGS = $(shell pkg-config --libs $(GUI_PKG)) $(shell pkg-config --libs libpq) -lm -lpthread
 

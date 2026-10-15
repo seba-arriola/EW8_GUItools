@@ -1,0 +1,2 @@
+
+#define STARTSTOP_VERSION "v8.0b1 2024-12-09"

@@ -119,92 +119,25 @@ Idéntico a `pick_FP` más el 11.º token de fase:
 8 <modid> <instid> <seq> STA.CHAN.NET.LOC <fm><wt> YYYYMMDDhhmmss.mmm <amp> 0 0 S
 ```
 
-Compatible con `capture_picks.sh`, con el parser de `csnloc` (`pick_scln.c`,
+Compatible con el parser de `csnloc` (`pick_scln.c`,
 token de fase) y con el regex `PICK_RE`.
 
 ## Herramientas offline
 
-```bash
-source ./ew8_unix.sh
+El modo offline (`pickS <pickS.d> <tank> [ppicks]`) se usa desde el arnés de validación; los
+scripts que lo manejaban (`tank_tools/`) ya no están en el repo.
 
-# capturar picks S de un repo de tanks (y guiar con los P de picks/)
-./tank_tools/capture_picks_s.sh --ppicks picks tank_repo picks_s
+## Horizontales en la adquisición
 
-# validar con csnloc OFFLINE (misma captura)
-./tank_tools/validate_csnloc.sh picks_s/<marca de tiempo>
-
-# atajos
-make -C tank_tools capture-s
-make -C tank_tools validate-s CAPTURE_S=picks_s/<marca de tiempo>
-make -C tank_tools offline-s
-```
-
-## Configuración de horizontales en el pipeline
-
-Las horizontales existen en los tanks, pero hay que habilitarlas en adquisición
-y almacenaje. El integrador lo hace de forma idempotente:
-
-```bash
-./tank_tools/add_horizontal_config.sh --dry-run   # solo informa
-./tank_tools/add_horizontal_config.sh --apply     # con respaldos .bak.<fecha>
-```
-
-Aplica:
-1. Genera `pickS.sta` desde `estaciones_107.txt`.
-2. Añade líneas `Tank ... HHE/HHN` a `wave_serverV.d`.
-3. Amplía los selectores de `slink2ew_HHZ.d`: `HHZ.D` → `HH?.D`.
-
-Tras `--apply` hay que **reiniciar EarthWorm** para que `slink2ew` pida los
-horizontales y `wave_serverV` cree los `.tnk` nuevos.
-
-## Validación contra picadas manuales
-
-`picks_por_tests410.dat` (raíz del repo) permite medir qué tan bien pica `pickS`:
-por cada evento trae la solución hipocentral y las picadas manuales P/S.
-
-```bash
-source ./ew8_unix.sh
-make -C tank_tools validate-manual                       # todo (lento)
-make -C tank_tools validate-manual MANUAL_ONLY='test[1-30]'
-```
-
-- `ew_gui_tools/csnloc/ttpred` predice los tiempos IASP91 P/S desde la solución
-  conocida (`resid_S = t_det − (t0 + ttS)`).
-- El emparejamiento con las S manuales es **por nombre de estación** (ignora
-  canal), para relacionar p. ej. `MT14.BHN` con `MT14.HHN`.
-- El archivo es una **muestra gruesa** (apenas un mes): se usa como **chequeo
-  suelto** ("¿encontró una S que estaba en el archivo? ¿es parecida?", vía
-  `dt_manual`/`resid_S`). No hay categoría "FP": lo no presente es `SIN_REF`.
-- La **certeza es intrínseca** (parámetros de la detección): `summary.json` trae
-  `certeza` (`ALTA`/`BAJA`, `pureza_alta`) y `metric_dist`. `confiable/` guarda
-  los picks `ALTA` y `good_s/` los de residual bajo.
-- `calibrate` barre umbrales intrínsecos sobre **todas** las detecciones
-  (`keep`+`drop`) y muestra, por umbral, cuántas pasan y su tasa `en_ref`, para
-  ajustar `Q_*`/`MinSnr`/`TriggerOn` sin recompilar.
-- La captura con métricas: `capture_picks_s.sh --metrics-out DIR` (fuerza
-  `MetricsLog 1` en una copia temporal de la config; producción queda intacta).
+Las horizontales (`HHE`/`HHN`) deben pedirse en `slink2ew_HHZ.d` (`HH?.D`), declararse en
+`pickS.sta` (generado desde `estaciones_107.txt`) y en `estaciones_hyp.sta` (HYPOINVERSE empareja
+por `STA+NET+COMP3+LOC`). Tras cambiar la adquisición hay que **reiniciar EarthWorm**.
 
 ## Pasar las S a los localizadores (offline)
 
 En vivo, `pickS` publica en `PICK_RING` y `csnloc` las consume directamente (11.º token
 `S`). En el **modo offline**, `csnloc` lee **un `.picks` por slug**, así que P y S deben
-combinarse:
-
-```bash
-# barrido P+S sobre el repo de tanks (P de pick_FP + S de pickS, guiado por las P)
-make -C tank_tools capture-ps                  # -> picks_ps/<ts>/<slug>.picks
-# o reusando una captura P ya existente:
-./tank_tools/capture_picks_ps.sh --pdir picks/<captura_P> \
-    --sdir picks_s/<ts> --out picks_ps/<ts> tank_repo
-
-# combinar con control de fase (idempotente: omite lo ya presente)
-python3 tank_tools/merge_picks.py --out picks_ps/<ts> --phases PS <dirP> <dirS>
-
-# localizar con P+S
-make -C tank_tools offline-ps
-```
-
-`--phases PS|P|S` permite pasar solo P o solo S. Ver `tank_tools/RUNBOOK.md` §9.
+combinarse en ese archivo antes de localizar.
 
 ## Tests
 

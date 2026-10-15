@@ -1195,8 +1195,8 @@ int csnhypodbp_magsta_for(CsnhypodbpRow *row, int slot, CsnhypodbpMagIn *out, in
 }
 
 /* --- Descarga asincrona de formas de onda (worker + publicacion) ---
- * El fetch a wave_serverV bloquea (TCP con WsTimeout); hacerlo en el hilo
- * principal congelaba la UI al seleccionar un sismo. El worker SOLO hace I/O
+ * El I/O (store y SDS) puede tardar; hacerlo en el hilo principal congelaba la
+ * UI al seleccionar un sismo. El worker SOLO hace I/O
  * (y lee metadata de estaciones, estable tras el arranque) y copia los bytes
  * crudos; el parseo a StaArray, el post-proceso y el filtrado corren en el
  * hilo principal (GTK no es thread-safe). Un solo job a la vez (g_ws_busy). */
@@ -1229,7 +1229,7 @@ static gboolean ws_fetch_finish(gpointer data);
 static WStore *g_wstore = NULL;
 
 /* Lee del store y sintetiza UN registro TRACE2 en *raw, para que
-   ws_fetch_finish lo parsee igual que una respuesta de wave_serverV. */
+   ws_fetch_finish lo parsee igual que cualquier otra fuente. */
 static int store_fetch_sta(const char *sta, const char *net, const char *chan,
                            const char *loc, double t0, double t1,
                            char **raw, long *len) {
@@ -1271,17 +1271,10 @@ static int store_fetch_sta(const char *sta, const char *net, const char *chan,
 static gpointer ws_fetch_thread(gpointer data)
 {
     WsFetchJob *job = data;
-    long max_trace_buf = 2000000;
-    char *trace_buffer = malloc(max_trace_buf);
 
     /* Store backend: abrir una vez por job (un solo job a la vez). */
-    if (g_wave_backend != 0 && g_wstore == NULL && g_store_root[0])
+    if (g_wstore == NULL && g_store_root[0])
         wstore_open(&g_wstore, g_store_root, NULL);
-
-    if (trace_buffer && g_wave_backend != 1 && ws_menu.head == NULL) {
-        if (wsAppendMenu(WsIP, WsPort, &ws_menu, WsTimeout) != WS_ERR_NONE)
-            logit("e", "csnhypodbp: fetch: wsAppendMenu fallo (%s:%s)\n", WsIP, WsPort);
-    }
 
     for (int i = 0; i < job->nsta; i++) {
         WsFetchedSta *f = &job->stas[i];
@@ -1298,18 +1291,16 @@ static gpointer ws_fetch_thread(gpointer data)
         if (f->dist * 111.19 > job->max_dist_km && f->dist != 0.0) continue;
         if (job->only_sta[0] && strcmp(StaArray[i].szStation, job->only_sta) != 0) continue;
 
-        TRACE_REQ req; memset(&req, 0, sizeof(TRACE_REQ));
-        snprintf(req.sta, sizeof(req.sta), "%s", StaArray[i].szStation);
-        snprintf(req.net, sizeof(req.net), "%s", StaArray[i].szNetID);
-        snprintf(req.chan, sizeof(req.chan), "%s", StaArray[i].szChannel);
-        snprintf(req.loc, sizeof(req.loc), "%s", StaArray[i].szLocation);
-        req.reqStarttime = job->req_start; req.reqEndtime = job->req_end;
-        req.pBuf = trace_buffer; req.bufLen = max_trace_buf; req.timeout = WsTimeout; req.fill = 0;
+        char sta[TRACE2_STA_LEN], net[TRACE2_STA_LEN];
+        char chan[TRACE2_STA_LEN], loc[TRACE2_STA_LEN];
+        snprintf(sta, sizeof(sta), "%s", StaArray[i].szStation);
+        snprintf(net, sizeof(net), "%s", StaArray[i].szNetID);
+        snprintf(chan, sizeof(chan), "%s", StaArray[i].szChannel);
+        snprintf(loc, sizeof(loc), "%s", StaArray[i].szLocation);
 
         int got = 0;
         /* Edad del evento: por encima de SdsFallbackHours la retencion local ya
-           no lo tiene, asi que se consulta el SDS primero (evita el timeout de
-           wave_serverV en eventos viejos). */
+           no lo tiene, asi que se consulta el SDS primero. */
         double age_hours = job->event_otime > 0.0
                          ? (double)(time(NULL) - (time_t)job->event_otime) / 3600.0
                          : 0.0;
@@ -1317,48 +1308,29 @@ static gpointer ws_fetch_thread(gpointer data)
                                                g_sds_root, g_sds_fallback_hours);
 
         if (prefer_sds) {
-            got = csnhypodbp_sds_fetch(req.sta, req.net, req.chan, req.loc,
+            got = csnhypodbp_sds_fetch(sta, net, chan, loc,
                                        job->req_start, job->req_end,
                                        &f->raw, &f->act_len);
             logit("t", "csnhypodbp: fetch sds %s.%s.%s.%s res=%d len=%ld\n",
-                  req.sta, req.chan, req.net, req.loc, got,
-                  got ? f->act_len : 0L);
+                  sta, chan, net, loc, got, got ? f->act_len : 0L);
             if (got) f->has_data = 1;
         }
-        /* Backend store: lectura indexada directa (rapida, sin TCP). */
-        if (!got && g_wave_backend != 0 && g_wstore != NULL) {
-            got = store_fetch_sta(req.sta, req.net, req.chan, req.loc,
+        /* Store: lectura indexada directa (sin TCP). */
+        if (!got && g_wstore != NULL) {
+            got = store_fetch_sta(sta, net, chan, loc,
                                   job->req_start, job->req_end, &f->raw, &f->act_len);
             if (got) f->has_data = 1;
         }
-        /* Evento antiguo (prefer_sds): wave_serverV ya no lo retiene (misma
-           ventana que el store); no se le pregunta para no romper la conexion
-           ni ensuciar el log. Aqui solo se llega si SDS y store no dieron nada. */
-        if (!got && !prefer_sds && g_wave_backend != 1 && trace_buffer) {
-            int ws_res = wsGetTraceBinL(&req, &ws_menu, WsTimeout);
-            logit("t", "csnhypodbp: fetch %s.%s.%s.%s res=%d actLen=%ld\n",
-                  req.sta, req.chan, req.net, req.loc, ws_res, (long)req.actLen);
-            if (ws_res == WS_ERR_NONE && req.actLen > 0) {
-                f->raw = malloc(req.actLen);
-                if (f->raw) { memcpy(f->raw, req.pBuf, req.actLen); f->act_len = req.actLen; f->has_data = 1; }
-            } else if (ws_res == WS_ERR_BROKEN_CONNECTION || ws_res == WS_ERR_TIMEOUT) {
-                logit("e", "csnhypodbp: fetch: conexion rota/timeout (res=%d); reinicio el menu\n", ws_res);
-                wsKillMenu(&ws_menu); ws_menu.head = NULL;
-                if (g_wave_backend == 0) break;
-            }
-        }
-        /* Ultimo recurso: SDS cuando el evento es reciente pero store/ws no dieron datos. */
+        /* Ultimo recurso: SDS cuando el evento es reciente pero el store no dio datos. */
         if (!got && !prefer_sds && g_sds_enabled && g_sds_root[0]) {
-            got = csnhypodbp_sds_fetch(req.sta, req.net, req.chan, req.loc,
+            got = csnhypodbp_sds_fetch(sta, net, chan, loc,
                                        job->req_start, job->req_end,
                                        &f->raw, &f->act_len);
             logit("t", "csnhypodbp: fetch sds %s.%s.%s.%s res=%d len=%ld\n",
-                  req.sta, req.chan, req.net, req.loc, got,
-                  got ? f->act_len : 0L);
+                  sta, chan, net, loc, got, got ? f->act_len : 0L);
             if (got) f->has_data = 1;
         }
     }
-    free(trace_buffer);
 
     g_idle_add(ws_fetch_finish, job);
     return NULL;

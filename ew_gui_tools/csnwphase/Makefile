@@ -8,14 +8,9 @@ CFLAGS = -O2 -g -Wall -Wextra -I. -I../common/include -I../wavestore \
 
 LIBS   = -lm -lpthread
 EWLIB  = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
-# libwavestore referencia el cliente de anillos (wavesource.o), así que hay que
-# aportar esos objetos igual que hace csnmags.
-EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o
 WSLIB  = ../wavestore/libwavestore.a
 SDSLIB = ewgui_sds.o $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a
-WDEPS  = $(WSLIB) $(SDSLIB) $(EWOBJ)
+WDEPS  = $(WSLIB) $(SDSLIB)
 
 LIB     = libcsnwphase.a
 LIBOBJS = csnwphase_cfg.o csnwphase_prep.o csnwphase_pz.o csnwphase_sac.o \

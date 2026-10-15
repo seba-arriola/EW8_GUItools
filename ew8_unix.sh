@@ -10,7 +10,7 @@ echo "==================================================="
 # 1. Configurar variables de entorno de Earthworm para esta terminal
 export EW_INSTALLATION="INST_UNKNOWN"
 export EW_HOME="${DIR}"
-export EW_VERSION="earthworm_8.0"
+export EW_VERSION="ew_8.0"
 export EW_PARAMS="${DIR}/run_working_v8/params"
 export EW_LOG="${DIR}/run_working_v8/log"
 export SYS_NAME=`hostname`

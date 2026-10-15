@@ -23,13 +23,18 @@ transporte en vivo** y la BD es el **store persistente** que consultan los visor
 - **Docker** + plugin **compose** (para la BD).
 - **`libpq-dev`** solo para **compilar** los módulos C (`common`, `hypodb`, visores). En runtime
   basta **`libpq5`** (normalmente ya instalado).
-- Puerto host **5435** libre (5433/5434 los ocupan otros contenedores de desarrollo).
+- Puerto host **5435** libre para la instancia 0 (5433/5434 los ocupan otros contenedores de
+  desarrollo; las instancias de worktree usan 5435+N).
 
 ## Configuración (docker)
 
 `db/docker-compose.yml`: `postgres:16`, contenedor **`ew8_hypodb`**, puerto `5435:5432`, volumen
 **`ew8_hypodb_ew8_db_data`**, `restart: unless-stopped`, `healthcheck` con `pg_isready`, y el
 esquema autoaplicado al crear el volumen (`/docker-entrypoint-initdb.d/01-schema.sql`).
+
+El nombre del proyecto, el del contenedor, el puerto y el `restart` se interpolan
+(`${COMPOSE_PROJECT_NAME:-ew8_hypodb}`, `${DB_PORT:-5435}`, `${DB_RESTART:-unless-stopped}`), que es
+lo que permite tener **una instancia por worktree** (ver "Instancias" abajo).
 
 Credenciales en **`run_working_v8/params/db.env`** (no versionado; versionado `db.env.example`):
 
@@ -45,22 +50,37 @@ Las variables de entorno tienen precedencia sobre el archivo al conectar desde l
 ```bash
 # Arrancar (una vez, si falta db.env)
 cp run_working_v8/params/db.env.example run_working_v8/params/db.env
-docker compose -f db/docker-compose.yml up -d --wait
+./ew8_db.sh up                         # equivale a `up -d --wait` y muestra el estado
 db/test_schema.sh                      # verifica las 6 tablas
 
-# Parar (conserva los datos)
-docker compose -f db/docker-compose.yml down
+# Parar (conserva los datos) / estado / logs / psql
+./ew8_db.sh down
+./ew8_db.sh status
+./ew8_db.sh logs
+./ew8_db.sh psql
 
-# Reiniciar
-docker compose -f db/docker-compose.yml restart
-
-# Reset total (BORRA los datos y reaplica el esquema)
-docker compose -f db/docker-compose.yml down -v
-docker compose -f db/docker-compose.yml up -d --wait
+# Reset total (BORRA los datos y reaplica el esquema, con confirmación)
+./ew8_db.sh reset
 ```
 
-- **Autoarranque**: con `restart: unless-stopped`, la BD arranca sola con Docker (salvo que la
-  hayas parado explícitamente con `down`).
+### Instancias (worktrees)
+
+Cada worktree puede tener su **propia** base, aislada: el mismo `docker-compose.yml` con proyecto,
+contenedor y volumen propios, y otro puerto.
+
+```bash
+./ew8_db.sh -i 2 up      # proyecto/contenedor ew8_hypodb_2, puerto 5437, volumen propio
+```
+
+- Requiere que el `db.env` de ese worktree declare `DB_PORT=5437`; el script **aborta** si no
+  coincide (si no, los módulos apuntarían a otra base).
+- Las instancias ≥1 usan `restart: no`: no se auto-arrancan al bootear.
+- Se gestionan por separado: `./ew8_db.sh -i 2 status|down|reset`.
+- Por debajo son `COMPOSE_PROJECT_NAME`/`DB_PORT`/`DB_RESTART`; también vale
+  `EWGUI_INSTANCE=2 ./ew8_db.sh up`.
+
+- **Autoarranque**: la instancia 0 (`restart: unless-stopped`) arranca sola con Docker (salvo que la
+  hayas parado explícitamente con `down`). Las instancias de worktree usan `restart: no`.
 - **Independencia de EarthWorm**: reiniciar EarthWorm **no** afecta a la BD; sus datos siguen en el
   volumen. `hypodb_ingest` se reconecta solo (reintenta cada 10 s si no encuentra la BD).
 
@@ -86,7 +106,7 @@ docker compose -f db/docker-compose.yml exec -T db psql -U csn -d csn_hypo -c \
 - **`Bind for 0.0.0.0:5433 failed`**: otro contenedor usa ese puerto → la BD usa **5435** (ya
   configurado); si hace falta otro, cámbialo en `docker-compose.yml` y en `db.env`.
 - **`Text file busy` al `make`**: un binario del módulo está corriendo; `rm -f
-  earthworm_8.0/bin/<modulo>` antes de recompilar.
+  ew_8.0/bin/<modulo>` antes de recompilar.
 - **El esquema no aparece**: se aplica solo al crear el volumen → `down -v` + `up`.
 - **Los módulos no ven la BD**: revisa `run_working_v8/params/db.env` y que `DbEnvFile` apunte a
   él en los `.d`; los módulos registran el error de conexión en su log.

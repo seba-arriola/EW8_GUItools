@@ -275,7 +275,7 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn)
         if (strstr(line, "--- HYP2000ARC evento")) {
             /* Bloque NUEVO: se descarta el anterior. La ventana deslizante emite
                una solucion por pasada y el representante es la ULTIMA (mismo
-               criterio que offline_report.py y que el JSONL de csnloc), no la
+               criterio que el JSONL de csnloc), no la
                primera: la primera suele ser una solucion parcial y con ella los
                refinadores se quedan sin fases utiles. */
             in = 1;

@@ -11,7 +11,7 @@ CC         ?= gcc
 AR         ?= ar
 
 EW_HOME    ?= $(abspath $(CURDIR)/../..)
-EW_VERSION ?= earthworm_8.0
+EW_VERSION ?= ew_8.0
 
 # Toolkits: gio-2.0 siempre (ewgui_actions). La capa de vista usa GTK3 por
 # defecto; con `make GUI_TOOLKIT=gtk4` se compila con GTK4 + libadwaita.

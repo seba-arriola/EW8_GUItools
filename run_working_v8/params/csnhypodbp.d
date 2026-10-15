@@ -42,17 +42,8 @@ ModuleLabel     162  csnloc
 ModuleLabel     163  hyp2000
 ModuleLabel     164  nlloc
 
-# Wave server: solo lo usan los modos WaveBackend que lo pidan (ver abajo).
-WsIP            127.0.0.1
-WsPort          16022
-WsTimeout       10000
-
-# Backend de ondas (TODO por configuracion, nada en el codigo):
-#   store = store (wstore_ingest -> StoreRoot) + SDS; NO abre conexion a
-#           wave_serverV, que ya no se despliega (lo reemplaza el store).
-#   auto  = store -> wave_serverV -> SDS (comportamiento historico).
-#   otro  = wave_serverV.
-WaveBackend     store
+# Fuente de ondas: el store indexado (wstore_ingest -> StoreRoot) para lo
+# reciente y el archivo SDS para lo antiguo (ver Sds* abajo).
 StoreRoot       ../wstore
 DbEnvFile       db.env
 

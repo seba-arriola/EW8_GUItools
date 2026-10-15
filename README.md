@@ -36,7 +36,7 @@ SeedLink (10.54.217.9:18000)
 
 ```text
 EW8_GUItools/
-├── earthworm_8.0/          # Instalación base de EarthWorm 8
+├── ew_8.0/                 # Instalación base de EarthWorm 8 (vendorizada)
 ├── ew_gui_tools/           # Módulos y herramientas GUI propias
 │   ├── csnmags/            # Cálculo de magnitud (ML/Mwp/Mb/Ms)
 │   ├── wavestore/          # Store indexado de ondas (libwavestore.a + wstore_ingest)
@@ -48,7 +48,7 @@ EW8_GUItools/
 │   ├── ew_controller/      # Panel de control de startstop
 │   ├── _legacy_atwc/       # Herramientas WC/ATWC archivadas (referencia histórica)
 │   └── libsrc/             # Legacy WC/ATWC (sin consumidores activos)
-├── run_working_v8/         # Runtime de EarthWorm (params, log, tanks)
+├── run_working_v8/         # Runtime de EarthWorm (params, log, wstore)
 ├── ew8_unix.sh             # Inicialización del entorno
 ├── ew8_gtk_env.sh          # Entorno GTK4/WSLg (fuente única; la carga ew8_unix.sh)
 └── ew_monitor.sh           # Control del servicio EarthWorm
@@ -80,7 +80,7 @@ Consulta `AGENTS.md` para la tabla completa de variables.
 
 ## 🛠️ Compilación
 
-Recompila todos los módulos propios (cada uno instala su binario en `earthworm_8.0/bin/`):
+Recompila todos los módulos propios (cada uno instala su binario en `ew_8.0/bin/`):
 
 ```bash
 source ./ew8_unix.sh
@@ -146,27 +146,16 @@ tail -f run_working_v8/log/csnloc_*.log
 tail -f run_working_v8/log/csnmags_*.log
 
 # Hipocentros en el ring (sin drenar)
-earthworm_8.0/bin/sniffring -n HYPO_RING
+ew_8.0/bin/sniffring -n HYPO_RING
 ```
 
 ---
 
 ### Coherencia de estaciones
 
-`csnloc` y `csnmags` solo usan estaciones con metadata en `estaciones_107.txt`. Un pick o Tank
-sin metadata queda inerte (no se localiza ni se mide). Para detectarlo y eliminarlo:
-
-```bash
-./tank_tools/prune_orphan_stations.sh --dry-run              # informa (no modifica)
-./tank_tools/prune_orphan_stations.sh --only pick,tanks --apply
-```
-
-Tras podar, mueve los `.tnk`/`.inx` huérfanos y reinicia EarthWorm:
-
-```bash
-./tank_tools/align_channels.sh --only tanks \
-    --prune-orphans run_working_v8/tanks/_orphan_removed --apply
-```
+`csnloc` y `csnmags` solo usan estaciones con metadata en `estaciones_107.txt`. Un pick sin
+metadata queda inerte (no se localiza ni se mide): revísalo contra esa lista antes de añadir
+estaciones nuevas.
 
 ---
 
@@ -178,9 +167,13 @@ La información hipocentral (eventos, orígenes, picks, magnitudes) se almacena 
 
 ```bash
 cp run_working_v8/params/db.env.example run_working_v8/params/db.env
-docker compose -f db/docker-compose.yml up -d --wait
+./ew8_db.sh up          # instancia 0: ew8_hypodb en el puerto 5435
 db/test_schema.sh
 ```
+
+Cada worktree puede tener su base **aislada**: `./ew8_db.sh -i N up` levanta
+`ew8_hypodb_<N>` en el puerto `5435+N`, con contenedor y volumen propios (y sin auto-arranque).
+El `db.env` de ese worktree debe declarar el mismo `DB_PORT`; el script lo verifica.
 
 Ver `docs/HYPODB.md` y `db/README.md`.
 

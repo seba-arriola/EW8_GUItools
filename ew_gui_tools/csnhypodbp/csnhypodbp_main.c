@@ -24,9 +24,6 @@ int  g_db_hours = 24;          /* ventana de historial de la BD (horas) */
 char TauModel[MAX_STR];        /* modelo de tiempos de viaje (default iasp91) */
 char StaFile[MAX_STR];
 char StateFile[MAX_STR];   /* archivo de estado de csnloc (recuperacion) */
-char WsIP[MAX_STR];
-char WsPort[MAX_STR];
-int  WsTimeout;
 int  HeartBeatInt;
 int  LogFile;
 pid_t MyPid;
@@ -65,7 +62,6 @@ double  selected_depth = 0;
 char    selected_id[32] = "None";
 double  g_pick_window_sec = 600.0;   /* PickCaptureWindowSec */
 char    g_pick_phase = 'P';          /* fase a picar en modo Repick */
-WS_MENU_QUEUE_REC ws_menu; 
 
 EwGuiCanvas *canvas_global = NULL;
 GListStore *g_store_hypo = NULL;
@@ -96,8 +92,6 @@ char g_manual_state_file[MAX_STR] = "csnhypodbp_manual.events";
 int  g_locator_timeout_sec = 180;
 int  g_prefetch_neighbors = 2;
 int  g_hide_empty = 0;   /* HideEmptyStations: ocultar estaciones sin datos */
-/* Backend de formas de onda: 0=wave_serverV, 1=store, 2=auto (store->ws). */
-int  g_wave_backend = 2;
 char g_store_root[512] = "";
 int  g_fetch_threads = 4;
 /* Colores de las fases (pColor/sColor del .d): marca + circulo del indicador. */
@@ -286,7 +280,7 @@ static void k_rest_join(char *out, size_t n)
  * LECTURA DE CONFIG Y CONEXION EW
  * -------------------------------------------------------------------- */
 int ReadConfig(char *configfile) {
-    int ncommand = 9, nmiss = 0, i; char init[10] = {0}; char *com, *str;
+    int ncommand = 7, nmiss = 0, i; char init[8] = {0}; char *com, *str;
     if (!k_open(configfile)) { fprintf(stderr, "Error abriendo archivo config <%s>\n", configfile); return -1; }
     while (k_rd()) {
         com = k_str(); if (!com || com[0] == '#') continue;
@@ -296,9 +290,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("HeartBeatInt")) { HeartBeatInt = k_int(); init[3] = 1; } 
         else if (k_its("LogFile")) { LogFile = k_int(); init[4] = 1; } 
         else if (k_its("StaFile")) { str = k_str(); if (str) strcpy(StaFile, str); init[5] = 1; } 
-        else if (k_its("WsIP")) { str = k_str(); if (str) strcpy(WsIP, str); init[6] = 1; } 
-        else if (k_its("WsPort")) { str = k_str(); if (str) strcpy(WsPort, str); init[7] = 1; } 
-        else if (k_its("StateFile")) { str = k_str(); if (str) strcpy(StateFile, str); init[8] = 1; }
+        else if (k_its("StateFile")) { str = k_str(); if (str) strcpy(StateFile, str); init[6] = 1; }
         else if (k_its("InRingRaw")) { str = k_str(); if (str) strcpy(InRingRawName, str); }
         else if (k_its("InRingPick")) { str = k_str(); if (str) strcpy(InRingPickName, str); }
         else if (k_its("TauModel")) { str = k_str(); if (str) strcpy(TauModel, str); }
@@ -314,13 +306,6 @@ int ReadConfig(char *configfile) {
         else if (k_its("MwwConfigFile")) { str = k_str(); if (str) strcpy(MwwConfigFile, str); }
         else if (k_its("MwwWorkDir")) { str = k_str(); if (str) strcpy(MwwWorkDir, str); }
         else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
-        else if (k_its("WsTimeout")) { WsTimeout = k_int(); } 
-        else if (k_its("WaveBackend")) {
-            str = k_str();
-            if (str && (str[0] == 's' || str[0] == 'S'))      g_wave_backend = 1;
-            else if (str && (str[0] == 'a' || str[0] == 'A')) g_wave_backend = 2;
-            else                                              g_wave_backend = 0;
-        }
         else if (k_its("StoreRoot")) { str = k_str(); if (str) snprintf(g_store_root, sizeof(g_store_root), "%s", str); }
         else if (k_its("FetchThreads")) { g_fetch_threads = k_int(); if (g_fetch_threads < 1) g_fetch_threads = 1; }
         else if (k_its("ModuleLabel")) {
@@ -656,7 +641,6 @@ void ConnectToEarthworm() {
     }
     logit("t", "=== csnhypodbp: Conectado a %s%s%s, %s (picks) y %s ===\n",
           InRingName, InRingRawName[0] ? " + " : "", InRingRawName, InRingPickName, OutRingName);
-    ws_menu.head = NULL; ws_menu.tail = NULL;
 }
 
 static void drain_ring(SHM_INFO *region, GtkWidget *tree) {

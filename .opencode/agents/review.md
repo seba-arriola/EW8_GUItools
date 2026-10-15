@@ -84,7 +84,7 @@ ADVERTENCIAS:
 CHECKLIST:
 - alcance    PASS|FAIL|NA — ¿el diff toca solo lo que corresponde a la tarea?
 - tests      PASS|FAIL|NA — ¿hay test por cada cambio funcional y el test verifica el cambio?
-- datos      PASS|FAIL|NA — ¿entran datos pesados (mseed/, tank_repo/, resources/, runs/, picks/, *.tank, *.mseed)?
+- datos      PASS|FAIL|NA — ¿entran datos pesados (resources/, run_working_v8/wstore/, *.tank, *.mseed)?
 - secretos   PASS|FAIL|NA — ¿credenciales o rutas personales (db.env, service.json, tokens)?
 - conflictos PASS|FAIL|NA — ¿quedan marcadores de conflicto?
 - formato    PASS|FAIL|NA — ¿`git diff --check` limpio?

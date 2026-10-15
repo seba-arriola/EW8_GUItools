@@ -2,8 +2,6 @@
 
 #include <string.h>
 
-#include <ws_clientII.h>
-#include <socket_ew.h>
 #include <wstore.h>
 #include <libmseed2.h>
 #include <ewgui/sds.h>
@@ -15,15 +13,12 @@
 /*
  * wave_source.c - Abstracción de la fuente de onda.
  *
- *   WSRC_WS    : wave_serverV por TCP (modo anillo).
  *   WSRC_TANK  : lectura directa del tank (modo offline), patrón de pickS.
  *   WSRC_STORE : store indexado (wstore); si no tiene la traza, va al SDS.
- *   WSRC_AUTO  : store -> wave_serverV -> SDS.
  *
- * QUE fuentes se usan es CONFIGURACION (WaveBackend/SdsEnabled/SdsRoot/
- * SdsFallbackHours del .d), no codigo: con `WaveBackend store` no se abre la
- * conexion a wave_serverV (esta fuera de la configuracion: lo reemplaza el
- * store) y el archivo SDS cubre lo mas antiguo que la retencion local.
+ * QUE fuentes se usan es CONFIGURACION (SdsEnabled/SdsRoot/SdsFallbackHours del
+ * .d), no codigo: el store cubre lo reciente y el archivo SDS lo mas antiguo que
+ * la retencion local.
  *
  * En offline se construye un índice (SCNL + offset) recorriendo el tank una sola
  * vez; wave_get lee sólo los paquetes del SCNL pedido, sin volver a barrer todo.
@@ -134,83 +129,6 @@ static int tank_get(WaveSource *w, const char *sta, const char *net,
         if (fread(buf, sizeof(int32_t), (size_t)e->nsamp, w->tank) != (size_t)e->nsamp) break;
         if (out->n == 0) out->t0 = e->starttime;
         for (j = 0; j < e->nsamp; j++) out->x[out->n++] = (double)buf[j];
-    }
-    free(buf);
-    return (out->n > 0) ? 0 : -1;
-}
-
-/* ------------------------------ online ------------------------------ */
-
-static int ws_get(WaveSource *w, const char *sta, const char *net, const char *chan,
-                  const char *loc, double t0, double t1, MagTrace *out)
-{
-    TRACE_REQ req;
-    char     *buf;
-    int      rc = -1, tries = 0;
-    WS_MENU_QUEUE_REC *menu = (WS_MENU_QUEUE_REC *)w->ws_menu;
-
-    out->x = NULL; out->n = 0; out->t0 = 0; out->dt = 0; out->samprate = 0;
-
-    buf = (char *)malloc(MAG_MAX_TRACE * sizeof(int32_t) + 4096);
-    if (!buf) return -1;
-
-    memset(&req, 0, sizeof(req));
-    scnl_copy(req.sta, sizeof(req.sta), sta);
-    scnl_copy(req.net, sizeof(req.net), net);
-    scnl_copy(req.chan, sizeof(req.chan), chan);
-    scnl_copy(req.loc, sizeof(req.loc), loc);
-    req.reqStarttime = t0;
-    req.reqEndtime   = t1;
-    req.pBuf         = buf;
-    req.bufLen       = (int)(MAG_MAX_TRACE * sizeof(int32_t) + 4096);
-    req.timeout      = w->ws_timeout;
-    req.fill         = 0;
-
-    while (tries < 2) {
-        if (!menu || menu->head == NULL) {
-            if (wsAppendMenu(w->ws_ip, w->ws_port, menu, w->ws_timeout) != WS_ERR_NONE) {
-                menu = NULL; tries++; sleep_ew(500); continue;
-            }
-        }
-        rc = wsGetTraceBinL(&req, menu, w->ws_timeout);
-        if (rc == WS_ERR_NONE) break;
-        wsKillMenu(menu); menu->head = NULL; menu->tail = NULL;
-        tries++; sleep_ew(500);
-    }
-    if (rc != WS_ERR_NONE) { free(buf); return -1; }
-
-    /* Concatenar muestras dentro de la ventana */
-    {
-        char *ptr = req.pBuf, *end = req.pBuf + req.actLen;
-        long  total = 0;
-        while (ptr + sizeof(TRACE2_HEADER) <= end) {
-            TRACE2_HEADER *h = (TRACE2_HEADER *)ptr;
-            long data_bytes = (long)h->nsamp * (long)sizeof(int32_t);
-            if (h->nsamp <= 0 || ptr + sizeof(TRACE2_HEADER) + data_bytes > end) break;
-            if (scnl_match(h->sta, sta) && scnl_match(h->net, net) &&
-                scnl_match(h->chan, chan) && scnl_match(h->loc, loc))
-                total += h->nsamp;
-            ptr += sizeof(TRACE2_HEADER) + data_bytes;
-        }
-        if (total == 0) { free(buf); return -1; }
-        out->x = (double *)malloc((size_t)total * sizeof(double));
-        if (!out->x) { free(buf); return -1; }
-        out->n = 0;
-        ptr = req.pBuf;
-        while (ptr + sizeof(TRACE2_HEADER) <= end) {
-            TRACE2_HEADER *h = (TRACE2_HEADER *)ptr;
-            long data_bytes = (long)h->nsamp * (long)sizeof(int32_t);
-            int32_t *d;
-            long j;
-            if (h->nsamp <= 0 || ptr + sizeof(TRACE2_HEADER) + data_bytes > end) break;
-            d = (int32_t *)(ptr + sizeof(TRACE2_HEADER));
-            if (scnl_match(h->sta, sta) && scnl_match(h->net, net) &&
-                scnl_match(h->chan, chan) && scnl_match(h->loc, loc)) {
-                if (out->n == 0) { out->t0 = h->starttime; out->samprate = h->samprate; out->dt = 1.0 / h->samprate; }
-                for (j = 0; j < h->nsamp; j++) out->x[out->n++] = (double)d[j];
-            }
-            ptr += sizeof(TRACE2_HEADER) + data_bytes;
-        }
     }
     free(buf);
     return (out->n > 0) ? 0 : -1;
@@ -360,22 +278,14 @@ static int sds_get(WaveSource *w, const char *sta, const char *net, const char *
 int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
 {
     memset(w, 0, sizeof(*w));
-    w->ws_timeout = cfg->ws_timeout;
-    scnl_copy(w->ws_ip, sizeof(w->ws_ip), cfg->ws_ip);
-    scnl_copy(w->ws_port, sizeof(w->ws_port), cfg->ws_port);
     w->sds_enabled = cfg->sds_enabled;
     w->sds_fallback_hours = cfg->sds_fallback_hours;
     scnl_copy(w->sds_root, sizeof(w->sds_root), cfg->sds_root);
 
-    if (!tank_or_null && cfg->store_root[0] && cfg->wave_backend != 0) {
-        /* store (+ SDS segun la ventana). Con wave_backend=1 (store) NO se abre
-         * el menu de wave_serverV; con 2 (auto) queda como red de seguridad. */
-        w->mode = (cfg->wave_backend == 1) ? WSRC_STORE : WSRC_AUTO;
+    if (!tank_or_null && cfg->store_root[0]) {
+        /* store + SDS segun la ventana. */
+        w->mode = WSRC_STORE;
         if (wstore_open((WStore **)&w->store, cfg->store_root, NULL) != 0) return -1;
-        if (w->mode == WSRC_AUTO) {
-            w->ws_menu = calloc(1, sizeof(WS_MENU_QUEUE_REC));
-            if (!w->ws_menu) { wstore_close((WStore *)w->store); w->store = NULL; return -1; }
-        }
         return 0;
     }
 
@@ -387,10 +297,8 @@ int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
         return 0;
     }
 
-    w->mode = WSRC_WS;
-    w->ws_menu = calloc(1, sizeof(WS_MENU_QUEUE_REC));
-    if (!w->ws_menu) return -1;
-    return 0;
+    /* Sin tank y sin store no hay fuente de ondas. */
+    return -1;
 }
 
 void wave_close(WaveSource *w)
@@ -398,14 +306,10 @@ void wave_close(WaveSource *w)
     if (!w) return;
     if (w->mode == WSRC_TANK) {
         if (w->tank) fclose(w->tank);
-    } else if (w->mode == WSRC_STORE || w->mode == WSRC_AUTO) {
+    } else if (w->mode == WSRC_STORE) {
         if (w->store) wstore_close((WStore *)w->store);
-        if (w->ws_menu) wsKillMenu((WS_MENU_QUEUE_REC *)w->ws_menu);
-    } else if (w->ws_menu) {
-        wsKillMenu((WS_MENU_QUEUE_REC *)w->ws_menu);
     }
     free(w->idx);
-    free(w->ws_menu);
     memset(w, 0, sizeof(*w));
 }
 
@@ -414,16 +318,13 @@ int wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,
 {
     if (!w) return -1;
     if (w->mode == WSRC_TANK) return tank_get(w, sta, net, chan, loc, t0, t1, out);
-    if (w->mode == WSRC_STORE || w->mode == WSRC_AUTO) {
+    if (w->mode == WSRC_STORE) {
         /* Politica de fuentes (toda por .d): lo reciente del store y lo mas
          * antiguo que SdsFallbackHours del archivo SDS. */
         int pref = sds_prefer(w, t0);
         if (pref && sds_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
         if (store_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
         if (!pref && sds_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
-        if (w->mode == WSRC_AUTO)
-            return ws_get(w, sta, net, chan, loc, t0, t1, out);
-        return -1;
     }
-    return ws_get(w, sta, net, chan, loc, t0, t1, out);
+    return -1;
 }

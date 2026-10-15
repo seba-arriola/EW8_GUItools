@@ -14,8 +14,7 @@
 /*
  * Capa de ondas: store indexado (wstore) + SDS (libmseed2).
  *
- * wave_serverV NO se usa (no forma parte de la configuración del sistema). La
- * política es la del resto del repo: para eventos más viejos que
+ * La política es la del resto del repo: para eventos más viejos que
  * SdsFallbackHours se consulta primero el SDS y, si no hay datos, la otra
  * fuente. El SDS se lee por día con el layout de ewgui_sds_path:
  *   <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>

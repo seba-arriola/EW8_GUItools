@@ -214,7 +214,7 @@ int main(void)
         CHECK(errsz == 0, "estacion ausente -> stderr vacio (sin 'Cannot open file')");
     }
 
-    /* Punto 2(a): predicado prefer_sds (evento antiguo omite wave_serverV). */
+    /* Punto 2(a): predicado prefer_sds (evento antiguo -> SDS primero). */
     CHECK(csnhypodbp_sds_prefer(200.0, 1, "/mnt/sds", 168) == 1,
           "evento antiguo -> prefer_sds");
     CHECK(csnhypodbp_sds_prefer(100.0, 1, "/mnt/sds", 168) == 0,

@@ -1,22 +1,20 @@
 # ===========================================================================
 # EW8_GUItools — .gitignore
-# Se versionan: api_report_locs/, ew_gui_tools/, tank_tools/ y
-# run_working_v8/params/ (config de ejemplo). Sin binarios ni runtime.
+# Se versionan: ew_gui_tools/, run_working_v8/params/ (config de ejemplo) y
+# ew_8.0/ (subconjunto de la instalación EarthWorm 8: headers, librerías y los
+# binarios de fabrica; los binarios que compilan NUESTROS modulos NO se
+# versionan, ver §3b).
 # Los archivos sueltos de la raíz NO se listan aquí: se deciden manualmente.
 # ===========================================================================
 
 # --- 1. Infraestructura y datos que NO se versionan -------------------------
+# Instalación EarthWorm COMPLETA (legado): vive fuera del repo. El subconjunto
+# que sí se versiona está en ew_8.0/ (ver §3b).
 earthworm_8.0/
-mseed/
-tank_repo/
-replay/
-picks/
-runs/
 report_images/
 run_working_v8/wstore/
 db/backups/
 # --- 2. Runtime de EarthWorm ------------------------------------------------
-run_working_v8/tanks/
 run_working_v8/log/*.log
 run_working_v8/log/*.lock
 run_working_v8/log/.noexec_fifo.txt
@@ -51,6 +49,30 @@ run_working_v8/params/db.env
 *.so.*
 *.dylib
 *.dSYM/
+
+# --- 3b. ew_8.0/: instalación EarthWorm vendorizada -------------------------
+# Los .a/.o de ew_8.0/lib SÍ se versionan (el §3 los ignora: hay que re-incluir).
+!/ew_8.0/lib/*.a
+!/ew_8.0/lib/*.o
+# Los binarios de FABRICA de ew_8.0/bin SÍ se versionan. Estos son los que
+# `make install` de los módulos deja ahí: se ignoran (lista derivada de las
+# recetas install_bin.sh de cada Makefile; ver common/tools/check_install.sh).
+/ew_8.0/bin/csnloc
+/ew_8.0/bin/pickS
+/ew_8.0/bin/csnmags
+/ew_8.0/bin/csnhypodbp
+/ew_8.0/bin/csnrv
+/ew_8.0/bin/csntvp
+/ew_8.0/bin/csnstaevdisp
+/ew_8.0/bin/ew_controller
+/ew_8.0/bin/hyp2000_ring
+/ew_8.0/bin/nlloc_ring
+/ew_8.0/bin/csnwphase
+/ew_8.0/bin/hypodb_ingest
+/ew_8.0/bin/wstore_ingest
+/ew_8.0/bin/tank2store
+/ew_8.0/bin/store2tank
+/ew_8.0/bin/wstore_query
 
 # --- 4. Ejecutables generados por los Makefiles (sin extensión) -------------
 /ew_gui_tools/csnloc/csnloc
@@ -95,21 +117,16 @@ run_working_v8/params/db.env
 
 # --- runtime ---
 /run_working_v8/log/
-/picks_ps/
-/picks_s/
 
 # --- 5. run_working_v8/params: excluir runtime/generados/respaldos/legacy ---
 /run_working_v8/params/*.bak
 /run_working_v8/params/*.bak.*
 /run_working_v8/params/*.bak_*
-/run_working_v8/params/tankplayer_replay.d
 /run_working_v8/params/slink126.state
 /run_working_v8/params/ew2openapi_144.queue
 /run_working_v8/params/pick_FP_151.ndx
 /run_working_v8/params/hyp2000_output/
 /run_working_v8/params/csnhypodbp_hist.txt
-/run_working_v8/params/iasp91.tbl
-/run_working_v8/params/iasp91.hed
 /run_working_v8/params/test_run.cmd
 /run_working_v8/params/_legacy_atwc/
 /run_working_v8/params/*.log
@@ -126,7 +143,6 @@ core
 core.*
 __pycache__/
 *.pyc
-tank_tools/tests/tmp/
 # Carpeta de pruebas de integracion de localizadores (NLL, HYP2000, etc.)
 tmp/
 # Datos grandes requeridos en runtime (nlloc, hyp2000, csnmags): no se versionan.

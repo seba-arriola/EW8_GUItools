@@ -10,7 +10,7 @@
  *
  * La respuesta instrumental se lee de ficheros SAC PZ en disco (generados por
  * tools/fetch_responses.py desde el FDSNWS de metadata). El modo offline no toca
- * anillos ni wave_serverV: lee el tank directamente (patrón pickS/pick_FP).
+ * los anillos: lee el tank directamente (patrón pickS/pick_FP).
  */
 
 #include <stdio.h>
@@ -66,18 +66,12 @@ typedef struct {
     char win_ovr_file[MAG_STR];
     char tau_model[64];
 
-    /* Wave server (modo anillo) */
-    char ws_ip[64];
-    char ws_port[16];
-    int  ws_timeout;
-    char store_root[MAG_STR];   /* modo store (wstore) */
+    char store_root[MAG_STR];   /* store indexado (wstore) */
 
     /* Fuente de ondas (todo por configuracion, nada en el codigo):
-     *   wave_backend 1 = store (+SDS)  2 = auto (store->ws->SDS)  0 = wave_serverV
-     * El archivo SDS (SeisComP) es la fuente para lo antiguo: los eventos mas
-     * viejos que sds_fallback_hours se piden al SDS en vez de a la retencion local.
-     * sds_fallback_hours 0 = SDS desactivado. */
-    int  wave_backend;
+     * lo reciente sale del store (wstore) y los eventos mas viejos que
+     * sds_fallback_hours se piden al archivo SDS (SeisComP) en vez de a la
+     * retencion local. sds_fallback_hours 0 = SDS desactivado. */
     int  sds_enabled;
     char sds_root[MAG_STR];
     int  sds_fallback_hours;
@@ -184,7 +178,7 @@ typedef struct {
 
 /* ============================ Fuente de onda ============================ */
 
-typedef enum { WSRC_WS, WSRC_TANK, WSRC_STORE, WSRC_AUTO } WaveSourceMode;
+typedef enum { WSRC_TANK, WSRC_STORE } WaveSourceMode;
 
 typedef struct {
     char   sta[8], net[8], chan[8], loc[8];
@@ -196,9 +190,6 @@ typedef struct {
 
 typedef struct {
     WaveSourceMode mode;
-    char  ws_ip[64], ws_port[16];
-    int   ws_timeout;
-    void *ws_menu;                 /* WS_MENU_QUEUE_REC */
     FILE *tank;                    /* modo offline */
     char  tank_path[MAG_STR];
     MagTankIndex *idx;             /* índice del tank (offline) */

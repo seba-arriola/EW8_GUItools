@@ -3,7 +3,7 @@
  *
  * POR QUE EXISTE: `rd_chan_mag` de EarthWorm **no acota** sus escrituras contra
  * el tamano que se le pasa (el 4.o argumento solo alimenta su `memset` inicial:
- * earthworm_8.0/src/libsrc/util/rw_mag.c:114) y ademas parsea IN-PLACE
+ * rw_mag.c:114 de EarthWorm 8) y ademas parsea IN-PLACE
  * (`tmpMsg = msg`, :119, y `line[len] = '\0'`, :134), o sea que destruye el
  * buffer del llamante. Dimensionar contando '\n' NO sirve de proxy: el formato
  * no parte solo por '\n' (medido 2026-10-14 con `wr_mag_scnl`: 2 '\n' para 3

@@ -445,7 +445,7 @@ fi
 printf 'RESULTADO_SORT_STATUS=%s\n' "$rc"
 exit "$rc"
 INNER
-    EWGUI_BIN="$ROOT/earthworm_8.0/bin/ew_controller" EWGUI_PARAMS="$PARAMS" \
+    EWGUI_BIN="$ROOT/ew_8.0/bin/ew_controller" EWGUI_PARAMS="$PARAMS" \
     EWGUI_LOG="$TMP/log" EWGUI_MODE="$mode" EWGUI_FAKE="$MOD_DIR/tests/fake_status" \
     EWGUI_FIX="$FIX" \
         "$ROOT/ew_gui_tools/common/tools/gui_run.sh" -- bash "$inner"

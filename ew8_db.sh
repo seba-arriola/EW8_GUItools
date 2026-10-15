@@ -17,15 +17,24 @@
 #  `db/docker-compose.yml` monta `db/schema.sql` en /docker-entrypoint-initdb.d,
 #  asi que el primer `up` crea la base CON esquema y sin pasos manuales.
 #
+#  INSTANCIAS (worktrees)
+#  ----------------------
+#  Con `-i N` (o EWGUI_INSTANCE=N) cada worktree usa SU base: proyecto y
+#  contenedor ew8_hypodb_<N>, volumen propio y puerto 5435+N. `db.env` debe
+#  declarar ese mismo DB_PORT (el script lo verifica y aborta si no coincide).
+#  La instancia 0 (por defecto) es la de siempre: ew8_hypodb en 5435.
+#  Las instancias >=1 no se auto-arrancan al bootear (restart: no) y se borran
+#  por separado (`./ew8_db.sh -i N reset`).
+#
 #  USO
 #  ---
-#     ./ew8_db.sh up            levanta la base (espera al healthcheck)
-#     ./ew8_db.sh status        estado del contenedor + healthcheck + tablas
-#     ./ew8_db.sh down          detiene el contenedor (CONSERVA los datos)
-#     ./ew8_db.sh reset         borra el volumen y vuelve a crear la base
-#     ./ew8_db.sh logs          logs del contenedor (Ctrl-C para salir)
-#     ./ew8_db.sh psql [args]   consola psql (por defecto: -U $DB_USER -d $DB_NAME)
-#     ./ew8_db.sh deps          comprueba docker/compose y dice que falta
+#     ./ew8_db.sh [-i N] up            levanta la base (espera al healthcheck)
+#     ./ew8_db.sh [-i N] status        estado del contenedor + healthcheck + tablas
+#     ./ew8_db.sh [-i N] down          detiene el contenedor (CONSERVA los datos)
+#     ./ew8_db.sh [-i N] reset         borra el volumen y vuelve a crear la base
+#     ./ew8_db.sh [-i N] logs          logs del contenedor (Ctrl-C para salir)
+#     ./ew8_db.sh [-i N] psql [args]   consola psql (por defecto: -U $DB_USER -d $DB_NAME)
+#     ./ew8_db.sh deps                 comprueba docker/compose y dice que falta
 #     ./ew8_db.sh -h|--help
 #
 #  CODIGOS DE SALIDA
@@ -38,7 +47,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPOSE="$ROOT/db/docker-compose.yml"
 ENVFILE="$ROOT/run_working_v8/params/db.env"
 
-die() { echo "ERROR: $*" >&2; exit "$1"; }
+die() { local code=$1; shift; echo "ERROR: $*" >&2; exit "$code"; }
 
 usage() {
     sed -n '2,/^# =====/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -158,6 +167,41 @@ cmd_psql() {
 }
 
 [ $# -gt 0 ] || usage 1
+
+# --- Instancia (worktrees) ---------------------------------------------------
+# Se puede dar como -i N / --instance N / --instance=N / EWGUI_INSTANCE=N.
+INSTANCE="${EWGUI_INSTANCE:-0}"
+args=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -i|--instance)  [ $# -ge 2 ] || die 1 "falta el valor de $1"; INSTANCE="$2"; shift 2 ;;
+        -i*)            INSTANCE="${1#-i}"; shift ;;
+        --instance=*)   INSTANCE="${1#--instance=}"; shift ;;
+        *)              args+=("$1"); shift ;;
+    esac
+done
+set -- ${args[@]+"${args[@]}"}
+[ $# -gt 0 ] || usage 1
+
+case "$INSTANCE" in
+    ''|*[!0-9]*) die 1 "instancia invalida: '$INSTANCE' (usa un entero >= 0)" ;;
+esac
+
+# El puerto de la instancia manda: sale de db.env (instancia 0) o de 5435+N.
+if [ -f "$ENVFILE" ]; then
+    env_port="$(db_var DB_PORT)"
+    [ -n "$env_port" ] && export DB_PORT="$env_port"
+fi
+if [ "$INSTANCE" -gt 0 ]; then
+    export COMPOSE_PROJECT_NAME="ew8_hypodb_$INSTANCE"
+    export DB_RESTART="no"
+    want_port=$((5435 + INSTANCE))
+    if [ -f "$ENVFILE" ] && [ "${DB_PORT:-}" != "$want_port" ]; then
+        die 1 "instancia $INSTANCE: ${ENVFILE#$ROOT/} declara DB_PORT=${DB_PORT:-?} y deberia declarar DB_PORT=$want_port (si no, los modulos apuntarian a otra base)"
+    fi
+    export DB_PORT="$want_port"
+fi
+
 case "$1" in
     up)             shift; cmd_up "$@" ;;
     status|ps)      shift; cmd_status "$@" ;;

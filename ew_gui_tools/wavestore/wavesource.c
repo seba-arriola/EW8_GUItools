@@ -1,13 +1,11 @@
 #define _GNU_SOURCE
 #include "wavesource.h"
 #include "wstore.h"
+#include "trace_buf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#include <ws_clientII.h>
-#include <socket_ew.h>
 
 #define WSRC_MAX_TRACE 200000
 
@@ -25,7 +23,6 @@ struct WaveSource {
     FILE      *tank;
     WsTankEnt *idx;
     long       nidx;
-    WS_MENU_QUEUE_REC *menu;
     WStore    *store;
 };
 
@@ -158,88 +155,6 @@ static int store_get(WaveSource *w, const char *sta, const char *net, const char
     return 0;
 }
 
-/* ------------------------------ ws ------------------------------ */
-
-static int ws_get(WaveSource *w, const char *sta, const char *net, const char *chan,
-                  const char *loc, double t0, double t1, WaveTrace *out)
-{
-    TRACE_REQ req;
-    char     *buf;
-    int       rc = -1, tries = 0;
-    WS_MENU_QUEUE_REC *menu = w->menu;
-
-    buf = (char *)malloc(WSRC_MAX_TRACE * sizeof(int32_t) + 4096);
-    if (!buf) return -1;
-
-    memset(&req, 0, sizeof(req));
-    scnl_copy(req.sta, sizeof(req.sta), sta);
-    scnl_copy(req.net, sizeof(req.net), net);
-    scnl_copy(req.chan, sizeof(req.chan), chan);
-    scnl_copy(req.loc, sizeof(req.loc), loc);
-    req.reqStarttime = t0;
-    req.reqEndtime = t1;
-    req.pBuf = buf;
-    req.bufLen = (int)(WSRC_MAX_TRACE * sizeof(int32_t) + 4096);
-    req.timeout = w->cfg.ws_timeout;
-    req.fill = 0;
-
-    while (tries < 2) {
-        if (!menu || menu->head == NULL) {
-            if (wsAppendMenu(w->cfg.ws_ip, w->cfg.ws_port, menu, w->cfg.ws_timeout) != WS_ERR_NONE) {
-                tries++;
-                sleep_ew(500);
-                continue;
-            }
-        }
-        rc = wsGetTraceBinL(&req, menu, w->cfg.ws_timeout);
-        if (rc == WS_ERR_NONE) break;
-        wsKillMenu(menu);
-        menu->head = NULL;
-        menu->tail = NULL;
-        tries++;
-        sleep_ew(500);
-    }
-    if (rc != WS_ERR_NONE) { free(buf); return -1; }
-
-    {
-        char *ptr = req.pBuf, *end = req.pBuf + req.actLen;
-        long  total = 0;
-        while (ptr + sizeof(TRACE2_HEADER) <= end) {
-            TRACE2_HEADER *h = (TRACE2_HEADER *)ptr;
-            long data_bytes = (long)h->nsamp * (long)sizeof(int32_t);
-            if (h->nsamp <= 0 || ptr + sizeof(TRACE2_HEADER) + data_bytes > end) break;
-            if (scnl_match(h->sta, sta) && scnl_match(h->net, net) &&
-                scnl_match(h->chan, chan) && scnl_match(h->loc, loc)) total += h->nsamp;
-            ptr += sizeof(TRACE2_HEADER) + data_bytes;
-        }
-        if (total == 0) { free(buf); return -1; }
-        out->x = (double *)malloc((size_t)total * sizeof(double));
-        if (!out->x) { free(buf); return -1; }
-        out->n = 0;
-        ptr = req.pBuf;
-        while (ptr + sizeof(TRACE2_HEADER) <= end) {
-            TRACE2_HEADER *h = (TRACE2_HEADER *)ptr;
-            long data_bytes = (long)h->nsamp * (long)sizeof(int32_t);
-            int32_t *d;
-            long j;
-            if (h->nsamp <= 0 || ptr + sizeof(TRACE2_HEADER) + data_bytes > end) break;
-            d = (int32_t *)(ptr + sizeof(TRACE2_HEADER));
-            if (scnl_match(h->sta, sta) && scnl_match(h->net, net) &&
-                scnl_match(h->chan, chan) && scnl_match(h->loc, loc)) {
-                if (out->n == 0) {
-                    out->t0 = h->starttime;
-                    out->samprate = h->samprate;
-                    out->dt = 1.0 / h->samprate;
-                }
-                for (j = 0; j < h->nsamp; j++) out->x[out->n++] = (double)d[j];
-            }
-            ptr += sizeof(TRACE2_HEADER) + data_bytes;
-        }
-    }
-    free(buf);
-    return (out->n > 0) ? 0 : -1;
-}
-
 /* ------------------------------ API ------------------------------ */
 
 int wave_open(WaveSource **out, const WaveSrcCfg *cfg)
@@ -258,12 +173,8 @@ int wave_open(WaveSource **out, const WaveSrcCfg *cfg)
         if (!w->tank) { free(w); return -1; }
         if (tank_index(w) != 0) { fclose(w->tank); free(w); return -1; }
     }
-    if (cfg->mode == WSRC_STORE || cfg->mode == WSRC_AUTO) {
+    if (cfg->mode == WSRC_STORE) {
         if (w->store_root[0]) wstore_open(&w->store, w->store_root, NULL);
-    }
-    if (cfg->mode == WSRC_WS || cfg->mode == WSRC_AUTO) {
-        w->menu = (WS_MENU_QUEUE_REC *)calloc(1, sizeof(WS_MENU_QUEUE_REC));
-        if (!w->menu) { if (w->store) wstore_close(w->store); free(w); return -1; }
     }
     *out = w;
     return 0;
@@ -277,20 +188,14 @@ int wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,
 
     if (w->cfg.mode == WSRC_STORE) return store_get(w, sta, net, chan, loc, t0, t1, out);
     if (w->cfg.mode == WSRC_TANK)  return tank_get(w, sta, net, chan, loc, t0, t1, out);
-    if (w->cfg.mode == WSRC_AUTO) {
-        if (store_get(w, sta, net, chan, loc, t0, t1, out) == 0) return 0;
-        return ws_get(w, sta, net, chan, loc, t0, t1, out);
-    }
-    return ws_get(w, sta, net, chan, loc, t0, t1, out);
+    return -1;
 }
 
 void wave_close(WaveSource *w)
 {
     if (!w) return;
     if (w->tank) fclose(w->tank);
-    if (w->menu) wsKillMenu(w->menu);
     if (w->store) wstore_close(w->store);
     free(w->idx);
-    free(w->menu);
     free(w);
 }

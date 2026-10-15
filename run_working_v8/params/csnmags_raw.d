@@ -13,14 +13,9 @@ HeartBeatInt      30
 LogFile           1
 Debug             0
 
-# --- Wave server (modo anillo) ---
-WsIP              127.0.0.1
-WsPort            16022
-WsTimeout         10000
+# --- Fuente de ondas ---
 StoreRoot         ../wstore
-# Fuente de ondas (TODO por .d): store para lo reciente y SDS para lo antiguo.
-#   store = store + SDS (sin wave_serverV: no se despliega) | auto = + wave_serverV
-WaveBackend       store
+# store para lo reciente y SDS para lo antiguo (todo por .d).
 # Archivo SDS (SeisComP). SdsFallbackHours 0 = SDS desactivado.
 SdsEnabled        1
 SdsRoot           /mnt/sds/archive

@@ -234,11 +234,6 @@ copias en `run_working_v8/params/`).
 | `test_event_id` | ID base derivado del epoch de arranque |
 | `test_renucleate` | Re-núcleo con back-projection al cambiar mucho las fases |
 
-> **Ensayo offline con S.** La tabla de arriba cubre solo P. Para validar `csnloc` con
-> picks S automáticos en modo offline hay que combinar P+S en un `.picks` por slug
-> (`tank_tools/capture_picks_ps.sh` y `tank_tools/merge_picks.py`; ver
-> `tank_tools/RUNBOOK.md` §9.3). En vivo no hace falta: `PICK_RING` ya trae P y S.
-
 ## Nota sobre `taulib_csnloc.c`
 
 `taulib_csnloc.c` es una copia local del motor IASP91 (originalmente

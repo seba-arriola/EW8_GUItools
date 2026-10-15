@@ -1,7 +1,7 @@
 # wavestore — store de formas de onda indexado
 
 Librería headless + ingester para almacenar y servir formas de onda de forma
-**más eficiente que los tanks planos** y que `wave_serverV`, sin dependencias
+**más eficiente que los tanks planos**, sin dependencias
 nuevas.
 
 ## Idea
@@ -11,7 +11,7 @@ Un **tank indexado**: los datos siguen siendo una secuencia `TRACE2_HEADER` +
 que permite leer una ventana por SCNL en O(log n) sin barrer todo el fichero.
 Así:
 
-- `pick_FP`, `pickS`, `csnmags` y `tankplayer` siguen leyendo el `.tank` **sin cambios**.
+- `pick_FP`, `pickS` y `csnmags` siguen leyendo el `.tank` **sin cambios**.
 - El lector nuevo usa el `.idx` para acceso aleatorio y paralelo.
 - El ingester escribe en paralelo (un hilo por shard; cada canal en un solo shard).
 
@@ -58,9 +58,8 @@ Class/Priority    OTHER 0
 
 ## Integración en los módulos
 
-- **`csnhypodbp`**: claves `WaveBackend store|ws|auto` (default `auto` en el código; el `.d` de este
-  entorno usa `store`), `StoreRoot`, `FetchThreads`. En `auto`, intenta el store y cae a
-  `wave_serverV` — **legado: no se despliega**.
+- **`csnhypodbp`**: claves `StoreRoot` y `FetchThreads`. Las ondas salen del store (y del SDS para
+  lo antiguo).
 - **`csnmags`**: modo `store` (offline) sobre el mismo store.
 
 ## API
@@ -72,8 +71,7 @@ WStoreTrace tr; wstore_get(s, sta, net, chan, loc, t0, t1, &tr);  /* 0 datos, 1 
 wstore_trace_free(&tr); wstore_close(s);
 ```
 
-`WaveSource` (`wavesource.h`) unifica los backends `WSRC_WS` (`wave_serverV`, **legado no
-desplegado**), `WSRC_TANK`, `WSRC_STORE` y `WSRC_AUTO`.
+`WaveSource` (`wavesource.h`) unifica los backends `WSRC_TANK` y `WSRC_STORE`.
 
 ## Tests
 

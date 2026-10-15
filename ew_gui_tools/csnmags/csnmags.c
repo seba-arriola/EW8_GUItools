@@ -7,8 +7,6 @@
 #include <sys/types.h>
 
 #include <kom.h>
-#include <socket_ew.h>
-#include <ws_clientII.h>
 
 /*
  * csnmags.c - Motor de magnitudes ML/Mwp/Mb/Ms.
@@ -784,9 +782,7 @@ int main(int argc, char **argv)
     /* Modo anillo: requiere claves EarthWorm */
     lookup(&c);
     logit_init(argv[1], c.MyModId, 256, c.cfg.logfile);
-    SocketSysInit();
-    setWsClient_ewDebug(0);
-    if (wave_open(&c.wave, &c.cfg, NULL) != 0) { logit("e", "csnmags: no abro wave_server\n"); return 1; }
+    if (wave_open(&c.wave, &c.cfg, NULL) != 0) { logit("e", "csnmags: no abro la fuente de ondas\n"); return 1; }
     ring_run(&c);
     wave_close(&c.wave);
     tport_detach(&c.region);

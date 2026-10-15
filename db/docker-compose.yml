@@ -10,17 +10,23 @@
 #
 # El esquema se aplica SOLO al crear el volumen por primera vez
 # (docker-entrypoint-initdb.d). Para reaplicarlo tras cambios: `down -v` + `up`.
-name: ew8_hypodb
+#
+# INSTANCIAS (worktrees): con COMPOSE_PROJECT_NAME=ew8_hypodb_<N>, DB_PORT=<puerto>
+# y DB_RESTART=no (lo hace ew8_db.sh -i N) esta misma definicion levanta una base
+# INDEPENDIENTE por instancia: contenedor propio, volumen propio (el nombre del
+# volumen se prefija con el proyecto) y su puerto. Sin esas variables se comporta
+# como la instancia 0 (`ew8_hypodb` en 5435).
+name: ${COMPOSE_PROJECT_NAME:-ew8_hypodb}
 
 services:
   db:
     image: postgres:16
-    container_name: ew8_hypodb
-    restart: unless-stopped
+    container_name: ${COMPOSE_PROJECT_NAME:-ew8_hypodb}
+    restart: ${DB_RESTART:-unless-stopped}
     env_file:
       - ../run_working_v8/params/db.env
     ports:
-      - "5435:5432"
+      - "${DB_PORT:-5435}:5432"
     volumes:
       - ew8_db_data:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro

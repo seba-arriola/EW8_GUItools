@@ -10,10 +10,7 @@ CFLAGS = -O2 -g -Wall -Wextra -I. -I../common/include -I../csnhypodbp \
 
 LIBS   = -lm -lpthread $(shell pkg-config --libs libpq)
 EWLIB  = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
-EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o
+EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
 
 LIB     = libhypodb.a
 LIBOBJS = hypodb_ids.o hypodb_config.o hypodb_ingest.o \

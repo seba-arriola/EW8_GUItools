@@ -8,7 +8,7 @@
  *
  *   <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>
  *
- * (igual que `earthworm_8.0/src/archiving/mseedarchplayer/mseedfilename.c`).
+ * (igual que el `mseedfilename.c` de EarthWorm 8).
  * `t` es un epoch UTC en segundos. Devuelve 0 si OK; -1 si error.
  *
  * `loc` se normaliza a la convencion del SDS: el location "nulo" de EarthWorm

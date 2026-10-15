@@ -163,7 +163,7 @@ static const char *ew_software(void)
 
     if (!done) {
         const char *v = getenv("EW_VERSION");
-        snprintf(cached, sizeof cached, "%s", (v && v[0]) ? v : "earthworm_8.0");
+        snprintf(cached, sizeof cached, "%s", (v && v[0]) ? v : "ew_8.0");
         done = 1;
     }
     return cached;

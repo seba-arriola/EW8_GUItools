@@ -112,7 +112,7 @@ python3 "$EWGUI_PROBE" --click-by-name Estaciones --timeout 25 || rc=1
 printf 'RESULTADO_MWW=%s\n' "$rc"
 exit "$rc"
 INNER
-    EWGUI_BIN="$ROOT/earthworm_8.0/bin/csnhypodbp" EWGUI_PARAMS="$PARAMS" \
+    EWGUI_BIN="$ROOT/ew_8.0/bin/csnhypodbp" EWGUI_PARAMS="$PARAMS" \
     EWGUI_LOG="$TMP/log" EWGUI_MODE="$mode" EWGUI_SLEEP="${EWGUI_SLEEP:-8}" \
     EWGUI_CLICK="${EWGUI_CLICK:-}" EWGUI_SHOT_NAME="${EWGUI_SHOT_NAME:-shot}" \
         "$ROOT/ew_gui_tools/common/tools/gui_run.sh" -- bash "$inner"

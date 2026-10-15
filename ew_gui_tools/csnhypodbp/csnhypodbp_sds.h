@@ -16,7 +16,7 @@ int csnhypodbp_sds_fetch(const char *sta, const char *net, const char *chan,
 /*
  * Predicado puro: 1 si el evento es tan antiguo que la retencion local ya no lo
  * tiene (edad > `fallback_hours` y SDS habilitado con root): se consulta el SDS
- * primero y se omite wave_serverV.
+ * primero.
  */
 int csnhypodbp_sds_prefer(double age_hours, int enabled, const char *root,
                           int fallback_hours);

@@ -10,7 +10,7 @@
 #      "Text file busy" y `make` abortaba: el instalado quedaba viejo.
 #   2) Si el binario local ya estaba al día, `make` respondía "Nothing to be
 #      done" y NO ejecutaba la regla de copia ⇒ el instalado quedaba AUSENTE.
-#      Así se quedó este repo sin `earthworm_8.0/bin/csnhypodbp` y `startstop`
+#      Así se quedó este repo sin `ew_8.0/bin/csnhypodbp` y `startstop`
 #      no pudo arrancarlo (`execvp failed` → CHILD FATAL ERROR → se cayó todo).
 #
 # La copia a un temporal + `mv` (rename dentro del mismo directorio) es atómica:

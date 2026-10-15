@@ -22,10 +22,7 @@ SDSOBJ = ewgui_sds.o $(EW_HOME)/$(EW_VERSION)/lib/libmseed2.a
 # Objetos sueltos de EarthWorm que no viven en libew_mt.a
 EWLIB  = $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a
 WSLIB  = ../wavestore/libwavestore.a
-EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/ws_clientII.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew_common.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/socket_ew.o \
-         $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
+EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
 
 TARGET = csnmags
 

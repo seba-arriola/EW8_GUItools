@@ -3,21 +3,16 @@
 
 /*
  * Fuente de onda unificada:
- *   WSRC_WS    : wave_serverV por TCP.
  *   WSRC_TANK  : tank directo (indice en memoria; patron pickS).
  *   WSRC_STORE : store indexado (wstore).
- *   WSRC_AUTO  : intenta STORE y, si no hay datos, cae a WS.
  */
 
-typedef enum { WSRC_WS, WSRC_TANK, WSRC_STORE, WSRC_AUTO } WaveSourceMode;
+typedef enum { WSRC_TANK, WSRC_STORE } WaveSourceMode;
 
 typedef struct {
     WaveSourceMode mode;
-    const char    *store_root;   /* WSRC_STORE / WSRC_AUTO */
-    const char    *tank_or_null; /* WSRC_TANK              */
-    char           ws_ip[64];
-    char           ws_port[16];
-    int            ws_timeout;
+    const char    *store_root;   /* WSRC_STORE */
+    const char    *tank_or_null; /* WSRC_TANK  */
 } WaveSrcCfg;
 
 typedef struct {

@@ -6,7 +6,7 @@
 * por epicentro con los circulos NOD, + amortiguamiento 15 + profundidad de
 * prueba 20 km.
 *
-* Justificacion (tank_tools/calib/RESULTS_REFINERS.md §11; 2211 ARC, con la S ya
+* Justificacion (medido en calibración; 2211 ARC, con la S ya
 * ACTIVA tras corregir los horizontales en estaciones_hyp.sta):
 *
 *   set                          <=25km  <=50km  mediana  |dz| vs publ.  RMS

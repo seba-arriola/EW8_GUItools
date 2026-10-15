@@ -45,7 +45,7 @@ T0ToleranceSec    2.0              # tolerancia del stacking de t0 (s)
 # Claves que existen en el codigo pero NO estaban en este .d (corrian a default).
 # A 100 km se fusionaban eventos cercanos: medido sobre 388 eventos, bajarlo a 50
 # sube el <=25 km de 236 a 258, el <=50 de 356 a 368 y la mediana de 21.8 a 20.4 km
-# (tank_tools/calib/RESULTS.md §8). A 200 km se PIERDEN eventos.
+# (medido en calibración). A 200 km se PIERDEN eventos.
 EventDedupSec     30.0
 EventDedupKm      50.0
 DBSCAN_Eps        60.0             # epsilon de clustering (km / km/s)

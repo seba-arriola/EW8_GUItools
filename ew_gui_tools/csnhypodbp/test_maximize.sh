@@ -15,7 +15,7 @@ cd "$(dirname "$0")" || exit 1
 
 ROOT=$(cd ../.. && pwd)
 PARAMS="$ROOT/run_working_v8/params"
-BIN="$ROOT/earthworm_8.0/bin/csnhypodbp"
+BIN="$ROOT/ew_8.0/bin/csnhypodbp"
 INTERVAL_MS=${CSNHYPODBP_MAXIMIZE_MS_TEST:-300}   # 10 toggles = 3 s
 WAIT_S=6                                          # 3 s de ciclos + margen
 

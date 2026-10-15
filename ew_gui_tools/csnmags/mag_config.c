@@ -31,14 +31,8 @@ void mag_config_defaults(MagConfig *c)
     strcpy(c->win_ovr_file, "");
     strcpy(c->tau_model, "iasp91");
 
-    strcpy(c->ws_ip, "127.0.0.1");
-    strcpy(c->ws_port, "16022");
-    c->ws_timeout = 10000;
-
-    /* Fuente de ondas: auto (store -> wave_serverV) es el historico; store evita
-     * abrir conexion a un wave_serverV que no se despliega. SDS: apagado si
-     * sds_root esta vacio. */
-    c->wave_backend = 2;
+    /* Fuente de ondas: lo reciente del store (wstore) y lo antiguo del SDS.
+     * SDS: apagado si sds_root esta vacio. */
     c->sds_enabled = 1;
     strcpy(c->sds_root, "");
     c->sds_fallback_hours = 168;
@@ -118,16 +112,7 @@ int mag_config_load(const char *path, MagConfig *c)
         else if (k_its("LogFile"))      c->logfile = k_int();
         else if (k_its("Debug"))        c->debug = k_int();
 
-        else if (k_its("WsIP"))    { str = k_str(); if (str) snprintf(c->ws_ip, sizeof(c->ws_ip), "%s", str); }
-        else if (k_its("WsPort"))  { str = k_str(); if (str) snprintf(c->ws_port, sizeof(c->ws_port), "%s", str); }
-        else if (k_its("WsTimeout")) c->ws_timeout = k_int();
         else if (k_its("StoreRoot")) { str = k_str(); if (str) snprintf(c->store_root, sizeof(c->store_root), "%s", str); }
-    else if (k_its("WaveBackend")) {
-        str = k_str();
-        if (str && (str[0] == 's' || str[0] == 'S'))      c->wave_backend = 1;
-        else if (str && (str[0] == 'a' || str[0] == 'A')) c->wave_backend = 2;
-        else                                              c->wave_backend = 0;
-    }
     else if (k_its("SdsEnabled")) { c->sds_enabled = k_int() ? 1 : 0; }
     else if (k_its("SdsRoot")) { str = k_str(); if (str) snprintf(c->sds_root, sizeof(c->sds_root), "%s", str); }
     else if (k_its("SdsFallbackHours")) {

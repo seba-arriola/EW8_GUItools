@@ -198,7 +198,6 @@ void csnwphase_distaz(double evla, double evlo, double stla, double stlo,
 
 /* ------------------------------------------------------------------ */
 /* Ondas: store indexado (wstore) + SDS (libmseed2).                   */
-/* wave_serverV NO se usa: no forma parte de la configuración.         */
 /* ------------------------------------------------------------------ */
 
 typedef struct {

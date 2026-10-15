@@ -244,7 +244,8 @@ definitivo.
 
 ## 5. Generador de tablas tau de `csnloc` (verificado)
 
-`earthworm_8.0/src/grab_bag/makeTTTable/` contiene el generador (Buland-Kennett). Secuencia:
+El generador (Buland-Kennett) es el `makeTTTable` de las fuentes de EarthWorm 8 (no se
+versiona). Secuencia:
 `REMODL` → `REMODL.HED/.TBL` → `SETBRN` → `<modelo>.HED/.TBL`. Comando:
 `cd Iasp91 && make remodl setbrn && ./remodl && ./setbrn`.
 
@@ -266,22 +267,10 @@ gfortran. TauP/ObsPy **no** generan `.tbl/.hed` (solo `.taup`/`.npz`/LOCSAT).
 
 ---
 
-## 7. Mirar si los eventos del archivo aparecen
+## 7. Ajuste de `AssocWindowSec` (medido)
 
-El catálogo `tests_soluciones_publicadas.dat` es una **referencia para mirar a ojo**, no una
-métrica. El bucle vive en `tank_tools/` (ver `tank_tools/RUNBOOK.md` §10):
-
-- **`loc_report.py`**: `<validacion>/loc_report.txt` con los parámetros de `csnloc.d`, las
-  **grillas** (densidad: bbox, `NodeKm`, capas de profundidad, nº de nodos) y todos los eventos
-  localizados.
-- **`catalog_report.py`**: `<validacion>/catalog_report.txt` con una fila por evento del archivo
-  (referencia + la solución localizada más parecida + diferencias), los **adicionales** (soluciones
-  que no son el evento del archivo, como "plus a revisar") y un resumen.
-- **`calibrate_csnloc.py`** + **`calib/csnloc_variants.json`**: barrido de claves de `csnloc.d`
-  (`AssocWindowSec`, `T0ToleranceSec`, `MinPhasesPerEvent`, `MaxRMS`, `DBSCAN_Eps`, `RefineDepthKm`,
-  `RefineNodeKm`, `RefineIterations`, `DepthPriorKm/SigmaKm`, `PhaseWeightS`, `BackProjThreshold`, …)
-  en copias **aisladas** (nunca `run_working_v8/params/csnloc.d`), dejando un reporte por set.
-
-Medido (408 tanks, `csnloc` `2ff357a7`, P+S): con `AssocWindowSec 120` (base) aparecen 340/410
-eventos a ≤100 km (164 a ≤25 km), 38 sin solución, mediana 27.6 km; con `AssocWindowSec 60`
+El catálogo `tests_soluciones_publicadas.dat` y los scripts que lo cruzaban (`loc_report.py`,
+`catalog_report.py`, `calibrate_csnloc.py`) vivían en el arnés `tank_tools/`, hoy fuera del repo.
+Lo que dejan medido (408 tanks, `csnloc` `2ff357a7`, P+S): con `AssocWindowSec 120` (base) aparecen
+340/410 eventos a ≤100 km (164 a ≤25 km), 38 sin solución, mediana 27.6 km; con `AssocWindowSec 60`
 aparecen 371/410 (217 a ≤25 km), 25 sin solución, mediana 23.0 km.

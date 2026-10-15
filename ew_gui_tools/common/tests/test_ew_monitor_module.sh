@@ -320,9 +320,9 @@ grep -q 9001 "$TMP/kill.log" && ok "stop stack: mato a los hijos capturados ante
 # ---------------------------------------------------------------------------
 # 9) EW_MONITOR_CFG manda sobre el .d por defecto; -h no rompe nada
 # ---------------------------------------------------------------------------
-printf ' Process    "csnloc csnloc.d"\n' > "$TMP/params/startstop_replay.d"
+printf ' Process    "csnloc csnloc.d"\n' > "$TMP/params/startstop_alt.d"
 reset
-out="$( export EW_MONITOR_CFG="$TMP/params/startstop_replay.d"; mon list 2>&1 )"
+out="$( export EW_MONITOR_CFG="$TMP/params/startstop_alt.d"; mon list 2>&1 )"
 grep -qE 'csnloc +csnloc +csnloc\.d +9002' <<< "$out" && ok "EW_MONITOR_CFG: usa ese .d" || ko "EW_MONITOR_CFG [$out]"
 grep -qE '^slink2ew ' <<< "$out" && ko "EW_MONITOR_CFG: sigue leyendo el .d por defecto" \
     || ok "EW_MONITOR_CFG: no mezcla el .d por defecto"
@@ -389,7 +389,7 @@ grep -qE '^  modulos   : 7 declarados \(ausente:7\)$' <<< "$out" && ok "status c
 
 # Union .d + vivos (mismo contrato que `list`)
 reset
-out="$( export EW_MONITOR_CFG="$TMP/params/startstop_replay.d"; mon status 2>&1 )"
+out="$( export EW_MONITOR_CFG="$TMP/params/startstop_alt.d"; mon status 2>&1 )"
 grep -qE '^    - csnloc +csnloc\.d +Alive +pid 9002$' <<< "$out" \
     && ok "status: el declarado del .d alternativo" || ko "status union [$out]"
 grep -qE '^    - csnrv +csnrv\.d +Alive +pid 9010$' <<< "$out" \

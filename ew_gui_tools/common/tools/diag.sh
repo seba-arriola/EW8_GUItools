@@ -158,7 +158,7 @@ cmd_env() {
     local b p
     for b in startstop csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp \
              ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest \
-             sniffring tankplayer; do
+             sniffring; do
         p="$(command -v "$b" 2>/dev/null || true)"
         printf '  %-14s %s\n' "$b" "${p:-<falta>}"
     done
@@ -283,7 +283,7 @@ cmd_errors() {  # errors [n]
 cmd_process() {
     local names pids any=0 b
     names="$(module_list)"
-    [ -n "$names" ] || names="startstop slink2ew pick_FP wave_serverV csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest"
+    [ -n "$names" ] || names="startstop slink2ew pick_FP csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest"
     for b in $names; do
         pids="$(pgrep -x "$b" 2>/dev/null | tr '\n' ' ')"
         [ -n "$pids" ] || continue

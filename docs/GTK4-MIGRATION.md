@@ -32,7 +32,7 @@ fuente única que `ew8_unix.sh` hace `source`.
 
 El problema real no es GTK3 ni cairo. Es:
 
-- **Arquitectura**: lógica de dominio (anillos `tport`, `wave_serverV`, DSP, parseo)
+- **Arquitectura**: lógica de dominio (anillos `tport`, el store de ondas, DSP, parseo)
   mezclada con la UI en monolitos (`csntvp.c` ~1428 líneas sin `.h`, `csnrv.c`,
   `csnstaevdisp.c`, `ew_controller.c`). Solo `csnhypodbp` está modularizado
   (`main`/`gui`/`ws`/`dsp` + `.h`) y es el **patrón de referencia**.
@@ -198,9 +198,9 @@ Modelo (idéntico en GTK3 y GTK4):
   (~4-8 ms); un hilo por anillo; animación continua → `GdkFrameClock` /
   `gtk_widget_add_tick_callback`, dato periódico → `g_timeout_add`.
 
-**Bloqueo real hoy:** `csnhypodbp_ws.c:271` (`wsAppendMenu`) + `:313`
-(`wsGetTraceBinL`, TCP con `WsTimeout`) corren en el hilo de UI dentro de
-`FetchWaveformsForEvent` → congelan la ventana al seleccionar un sismo. Se ataca en
+**Bloqueo real entonces:** las lecturas de ondas (el `fetch` TCP que había en su día, hoy
+store/SDS en `csnhypodbp_ws.c`) corrían en el hilo de UI dentro de
+`FetchWaveformsForEvent` → congelaban la ventana al seleccionar un sismo. Se atacó en
 **T1.5** (worker de I/O), no esperar a Fase 5.
 
 ---
@@ -252,7 +252,7 @@ Modelo (idéntico en GTK3 y GTK4):
   a `ewgui_heartbeat_due` + `ewgui_ring_should_quit` | build OK en los 4 + golden.
 - [x] **T1.4** Los 4 Makefiles enlazan `libewgui.a` (regla `../common/libewgui.a`) |
   build OK con `-Wall`.
-- [x] **T1.5** Worker de I/O para `wave_serverV` (`csnhypodbp_ws.c`): fetch en hilo
+- [x] **T1.5** Worker de I/O para el fetch de ondas (`csnhypodbp_ws.c`): I/O en hilo
   worker + publicación con `g_idle_add`; parseo/filtrado en el hilo principal |
   compila + golden. *(C7 no congelación: validar con GUI)*
 - [x] **T1.6** `ew_controller` adopta el core (`ewgui_config`/`ewgui_heartbeat_due`)
@@ -323,7 +323,7 @@ Modelo (idéntico en GTK3 y GTK4):
   como opción si sube la carga. *(sysprof requiere GUI)*
 - [x] **T5.2** Worker para filtro/envelope: **no necesario** al ritmo actual (el cómputo
   cabe en el presupuesto: 10.33 ms para 64 trazas). Se deja en reserva para cargas
-  mayores; el fetch de `wave_serverV` (el bloqueo real) ya corre en worker (T1.5).
+  mayores; el fetch de ondas (el bloqueo real) ya corre en worker (T1.5).
 - [x] **T5.3** ADR del backend de render: `docs/adr-0001-render-backend.md`.
 
 ### Fase 6 — Migración GTK3→GTK4 + libadwaita
@@ -492,7 +492,7 @@ dominio desde el port.
   (`test_filter`), csnrv/Makefile:25-27 (`test_config.sh` + `--test-mag`);
   csnstaevdisp solo `test-data`. Flags: `-Wall -O2 -g` (sin `-Wextra`).
 - EarthWorm por C: `earthworm.h`, `transport.h`, `kom.h`, `trace_buf.h`,
-  `ws_clientII.h`, `rw_mag.h`; enlace `libew_mt.a`, `ws_clientII.o`, `rw_mag.o`.
+  `rw_mag.h`; enlace `libew_mt.a` y `rw_mag.o`.
 
 ---
 
@@ -717,7 +717,7 @@ práctica fuerza unbind/rebind). Consecuencia medida: actualizar la fila in situ
   esto, `Stop`/`Restart` actuarían sobre el módulo equivocado y la re-selección marcaría otra fila.
 
 **Trampas de `tport_getmsg` (Earthworm).** `GET_OK`, `GET_MISS` y `GET_NOTRACK` **ya copiaron el
-mensaje** en el buffer del llamante (`earthworm_8.0/src/libsrc/unix/transport.c:844-865`; el salto
+mensaje** en el buffer del llamante (`transport.c:844-865` de EarthWorm 8; el salto
 de secuencia se marca *después*, `:903`) y son el idioma habitual: hay que parsearlos y **seguir
 drenando**, o un anillo con mensajes desincronizados se vacía a razón de un mensaje por tick.
 `GET_NONE` (nada casó) y `GET_TOOBIG` (casó pero no hubo copia: `*length = hd.size`, `:832-834`)

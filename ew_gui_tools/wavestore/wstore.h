@@ -8,7 +8,7 @@
  *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank   (TRACE2_HEADER + int32)
  *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.idx    (indice lateral)
  *
- * El `.tank` es un tank valido (lo leen pick_FP/pickS/csnmags/tankplayer sin
+ * El `.tank` es un tank valido (lo leen pick_FP/pickS/csnmags sin
  * cambios); el `.idx` permite acceso por ventana O(log n).
  */
 

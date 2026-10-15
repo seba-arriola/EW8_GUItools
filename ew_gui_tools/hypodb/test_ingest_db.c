@@ -166,7 +166,7 @@ int main(void)
         assert(fabs(ors[0].depth - 12.5) < 0.01);
         /* D2: `author` constante (el modulo) y `software` de $EW_VERSION. */
         assert(strcmp(ors[0].author, "csnhypodbp") == 0);
-        assert(strcmp(ors[0].software, (wv && *wv) ? wv : "earthworm_8.0") == 0);
+        assert(strcmp(ors[0].software, (wv && *wv) ? wv : "ew_8.0") == 0);
         assert(strcmp(ors[0].location_algorithm, "csnloc") == 0);
         assert(fabs(ors[0].azimuthal_gap - 180.0) < 1e-9);
         assert(fabs(ors[0].standard_error - 0.35) < 1e-6);

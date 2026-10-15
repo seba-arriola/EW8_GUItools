@@ -38,8 +38,7 @@ repintados del canvas de `csntvp` y `csnhypodbp` con datos reales.
 
 ### Procedimiento
 
-1. Arranca EarthWorm con datos (`source ./ew8_unix.sh`; `./ew_monitor.sh start` o
-   modo replay con `tank_tools/`).
+1. Arranca EarthWorm con datos (`source ./ew8_unix.sh`; `./ew_monitor.sh start`).
 2. Lanza el módulo con Inspector:
    ```bash
    GTK_DEBUG=interactive ew_gui_tools/csntvp/csntvp run_working_v8/params/csntvp.d
@@ -58,7 +57,7 @@ repintados del canvas de `csntvp` y `csnhypodbp` con datos reales.
 |---|---|---|---|---|---|
 | csntvp | 12 estaciones, 6 min, en vivo | | | | |
 | csntvp | HOLD + zoom | | | | |
-| csnhypodbp | selección de sismo (fetch wave_serverV) | | | | — (medir el cuelgue) |
+| csnhypodbp | selección de sismo (fetch del store) | | | | — (medir el cuelgue) |
 | csnhypodbp | dibujo de trazas alineadas a P | | | | |
 
 ---
