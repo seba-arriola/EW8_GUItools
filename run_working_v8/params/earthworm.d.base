@@ -1,4 +1,10 @@
 #  1999/07/28
+#
+#  OJO: este fichero es earthworm.d.base (VERSIONADO). No lo renombres a
+#  earthworm.d: ese lo GENERA worktree_bootstrap.sh con las keys de los anillos
+#  offseteadas (+10000*N) segun la instancia, y esta en .gitignore. Edita aqui y
+#  vuelve a ejecutar:  ew_gui_tools/common/tools/worktree_bootstrap.sh . --refresh
+#
 #  The working copy of earthworm.d should live in your EW_PARAMS directory.
 #
 #  An example copy of earthworm.d resides in the vX.XX/environment
@@ -26,6 +32,7 @@
 # The maximum length of ring string is 32 characters.
 #--------------------------------------------------------------------------
      
+# >>> ring keys (generado por worktree_bootstrap.sh) >>>
  Ring   WAVE_RING        1000    # public waveform data
  Ring   PICK_RING        1005    # public parametric data
  Ring   HYPO_RING        1015    # public hypocenters etc.
@@ -49,6 +56,7 @@
                                  # all ring keys values here in earthworm.d, including
                                  # this one. Do NOT include this private ring in
                                  # the ring area in startstop*d
+# <<< ring keys <<<
 
 
 #--------------------------------------------------------------------------

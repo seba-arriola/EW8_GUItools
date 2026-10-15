@@ -52,6 +52,7 @@ while IFS= read -r f; do
     rel="${f#"$PARAMS"/}"
     case "$rel" in
         db.env)                              ;;  # credenciales (de db.env.example)
+        earthworm.d)                         ;;  # generado por worktree_bootstrap.sh
         _legacy_atwc|_legacy_atwc/*)         ;;  # legado declarado
         hyp2000_output|hyp2000_output/*)     ;;  # legado (ncal.hyp, retirado)
         csnhypodbp_hist.txt)                 ;;  # residuo: nada lo escribe

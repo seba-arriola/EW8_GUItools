@@ -45,11 +45,32 @@ SELF_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SELF_DIR/../../.." && pwd)"
 PARAMS="${DIAG_PARAMS:-$ROOT/run_working_v8/params}"
 LOGDIR="${DIAG_LOG:-$ROOT/run_working_v8/log}"
-TMP="${DIAG_TMP:-/tmp/opencode/diag}"
+TMP="${DIAG_TMP:-$LOGDIR/diag}"
 TMO=/usr/bin/timeout
 SECS_DEF="${DIAG_SECS:-20}"
 SECS_MAX=120
 MAXLINES=40
+# Los tests usan pids sinteticos (no hay /proc que valide): DIAG_PID_SCOPE=loose.
+DIAG_PID_SCOPE="${DIAG_PID_SCOPE:-strict}"
+
+# --- identidad: DOS worktrees pueden tener los MISMOS binarios corriendo ------
+# `pgrep -x <bin>` a secas mezcla instancias (y produce falsos "YA CORRE"): los
+# pids se filtran por el EW_PARAMS del proceso. Solo se RECHAZA lo que se puede
+# probar ajeno (legible con otro EW_PARAMS): sin /proc legible no se puede probar
+# nada (pids sinteticos de los tests) y se acepta.
+diag_pid_is_ours() {
+    local pid="$1"
+    [ "$DIAG_PID_SCOPE" = loose ] && return 0
+    [ -r "/proc/$pid/environ" ] || return 0
+    tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "EW_PARAMS=$PARAMS"
+}
+
+diag_pids_of() {   # pids de <nombre de proceso> que son de ESTA instancia
+    local p
+    for p in $(pgrep -x "$1" 2>/dev/null); do
+        diag_pid_is_ours "$p" && printf '%s\n' "$p"
+    done
+}
 
 EX_OK=0
 EX_FAIL=1
@@ -285,7 +306,7 @@ cmd_process() {
     names="$(module_list)"
     [ -n "$names" ] || names="startstop slink2ew pick_FP csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest"
     for b in $names; do
-        pids="$(pgrep -x "$b" 2>/dev/null | tr '\n' ' ')"
+        pids="$(diag_pids_of "$b" | tr '\n' ' ')"
         [ -n "$pids" ] || continue
         any=1
         ps -o pid=,stat=,etime=,args= -p $pids 2>/dev/null | sed 's/^\(.\{120\}\).*/\1…/'
@@ -322,7 +343,7 @@ cmd_run() {  # run <modulo> [segundos] [--bg] [--force]
     command -v "$mod" >/dev/null 2>&1 || die "'$mod' no esta en PATH (proba: diag.sh install)"
 
     local pids
-    pids="$(pgrep -x "$mod" 2>/dev/null | tr '\n' ' ')"
+    pids="$(diag_pids_of "$mod" | tr '\n' ' ')"
     if [ -n "$pids" ] && [ "$force" != 1 ]; then
         say "YA CORRE: $mod (pids: $pids)"
         say "No arranco una segunda instancia (duplicaria los anillos). Si de verdad lo queres: run --force $mod"

@@ -1,7 +1,7 @@
 # PLAN — Worktrees de git para paralelizar el trabajo en EW8_GUItools
 
-**Estado: preparación HECHA (Fase 0 + Fase A, 2026-10-15); falta el bootstrap (Fase B).**
-Este documento es el plan de registro: ✅ hecho · ⏳ pendiente.
+**Estado: Fase 0 + Fase A + Fase B.1–B.3 HECHAS y validadas (2026-10-15); falta la validación con
+dos stacks vivos a la vez (B.4).** ✅ hecho · ⏳ pendiente.
 
 ---
 
@@ -95,21 +95,18 @@ worktree no declara el mismo `DB_PORT`. La instancia 0 es idéntica a siempre.
 
 ---
 
-## 3. Lo que queda: **Fase B (bootstrap)**
+## 3. Fase B: bootstrap (B.1–B.3 ✅ hechas; B.4 ⏳)
 
-### B.1 `earthworm.d` generado (opción G)
+### B.1 `earthworm.d` generado (opción G) ✅
 
-- `run_working_v8/params/earthworm.d.base` (**tracked**, offset 0) con sentinelas que delimitan la
-  sección de anillos y un encabezado «NO edites `earthworm.d`: es generado».
+- `run_working_v8/params/earthworm.d.base` (**tracked**, offset 0) con centinelas que delimitan la
+  sección de anillos (`>>> ring keys` / `<<< ring keys`) y un encabezado «NO edites `earthworm.d`».
 - `run_working_v8/params/earthworm.d` (**ignorado**, runtime): copia verbatim del `.base` con las
-  keys de la sección de anillos `+10000·N`. Reglas: se excluyen `MOD_*`/`TYPE_*` (ids de módulo y
-  de mensaje) e `INST_*` (los inst id son `unsigned char`); si el nº de líneas transformadas no
-  coincide con el del `.base`, **aborta**; idempotente (siempre desde el `.base`).
-- **N** se deriva del propio generado (`offset/10000`) y se cruza con `db.env`
-  (`DB_PORT − 5435`); si no coinciden, aborta. El drift (`earthworm.d` ≠ base + offset) se detecta
-  y se reporta.
+  keys de anillo `+10000·N`. La transformación sólo toca líneas `Ring <NOMBRE> <key>` (16), excluye
+  de facto `Module`/mensajes, exige que el nº de líneas coincida y es idempotente.
+- **N** se deduce del propio generado (`offset/10000`) y se cruza con `db.env` (`DB_PORT − 5435`).
 
-### B.2 `ew_gui_tools/common/tools/worktree_bootstrap.sh`
+### B.2 `ew_gui_tools/common/tools/worktree_bootstrap.sh` ✅
 
 ```
 worktree_bootstrap.sh [<wt>] [--instance N] [--check] [--refresh] [--print-plan] [--force]
@@ -127,16 +124,17 @@ exit 0 OK · 2 uso · 3 entorno · 4 --check con problemas
 5. `--refresh`: regenera y reporta drift. **Nunca escribe fuera del worktree.**
 6. **No crea work dirs ni symlinks**: ya no hacen falta (Fase A).
 
-### B.3 Aislar las herramientas compartidas
+### B.3 Aislar las herramientas compartidas ✅
 
-- **`ew_monitor.sh`**: `startstop.pid` en `$EW_LOG`; `get_startstop_pid` = pidfile validado por
-  `/proc/<pid>/environ` → si no, `pgrep -x startstop` **filtrado** por `EW_PARAMS`, y **si hay >1
-  aborta listando** (hoy toma el primero, `ew_monitor.sh:49`). `stop`/`ewmon_leftovers` sólo con
-  nuestros pids (hoy mata por nombre en todo el sistema). Ojo: `start()` lanza `startstop` con cwd
-  = raíz del repo (`:543`), el cwd de los hijos lo fija `startstop` (V6).
-- **`diag.sh`**: `TMP="${DIAG_TMP:-<root>/run_working_v8/.diag}"` (hoy `/tmp/opencode/diag`, fijo) y
-  `PARAMS`/`LOGDIR` por instancia; `process`/`run` filtran por `/proc/<pid>/environ` (hoy un
-  worktree da falsos `YA CORRE`).
+- **`ew_monitor.sh`** ✅: el pid sale de `$EW_LOG/startstop.pid`, con **evidencia positiva**
+  (`/proc/<pid>/comm` = `startstop` y, si es legible, `EW_PARAMS` nuestro) y, si no, de
+  `pgrep -x startstop` **filtrado** por `EW_PARAMS`; con >1 candidato **aborta**.
+  `stop`/`ewmon_leftovers` sólo tocan pids nuestros. Los tests usan pids sintéticos y van con
+  `EWMON_PID_SCOPE=loose` + `EWMON_PIDFILE` en su tmp; el invariante real es
+  `common/tests/test_ew_monitor_scope.sh` (dos `startstop` reales).
+- **`diag.sh`**: `TMP="${DIAG_TMP:-$LOGDIR/diag}"` (dentro del worktree; antes
+  `/tmp/opencode/diag`, fijo) y `process`/`run` filtran los pids por
+  `/proc/<pid>/environ` (antes, con dos stacks, un worktree daba falsos `YA CORRE`).
 
 ### B.4 Documentación y validación de dos stacks
 

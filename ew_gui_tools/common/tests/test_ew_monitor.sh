@@ -66,11 +66,15 @@ chmod +x "$TMP/bin/startstop" "$TMP/bin/pgrep"
 CONSOLE="$TMP/log/startstop_console.log"
 
 arrancar() {   # arrancar <n>  -> lanza `ew_monitor.sh start` con los stubs
-    rm -f "$TMP/running"
+    # Arranque "de cero": se borra el estado del fixture Y el nuestro (el
+    # pidfile), o `start` creeria que ya hay un stack corriendo.
+    rm -f "$TMP/running" "$TMP/log/startstop.pid"
     PATH="$TMP/bin:$PATH" \
     EW_UNIX="$TMP/unix.sh" \
     EW_LOG_DIR="$TMP/log" \
+    EWMON_PIDFILE="$TMP/log/startstop.pid" \
     STARTSTOP_CONSOLE="$CONSOLE" \
+    EWMON_PID_SCOPE=loose \
         bash "$MON" start >/dev/null 2>&1
     # `start` lanza con setsid: esperamos a que la salida del stub llegue al fichero.
     i=0

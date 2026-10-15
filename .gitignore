@@ -125,6 +125,9 @@ run_working_v8/params/db.env
 /run_working_v8/log/
 
 # --- 5. run_working_v8/params: SOLO configuracion versionada ----------------
+# `earthworm.d` se GENERA a partir de `earthworm.d.base` (versionado, offset 0)
+# con las keys de anillo de la instancia: ew_gui_tools/common/tools/worktree_bootstrap.sh
+/run_working_v8/params/earthworm.d
 # Ningun modulo NUESTRO escribe aqui. Las dos unicas salvedades son el estado
 # interno de binarios de FABRICA (no tienen clave de ruta en su .d) y su sufijo es
 # su id de modulo (earthworm.d: MOD_SLINK2EW 126, MOD_PICK_FP 151): se ignoran por

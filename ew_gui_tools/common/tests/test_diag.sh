@@ -35,7 +35,7 @@ printf 'linea uno\nlinea dos\nerror de mentira\n' > "$TMP/log/foo_20260101T00000
 # diag <args…> ; deja la salida en $TMP/out y el rc en $rc
 rc=0
 diag() {
-    ( cd "$ROOT" && DIAG_PARAMS="$TMP/params" DIAG_LOG="$TMP/log" DIAG_TMP="$TMP/d" \
+    ( cd "$ROOT" && DIAG_PARAMS="$TMP/params" DIAG_LOG="$TMP/log" DIAG_TMP="$TMP/d" DIAG_PID_SCOPE=loose \
         sh "$DIAG" "$@" ) >"$TMP/out" 2>&1
     rc=$?
 }
@@ -65,7 +65,7 @@ for bad in make startstop stopmodule restart ew_monitor.sh git kill pkill rm sud
 done
 
 # --- independencia del cwd ---------------------------------------------------
-( cd /tmp && DIAG_PARAMS="$TMP/params" DIAG_LOG="$TMP/log" DIAG_TMP="$TMP/d" \
+( cd /tmp && DIAG_PARAMS="$TMP/params" DIAG_LOG="$TMP/log" DIAG_TMP="$TMP/d" DIAG_PID_SCOPE=loose \
     sh "$DIAG" help ) >"$TMP/out" 2>&1
 if [ "$?" = 0 ]; then ok "help funciona desde /tmp"; else ko "help desde /tmp falló"; fi
 expect_rc "env funciona con el entorno sin cargar" 0 env

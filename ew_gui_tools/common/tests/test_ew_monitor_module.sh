@@ -191,8 +191,10 @@ mon() {   # mon <args ew_monitor.sh>  -> con el PATH y el entorno de mentira
     BASH_ENV="$TMP/no-builtin-kill.sh" \
     EW_UNIX="$TMP/unix.sh" \
     EW_LOG_DIR="$TMP/log" \
+    EWMON_PIDFILE="$TMP/log/startstop.pid" \
     EW_PARAMS="$TMP/params" \
     EWMON_VERIFY_TIMEOUT=1 \
+    EWMON_PID_SCOPE=loose \
         bash "$MON" "$@"
 }
 reset() { rm -f "$TMP/restart.log" "$TMP/stopmodule.log" "$TMP/status.log" \

@@ -46,7 +46,65 @@ STOP_TIMEOUT="${STOP_TIMEOUT:-30}"
 # nuevo) o que murio. Los binarios de fabrica no lo dicen, asi que se sondea.
 EWMON_VERIFY_TIMEOUT="${EWMON_VERIFY_TIMEOUT:-15}"
 
-get_startstop_pid() { pgrep -x startstop 2>/dev/null | head -n1; }
+# --- identidad del stack: DOS worktrees pueden tener un `startstop` cada uno ----
+# El pid sale del pidfile (vive en NUESTRO $EW_LOG) validado por el entorno del
+# proceso, y si no, de `pgrep -x startstop` FILTRADO por nuestro EW_PARAMS. Nunca
+# "el primer startstop del sistema": `stop` mataba el stack del otro worktree.
+EWMON_PIDFILE="${EWMON_PIDFILE:-$EW_LOG_DIR/startstop.pid}"
+# Los tests de common/tests usan pids SINTETICOS (no hay /proc real que los
+# valide): EWMON_PID_SCOPE=loose acepta sin evidencia. Default: strict.
+EWMON_PID_SCOPE="${EWMON_PID_SCOPE:-strict}"
+
+# 0 si <pid> puede ser de NUESTRA instancia: solo se RECHAZA lo que se puede
+# probar que es de otra (legible y con otro EW_PARAMS, o sin el). Si /proc no es
+# legible (pids sinteticos de los tests, procesos de otro usuario) no se puede
+# probar nada y se acepta: en un sistema real, dos stacks del mismo usuario son
+# legibles y se distinguen por EW_PARAMS, que es justo el caso que nos importa.
+ewmon_pid_is_ours() {
+    local pid="$1" want env
+    [ "$EWMON_PID_SCOPE" = loose ] && return 0
+    want="$(ewmon_params_dir)"
+    [ -n "$want" ] || return 0
+    env="/proc/$pid/environ"
+    [ -r "$env" ] || return 0
+    tr '\0' '\n' < "$env" 2>/dev/null | grep -qxF "EW_PARAMS=$want"
+}
+
+# Evidencia POSITIVA de que <pid> es NUESTRO startstop: el pidfile no puede
+# bastar (puede quedar obsoleto y el pid reusarse por otro proceso).
+ewmon_pid_is_startstop_ours() {
+    local pid="$1" want comm
+    [ "$EWMON_PID_SCOPE" = loose ] && return 0
+    want="$(ewmon_params_dir)"
+    [ -r "/proc/$pid" ] || return 1                       # el pid no existe
+    comm="$(cat "/proc/$pid/comm" 2>/dev/null)"
+    [ "$comm" = "startstop" ] || return 1                 # no es un startstop
+    if [ -r "/proc/$pid/environ" ] && [ -n "$want" ]; then
+        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "EW_PARAMS=$want" || return 1
+    fi
+    return 0
+}
+
+get_startstop_pid() {
+    local p ids="" n=0
+    if [ -f "$EWMON_PIDFILE" ]; then
+        p="$(cat "$EWMON_PIDFILE" 2>/dev/null)"
+        if [ -n "$p" ] && ewmon_pid_is_startstop_ours "$p"; then
+            printf '%s\n' "$p"
+            return 0
+        fi
+        rm -f "$EWMON_PIDFILE" 2>/dev/null      # pidfile obsoleto
+    fi
+    for p in $(pgrep -x startstop 2>/dev/null); do
+        if ewmon_pid_is_ours "$p"; then ids="$ids${ids:+ }$p"; n=$((n + 1)); fi
+    done
+    if [ "$n" -gt 1 ]; then
+        echo "ERROR: hay $n startstop de ESTA instancia ($ids): no se cual es el nuestro" >&2
+        return 1
+    fi
+    [ "$n" -eq 1 ] && printf '%s\n' "$ids"
+    return 0
+}
 
 is_running() { [ -n "$(get_startstop_pid)" ]; }
 
@@ -552,8 +610,10 @@ start() {
     done
 
     if [ -n "$pid" ]; then
+        printf '%s\n' "$pid" > "$EWMON_PIDFILE" 2>/dev/null
         echo "EarthWorm iniciado (startstop pid $pid)."
         echo "  consola: $STARTSTOP_CONSOLE"
+        echo "  pidfile: $EWMON_PIDFILE"
         return 0
     else
         echo "ERROR: startstop no arranco. Revise $STARTSTOP_CONSOLE"
@@ -568,7 +628,7 @@ start() {
 # de la configuracion y ademas mataba a cualquier proceso -el script que llama
 # incluido- cuya linea de comandos mencionara esos nombres.
 ewmon_leftovers() {
-    local pre="$1" names alt b out
+    local pre="$1" names alt b out q
     out="$pre"
     if names="$(ewmon_cfg_modules 2>/dev/null)"; then
         alt=""
@@ -579,8 +639,13 @@ ewmon_leftovers() {
             alt="$alt${alt:+|}$b"
         done <<< "$names"
         if [ -n "$alt" ]; then
-            out="$out
-$(pgrep -x "$alt" 2>/dev/null)"
+            # Solo los que son de NUESTRA instancia (el nombre se repite entre
+            # worktrees: matarlos por nombre se llevaba por delante el otro stack).
+            for q in $(pgrep -x "$alt" 2>/dev/null); do
+                ewmon_pid_is_ours "$q" || continue
+                out="$out
+$q"
+            done
         fi
     fi
     printf '%s\n' "$out" | tr -s '[:space:]' '\n' | grep -v '^$' | sort -u
@@ -627,6 +692,7 @@ stop() {
         sleep 1
     fi
 
+    is_running || rm -f "$EWMON_PIDFILE" 2>/dev/null
     is_running && { echo "ERROR: no se pudo detener EarthWorm."; return 1; } || { echo "EarthWorm detenido."; return 0; }
 }
 

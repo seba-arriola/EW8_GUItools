@@ -561,6 +561,16 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   nada** en éxito), así que la confirmación —pid nuevo y `Alive`, o `Dead`— la hace el script y sin
   ella sale **4**. Un nombre ambiguo (dos instancias de `csnmags`) se rechaza con los candidatos,
   jamás "el primero". La guarda de "binario ausente" evita relanzar algo que quedaría en `NoExec`.
+  **La identidad del stack es el pid, no el nombre**: con dos worktrees vivos hay dos `startstop` y
+  dos juegos de módulos con los MISMOS nombres, así que el pid sale de `$EW_LOG/startstop.pid` (del
+  que se exige evidencia: `/proc/<pid>/comm` = `startstop` y, si es legible, `EW_PARAMS` nuestro) y,
+  si no, de `pgrep -x startstop` **filtrado** por el `EW_PARAMS` del proceso; con varios candidatos
+  aborta. Lo mismo para los huérfanos de `stop` (`ewmon_leftovers`). Solo se descarta lo que se puede
+  probar ajeno: sin `/proc` legible (pids sintéticos de los tests) se acepta, y por eso los tests
+  pasan `EWMON_PID_SCOPE=loose` y fijan `EWMON_PIDFILE` en su tmp. `diag.sh` hace lo mismo con
+  `DIAG_PID_SCOPE=loose`, su `TMP` por defecto vive dentro del worktree (`$LOGDIR/diag`) y
+  `process`/`run` filtran por `EW_PARAMS`. Invariante: `common/tests/test_ew_monitor_scope.sh` (dos
+  `startstop` reales con `EW_PARAMS` distintos: `status` ve el suyo y `stop` no toca el otro).
   `status` imprime **una fila por módulo declarado con su estado**: `EncodeStatus` conserva la fila
   de un hijo muerto (el `pgrep -P` de antes no, y por eso los muertos no aparecían). `Zombie` es la
   1.ª consulta tras una muerte (es cuando `startstop` reapea): se reintenta **una** vez para poder
