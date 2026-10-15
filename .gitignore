@@ -18,6 +18,12 @@ db/backups/
 run_working_v8/log/*.log
 run_working_v8/log/*.lock
 run_working_v8/log/.noexec_fifo.txt
+# Directorios de trabajo que cada modulo crea en runtime (no se versionan):
+#   hyp2000_ring/ = arcIn/arcOut · nlloc_ring/ = obs.nll, nll_ring.in, loc/
+#   csnhypodbp/   = estado manual + corridas Mww
+run_working_v8/hyp2000_ring/
+run_working_v8/nlloc_ring/
+run_working_v8/csnhypodbp/
 run_working_v8/params/db.env
 
 # ===========================================================================
@@ -118,16 +124,18 @@ run_working_v8/params/db.env
 # --- runtime ---
 /run_working_v8/log/
 
-# --- 5. run_working_v8/params: excluir runtime/generados/respaldos/legacy ---
+# --- 5. run_working_v8/params: SOLO configuracion versionada ----------------
+# Ningun modulo NUESTRO escribe aqui. Las dos unicas salvedades son el estado
+# interno de binarios de FABRICA (no tienen clave de ruta en su .d) y su sufijo es
+# su id de modulo (earthworm.d: MOD_SLINK2EW 126, MOD_PICK_FP 151): se ignoran por
+# patron para que un cambio de id no los deje a la vista.
+/run_working_v8/params/slink*.state
+/run_working_v8/params/pick_FP_*.ndx
+# Respaldos y temporales (ew_controller guarda un .d: <mod>.d.bak/.tmp).
 /run_working_v8/params/*.bak
 /run_working_v8/params/*.bak.*
 /run_working_v8/params/*.bak_*
-/run_working_v8/params/slink126.state
-/run_working_v8/params/ew2openapi_144.queue
-/run_working_v8/params/pick_FP_151.ndx
-/run_working_v8/params/hyp2000_output/
-/run_working_v8/params/csnhypodbp_hist.txt
-/run_working_v8/params/test_run.cmd
+/run_working_v8/params/*.tmp
 /run_working_v8/params/_legacy_atwc/
 /run_working_v8/params/*.log
 

@@ -703,3 +703,18 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   el motor: salta el preámbulo con `csnhypodbp_arc_skip_preamble`). Para diagnosticar:
   `LocateKeepTmp 1` (no borra el temporal y lo pone en el error como `[tmp=…]`) y el arnés
   `make -C ew_gui_tools/csnhypodbp chain` + `./locate_chain <arc> [refinador] [tmp_root]`.
+- **`run_working_v8/params/` es SOLO configuración versionada; el runtime de cada módulo va a su
+  carpeta en `run_working_v8/`**: ningún módulo nuestro escribe en `params/`. Los refinadores
+  declaran su `WorkDir` **relativo** (`../hyp2000_ring`, `../nlloc_ring`), que se resuelve contra
+  `$EW_PARAMS` (el cwd que `startstop` da a los hijos) y el propio módulo lo crea al arrancar
+  (`mkdir -p`) — igual que el `loc/` bajo `OutRoot` de nlloc y la carpeta del estado manual de la
+  GUI (`csnhypodbp`, junto a sus corridas `mww/`). Los recursos pesados **no** se copian ni se
+  symlinkean: se referencian por ruta **absoluta de sólo lectura** en el `.d` (`nlloc_ring.d`:
+  `ModelBand` → `/mnt/d/resources/nlloc/time3d/…`, y `TtimeRoot`/`ControlFile`/`ModelFallback` →
+  `/mnt/d/resources/nlloc/…`; también `GfDir`, `SdsRoot`, `ResponseDir`, `OverlayFile`,
+  `ProfileDataDir`). Las entradas pequeñas de HYPOINVERSE (`.hyp`, `estaciones_hyp.sta`, los `.crh`)
+  siguen versionadas en `params/` y el `.hyp` las referencia como `../params/…`, porque el motor
+  corre con cwd = `WorkDir`. Las **únicas** escrituras inevitables en `params/` son el estado de dos
+  binarios de **fábrica**, que no tienen clave de ruta en su `.d`: `slink2ew` → `slink<modid>.state`
+  y `pick_FP` → `pick_FP_<modid>.ndx` (ignorados por patrón). Invariante:
+  `common/tests/test_params_stays_clean.sh` (`make -C ew_gui_tools/common check`).

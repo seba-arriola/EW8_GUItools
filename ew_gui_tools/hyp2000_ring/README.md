@@ -50,7 +50,7 @@ Se excluyen del build los `.f` duplicados del vendorizado original.
 | `InRing` / `OutRing` | `HYPO_RING` / `HYPO_RING_REF` |
 | `HeartBeatInt`, `LogFile`, `Debug`, `SourceCode` | como el resto de módulos |
 | `CommandFile` | fichero `.hyp` de arranque de HYPOINVERSE |
-| `WorkDir` | directorio donde se escriben `arcIn`/`arcOut` (debe existir) |
+| `WorkDir` | carpeta PROPIA del módulo (`../hyp2000_ring`): ahí escribe `arcIn`/`arcOut`; el módulo la crea si falta. Las entradas (`.hyp`/`.sta`/`.crh`) viven en `params/` y se referencian como `../params/...` |
 | `GridFile` | `.grid` de `csnloc` (opcional): solo se refinan eventos en su bbox |
 | `MinPhases`, `MaxRMS` | filtros de calidad (`0` = sin filtro) |
 

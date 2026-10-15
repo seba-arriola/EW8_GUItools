@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 #include <trace_buf.h>
 #include <ewgui/arc_layout.h>
@@ -21,6 +23,31 @@ static int read_file(const char *path, char *out, size_t outn)
     n = fread(out, 1, outn - 1, fp);
     out[n] = '\0';
     fclose(fp);
+    return 0;
+}
+
+/* Crea el directorio (y sus padres) si no existe. 0 = existe o se creo. */
+static int mkdir_p(const char *path)
+{
+    char        tmp[1024];
+    char       *p;
+    size_t      len;
+    struct stat st;
+
+    if (!path || !path[0]) return -1;
+    if (stat(path, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    while (len > 1 && tmp[len - 1] == '/') tmp[--len] = '\0';
+
+    for (p = tmp + 1; *p != '\0'; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+        if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return -1;
+        *p = '/';
+    }
+    if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return -1;
     return 0;
 }
 
@@ -683,9 +710,17 @@ int csnhypodbp_manual_state_save(const char *path, const CsnhypodbpSolution *sol
                                  const CsnhypodbpMagOut *mag)
 {
     char lines[256][4096];
+    char dir[1024];
+    char *slash;
     int n = 0, i;
     FILE *fp;
     if (!path || !sol) return -1;
+    /* El estado manual vive en la carpeta PROPIA de la GUI (p. ej.
+       ../csnhypodbp/csnhypodbp_manual.events), que no se versiona: la creamos si
+       falta (el .d no garantiza que exista). */
+    snprintf(dir, sizeof(dir), "%s", path);
+    slash = strrchr(dir, '/');
+    if (slash != NULL) { *slash = '\0'; mkdir_p(dir); }
     fp = fopen(path, "r");
     if (fp) {
         while (n < 256 && fgets(lines[n], sizeof(lines[n]), fp)) n++;

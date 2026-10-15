@@ -97,12 +97,26 @@ Process  "nlloc_ring nlloc_ring.d"
 
 ## Requisitos de `WorkDir`
 
-- `hyp2000_ring`: `hyp2000_ring.hyp`, `estaciones_hyp.sta` y los `.crh` que
-  referencie (hoy las 6 bandas `N18-26_1.5k.crh` … `N38-46_1.5k.crh` derivadas del
-  3D; `chile_1d.crh` sigue disponible para volver al modelo único).
-- `nlloc_ring`: la plantilla 1D `nlloc.in` y las grillas `time/model.P.<STA>.time`
-  (fallback), más las grillas 3D `time3d/<banda>/time/<banda>.<PHA>.<STA>.time` y
-  los controles `ctrl/<banda>.in` de las bandas.
+`WorkDir` es la carpeta PROPIA de cada módulo (relativa a `$EW_PARAMS`:
+`../hyp2000_ring`, `../nlloc_ring`), donde el motor escribe sus ficheros de
+intercambio; el módulo la crea al arrancar (`mkdir -p`) y `.gitignore` la ignora.
+
+Las ENTRADAS (configuración versionada) NO viven ahí: se referencian desde el
+`WorkDir` y viven en `params/`.
+
+- `hyp2000_ring`: `CommandFile ../params/hyp2000_ring.hyp` y, dentro del `.hyp`,
+  `STA '../params/estaciones_hyp.sta'` + los 6 `CRH '../params/N18-26_1.5k.crh'` …
+  `'../params/N38-46_1.5k.crh'` (derivadas del 3D de Potin; `chile_1d.crh` sigue
+  disponible para volver al modelo único).
+- `nlloc_ring`: las grillas de tiempos 3D (`time3d/<banda>/time/<banda>`), las
+  plantillas de control (`ctrl/<banda>.in`) y el fallback 1D (`time/model`,
+  `nlloc.in`) van **ABSOLUTOS al disco de datos** en `ModelBand`
+  (`TtimeRoot`/`ControlFile`) y en `ControlFile`/`TtimeRoot`/`ModelFallback`
+  globales. Son sólo lectura; el módulo no escribe ahí.
+
+Las SALIDAS del motor van a la carpeta del módulo: `run_working_v8/hyp2000_ring/`
+(`arcIn`, `arcOut`) y `run_working_v8/nlloc_ring/` (`obs.nll`, `nll_ring.in` y
+`loc/ev.*` bajo `OutRoot`, que es relativo al `WorkDir`).
 
 ## Modelos de velocidad
 

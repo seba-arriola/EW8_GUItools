@@ -40,7 +40,9 @@ en el código C del motor.
 | `Evname`, `SeedRef`, `CmtFile`, `GfdirRel`, `FiltOrder`, `FiltPass`, `Idec2`, `Idec3`, `WpWin` | valores de `i_master`, con los defaults del generador del CSN |
 
 En la GUI, el panel lee **el mismo `.d`** (`MwwConfigFile`, default `csnwphase.d`) y el
-directorio de las corridas sale de `MwwWorkDir` (default `/tmp/csnhypodbp_mww`).
+directorio de las corridas sale de `MwwWorkDir` (en `csnhypodbp.d`: `../csnhypodbp/mww`, es
+decir `run_working_v8/csnhypodbp/mww`, relativo a `$EW_PARAMS`; el default del código es
+`/tmp/csnhypodbp_mww`).
 
 ## 3. CLI
 

@@ -33,13 +33,16 @@
 200 T 1900 0
 LET 5 2 3 0 0
 H71 2 3 3
-STA 'estaciones_hyp.sta'
-CRH 1 'N18-26_1.5k.crh'
-CRH 2 'N22-30_1.5k.crh'
-CRH 3 'N26-34_1.5k.crh'
-CRH 4 'N30-38_1.5k.crh'
-CRH 5 'N34-42_1.5k.crh'
-CRH 6 'N38-46_1.5k.crh'
+* Rutas de entrada: relativas al cwd del motor (= WorkDir del modulo,
+* run_working_v8/hyp2000_ring/), de ahi el ../params/. Son configuracion
+* versionada: NO se copian a la carpeta de trabajo del modulo.
+STA '../params/estaciones_hyp.sta'
+CRH 1 '../params/N18-26_1.5k.crh'
+CRH 2 '../params/N22-30_1.5k.crh'
+CRH 3 '../params/N26-34_1.5k.crh'
+CRH 4 '../params/N30-38_1.5k.crh'
+CRH 5 '../params/N34-42_1.5k.crh'
+CRH 6 '../params/N38-46_1.5k.crh'
 MUL T 3
 NOD -21.601 0 68.350 0 450. 150. 1
 NOD -25.975 0 68.692 0 450. 150. 2

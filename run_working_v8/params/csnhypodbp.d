@@ -26,7 +26,10 @@ componentsOrder Z N E
 locator         csnloc       csnloc       csnloc.d
 locator         hyp2000_ring hyp2000_ring hyp2000_ring.d
 locator         nlloc_ring   nlloc_ring   nlloc_ring.d
-ManualStateFile csnhypodbp_manual.events   # soluciones manuales propias (locate+confirm)
+# Estado propio de la GUI (soluciones manuales de locate+confirm): relativo a
+# $EW_PARAMS y dentro de SU carpeta — runtime, no versionado
+# (run_working_v8/csnhypodbp/); el modulo la crea si falta.
+ManualStateFile ../csnhypodbp/csnhypodbp_manual.events
 LocatorTimeoutSec 180                      # timeout (s) por localizador offline
 PrefetchNeighbors 2                        # estaciones vecinas a precargar
 
@@ -94,9 +97,10 @@ OverlayFile     /mnt/d/resources/overlays/fallas.lines
 # dibuja y csnmags mide con el MISMO archivo.
 MagConfigFile   csnmags.d
 # Panel `Mww` (inversión de fase W, on-demand): el mismo .d que el CLI csnwphase y
-# el directorio de sus corridas (se crea solo, con padres, en la primera corrida).
+# el directorio de sus corridas: relativo a $EW_PARAMS, dentro de SU carpeta
+# (runtime, no versionado: run_working_v8/csnhypodbp/mww). Se crea solo, con padres.
 MwwConfigFile   csnwphase.d
-MwwWorkDir      /tmp/csnhypodbp_mww
+MwwWorkDir      ../csnhypodbp/mww
 # Ventana temporal pedida por solucion (s). Es larga a proposito: Ms mide su
 # ventana (P + Ms_Window) y la sub-pestana `magnitudes` necesita el dato ya
 # descargado para no re-pedirlo al cambiar de magnitud. Tope: 870 s (el buffer de

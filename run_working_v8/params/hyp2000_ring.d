@@ -11,12 +11,14 @@ LogFile         1
 Debug           1
 SourceCode      W
 
-# Fichero de arranque de HYPOINVERSE (.hyp): modelo + estaciones.
-CommandFile     hyp2000_ring.hyp
+# Fichero de arranque de HYPOINVERSE (.hyp): modelo + estaciones. Vive en params/
+# (versionado) y se referencia relativo al cwd del modulo = su WorkDir (ver abajo).
+CommandFile     ../params/hyp2000_ring.hyp
 
-# Directorio de trabajo (hypoinverse escribe arcIn/arcOut aqui). ABSOLUTO y fuera
-# del repo: disco de datos (EW_RESOURCES_ROOT), debe existir y ser ESCRIBIBLE.
-WorkDir         /mnt/d/resources/hyp2000
+# Directorio de trabajo PROPIO del modulo (hypoinverse escribe arcIn/arcOut aqui):
+# relativo a $EW_PARAMS, en run_working_v8/hyp2000_ring/ (runtime, no versionado).
+# Los ficheros de entrada (.hyp/.sta/.crh) NO viven aqui: son ../params/... .
+WorkDir         ../hyp2000_ring
 
 # Region opcional (mismo formato .grid que csnloc): solo se refinan eventos
 # dentro del bbox. Vacio = sin filtro.

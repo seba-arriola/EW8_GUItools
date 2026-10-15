@@ -21,6 +21,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 #include "kom.h"
 #include "earthworm.h"
@@ -884,6 +886,34 @@ static void pend_process(void)
     }
 }
 
+/* ------------------------------------------------------------------------- */
+/* mkdir -p                                                                  */
+/* ------------------------------------------------------------------------- */
+/* Crea el directorio (y sus padres) si no existe. 0 = existe o se creo.      */
+static int mkdir_p(const char *path)
+{
+    char       tmp[MAX_STR];
+    char      *p;
+    size_t     len;
+    struct stat st;
+
+    if (!path || !path[0]) return -1;
+    if (stat(path, &st) == 0) return S_ISDIR(st.st_mode) ? 0 : -1;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    while (len > 1 && tmp[len - 1] == '/') tmp[--len] = '\0';
+
+    for (p = tmp + 1; *p != '\0'; p++) {
+        if (*p != '/') continue;
+        *p = '\0';
+        if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return -1;
+        *p = '/';
+    }
+    if (mkdir(tmp, 0777) != 0 && errno != EEXIST) return -1;
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     MSG_LOGO     reclogo, getlogo[1];
@@ -900,8 +930,31 @@ int main(int argc, char **argv)
         fprintf(stderr, "nlloc_ring: faltan OutRoot y (ControlFile/TtimeRoot o ModelBand/ModelFallback)\n");
         return 1;
     }
-    if (WorkDir[0] != '\0' && chdir(WorkDir) != 0) {
-        fprintf(stderr, "nlloc_ring: no se pudo chdir a %s\n", WorkDir); return 1;
+    /* WorkDir: el modulo escribe obs.nll / nll_ring.in / <OutRoot> en su cwd. Es
+       un directorio del PROPIO modulo (relativo a $EW_PARAMS: ../nlloc_ring),
+       fuera de params/ y no versionado (runtime, ver .gitignore). */
+    if (WorkDir[0] != '\0') {
+        if (mkdir_p(WorkDir) != 0) {
+            fprintf(stderr, "nlloc_ring: no se pudo crear el WorkDir %s\n", WorkDir);
+            return 1;
+        }
+        if (chdir(WorkDir) != 0) {
+            fprintf(stderr, "nlloc_ring: no se pudo chdir a %s\n", WorkDir); return 1;
+        }
+    }
+    /* El motor escribe sus salidas bajo OutRoot (<OutRoot>.sum.grid0.loc.*, el
+       scatter...): el directorio de OutRoot (p.ej. `loc/`) debe existir. */
+    if (OutRoot[0] != '\0') {
+        char  dir[MAX_STR];
+        char *slash;
+        snprintf(dir, sizeof(dir), "%s", OutRoot);
+        slash = strrchr(dir, '/');
+        if (slash != NULL) {
+            *slash = '\0';
+            if (mkdir_p(dir) != 0) {
+                fprintf(stderr, "nlloc_ring: no se pudo crear %s\n", dir); return 1;
+            }
+        }
     }
 
     logit_init(argv[1], 0, 256, LogFile);
