@@ -138,12 +138,15 @@ exit 0 OK · 2 uso · 3 entorno · 4 --check con problemas
 
 ### B.4 Documentación y validación de dos stacks
 
-- `docs/WORKTREES.md`: el procedimiento paso a paso (crear carpeta/rama, `git worktree add`,
-  bootstrap, compilar, `./ew8_db.sh -i N up`, `start`/`status`/`stop`, borrar).
-- CA con **dos stacks vivos a la vez**: keys disjuntas (`ipcs -m`), `status` de cada uno lista
-  **sólo** sus módulos, `stop` en uno **no** toca el otro, dos contenedores de BD
-  (`5435`/`5435+N`), sin cross-talk de picks (`putpick` + `sniffring` en cada `EW_PARAMS`),
-  `time3d` sin escrituras nuevas, 5 GUIs por stack (`G_APPLICATION_NON_UNIQUE` ya lo permite).
+- `docs/WORKTREES.md` ✅: el procedimiento paso a paso (crear carpeta/rama, `git worktree add`,
+  bootstrap, compilar, `./ew8_db.sh -i N up`, `start`/`status`/`stop`, borrar), la tabla de qué se
+  aísla y los CA-1…CA-10 a comprobar con dos stacks vivos.
+`ew_gui_tools/common/tools/worktree_two_stacks_check.sh <worktree> [--sniff]` (herramienta, no test
+de `check`: requiere los dos stacks arriba) comprueba CA-1…CA-10 contra los dos stacks vivos.
+Corrida real (2026-10-15): **OK** — keys disjuntas, `stop` de uno deja el otro intacto, 20
+segmentos SysV distintos, dos contenedores de BD (5435/5436), nada escrito en los recursos externos
+ni en `params` (salvo la salvedad de fábrica) y cada refinador con su cwd en su worktree. Evidencia
+en `docs/WORKTREES.md` §6.
 
 ### B.5 Paso a paso para el usuario
 

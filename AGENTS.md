@@ -727,4 +727,6 @@ No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `c
   corre con cwd = `WorkDir`. Las **únicas** escrituras inevitables en `params/` son el estado de dos
   binarios de **fábrica**, que no tienen clave de ruta en su `.d`: `slink2ew` → `slink<modid>.state`
   y `pick_FP` → `pick_FP_<modid>.ndx` (ignorados por patrón). Invariante:
-  `common/tests/test_params_stays_clean.sh` (`make -C ew_gui_tools/common check`).
+  `common/tests/test_params_stays_clean.sh` (`make -C ew_gui_tools/common check`). El procedimiento
+  completo para levantar dos stacks en paralelo (instancia N, `worktree_bootstrap.sh`, BD propia)
+  está en `docs/WORKTREES.md`.
