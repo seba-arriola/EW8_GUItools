@@ -14,7 +14,7 @@ picks/
 runs/
 report_images/
 run_working_v8/wstore/
-
+db/backups/
 # --- 2. Runtime de EarthWorm ------------------------------------------------
 run_working_v8/tanks/
 run_working_v8/log/*.log

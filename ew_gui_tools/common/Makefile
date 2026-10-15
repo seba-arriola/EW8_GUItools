@@ -89,6 +89,8 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_build_deps.sh
 	@echo "== check_launch_doc =="
 	@bash tests/test_launch_doc.sh
+	@echo "== check_timeout_gnu =="
+	@bash tests/test_timeout_gnu.sh
 	@echo "== check_install_bin =="
 	@bash tests/test_install_bin.sh
 	@echo "== check_install =="

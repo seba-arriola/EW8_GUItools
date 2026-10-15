@@ -174,8 +174,17 @@ ewmon_proc_module() {
 }
 
 # Tabla viva con el .d resuelto. TSV: nombre <TAB> pid <TAB> estado <TAB> cfg
+# startstop cosecha a sus hijos de forma perezosa: la 1.a consulta tras una muerte
+# reapea al hijo y lo llama `Zombie`; la 2.a ya dice `Dead`. Si alguna fila queda
+# en Zombie se repite UNA vez (maximo 2 consultas), para que un modulo que esta
+# muerto se reporte `Dead` y no un `Zombie` que startstop todavia no ha enterrado.
 ewmon_live_table() {
-    local n p s a pm
+    local n p s a pm raw retry=0
+    raw="$(ewmon_live_status 2>/dev/null)"
+    while IFS=$'\t' read -r n p s a; do
+        [ "$s" = Zombie ] && { retry=1; break; }
+    done <<< "$raw"
+    [ "$retry" = 1 ] && raw="$(ewmon_live_status 2>/dev/null)"
     while IFS=$'\t' read -r n p s a; do
         [ -n "$n" ] || continue
         pm="$(ewmon_proc_module "$p" 2>/dev/null | cut -f2)"
@@ -184,52 +193,108 @@ ewmon_live_table() {
         # ("??/ 0  00:00:01  <modulo>.d").
         [ -n "$pm" ] || pm="${a##* }"
         printf '%s\t%s\t%s\t%s\n' "$n" "$p" "$s" "${pm##*/}"
-    done < <(ewmon_live_status 2>/dev/null)
+    done <<< "$raw"
 }
 
-# Lista: modulos del .d (en su orden) con el pid/estado de la tabla viva, mas
-# los vivos que el .d no declare (config distinta a la del proceso vivo).
-ewmon_list() {
-    local cfg bin mcfg pid st i total n p s c
+# Filas de modulos: los declarados en el .d (en su orden) con el pid/estado de la
+# tabla viva, mas los vivos que el .d no declare (config distinta a la del proceso
+# vivo). Lo comparten `list` y `status`: es el unico sitio donde se decide el
+# estado de cada modulo. stdout TSV: modulo <TAB> binario <TAB> cfg <TAB> pid|-
+# <TAB> estado. Devuelve 3 si no hay .d legible (entonces solo salen los vivos).
+#
+# OJO con el TSV: NINGUN campo va vacio (un modulo sin .d sale con cfg `-`). Para
+# `read`, el tabulador cuenta como ESPACIO aunque se ponga en IFS, asi que los
+# campos vacios EN MEDIO se colapsan y las columnas se desplazan (medido en bash
+# 5.2.21). Los consumidores imprimen `${cfg:--}`, asi que el centinela no cambia
+# ninguna salida.
+ewmon_module_rows() {
+    local cfg bin mcfg pid st i total n p s c rrc=0
     local -a ln=() lp=() ls=() lc=() seen=()
 
-    cfg="$(ewmon_cfg)" || { echo "ERROR: no se pudo determinar la configuracion de startstop." >&2; return 3; }
-    if [ ! -r "$cfg" ]; then
-        echo "ERROR: no existe o no se puede leer $cfg" >&2
-        return 3
-    fi
+    cfg="$(ewmon_cfg 2>/dev/null)" || cfg=""
+    [ -n "$cfg" ] && [ -r "$cfg" ] || rrc=3
 
     while IFS=$'\t' read -r n p s c; do
         [ -n "$n" ] || continue
         ln+=("$n"); lp+=("$p"); ls+=("$s"); lc+=("$c")
     done < <(ewmon_live_table)
 
-    is_running || echo "NOTA: startstop no esta corriendo; la lista sale solo del .d." >&2
-
-    printf '%-16s %-16s %-20s %-8s %s\n' MODULO BINARIO CFG PID ESTADO
-    while IFS=$'\t' read -r bin mcfg; do
-        [ -n "$bin" ] || continue
-        pid="-"; st="ausente"
-        i=0; total="${#ln[@]}"
-        while [ "$i" -lt "$total" ]; do
-            if [ "${ln[$i]}" = "$bin" ] && \
-               { [ -z "$mcfg" ] || [ -z "${lc[$i]}" ] || [ "${lc[$i]}" = "$mcfg" ]; }; then
-                pid="${lp[$i]}"; st="${ls[$i]}"; seen[$i]=1
-                break
-            fi
-            i=$((i + 1))
-        done
-        printf '%-16s %-16s %-20s %-8s %s\n' \
-            "$(ewmon_mod_name "$bin" "$mcfg")" "$bin" "${mcfg:--}" "$pid" "$st"
-    done < <(ewmon_cfg_modules)
+    if [ "$rrc" = 0 ]; then
+        while IFS=$'\t' read -r bin mcfg; do
+            [ -n "$bin" ] || continue
+            pid="-"; st="ausente"
+            i=0; total="${#ln[@]}"
+            while [ "$i" -lt "$total" ]; do
+                if [ "${ln[$i]}" = "$bin" ] && \
+                   { [ -z "$mcfg" ] || [ -z "${lc[$i]}" ] || [ "${lc[$i]}" = "$mcfg" ]; }; then
+                    pid="${lp[$i]}"; st="${ls[$i]}"; seen[$i]=1
+                    break
+                fi
+                i=$((i + 1))
+            done
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+                "$(ewmon_mod_name "$bin" "$mcfg")" "$bin" "${mcfg:--}" "$pid" "$st"
+        done < <(ewmon_cfg_modules)
+    fi
 
     i=0; total="${#ln[@]}"
     while [ "$i" -lt "$total" ]; do
         if [ "${seen[$i]:-}" != 1 ]; then
-            printf '%-16s %-16s %-20s %-8s %s\n' \
+            printf '%s\t%s\t%s\t%s\t%s\n' \
                 "$(ewmon_mod_name "${ln[$i]}" "${lc[$i]}")" "${ln[$i]}" \
                 "${lc[$i]:--}" "${lp[$i]}" "${ls[$i]}"
         fi
+        i=$((i + 1))
+    done
+    return $rrc
+}
+
+# Subcomando `list`: una fila por modulo, con su estado, en tabla.
+ewmon_list() {
+    local cfg mod bin mcfg pid st
+    cfg="$(ewmon_cfg)" || { echo "ERROR: no se pudo determinar la configuracion de startstop." >&2; return 3; }
+    if [ ! -r "$cfg" ]; then
+        echo "ERROR: no existe o no se puede leer $cfg" >&2
+        return 3
+    fi
+    is_running || echo "NOTA: startstop no esta corriendo; la lista sale solo del .d." >&2
+    printf '%-16s %-16s %-20s %-8s %s\n' MODULO BINARIO CFG PID ESTADO
+    while IFS=$'\t' read -r mod bin mcfg pid st; do
+        [ -n "$bin" ] || continue
+        printf '%-16s %-16s %-20s %-8s %s\n' "$mod" "$bin" "${mcfg:--}" "$pid" "$st"
+    done < <(ewmon_module_rows)
+    return 0
+}
+
+# Bloque `modulos` de `status`: resumen por estado y una linea por modulo, con el
+# estado junto al nombre (el pid es el de `restart <pid>`; `-` si no lo hay).
+ewmon_status_modules() {
+    local i total j bin mcfg pid stt pid_txt summary="" rows rrc
+    local -a ab=() af=() ap=() ae=()
+    local -A counts=()
+
+    rows="$(ewmon_module_rows)"; rrc=$?
+    [ "$rrc" = 0 ] || echo "  modulos   : OJO: no se pudo leer la configuracion de startstop" >&2
+
+    while IFS=$'\t' read -r _ bin mcfg pid stt; do
+        [ -n "$bin" ] || continue
+        ab+=("$bin"); af+=("$mcfg"); ap+=("$pid"); ae+=("$stt")
+        counts[$stt]=$(( ${counts[$stt]:-0} + 1 ))
+    done <<< "$rows"
+
+    total="${#ab[@]}"
+    if [ "${#counts[@]}" -gt 0 ]; then
+        for stt in $(printf '%s\n' "${!counts[@]}" | LC_ALL=C sort); do
+            summary="$summary${summary:+, }$stt:${counts[$stt]}"
+        done
+    fi
+    printf '  modulos   : %s declarados%s\n' "$total" "${summary:+ ($summary)}"
+
+    i=0
+    while [ "$i" -lt "$total" ]; do
+        if [ "${ap[$i]}" = - ]; then pid_txt="-"; else pid_txt="pid ${ap[$i]}"; fi
+        printf '    - %-14s %-18s %-8s %s\n' \
+            "${ab[$i]}" "${af[$i]:--}" "${ae[$i]}" "$pid_txt"
         i=$((i + 1))
     done
     return 0
@@ -445,18 +510,18 @@ status() {
     local pid; pid="$(get_startstop_pid)"
     if [ -n "$pid" ]; then
         echo "EarthWorm: RUNNING (startstop pid $pid)"
-        echo "  EW_PARAMS : ${EW_PARAMS:-<no definido>}"
-        echo "  log dir   : $EW_LOG_DIR"
-        echo "  modulos   :"
-        local c
-        for c in $(child_pids); do
-            printf '    - %s\n' "$(ps -o args= -p "$c" 2>/dev/null)"
-        done
-        return 0
     else
-        echo "EarthWorm: STOPPED"
-        return 1
+        echo "EarthWorm: STOPPED (no hay startstop)"
     fi
+    echo "  EW_PARAMS : ${EW_PARAMS:-<no definido>}"
+    echo "  log dir   : $EW_LOG_DIR"
+    # Un modulo muerto ya no es hijo de startstop (queda reparentado al ser
+    # cosechado), asi que el `pgrep -P`/`ps` de antes lo perdia en silencio: el
+    # estado sale ahora de la tabla del binario de fabrica `status`, que conserva
+    # una fila por modulo declarado con su estado real.
+    ewmon_status_modules
+    [ -n "$pid" ] || return 1
+    return 0
 }
 
 start() {

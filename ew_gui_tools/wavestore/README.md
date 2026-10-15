@@ -58,9 +58,9 @@ Class/Priority    OTHER 0
 
 ## Integración en los módulos
 
-- **`csnhypodbp`**: claves `WaveBackend store|ws|auto` (default `auto`),
-  `StoreRoot`, `FetchThreads`. En `auto`, intenta el store y cae a
-  `wave_serverV` si no hay datos.
+- **`csnhypodbp`**: claves `WaveBackend store|ws|auto` (default `auto` en el código; el `.d` de este
+  entorno usa `store`), `StoreRoot`, `FetchThreads`. En `auto`, intenta el store y cae a
+  `wave_serverV` — **legado: no se despliega**.
 - **`csnmags`**: modo `store` (offline) sobre el mismo store.
 
 ## API
@@ -72,8 +72,8 @@ WStoreTrace tr; wstore_get(s, sta, net, chan, loc, t0, t1, &tr);  /* 0 datos, 1 
 wstore_trace_free(&tr); wstore_close(s);
 ```
 
-`WaveSource` (`wavesource.h`) unifica los backends `WSRC_WS` (wave_serverV),
-`WSRC_TANK`, `WSRC_STORE` y `WSRC_AUTO`.
+`WaveSource` (`wavesource.h`) unifica los backends `WSRC_WS` (`wave_serverV`, **legado no
+desplegado**), `WSRC_TANK`, `WSRC_STORE` y `WSRC_AUTO`.
 
 ## Tests
 

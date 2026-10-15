@@ -165,7 +165,7 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="api_report_locs_")
         self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
 
-    def _mk_session(self, slug, idx, events, mags, discards=0, ready=True):
+    def _mk_session(self, slug, idx, events, mags, discards=0, ready=True, legacy_ws=True):
         sdir = os.path.join(self.tmp, slug, "%03d" % idx)
         ldir = os.path.join(sdir, "logs")
         os.makedirs(ldir, exist_ok=True)
@@ -184,12 +184,20 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
         with open(wsv, "w") as fh:
             for _ in range(discards):
                 fh.write(WS_DISCARD_LINES[0] + "\n")
+        # wave_serverV esta retirado: las sesiones NUEVAS ya no traen su log ni
+        # "ws_discards". legacy_ws=False reproduce ese manifiesto.
+        if legacy_ws:
+            counts = {"events": len(events), "magnitudes": len(mags), "ws_discards": discards}
+            logs = {"csnloc": csl, "csnmags": cml, "wave_serverV": wsv}
+        else:
+            counts = {"events": len(events), "magnitudes": len(mags)}
+            logs = {"csnloc": csl, "csnmags": cml}
         meta = {
             "session_id": "%s/%03d" % (slug, idx), "slug": slug, "source_file": "mseed/%s.mseed" % slug,
             "chunk_index": idx, "chunk_start_utc": "2026-01-01T00:00:00Z", "mode": "fast",
             "wall_s": 80, "exit_code": 0, "timeout": False,
-            "counts": {"events": len(events), "magnitudes": len(mags), "ws_discards": discards},
-            "logs": {"csnloc": csl, "csnmags": cml, "wave_serverV": wsv},
+            "counts": counts,
+            "logs": logs,
         }
         with open(os.path.join(sdir, "session.json"), "w") as fh:
             json.dump(meta, fh)
@@ -207,6 +215,14 @@ class TestCorrelacionYDuplicados(unittest.TestCase):
         self.assertAlmostEqual(rows[0].mwp, 7.80)
         self.assertEqual(rows[0].pref, "Mwp")
         self.assertEqual(rows[0].source_file, "mseed/ev_a.mseed")
+
+    def test_sesion_sin_clave_wave_serverV(self):
+        # Regresion: run_events.sh ya no emite logs.wave_serverV ni counts.ws_discards.
+        ev = "20260101_UTC_00:01:00 csnloc: evento 5 lat=-31.0 lon=-71.0 z=5.0 km nph=8 rms=0.60 gap=90"
+        p = self._mk_session("ev_c", 0, [ev], [], legacy_ws=False)
+        sess = report.load_session(p)
+        self.assertEqual(sess.ws_discards, 0)
+        self.assertFalse([w for w in sess.warnings if "wave_serverV" in w])
 
     def test_evento_sin_magnitud_se_marca(self):
         ev = "20260101_UTC_00:01:00 csnloc: evento 3 lat=-20.0 lon=-70.0 z=10.0 km nph=6 rms=1.00 gap=120"

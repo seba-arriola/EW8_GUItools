@@ -1,5 +1,6 @@
 #!/bin/bash
-# test_ew_monitor_module - el subcomando de modulos de `ew_monitor.sh`:
+# test_ew_monitor_module - los subcomandos de modulos de `ew_monitor.sh` (`list`,
+# `status` y los selectores de `start`/`stop`/`restart`):
 #
 #   * la lista de modulos sale de la configuracion de startstop (nada literal:
 #     una lista hardcodeada se queda vieja y encima puede matar de mas),
@@ -7,6 +8,8 @@
 #     resuelve "al primero": se avisa y no se envia nada,
 #   * `restart`/`stop` van POR PID a los binarios de fabrica y se VERIFICAN (los
 #     de fabrica salen con 0 aunque no hagan nada),
+#   * `status` da una fila por modulo declarado CON SU ESTADO (los muertos
+#     incluidos: ya no son hijos de startstop, asi que el `ps` no los veia),
 #   * `EW_PARAMS`/`EW_LOG` del llamante sobreviven al `source ew8_unix.sh`.
 #
 # No arranca ni manda nada real: `pgrep`, `kill`, `sleep`, `status`, `restart` y
@@ -46,6 +49,7 @@ nneedre() { # nneedre <descripcion> <patron ERE>  (no debe aparecer)
 need    "los modulos salen del .d de startstop"  'ewmon_cfg_modules'
 need    "los huerfanos se buscan por nombre EXACTO" 'pgrep -x'
 need    "las acciones por modulo van por PID"    'ewmon_bin restart'
+need    "status reporta el estado de cada modulo" 'ewmon_status_modules'
 need    "sin argumentos start/stop/restart siguen siendo el stack" 'if [ "$#" -eq 0 ]; then start;'
 nneedre "sin pgrep -f (mataba por linea de comandos)" 'pgrep[[:space:]]+-f'
 nneedre "sin NINGUN nombre de modulo literal" 'slink2ew|pick_FP|pickS|csnloc|csnmags|hypodb_ingest|hyp2000_ring|nlloc_ring|wstore_ingest|csntvp|csnhypodbp|csnrv|csnstaevdisp|ew_controller|wave_serverV'
@@ -104,13 +108,23 @@ cat <<'TAB'
          -------  -------   ------     --------   ----    --------
 TAB
 row() { printf '%13s %7s    %-9s  %s  %-9s %s\n' "$1" "$2" "$3" "??/ 0" "00:00:01" "$4"; }
+# Contador de consultas: con `flip-zombie` la 1.a dice Zombie y la 2.a Dead, que es
+# la cosecha perezosa de startstop (y permite comprobar que no se consulta de mas).
+ncalls="$(cat "$TMP/calls-status" 2>/dev/null || echo 0)"; ncalls=$((ncalls + 1))
+echo "$ncalls" > "$TMP/calls-status"
+# Estados forzables por marca (cubren Dead/Stop/NoExec sin tocar el .d).
+st_raw="$(st csnmags_raw Zombie)"
+[ -f "$TMP/flip-zombie" ] && [ "$ncalls" -ge 2 ] && st_raw=Dead
+[ -f "$TMP/dead-csnrv" ] && st_csnrv=Dead || st_csnrv=Alive
+[ -f "$TMP/stop-pickS" ] && st_pickS=Stop || st_pickS=Alive
+[ -f "$TMP/noexec-csnmags" ] && st_mags=NoExec || st_mags=Alive
 row startstop 4242 Alive -
 row csnloc "$(pidof csnloc 9002)" Alive csnloc.d
-[ -f "$TMP/gone-pickS" ] || row pickS "$(pidof pickS 9005)" Alive pickS.d
-row csnmags 9003 Alive csnmags.d
-row csnmags "$(pidof csnmags_raw 9004)" "$(st csnmags_raw Zombie)" csnmags_raw.d
+[ -f "$TMP/gone-pickS" ] || row pickS "$(pidof pickS 9005)" "$st_pickS" pickS.d
+row csnmags 9003 "$st_mags" csnmags.d
+row csnmags "$(pidof csnmags_raw 9004)" "$st_raw" csnmags_raw.d
 row hypodb_ingest "$(pidof hypodb_ingest 9006)" Alive hypodb.d
-row csnrv 9010 Alive csnrv.d
+row csnrv 9010 "$st_csnrv" csnrv.d
 EOF
 
 # `pgrep` de mentira: responde al sondeo de startstop (4242) y a los hijos
@@ -182,7 +196,8 @@ mon() {   # mon <args ew_monitor.sh>  -> con el PATH y el entorno de mentira
         bash "$MON" "$@"
 }
 reset() { rm -f "$TMP/restart.log" "$TMP/stopmodule.log" "$TMP/status.log" \
-                 "$TMP/pid-csnloc" "$TMP/pid-csnmags_raw" "$TMP/pid-hypodb_ingest" "$TMP/gone-pickS"; }
+                 "$TMP/pid-csnloc" "$TMP/pid-csnmags_raw" "$TMP/pid-hypodb_ingest" "$TMP/gone-pickS" \
+                 "$TMP/calls-status" "$TMP/flip-zombie" "$TMP/dead-csnrv" "$TMP/stop-pickS" "$TMP/noexec-csnmags"; }
 
 # ---------------------------------------------------------------------------
 # 3) `list`: el .d entero, con pid/estado, sin el propio startstop
@@ -320,6 +335,65 @@ grep -q 'list' <<< "$out" && ok "-h: menciona list" || ko "-h: sin list [$out]"
 
 out="$(mon loquesea 2>&1)"; rc=$?
 [ "$rc" -eq 2 ] && ok "subcomando invalido: rc 2" || ko "subcomando invalido: rc=$rc [$out]"
+
+# ---------------------------------------------------------------------------
+# 10) `status`: una fila por modulo declarado, con su estado
+# ---------------------------------------------------------------------------
+reset
+out="$(mon status 2>&1)"; rc=$?
+[ "$rc" -eq 0 ] && ok "status: rc 0" || ko "status: rc=$rc [$out]"
+grep -qE '^EarthWorm: RUNNING \(startstop pid' <<< "$out" && ok "status: cabecera RUNNING" \
+    || ko "status: sin cabecera [$out]"
+grep -qE '^  modulos   : 7 declarados \(Alive:5, Zombie:1, ausente:1\)$' <<< "$out" \
+    && ok "status: resumen por estado" || ko "status: resumen [$out]"
+for pat in 'slink2ew +- +ausente +-$' \
+           'csnloc +csnloc\.d +Alive +pid 9002$' \
+           'pickS +pickS\.d +Alive +pid 9005$' \
+           'csnmags +csnmags\.d +Alive +pid 9003$' \
+           'csnmags +csnmags_raw\.d +Zombie +pid 9004$' \
+           'hypodb_ingest +hypodb\.d +Alive +pid 9006$' \
+           'csnrv +csnrv\.d +Alive +pid 9010$'; do
+    if grep -qE "^    - $pat" <<< "$out"; then ok "status: fila $pat"; else ko "status: falta $pat [$out]"; fi
+done
+grep -qE '^    - startstop|Ring|name/key/size' <<< "$out" \
+    && ko "status: colo startstop o las lineas de anillos" || ok "status: sin startstop ni anillos"
+
+# Los estados que el `ps` de antes no podia ver (un modulo muerto ya no es hijo)
+reset
+: > "$TMP/dead-csnrv"; : > "$TMP/stop-pickS"; : > "$TMP/noexec-csnmags"
+out="$(mon status 2>&1)"
+grep -qE '^    - csnrv +csnrv\.d +Dead +pid 9010$' <<< "$out" && ok "status: Dead junto al nombre" \
+    || ko "status: sin Dead [$out]"
+grep -qE '^    - pickS +pickS\.d +Stop ' <<< "$out" && ok "status: Stop" || ko "status: sin Stop [$out]"
+grep -qE '^    - csnmags +csnmags\.d +NoExec ' <<< "$out" && ok "status: NoExec" || ko "status: sin NoExec [$out]"
+grep -qE '^  modulos   : 7 declarados \([^)]*Dead:1' <<< "$out" && ok "status: el resumen cuenta los muertos" \
+    || ko "status: resumen [$out]"
+
+# Zombie -> Dead: startstop cosecha perezoso, hacen falta 2 consultas (ni 1 ni 3)
+reset
+: > "$TMP/flip-zombie"
+out="$(mon status 2>&1)"
+grep -qE '^    - csnmags +csnmags_raw\.d +Dead +pid 9004$' <<< "$out" \
+    && ok "status: Zombie se estabiliza a Dead" || ko "status: sigue Zombie [$out]"
+n_calls="$(wc -l < "$TMP/status.log")"
+[ "$n_calls" -eq 2 ] && ok "status: 2 consultas al motor (ni 1 ni 3)" \
+    || ko "status: $n_calls consultas (esperadas 2)"
+
+# Sin startstop: todo ausente y rc 1 (contrato de siempre)
+reset
+out="$( export EWMON_TEST_NOSTARTSTOP=1; mon status 2>&1 )"; rc=$?
+[ "$rc" -eq 1 ] && ok "status caido: rc 1" || ko "status caido: rc=$rc [$out]"
+grep -qE '^EarthWorm: STOPPED' <<< "$out" && ok "status caido: STOPPED" || ko "status caido [$out]"
+grep -qE '^  modulos   : 7 declarados \(ausente:7\)$' <<< "$out" && ok "status caido: los 7 ausentes" \
+    || ko "status caido: resumen [$out]"
+
+# Union .d + vivos (mismo contrato que `list`)
+reset
+out="$( export EW_MONITOR_CFG="$TMP/params/startstop_replay.d"; mon status 2>&1 )"
+grep -qE '^    - csnloc +csnloc\.d +Alive +pid 9002$' <<< "$out" \
+    && ok "status: el declarado del .d alternativo" || ko "status union [$out]"
+grep -qE '^    - csnrv +csnrv\.d +Alive +pid 9010$' <<< "$out" \
+    && ok "status: los vivos que el .d no declara tambien salen" || ko "status union [$out]"
 
 if [ "$fail" -gt 0 ]; then echo; echo "$fail FALLOS"; exit 1; fi
 echo; echo "OK test_ew_monitor_module"

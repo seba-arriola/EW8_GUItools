@@ -53,7 +53,7 @@ los que apunta:
 |---|---|
 | `logs/csnloc_YYYYMMDD.log` | eventos (`csnloc: evento N lat=… lon=…`), resumen de salida, y la hora origen real del volcado `HYP2000ARC` |
 | `logs/csnmags_YYYYMMDD.log` | magnitudes de red (`CSNmags_Red: [ID …] ML=… \| MWp=… -> PREF: …`) |
-| `logs/wave_serverV_YYYYMMDD.log` | descartes por validez (`fails validity check, discarding`) |
+| `logs/wave_serverV_YYYYMMDD.log` | **legado** (módulo retirado, ya no se despliega): descartes por validez (`fails validity check, discarding`). Solo en `runs/` antiguos |
 
 ## Cómo se cruzan localización y magnitud
 

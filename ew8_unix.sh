@@ -24,8 +24,18 @@ else
     echo "AVISO: falta ${DIR}/ew8_gtk_env.sh (entorno GTK4 no aplicado)" >&2
 fi
 
-# 2. Agregar la carpeta bin al PATH
-export PATH="${DIR}/${EW_VERSION}/bin:$PATH"
+# 2. PATH: primero el blindaje de coreutils, luego los binarios de EarthWorm.
+#    En este entorno ~/seiscomp/bin queda ANTES de /usr/bin y su `timeout` NO es
+#    el de GNU coreutils (rechaza `timeout <segundos> <comando>`). tools/gnubin
+#    garantiza que `timeout` a secas resuelva a GNU; los scripts del repo usan
+#    ademas la ruta absoluta '/usr/bin/timeout'. Ver AGENTS.md seccion 7.
+export PATH="${DIR}/ew_gui_tools/common/tools/gnubin:${DIR}/${EW_VERSION}/bin:$PATH"
+
+# Aviso (no aborta): si algo reordena el PATH despues, `timeout` volveria a ser
+# el de SeisComP. Ver common/tests/test_timeout_gnu.sh.
+if [ "$(command -v timeout 2>/dev/null)" != "${DIR}/ew_gui_tools/common/tools/gnubin/timeout" ]; then
+    echo "AVISO: 'timeout' no resuelve al shim del repo; usa '/usr/bin/timeout' en scripts" >&2
+fi
 
 echo "Entorno configurado:"
 echo " - HOME: $EW_HOME"
@@ -33,6 +43,7 @@ echo " - Version: $EW_VERSION"
 echo " - Parametros: $EW_PARAMS"
 echo " - Logs: $EW_LOG"
 echo " - Binarios: ${DIR}/${EW_VERSION}/bin"
+echo " - GNU timeout: ${DIR}/ew_gui_tools/common/tools/gnubin"
 echo ""
 
 # 3. Dar permisos de ejecucion 

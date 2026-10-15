@@ -312,8 +312,9 @@ cae a la hora origen sin romper el arranque.
 
 ### Diagnóstico del fetch de ondas
 
-Cada descarga deja traza en el log de `csnhypodbp` (el camino GUI → `ws_clientII` → `wave_serverV`
-es mudo por diseño; estas líneas lo hacen observable):
+Cada descarga deja traza en el log de `csnhypodbp` (el camino GUI → `ws_clientII` → `wave_serverV`,
+**legado y no desplegado** — hoy las ondas salen del store, es mudo por diseño; estas líneas lo
+hacen observable):
 
 - `fetch inicio sta=… ventana=[…] …s nsta=…` al lanzar el worker.
 - `fetch <sta>.<chan>.<net>.<loc> res=<código> actLen=<bytes>` por SCNL pedido: `res=0` con
@@ -338,13 +339,13 @@ mostrara solo `[HH]`/`[Z]`, el parseo estaría truncado y solo se pediría `HHZ`
 
 ## Backend SDS (eventos antiguos)
 
-Las ondas se piden, por orden: **store** (`wstore`), **wave_serverV** y, por último, el archivo
-**SDS de SeisComP**. Con `SdsEnabled 1`, un evento más antiguo que `SdsFallbackHours` (def. 168 h ≈ 7
+Las ondas se piden, por orden: **store** (`wstore`) y, si no las tiene, el archivo **SDS de
+SeisComP**. Con `SdsEnabled 1`, un evento más antiguo que `SdsFallbackHours` (def. 168 h ≈ 7
 días, alineado con la retención del `wstore`) se consulta **directo al SDS** (`SdsRoot`, def.
-`/mnt/sds/archive`), porque la retención local ya no lo tiene y `wave_serverV` solo devolvería un
-timeout. En ese caso (**evento antiguo**) se omite `wave_serverV` (misma ventana de retención que el
-store): el orden es **SDS → store**, y si ninguno tiene datos la estación queda sin traza. Para
-eventos recientes el SDS es el **último recurso** (cuando store y `wave_serverV` vienen vacíos).
+`/mnt/sds/archive`), porque la retención local ya no lo tiene. En ese caso (**evento antiguo**) el
+orden es **SDS → store**, y si ninguno tiene datos la estación queda sin traza. Para eventos
+recientes el SDS es el **último recurso**. `wave_serverV` está **retirado** (lo reemplaza el store):
+`WsIP`/`WsPort`/`WsTimeout` y `WaveBackend ws|auto` quedan por compatibilidad.
 
 La ruta se arma con `ewgui_sds_path` (`common`):
 `<root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>`, y

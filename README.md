@@ -17,15 +17,14 @@ de magnitud y su visualización. Las formas de onda las sirve un **store indexad
 SeedLink (10.54.217.9:18000)
         │  slink2ew
         ▼
-   SLINK_RING ──────────────► wave_serverV (16022) ──► csnhypodbp (fallback)
-        │  pick_FP
-        ├────────────────────► wstore_ingest ──► store indexado (wstore)
+   SLINK_RING ──────────────► wstore_ingest ──► store indexado (wstore)
+        │  pick_FP                                   ondas: store → SDS
         ▼
    PICK_RING ──────────────► csntvp / csnhypodbp (re-picks manuales)
         │  csnloc (asociador + localizador local)
         ▼
-   HYPO_RING (TYPE_HYP2000ARC) ──► csnmags  (ML / Mwp / Mb / Ms)  [store/wave_serverV]
-                               ──► csnhypodbp  (GUI)              [store/wave_serverV]
+   HYPO_RING (TYPE_HYP2000ARC) ──► csnmags  (ML / Mwp / Mb / Ms)  [store/SDS]
+                               ──► csnhypodbp  (GUI)              [store/SDS]
                                ──► csnrv       (vista regional)
 ```
 
@@ -116,11 +115,18 @@ Parada:
 ### Control de servicios
 
 ```bash
-./ew_monitor.sh status                    # startstop + módulos vivos
-./ew_monitor.sh list                      # módulos del .d de startstop (pid y estado)
+./ew_monitor.sh status                    # EarthWorm + TODOS los módulos del .d, con su estado
+./ew_monitor.sh list                      # igual, en tabla (módulo / binario / cfg / pid / estado)
 ./ew_monitor.sh start | stop | restart    # todo el stack
 ./ew_monitor.sh restart csnrv             # solo un módulo
 ```
+
+`status` es la vista de salud: **una fila por cada módulo declarado** en la configuración de
+`startstop`, con su estado (`Alive`, `Zombie`, `Dead`, `Stop`, `NoExec`, o `ausente` si no aparece
+en la tabla de `startstop`) y su pid. Antes sólo listaba los procesos vivos —un módulo muerto deja
+de ser hijo de `startstop`, así que desaparecía de la lista y no había forma de ver que faltaba—.
+Si el motor cosecha perezoso y la primera consulta dice `Zombie`, se reintenta una vez para poder
+reportar `Dead`.
 
 `list` y los selectores salen de la configuración de `startstop` (`EW_MONITOR_CFG`, por defecto
 `$EW_PARAMS/startstop_unix.d`): **no hay ninguna lista de módulos escrita en el script**. Un
@@ -180,8 +186,10 @@ Ver `docs/HYPODB.md` y `db/README.md`.
 
 ## Notas / Solución de problemas
 
-- `timeout` puede estar ensombrecido por SeisComP (`~/seiscomp/bin/timeout`); **no** es el `timeout`
-  de GNU coreutils y falla con `couldn't exec <N>`. Usa `/usr/bin/timeout` en los scripts.
+- En este entorno SeisComP (`~/seiscomp/bin`) queda antes de `/usr/bin` y su `timeout` **no** es el de
+  GNU coreutils (falla con `couldn't exec <N>`). `source ./ew8_unix.sh` antepone
+  `ew_gui_tools/common/tools/gnubin` (shim a `/usr/bin/timeout`), y los scripts del repo usan siempre
+  la ruta absoluta `/usr/bin/timeout` (invariante en `common check`).
 - Los módulos GUI necesitan un `DISPLAY` funcional (WSLg `:0` funciona).
 - Si `slink2ew` no alcanza el servidor SeedLink, inyecta un pick de prueba con `putpick` e inspecciona
   con `sniffring`.

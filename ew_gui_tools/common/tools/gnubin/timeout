@@ -1,0 +1,21 @@
+#!/bin/sh
+# timeout - envoltorio de GNU coreutils para el entorno de este repo.
+#
+# Por que existe: en este entorno ~/seiscomp/bin queda ANTES de /usr/bin en el
+# PATH y su `timeout` NO es el de GNU coreutils: rechaza la sintaxis estandar
+# `timeout <segundos> <comando>` (falla con "couldn't exec <N>"). ew8_unix.sh
+# antepone ESTE directorio para que `timeout` a secas resuelva siempre a GNU.
+#
+# Regla del repo: los scripts invocan '/usr/bin/timeout' de forma explicita (lo
+# exige ew_gui_tools/common/tests/test_timeout_gnu.sh). Este shim cubre lo que se
+# escriba a mano en una shell con el entorno del repo cargado.
+#
+# Uso: timeout [OPCIONES] DURACION COMANDO [ARG]...
+# Salida: el rc de COMANDO; 124 si vencio; 125/126/127 como GNU.
+GNU_TIMEOUT=/usr/bin/timeout
+[ -x "$GNU_TIMEOUT" ] || GNU_TIMEOUT=/bin/timeout
+if [ ! -x "$GNU_TIMEOUT" ]; then
+    echo "gnubin/timeout: no encuentro el timeout de GNU coreutils (/usr/bin/timeout)" >&2
+    exit 127
+fi
+exec "$GNU_TIMEOUT" "$@"
