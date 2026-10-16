@@ -48,6 +48,40 @@ Así:
 | `IngestShards` | 4 | hilos de escritura (sharding por SCNL) |
 | `HeartbeatInt` | 30 | latido |
 | `LogFile` | 1 | log de EarthWorm |
+| `ChannelFilterFile` | — (sin filtro: se guarda todo) | lista SCNL de canales a guardar (ver abajo) |
+
+### Filtro de canales (`ChannelFilterFile`)
+
+`ChannelFilterFile wstore.sta` apunta a un archivo con **una línea por patrón**
+`STA NET CHAN LOC` (separados por espacios o tabs; `#` comenta el resto de la
+línea; las vacías y los comentarios se ignoran):
+
+```
+# ST01 vertical + horizontales, con localizacion nula
+ST01  CX  HH?  --
+# cualquier estacion de la red C1_AC01, cualquier canal y loc
+*     C1_AC01  *  *
+# todo (lo mismo que no poner la clave)
+* * * *
+```
+
+- `*` = cualquier secuencia (incluida vacía), `?` = exactamente 1 carácter; el
+  resto es literal y **case-sensitive**.
+- `LOC`: `--` (o vacío) es la localización nula de EarthWorm; `*` casa con
+  cualquier localización.
+- El canal es el del **store** (`HHZ`, `HHN`, …), **no** el selector de
+  `slink2ew` (que se escribe `HH?.D`).
+- Sin la clave ⇒ se guarda todo. Archivo ilegible o línea mal formada ⇒ el
+  ingester **no arranca** (mensaje `archivo:línea` en stderr); archivo sin
+  patrones ⇒ aviso y se guarda todo.
+- Los descartes por filtro se cuentan aparte de `dropped`
+  (`wstore_ingest_filtered()`), porque no son un fallo: son política.
+- El filtro sólo puede **reducir** lo que `slink2ew` ya entrega: un canal que no
+  esté en los selectores de `slink2ew_*.d` no se puede recuperar aquí.
+- No afecta a `tank2store`, `store2tank`, `wstore_query` ni a la API del store
+  (una conversión o una consulta explícitas no se filtran).
+- La antigua clave `ChannelFilter` (que ningún código leía) se retiró: su lugar
+  lo ocupa `ChannelFilterFile`.
 
 Para arrancarlo con EarthWorm, añade en `startstop_unix.d`:
 
@@ -77,5 +111,5 @@ wstore_trace_free(&tr); wstore_close(s);
 
 ```bash
 source ./ew8_unix.sh
-make -C ew_gui_tools/wavestore check   # headless: store, concurrencia, ingester, wavesource, conversores
+make -C ew_gui_tools/wavestore check   # headless: store, concurrencia, ingester, filtro, config, wavesource, conversores
 ```

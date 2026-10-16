@@ -441,7 +441,8 @@ Quedan prohibidos startstop/stopmodule/restart/ew_monitor.sh start|stop|restart.
 #### Coherencia de canal HHZ/BHZ
 
 El sistema debe ser coherente en el código de canal en **tres** sitios: la fuente real
-(`slink2ew_*.d`), los picks (`pick_FP.sta`) y la metadata (`estaciones_107.txt`). Si no coinciden:
+(`slink2ew_*.d`), los picks (`pick_FP.sta`) y la metadata (`estaciones_107.txt`) — y el store
+agua abajo puede **recortar** esa lista (ver al final). Si no coinciden:
 
 - `csnmags` descarta el **100 %** de las fases **en silencio** (exige `strcmp` exacto de
   `sta+net+chan`; `mag_sta.c:49-70`) → nunca calcula magnitud de red.
@@ -450,6 +451,11 @@ El sistema debe ser coherente en el código de canal en **tres** sitios: la fuen
 No afecta a `csnloc` ni a `csnstaevdisp` (descartan el canal al parsear) ni a `csntvp` (usa
 `stations_to_view.sta`, ya en `HHZ`, y lee del ring).
 
+El **store** es un cuarto sitio, pero sólo de recorte: `wstore_ingest` guarda únicamente los SCNL
+que pasan su `ChannelFilterFile` (`wavestore.d` → `params/wstore.sta`, campos `STA NET CHAN LOC` con
+comodines `*`/`?`; `--` es la loc nula). Un canal que no pase el filtro **no está en `wstore`**, y
+`csnhypodbp`/`csnmags` no lo verán (caen al SDS si `SdsRoot` está configurado). El filtro no puede
+**añadir** canales: sólo reduce lo que `slink2ew` ya entrega.
 
 
 

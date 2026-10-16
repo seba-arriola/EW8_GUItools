@@ -6,7 +6,7 @@ typedef struct {
     char root[512];           /* StoreRoot (obligatorio)        */
     char ring_name[32];       /* RingName   (SLINK_RING)        */
     char module_id[32];       /* MyModuleId (MOD_WSTORE)        */
-    char channel_filter[512]; /* ChannelFilter (opcional)       */
+    char channel_filter_file[512]; /* ChannelFilterFile (opcional); "" = sin filtro */
     long retention_days;      /* RetentionDays (7)              */
     int  reorder_ms;          /* ReorderMs (0)                  */
     int  heartbeat_int;       /* HeartbeatInt (30)              */

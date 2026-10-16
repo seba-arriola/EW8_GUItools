@@ -36,7 +36,7 @@ int wstore_config_load(WStoreConfig *out, const char *path)
         if      (k_its("StoreRoot"))     { str = k_str(); copy_str(out->root, sizeof(out->root), str); }
         else if (k_its("RingName"))      { str = k_str(); copy_str(out->ring_name, sizeof(out->ring_name), str); }
         else if (k_its("MyModuleId"))    { str = k_str(); copy_str(out->module_id, sizeof(out->module_id), str); }
-        else if (k_its("ChannelFilter")) { str = k_str(); copy_str(out->channel_filter, sizeof(out->channel_filter), str); }
+        else if (k_its("ChannelFilterFile")) { str = k_str(); copy_str(out->channel_filter_file, sizeof(out->channel_filter_file), str); }
         else if (k_its("RetentionDays")) out->retention_days = k_long();
         else if (k_its("ReorderMs"))     out->reorder_ms = k_int();
         else if (k_its("HeartbeatInt"))  out->heartbeat_int = k_int();
