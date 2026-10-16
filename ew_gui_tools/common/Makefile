@@ -107,6 +107,10 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_diag.sh
 	@echo "== check_ew8_db =="
 	@bash tests/test_ew8_db.sh
+	@echo "== check_db_test_schema =="
+	@bash tests/test_db_test_schema_instance.sh
+	@echo "== check_db_scripts_instance =="
+	@bash tests/test_db_scripts_instance.sh
 	@echo "== check_params_clean =="
 	@bash tests/test_params_stays_clean.sh
 	@echo "== check_no_repo_path =="

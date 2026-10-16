@@ -168,7 +168,7 @@ La información hipocentral (eventos, orígenes, picks, magnitudes) se almacena 
 ```bash
 cp run_working_v8/params/db.env.example run_working_v8/params/db.env
 ./ew8_db.sh up          # instancia 0: ew8_hypodb en el puerto 5435
-db/test_schema.sh
+db/test_schema.sh -i 0  # verifica las 6 tablas (AC1)
 ```
 
 Cada worktree puede tener su base **aislada**: `./ew8_db.sh -i N up` levanta

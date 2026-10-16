@@ -35,7 +35,7 @@ sh ew_gui_tools/common/tools/check_install.sh -v   # 16/16 OK
 
 # 4) Su base de datos (contenedor/volumen/puerto propios, sin auto-arranque)
 ./ew8_db.sh -i 1 up
-db/test_schema.sh
+db/test_schema.sh -i 1                 # verifica las 6 tablas de ESTA instancia
 
 # 5) Trabajar
 source ./ew8_unix.sh

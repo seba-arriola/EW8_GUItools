@@ -51,7 +51,7 @@ Las variables de entorno tienen precedencia sobre el archivo al conectar desde l
 # Arrancar (una vez, si falta db.env)
 cp run_working_v8/params/db.env.example run_working_v8/params/db.env
 ./ew8_db.sh up                         # equivale a `up -d --wait` y muestra el estado
-db/test_schema.sh                      # verifica las 6 tablas
+db/test_schema.sh -i 0                 # verifica las 6 tablas (AC1)
 
 # Parar (conserva los datos) / estado / logs / psql
 ./ew8_db.sh down

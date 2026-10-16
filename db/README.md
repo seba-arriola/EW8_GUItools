@@ -21,7 +21,7 @@ cp run_working_v8/params/db.env.example run_working_v8/params/db.env
 docker compose -f db/docker-compose.yml up -d --wait
 
 # 3) Verificar esquema (AC1)
-db/test_schema.sh
+db/test_schema.sh -i 0
 
 # Detener / resetear
 docker compose -f db/docker-compose.yml down        # detener (conserva datos)
@@ -63,4 +63,4 @@ Las variables de entorno tienen precedencia sobre el archivo al conectar.
 |---|---|
 | `schema.sql` | Esquema (copia literal de `test_db`) |
 | `docker-compose.yml` | PostgreSQL 16 en `:5435` con el esquema autoaplicado |
-| `test_schema.sh` | Verifica que el esquema crea las 6 tablas (AC1) |
+| `test_schema.sh` | Verifica que el esquema crea las 6 tablas (AC1) de una instancia (`-i N`) |

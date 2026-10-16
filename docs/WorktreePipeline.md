@@ -38,7 +38,9 @@ Define `EW_HOME`(raíz del repo), `EW_VERSION`(`ew_8.0`), `EW_PARAMS`(`run_worki
 **Bloque de compilación (el de `docs/WORKTREES.md` §1 paso 3):**
 
 ```bash
+cd <ruta-del-repo>            # ¡la raíz de ESTE repo/worktree, no la del principal!
 source ./ew8_unix.sh
+echo "$EW_HOME"               # 🔎 debe imprimir la raíz de ESTE repo/worktree
 make -C ew_gui_tools/common GUI_TOOLKIT=gtk4            # la lib compartida, primero
 for d in wavestore csnloc csnwphase csnmags pickS csntvp csnrv csnstaevdisp \
          ew_controller hypodb hyp2000_ring nlloc_ring csnhypodbp; do
@@ -47,8 +49,9 @@ done
 sh ew_gui_tools/common/tools/check_install.sh -v        # QUERÉS 16/16 "OK"
 ```
 
-Dos detalles que importan:
+Tres detalles que importan:
 - **`make` a secas ya instala** en `ew_8.0/bin`: el target por defecto es `all: <target> install` (verificado en `csnloc`, `csnhypodbp`, `csnmags`); no hace falta `make install`.
+- ⚠️ **`source` va ANTES del `make`, y sobre ESTE repo**: el destino de instalación lo pone el Makefile (`install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin`). Sin entorno no compila (las cabeceras y librerías quedan en `//include`/`//lib` y el `install` aborta con `no existe el directorio destino //bin`); y si el entorno venía cargado **desde otro repo** (p. ej. dejaste el `source` del principal en esa terminal) compila igual pero **instala los binarios en el otro repo**. De ahí el `echo "$EW_HOME"`.
 - ⚠️ **`check_install.sh` no falla si no compilaste**: imprime `SKIP <binario> (módulo … sin compilar)` y **sale 0**. No te fíes del exit code: mirá que **no quede ningún `SKIP`**. `FALTA`/`DESACTUALIZADO` sí dan exit 1 con el comando exacto a correr.
 
 🔎 ¿Hace falta `make clean`? Solo si ya compilaste y cambiaste `common/` (la regla de la lib no depende de las fuentes):
@@ -65,7 +68,7 @@ make -C ew_gui_tools/common clean GUI_TOOLKIT=gtk4 && make -C ew_gui_tools/commo
 source ./ew8_unix.sh              # ✅
 ./ew8_db.sh status                # 🔎 ¿sana y con tablas=6? (exit 0 ok · 2 no sana)
 ./ew8_db.sh up                    # ✅ si estaba abajo (idempotente; espera healthcheck)
-db/test_schema.sh                 # 👍 verifica las 6 tablas
+db/test_schema.sh -i 0            # 👍 verifica las 6 tablas por nombre (AC1)
 ./ew_monitor.sh start             # ✅ stack completo en background (setsid)
 ./ew_monitor.sh status            # 🔎 RUNNING + pid + una fila por módulo con su estado
 sh ew_gui_tools/common/tools/diag.sh process   # 🔎 qué módulos del .d están corriendo
@@ -115,14 +118,21 @@ cd ../wt_featureA
 Comprueba: `earthworm.d` = base+offset (drift), el `N` deducido, `db.env` con el puerto correcto, **keys disjuntas con los otros worktrees**, puerto libre y de quién es el contenedor, y si hay un stack vivo en otra carpeta. **No escribe nada** (salvo un `/tmp`). Sale **0** OK · **2** uso · **3** entorno · **4** problemas.
 💤 `--refresh` regenera (idempotente) y reporta drift; `--force` permite `--instance 0` dentro de un worktree (colisiona con el principal: solo si no corren a la vez).
 
-**Paso 4 — ✅ compilar** → ver §2 (en un worktree nuevo es obligatorio; el bootstrap **no** compila ni avisa de binarios ausentes).
-
-**Paso 5 — ✅ su base de datos aislada**:
+**Paso 4 — ✅ compilar** (en un worktree nuevo es obligatorio; el bootstrap **no** compila ni avisa de binarios ausentes). El `source` va **aquí**, antes del `make`, y sobre la raíz de ESTE worktree:
 
 ```bash
-source ./ew8_unix.sh
+cd ../wt_featureA                 # la raíz del worktree, no la del principal
+source ./ew8_unix.sh              # ⚠️ ANTES de compilar: fija EW_HOME
+echo "$EW_HOME"                   # 🔎 debe ser la raíz de ESTE worktree
+# … y sigue el bloque de §2 (common + los 13 módulos + check_install.sh -v)
+```
+
+**Paso 5 — ✅ su base de datos aislada** (el entorno ya quedó cargado en el paso 4):
+
+```bash
 ./ew8_db.sh -i 1 up               # contenedor ew8_hypodb_1, puerto 5436, volumen propio
-db/test_schema.sh                 # 👍 6 tablas (el esquema entra solo al crear el volumen)
+./ew8_db.sh -i 1 status           # 👍 5436 + tablas=6 (el esquema entra solo al crear el volumen)
+db/test_schema.sh -i 1            # 💤 lo mismo, pero exigiendo las 6 tablas por nombre
 ```
 
 **Paso 6 — ✅ arrancar su stack**:
@@ -208,6 +218,9 @@ Nunca hace `startstop`/`restart`/`make`/`git`: para eso está `ew_monitor.sh`.
 
 ### `sh ew_gui_tools/common/tools/check_install.sh [-v]` — único flag `-v` (lista `OK`/`SKIP`/`FALTA`/`DESACTUALIZADO`); exit `0` al día · `1` falta/desactualizado · `2` sin destino.
 
+### `db/test_schema.sh [-i N]` — exit `0` 6 tablas · `1` no arranca o falta una tabla · `2` uso o falta `db.env`
+Levanta la base de **esa** instancia (delega en `./ew8_db.sh -i N up`) y exige las 6 tablas por nombre. Sin `-i` es la instancia 0. **No tiene compose propio**: tenerlo cruzaba instancias (contenedor de la 0 con el puerto y el volumen del worktree → `Bind for 0.0.0.0:5436 failed`). Lo vigilan `common/tests/test_db_scripts_instance.sh` (fuente + doc) y `test_db_test_schema_instance.sh` (comportamiento).
+
 ---
 
 # 7. Diagnóstico rápido (cuando algo no cuadre)
@@ -220,10 +233,11 @@ sh ew_gui_tools/common/tools/diag.sh errors   # errores de los logs recientes
 sh ew_gui_tools/common/tools/diag.sh log csnloc 40
 tail -f run_working_v8/log/startstop_unix_*.log
 ./ew8_db.sh status                           # ¿tablas=6?
+./ew8_db.sh instances                        # ¿bases huérfanas de worktrees ya borrados?
 ```
 
 Síntoma típico: módulo que no arranca y en la consola de `startstop` aparece `execvp failed`/`NoExec` ⇒ **falta compilar/instalar** ese binario (`check_install.sh -v`, mirando los `SKIP`).
 
 ---
 
-**Resumen de lo que es imprescindible:** `source ./ew8_unix.sh` → (worktree) `git worktree add` → `worktree_bootstrap.sh . --instance N` → **compilar** → `./ew8_db.sh -i N up` → `./ew_monitor.sh start`. Todo lo demás (`--check`, `test_schema.sh`, `check_install.sh -v`, `two_stacks_check.sh`, `diag.sh`) es verificación, y conviene `--check` + `check_install.sh -v` en cada worktree nuevo: son los dos que detectan el 90 % de los problemas antes de arrancar.
+**Resumen de lo que es imprescindible:** `cd` a la raíz del repo/worktree + `source ./ew8_unix.sh` (**también en un worktree, y antes de compilar**: fija `EW_HOME`) → `git worktree add` → `worktree_bootstrap.sh . --instance N` → **compilar** → `./ew8_db.sh -i N up` → `./ew_monitor.sh start`. Todo lo demás (`--check`, `test_schema.sh -i N`, `check_install.sh -v`, `two_stacks_check.sh`, `diag.sh`) es verificación, y conviene `--check` + `check_install.sh -v` en cada worktree nuevo: son los dos que detectan el 90 % de los problemas antes de arrancar.
