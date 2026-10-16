@@ -104,9 +104,17 @@ printf '== el panel Mww esta armado ==\n'
 python3 "$EWGUI_PROBE" --assert-text "Parámetros de la inversión de fase W" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "Calculate" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "Cancel" --timeout 25 || rc=1
+python3 "$EWGUI_PROBE" --assert-text "Resultados de la inversión" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "Mecanismo focal" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "Salida completa del motor" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "sin resultado" --timeout 25 || rc=1
+# La tabla de parametros es editable y ya NO hay boton de guardado: el mecanismo
+# focal se persiste al confirmar la solución (radio `Mww` del preview).
+python3 "$EWGUI_PROBE" --assert-text "magnitud semilla" --timeout 25 || rc=1
+python3 "$EWGUI_PROBE" --assert-text "ventana de ondas pre" --timeout 25 || rc=1
+if python3 "$EWGUI_PROBE" --assert-text "Save to DB" --timeout 10 >/dev/null 2>&1; then
+    printf 'FALLO: sigue el boton Save to DB\n'; rc=1
+fi
 printf '== se vuelve a Estaciones ==\n'
 python3 "$EWGUI_PROBE" --click-by-name Estaciones --timeout 25 || rc=1
 printf 'RESULTADO_MWW=%s\n' "$rc"

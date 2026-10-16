@@ -7,6 +7,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 /*
@@ -48,7 +49,7 @@ static void py_g_field(char *dst, size_t n, double v, int width, int prec)
 }
 
 /* Banda de la inversión por magnitud (i_master.py:31-40). */
-static void band_for_magnitude(double mag, double *cf1, double *cf2)
+void csnwphase_band_for_magnitude(double mag, double *cf1, double *cf2)
 {
     if (mag >= 8.0) {
         *cf1 = 0.001;
@@ -69,10 +70,59 @@ static void band_for_magnitude(double mag, double *cf1, double *cf2)
 }
 
 /* Media duración / time shift del CMT semilla (cmtsolution.py:39-41). */
-static double half_duration(double magnitude)
+double csnwphase_half_duration(double magnitude)
 {
     return (1.2 * pow(10.0, -8.0)) *
            pow(pow(10.0, 1.5 * (magnitude + 10.73)), 1.0 / 3.0);
+}
+
+/* ------------------------------------------------------------------ */
+/* Campos editables de la tabla                                        */
+/* ------------------------------------------------------------------ */
+
+double csnwphase_epoch_utc(int year, int mon, int day, int hh, int mm, double ss)
+{
+    struct tm t;
+
+    memset(&t, 0, sizeof t);
+    t.tm_year = year - 1900;
+    t.tm_mon = mon - 1;
+    t.tm_mday = day;
+    t.tm_hour = hh;
+    t.tm_min = mm;
+    t.tm_sec = (int)ss;
+
+    /* timegm interpreta UTC y NO consulta TZ (a diferencia de mktime). */
+    return (double)timegm(&t) + (ss - (double)(int)ss);
+}
+
+int csnwphase_time_parse(const char *txt, CsnwphaseInput *in)
+{
+    int y, mo, d, h, mi;
+    double s;
+    char sep;
+
+    if (!txt || !in)
+        return -1;
+
+    /* Mismo formato que muestra la tabla ("%Y-%m-%d %H:%M:%S"); se acepta 'T'
+     * porque es el que usa la CLI (--run ... 2015-09-16T22:54:32). */
+    if (sscanf(txt, "%d-%d-%d%c%d:%d:%lf", &y, &mo, &d, &sep, &h, &mi, &s) != 7)
+        return -1;
+    if (sep != ' ' && sep != 'T')
+        return -1;
+    if (y < 1900 || y > 2200 || mo < 1 || mo > 12 || d < 1 || d > 31 ||
+        h < 0 || h > 23 || mi < 0 || mi > 59 || !(s >= 0.0 && s < 61.0))
+        return -1;
+
+    in->year = y;
+    in->month = mo;
+    in->day = d;
+    in->hour = h;
+    in->minute = mi;
+    in->second = s;
+    in->origin_epoch = csnwphase_epoch_utc(y, mo, d, h, mi, s);
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,7 +237,7 @@ int csnwphase_i_master_text(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
     if (!cfg || !out || outsz == 0)
         return -1;
 
-    band_for_magnitude(in ? in->magnitude : 6.5, &cf1, &cf2);
+    csnwphase_band_for_magnitude(in ? in->magnitude : 6.5, &cf1, &cf2);
     py_num(dmin, sizeof(dmin), cfg->dmin_deg);
     py_num(dmax, sizeof(dmax), cfg->dmax_deg);
     /* IDEC_2/IDEC_3 son *strings* en el generador del CSN: se re-renderizan
@@ -237,7 +287,7 @@ int csnwphase_cmt_text(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
     if (!cfg || !in || !out || outsz == 0)
         return -1;
 
-    hd = half_duration(in->magnitude);
+    hd = csnwphase_half_duration(in->magnitude);
     py_g_field(latg, sizeof(latg), in->latitude, 14, 4);
     snprintf(loc, sizeof(loc), "%s", in->location[0] ? in->location : cfg->evname);
 
@@ -473,7 +523,7 @@ int csnwphase_prep_write(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
 /* Tabla de parámetros                                                  */
 /* ------------------------------------------------------------------ */
 
-static void row(CsnwphaseParamRow *rows, int max, int *n,
+static void row(CsnwphaseParamRow *rows, int max, int *n, int field,
                 const char *name, const char *source, const char *fmt, ...)
 {
     va_list ap;
@@ -482,6 +532,7 @@ static void row(CsnwphaseParamRow *rows, int max, int *n,
         return;
     snprintf(rows[*n].name, sizeof(rows[*n].name), "%s", name);
     snprintf(rows[*n].source, sizeof(rows[*n].source), "%s", source);
+    rows[*n].field = field;
     va_start(ap, fmt);
     vsnprintf(rows[*n].value, sizeof(rows[*n].value), fmt, ap);
     va_end(ap);
@@ -497,53 +548,76 @@ int csnwphase_params_build(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
         return -1;
 
     *n = 0;
-    band_for_magnitude(in->magnitude, &cf1, &cf2);
+    csnwphase_band_for_magnitude(in->magnitude, &cf1, &cf2);
 
-    row(rows, max, n, "evento", "ARC", "%s",
+    /* Solo lectura (origen de los datos, derivados de la magnitud o informativos). */
+    row(rows, max, n, CSNWPHASE_PF_NONE, "evento", "ARC", "%s",
         in->event_id[0] ? in->event_id : "(sin id)");
-    row(rows, max, n, "origin_id (semilla)", "ARC", "%s",
+    row(rows, max, n, CSNWPHASE_PF_NONE, "origin_id (semilla)", "ARC", "%s",
         in->origin_id[0] ? in->origin_id : "(sin id)");
-    row(rows, max, n, "origen t0 (UTC)", "ARC", "%04d-%02d-%02d %02d:%02d:%05.2f",
+    /* Editables: el usuario los cambia en el panel antes de ejecutar. */
+    row(rows, max, n, CSNWPHASE_PF_ORIGIN_TIME, "origen t0 (UTC)", "ARC",
+        "%04d-%02d-%02d %02d:%02d:%05.2f",
         in->year, in->month, in->day, in->hour, in->minute, in->second);
-    row(rows, max, n, "lat / lon [deg]", "ARC", "%.4f / %.4f",
-        in->latitude, in->longitude);
-    row(rows, max, n, "profundidad [km]", "ARC", "%.1f", in->depth_km);
-    row(rows, max, n, "magnitud semilla", "ARC", "%.1f", in->magnitude);
-    row(rows, max, n, "banda de inversion [Hz]", "derivado de mag",
-        "%g - %g", cf1, cf2);
-    row(rows, max, n, "filt_order / filt_pass", "config", "%d / %d",
-        cfg->filt_order, cfg->filt_pass);
-    row(rows, max, n, "IDEC_2 (idtr preevent fend)", "config", "%g %g  %g",
-        cfg->idec2_idtr, cfg->idec2_preevent, cfg->idec2_fend);
-    row(rows, max, n, "IDEC_3 (fl fh nf tol)", "config", "%g  %g  %d  %g",
-        cfg->idec3_fl, cfg->idec3_fh, cfg->idec3_nf, cfg->idec3_tol);
-    row(rows, max, n, "WP_WIN (t_end clip1 clip2)", "config", "%g. %.1f %.1f",
-        cfg->wpwin[0], cfg->wpwin[1], cfg->wpwin[2]);
-    row(rows, max, n, "DMIN / DMAX [deg]", "config", "%g / %g",
+    row(rows, max, n, CSNWPHASE_PF_LAT, "latitud [deg]", "ARC", "%.4f",
+        in->latitude);
+    row(rows, max, n, CSNWPHASE_PF_LON, "longitud [deg]", "ARC", "%.4f",
+        in->longitude);
+    row(rows, max, n, CSNWPHASE_PF_DEPTH, "profundidad [km]", "ARC", "%.1f",
+        in->depth_km);
+    row(rows, max, n, CSNWPHASE_PF_MAGNITUDE, "magnitud semilla", "ARC", "%.1f",
+        in->magnitude);
+    row(rows, max, n, CSNWPHASE_PF_WIN_PRE, "ventana de ondas pre [s]", "config",
+        "%d", cfg->win_pre_sec);
+    row(rows, max, n, CSNWPHASE_PF_WIN_POST, "ventana de ondas post [s]", "config",
+        "%d", cfg->win_post_sec);
+    row(rows, max, n, CSNWPHASE_PF_SCREEN_TH, "screening RMS (-th)", "config",
+        "%g", cfg->screen_th);
+    row(rows, max, n, CSNWPHASE_PF_SCREEN_NR, "screening ratio (-nr)", "config",
+        "%g", cfg->screen_nr);
+    /* Derivado de la magnitud semilla: NO editable (se recalcula al editarla). */
+    row(rows, max, n, CSNWPHASE_PF_NONE, "banda de inversion [Hz]",
+        "derivado de mag", "%g - %g", cf1, cf2);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "filt_order / filt_pass", "config",
+        "%d / %d", cfg->filt_order, cfg->filt_pass);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "IDEC_2 (idtr preevent fend)", "config",
+        "%g %g  %g", cfg->idec2_idtr, cfg->idec2_preevent, cfg->idec2_fend);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "IDEC_3 (fl fh nf tol)", "config",
+        "%g  %g  %d  %g", cfg->idec3_fl, cfg->idec3_fh, cfg->idec3_nf,
+        cfg->idec3_tol);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "WP_WIN (t_end clip1 clip2)", "config",
+        "%g. %.1f %.1f", cfg->wpwin[0], cfg->wpwin[1], cfg->wpwin[2]);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "DMIN / DMAX [deg]", "config", "%g / %g",
         cfg->dmin_deg, cfg->dmax_deg);
-    row(rows, max, n, "ventana de ondas [s]", "config", "t0-%d / t0+%d",
-        cfg->win_pre_sec, cfg->win_post_sec);
-    row(rows, max, n, "GFDIR (relativo al run dir)", "config", "%s",
-        cfg->gfdir_rel);
-    row(rows, max, n, "GF_PATH (base de Green)", "config", "%s", cfg->gf_dir);
-    row(rows, max, n, "screening RMS (-th)", "config", "%g %g %g",
-        cfg->screen_th[0], cfg->screen_th[1], cfg->screen_th[2]);
-    row(rows, max, n, "screening ratio (-nr)", "config", "%g", cfg->screen_nr);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "GFDIR (relativo al run dir)", "config",
+        "%s", cfg->gfdir_rel);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "GF_PATH (base de Green)", "config", "%s",
+        cfg->gf_dir);
     if (cfg->grid_search) {
-        row(rows, max, n, "grid search ts [s] (min paso max)", "config", "%g %g %g",
-            cfg->gs_ts_min, cfg->gs_ts_dt, cfg->gs_ts_max);
-        row(rows, max, n, "grid search ts (iteraciones)", "config", "%d", cfg->gs_ts_nit);
-        row(rows, max, n, "grid search xy (paso/Nx/Nopt)", "config", "%g %d %d",
-            cfg->gs_xy_dx, cfg->gs_xy_nx, cfg->gs_xy_nopt);
-        row(rows, max, n, "grid search xy (iteraciones)", "config", "%d", cfg->gs_xy_nit);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search ts [s] (min paso max)",
+            "config", "%g %g %g", cfg->gs_ts_min, cfg->gs_ts_dt, cfg->gs_ts_max);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search ts (iteraciones)",
+            "config", "%d", cfg->gs_ts_nit);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search xyz (dz/minz)", "config",
+            "%g / %g", cfg->gs_xyz_dz, cfg->gs_xyz_minz);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search xyz (paso/Nx/Nopt)",
+            "config", "%g %d %d", cfg->gs_xyz_dx, cfg->gs_xyz_nx,
+            cfg->gs_xyz_nopt);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search xyz (iteraciones)",
+            "config", "%d", cfg->gs_xyz_nit);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search xy (paso/Nx/Nopt)",
+            "config", "%g %d %d", cfg->gs_xy_dx, cfg->gs_xy_nx, cfg->gs_xy_nopt);
+        row(rows, max, n, CSNWPHASE_PF_NONE, "grid search xy (iteraciones)",
+            "config", "%d", cfg->gs_xy_nit);
     }
-    row(rows, max, n, "grid search (ts+xy)", "config", "%s",
+    row(rows, max, n, CSNWPHASE_PF_NONE, "grid search (ts+xyz+xy)", "config", "%s",
         cfg->grid_search ? "on" : "off");
-    row(rows, max, n, "WPHASE_HOME", "config", "%s", cfg->wphase_home);
-    row(rows, max, n, "timeout [s] / KeepTmp", "config", "%d / %d",
-        cfg->timeout_sec, cfg->keep_tmp);
-    row(rows, max, n, "pipeline", "csnwphase",
-        "decim->trim->resp->deconv->kernels->inv(-med,-th,-nr)->gridsearch");
+    row(rows, max, n, CSNWPHASE_PF_NONE, "WPHASE_HOME", "config", "%s",
+        cfg->wphase_home);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "timeout [s] / KeepTmp", "config",
+        "%d / %d", cfg->timeout_sec, cfg->keep_tmp);
+    row(rows, max, n, CSNWPHASE_PF_NONE, "pipeline", "csnwphase",
+        "decim->trim->resp->deconv->kernels->inv(-med,-th,-nr)->gs(xyz->xy)");
 
     return 0;
 }

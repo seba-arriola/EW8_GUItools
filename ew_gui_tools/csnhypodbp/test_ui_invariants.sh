@@ -82,7 +82,7 @@ ck  "preview: caja con clase propia"        'gtk_widget_add_css_class\(g_preview
 ck  "preview: siempre visible"              'gtk_widget_set_visible\(g_preview_box, TRUE\)' csnhypodbp_main.c
 ck  "preview: radios + cabecera + valores"    'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 2' csnhypodbp_main.c
 ck  "preview: radios en la fila 0"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], i, 0' csnhypodbp_main.c
-ck  "preview: 7 valores en la fila"         'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
+ck  "preview: 10 valores en la fila"        'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
 ck  "preview: cabeceras del nucleo puro"    'csnhypodbp_preview_headers'                  csnhypodbp_main.c
 ck  "preview: botones a la derecha"         'gtk_box_append\(GTK_BOX\(g_preview_box\), pc\)' csnhypodbp_main.c
 nck "preview: sin etiqueta de texto unica"  'g_preview_label'                             csnhypodbp_main.c
@@ -183,7 +183,9 @@ ck  "magnitudes: puntero segun zona"         'gtk_widget_set_cursor_from_name'  
 ck  "magnitudes: controlador de movimiento"  'G_CALLBACK\(on_mag_canvas_motion\)'          csnhypodbp_main.c
 ck  "calculate: boton en la barra"           'gtk_button_new_with_label\("calculate"\)'    csnhypodbp_main.c
 ck  "calculate all: boton en la barra"       'gtk_button_new_with_label\("calculate all"\)' csnhypodbp_main.c
-ck  "calculate: barra compacta"              'pango_attr_scale_new\(0.75\)'                csnhypodbp_main.c
+ck  "calculate: barra compacta al 60%"       'mag-bar-cell'                                csnhypodbp_main.c
+ck  "calculate: etiquetas de la barra al 60%" '\.mag-bar-label \{ font-size: 60%'          csnhypodbp_main.c
+nck "calculate: ya no compacta con Pango"    'pango_attr_scale_new'                        csnhypodbp_main.c
 ck  "calculate: no relocaliza"               'job->mags_only = mags_only;'                 csnhypodbp_gui.c
 ck  "calculate: corrida de magnitudes"       'csnhypodbp_mag_run\('                        csnhypodbp_gui.c
 ck  "calculate: mascara por magnitud"        'g_mag_calc_mask = 1u << g_mag_kind;'         csnhypodbp_gui.c
@@ -213,8 +215,14 @@ ck  "preferida: radios en el cuadro"         'g_preview_radio\[k\] = gtk_check_b
 ck  "preferida: radios en grupo (exclusivos)" 'gtk_check_button_set_group'                  csnhypodbp_main.c
 ck  "preferida: defecto con la regla de csnmags" 'csnhypodbp_mag_pref_default'              csnhypodbp_gui.c
 ck  "preferida: radio insensible sin valor"  'gtk_widget_set_sensitive\(GTK_WIDGET\(g_preview_radio' csnhypodbp_gui.c
-ck  "preferida: confirm la recibe"           'g_preview_pref_kind);'                        csnhypodbp_gui.c
+ck  "preferida: confirm la recibe"           'csnhypodbp_confirm_manual\(&g_preview_sol, &g_preview_mag, pref\);' csnhypodbp_gui.c
 ck  "preferida: se publican las 4 magnitudes" 'emit_mag_scnl'                               csnhypodbp_ws.c
+ck  "preferida: columna y radio Mww"         'CSNHYPODBP_PREVIEW_MWW_KIND'                 csnhypodbp_gui.c
+ck  "preferida: columna Mww del nucleo puro" '"Mww"'                                       csnhypodbp_preview.c
+ck  "preferida: el Mww sale de la inversion" 'csnhypodbp_mww_result_for'                   csnhypodbp_gui.c
+ck  "preferida: sin Mww de esa solucion -> guion" 'preview_mww_text'                        csnhypodbp_gui.c
+ck  "preferida: confirm guarda el mecanismo" 'csnhypodbp_mww_persist\(&g_preview_sol'       csnhypodbp_gui.c
+ck  "preferida: el fallo se muestra"         'csnhypodbp_mww_report\(0, err\)'             csnhypodbp_gui.c
 ck  "preferida: marca manual en algorithm"   'CSNMan'                                      csnhypodbp_ws.c
 ck  "preferida: 13.er token en la picada"    '%c M %c'                                     csnhypodbp_ws.c
 ck  "picking: ancla congelada (no la P ganadora)" 'g_win_ref_pick'                          csnhypodbp_gui.c
@@ -285,6 +293,19 @@ ck  "ventana: el panel Mww no infla el minimo"   'mww_scrolled\(g_mww\.grid, 90\
 ck  "ventana: idem para la salida del motor"     'mww_scrolled\(g_mww\.view, 90\)'    csnhypodbp_mww.c
 nck "ventana: sin size_request en mww_scrolled"  'gtk_widget_set_size_request\(sw, -1, h\)' csnhypodbp_mww.c
 ck  "ventana: la playera con suelo pequeno"      'gtk_widget_set_size_request\(vbox, 120, 120\)' csnhypodbp_mww.c
+# --- Panel Mww: tabla editable, resultados lado a lado, sin boton de guardado ---
+ck  "mww: la tabla es editable (celda por campo)" 'mww_cell_new'                             csnhypodbp_mww.c
+ck  "mww: campos editables de la libreria"        'CSNWPHASE_PF_MAGNITUDE'                   csnhypodbp_mww.c
+ck  "mww: overrides sobre la corrida"             'mww_over_apply'                           csnhypodbp_mww.c
+nck "mww: sin spin de semilla aparte"             'gtk_spin_button_new_with_range\(0\.0, 9\.9' csnhypodbp_mww.c
+nck "mww: sin boton Save to DB"                   'Save to DB'                               csnhypodbp_mww.c
+ck  "mww: resultados y salida con la misma altura" 'set_size_request\(row, -1, MWW_ROW_H\)'   csnhypodbp_mww.c
+ck  "mww: los parametros se llevan el alto"        'set_vexpand\(frame, TRUE\)'              csnhypodbp_mww.c
+ck  "mww: fuentes al 60% en resultados y salida"   '\.mww-summary \{ font-size: 60%'         csnhypodbp_main.c
+ck  "mww: persistencia al confirmar"               'int csnhypodbp_mww_persist'              csnhypodbp_mww.c
+ck  "mww: el origen se crea si falta"              'ewguidb_upsert_origin_if_absent'          csnhypodbp_mww.c
+ck  "mww: ids compartidos con hypodb"              'ewgui_origin_id'                          csnhypodbp_mww.c
+ck  "mww: la preferida del evento se actualiza"    'ewguidb_set_preferred'                    csnhypodbp_mww.c
 ck  "ventana: suelo pequeno del canvas de planta" '&plan_w, 160, 140'                 csnhypodbp_main.c
 ck  "ventana: suelo pequeno del canvas de perfil" '&prof_w, 160, 100'                 csnhypodbp_main.c
 nck "ventana: sin suelos de 300 px"              '&(plan|prof)_w, 300, [0-9]+'         csnhypodbp_main.c

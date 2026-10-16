@@ -47,8 +47,7 @@ static void test_defaults(void)
     assert(cfg.dmax_deg == 50.0);
     assert(cfg.min_magnitude == 6.0);
     assert(cfg.win_pre_sec == 300 && cfg.win_post_sec == 900);
-    assert(cfg.screen_th[0] == 5.0 && cfg.screen_th[1] == 3.0 &&
-           cfg.screen_th[2] == 1.0);
+    assert(cfg.screen_th == 2.0);
     assert(cfg.screen_nr == 2.0);
     assert(cfg.filt_order == 4 && cfg.filt_pass == 1);
     assert(cfg.idec2_preevent == 280.0 && cfg.idec2_fend == 0.1);
@@ -69,7 +68,7 @@ static void test_load(void)
     fprintf(f, "WphaseBin /tmp/wh/bin\n");
     fprintf(f, "GfDir /tmp/gf\n");
     fprintf(f, "Dmin 5.0\nDmax 90.0\n");
-    fprintf(f, "ScreenTh 6.0 4.0 2.0\n");
+    fprintf(f, "ScreenTh 1.5\n");
     fprintf(f, "Idec2 1 100  0.5\n");
     fprintf(f, "Idec3 0.002  0.2  50  0.05\n");
     fprintf(f, "WpWin 1. 20.0 10.0\n");
@@ -81,7 +80,7 @@ static void test_load(void)
     assert(strcmp(cfg.gf_dir, "/tmp/gf") == 0);
     assert(cfg.dmax_deg == 90.0);
     assert(cfg.dmin_deg == 5.0);            /* no tocado: default */
-    assert(cfg.screen_th[2] == 2.0);
+    assert(cfg.screen_th == 1.5);
     assert(cfg.idec2_idtr == 1.0 && cfg.idec2_preevent == 100.0 &&
            cfg.idec2_fend == 0.5);
     assert(cfg.idec3_fl == 0.002 && cfg.idec3_nf == 50 && cfg.idec3_tol == 0.05);
@@ -90,6 +89,34 @@ static void test_load(void)
     assert(cfg.keep_tmp == 0);              /* default */
     remove(path);
     printf("  load ok\n");
+}
+
+static void test_screen_th(void)
+{
+    const char *path = "/tmp/csnwphase_th.d";
+    CsnwphaseCfg cfg;
+    FILE *f;
+
+    /* Forma nueva: un solo valor. */
+    f = fopen(path, "w");
+    assert(f);
+    fprintf(f, "WphaseHome /tmp/wh\nWphaseBin /tmp/wh/bin\nGfDir /tmp/gf\n");
+    fprintf(f, "ScreenTh 2.0\n");
+    fclose(f);
+    assert(csnwphase_cfg_load(&cfg, path) == 0);
+    assert(cfg.screen_th == 2.0);
+
+    /* Forma vieja (tres valores, RUNA3r.csh): se usa el PRIMERO y se avisa. */
+    f = fopen(path, "w");
+    assert(f);
+    fprintf(f, "WphaseHome /tmp/wh\nWphaseBin /tmp/wh/bin\nGfDir /tmp/gf\n");
+    fprintf(f, "ScreenTh 5.0 3.0 1.0\n");
+    fclose(f);
+    assert(csnwphase_cfg_load(&cfg, path) == 0);
+    assert(cfg.screen_th == 5.0);
+
+    remove(path);
+    printf("  ScreenTh ok (1 valor; el formato de 3 usa el primero)\n");
 }
 
 static void test_gfdir_guard(void)
@@ -188,6 +215,7 @@ int main(void)
     printf("csnwphase: tests de configuracion\n");
     test_defaults();
     test_load();
+    test_screen_th();
     test_gfdir_guard();
     test_abi_and_selfcheck();
     printf("ALL CSNWPHASE CFG TESTS PASSED\n");

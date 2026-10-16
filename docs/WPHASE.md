@@ -34,8 +34,9 @@ en el código C del motor.
 | `StaFile`, `ResponseDir`, `ResponsePattern`, `ResponseInNm` | metadata y respuestas (`.pz`) |
 | `Dmin`, `Dmax`, `MinMagnitude` | cribado de estaciones y umbral de disparo |
 | `WinPre`, `WinPost` | ventana de ondas alrededor del origen |
-| `ScreenTh`, `ScreenNr` | screenings del motor (`RUNA3r.csh`: `5 3 1` y `2`) |
-| `GsTsMin`, `GsTsDt`, `GsTsMax`, `GsTsNit`, `GsXyDx`, `GsXyNx`, `GsXyNopt`, `GsXyNit` | **grid search del centroide** (`wpinversion_gs`); los `-ts` los derivaba el wrapper del CSN de la duración, aquí son visibles y editables |
+| `ScreenTh`, `ScreenNr` | screenings del motor: **un solo** `-th` y un `-nr` (`RUNA3r.csh` encadenaba `5 3 1`; aquí se pide **una sola corrida** con los dos flags juntos). Un `ScreenTh` con varios valores se acepta por compatibilidad: se usa el **primero** y se avisa por `stderr` |
+| `GsTsMin`, `GsTsDt`, `GsTsMax`, `GsTsNit`, `GsXyDx`, `GsXyNx`, `GsXyNopt`, `GsXyNit` | **pasada xy fina** del grid search del centroide (`wpinversion_gs`); los `-ts` los derivaba el wrapper del CSN de la duración, aquí son visibles y editables |
+| `GsXyzDz`, `GsXyzMinz`, `GsXyzDx`, `GsXyzNx`, `GsXyzNopt`, `GsXyzNit` | **pasada 3D** (lat/lon/prof) del grid search: `-dz`/`-minz` y la salida `grid_search_xyz_out`. Son los `DDEP`/`MINDEP`/`XYZ_*` del wrapper del CSN |
 | `GridSearch`, `TimeoutSec`, `KeepTmp`, `MaxConcurrent`, `Debug` | orquestación |
 | `Evname`, `SeedRef`, `CmtFile`, `GfdirRel`, `FiltOrder`, `FiltPass`, `Idec2`, `Idec3`, `WpWin` | valores de `i_master`, con los defaults del generador del CSN |
 
@@ -63,17 +64,33 @@ make -C ew_gui_tools/csnwphase check          # unitarios + tests contra los bin
 <rundir>/DATA_org/*.SAC + SAC_PZs_*           # trazas y respuestas
 <rundir>/run.log                              # salida del motor
 <rundir>/WCMTSOLUTION                        # solución tras el screening
-<rundir>/xy_WCMTSOLUTION                      # centroide (grid search, GridSearch 1)
+<rundir>/xyz_WCMTSOLUTION                    # solución 3D (grid search, GridSearch 1)
+<rundir>/xy_WCMTSOLUTION                     # centroide refinado (la que prefiere el parser)
 <rundir>/LOG/wpinversion*.log  LOG/gs_o_wpinversion.log
-<rundir>/gs_SYNTH/  grid_search_{ts,xy}_out  # sintéticos y grillas del grid search
+<rundir>/gs_SYNTH/  grid_search_{ts,xyz,xy}_out  # sintéticos y grillas del grid search
 <rundir>/full_output.txt                      # salida COMPLETA (lo que muestra la GUI)
 <rundir>/wphase.json                          # contrato estable para GUI y BD
 ```
 
-La secuencia de `run.sh` es la de `RUNA3r.csh`: `decim_one_sac_file_to_1sps` →
+La secuencia de `run.sh` sigue la de `RUNA3r.csh` (`decim_one_sac_file_to_1sps` →
 `trim_sac_files` → `make_resp_lookup_table` → `rec_dec_filt` → `prep_kernels` →
-`wpinversion -med` → screenings `-th 5 3 1` → screening `-nr 2` → `wpinversion_gs`
-(grid search del centroide, si `GridSearch 1`) ⇒ `xy_WCMTSOLUTION`.
+`wpinversion -med` ⇒ **una sola** corrida de screening con `-th` y `-nr` juntos) con **dos
+desviaciones deliberadas**:
+
+1. **screening en una sola ejecución** (antes: tres `-th 5 3 1` encadenadas más una `-nr`).
+   El motor aplica ambos flags en la misma corrida, en secuencia
+   (`wpinversion.c:100-103`: `screen_rms` y luego `screen_ratio` sobre la solución de `-med`),
+   y su log final es `LOG/wpinversion.log` — el que lee el parser cuando no hay grid search.
+2. **grid search 3D**, que replica el `--xyz` de `wp_grid_search.py` (python2, no se usa) con
+   **dos pasadas** de `wpinversion_gs`:
+   - pasada 3D: `-oxygsf grid_search_xyz_out -dz <GsXyzDz> -minz <GsXyzMinz>` (la profundidad
+     no tiene flag propio en el binario: entra por `-dz` en la misma pasada xy) ⇒ su solución
+     se copia a `xyz_WCMTSOLUTION`;
+   - pasada xy fina sobre esa solución (más las líneas ≥7 del CMT de referencia, si trae la
+     solución completa: el `addrefsol` del wrapper) con `-nots -oxygsf grid_search_xy_out` ⇒
+     `xy_WCMTSOLUTION`, el centroide que prefiere el parser.
+
+   Así `grid_search_xyz_out` deja de ser un nombre huérfano en la captura de `full_output.txt`.
 
 ## 5. Trampas (todas medidas en este repo)
 
@@ -121,21 +138,42 @@ La secuencia de `run.sh` es la de `RUNA3r.csh`: `decim_one_sac_file_to_1sps` →
 (`Estaciones` | `Mww`). El panel `Mww` trae:
 
 - la **tabla de parámetros** de la corrida (misma fuente que `i_master`: config, evento,
-  derivados y grid search) y la **magnitud semilla editable**: decide la banda del filtro y
-  la half-duration, se precarga con la de la solución elegida (o `MinMagnitude`) y **no**
-  bloquea `Calculate`;
+  derivados y grid search) **editable**: cada fila de un `CSNWPHASE_PF_*` lleva su widget
+  (spin numérico o entrada de texto para el t0) y lo que se edita se vuelca sobre la corrida
+  (`csnhypodbp_mww_over.c`), así que la tabla, el `i_master` y el `run.sh` siguen teniendo una
+  sola fuente. Son editables el **t0 (UTC)**, **lat**, **lon**, **profundidad**, **magnitud
+  semilla**, **ventana de ondas** (pre/post), **screening RMS** y **screening ratio**; la
+  **banda de inversión** es derivada de la magnitud (se recalcula al editarla) y el resto es
+  informativo. Al cambiar de solución elegida los ajustes se descartan. El t0 se aplica **solo**
+  si el texto es una fecha válida (la celda se marca en rojo si no lo es);
 - **`Calculate`** (corre `input_prep` + el motor en un hilo, con indicador de progreso) y
   **`Cancel`** (descarta el resultado en curso: el `TimeoutSec` acota la corrida);
 - el **resumen** (Mw, M0, centroide, planos nodales, estaciones usadas) con la
-  **playera** dibujada en cairo desde el tensor de la solución;
-- el **visor de la salida completa** del motor (`full_output.txt`); cualquier fallo
-  (preparación, ondas o motor) se muestra con su texto real en la línea de estado;
-- **`Save to DB`**: escribe en la BD **la solución que se está analizando** (sus
-  parámetros hipocentrales ya viven en `origin`: sólo se enlaza por su `origin_id`) más
-  lo que aporta la fase W, es decir la **magnitud** y el **mecanismo focal**. El
-  **centroide no se escribe** en `origin`.
+  **playera** dibujada en cairo desde el tensor de la solución, **al lado** del visor de la
+  salida completa del motor (`full_output.txt`) y ambos con la misma altura (`MWW_ROW_H`);
+  el alto sobrante es para la tabla de parámetros, que es lo que se ajusta antes de calcular.
+  Las fuentes de esas dos ventanas van al 60 %. Cualquier fallo (preparación, ondas o motor)
+  se muestra con su texto real en la línea de estado.
 
-En la BD quedan dos filas con la convención de ids de `hypodb_ids.c`:
+**El mecanismo focal se guarda al confirmar la solución, no con un botón aparte** (el
+`Save to DB` ya no existe). El preview del tope de la pestaña *Ondas* tiene **cinco** radios de
+magnitud preferida — `ML`, `Mwp`, `Mb`, `Ms` y **`Mww`** — más una columna `Mww` que muestra el
+valor de la inversión. El radio `Mww` solo se activa si hay **una corrida de fase W de la
+solución que se está confirmando** (mismo `qid` y `mod`; el panel no borra el resultado viejo al
+cambiar de selección, así que sin esa comprobación se le atribuiría a una solución el Mww de
+otra) y, al pulsar `Confirm` con él marcado, se guarda el mecanismo focal y la magnitud:
+
+- el **origen** es el de la **solución confirmada**, no el centroide de la inversión. El ARC
+  confirmado no pasa por ningún anillo, así que `hypodb_ingest` no escribe ese origen: si no
+  está en la base **se crea** (`event` + `origin`) con los ids de `ewgui/db_ids.h` — los mismos
+  del ingester — y si ya está **no se pisa** (`ewguidb_upsert_origin_if_absent`);
+- `Mww` **no** es un 5.º slot de magnitud de la GUI: no es una magnitud por estación con ventana
+  y puerta, así que no toca `nmag0..3` ni la tabla *Origins*;
+- `Mww` **tampoco viaja en el ARC**: `BMTYPI` es un solo carácter con `L`(ML)/`W`(Mwp)/`B`(Mb)/
+  `S`(Ms), así que la picada sale sin tipo preferido y la preferencia se marca en la base
+  (`ewguidb_set_preferred`). Ver `docs/pendienteMww.md`.
+
+En la BD quedan dos filas con la convención de ids de `ewgui/db_ids.h`:
 
 ```
 magnitude: <origin_id>/mag/Mww       type Mww, calculation_method WPHASE, station_count = n_used
@@ -143,8 +181,8 @@ tensor:    <origin_id>/tensor/WPHASE method WPHASE, mechanism WCMT,
            strike/dip/rake 1-2, m_rr..m_tp, scalar_moment
 ```
 
-`Mww` **no** es un 5.º slot de magnitud de la GUI: no es una magnitud por estación con
-ventana y puerta, así que no toca `nmag0..3` ni la tabla *Origins*.
+El resultado de la persistencia se muestra en la línea de estado del panel `Mww` (y un fallo
+queda además en el log del módulo con su texto real), porque el `Confirm` vive en otra pestaña.
 
 ## 7. Verificación
 
@@ -161,6 +199,11 @@ ventana y puerta, así que no toca `nmag0..3` ni la tabla *Origins*.
   centroide se desplaza a **-23.15, -67.76, 120.5 km** (shift 14 s) con los planos
   nodales `180.7/20.9/-78.7` y `348.7/69.5/-94.3`. El parser lo prefiere sobre
   `WCMTSOLUTION`.
+- **La pasada 3D (`-dz`/`-minz` → `grid_search_xyz_out`) y la pasada xy fina encadenada
+  están cubiertas por `tests/test_run_dry.sh`** (orden, `.xyz` intermedio, apéndice de la
+  referencia y `xyz_WCMTSOLUTION` en la captura), pero **no** por una corrida real en este
+  entorno: falta ejecutar el motor con `GsXyz*` y comprobar que `grid_search_xyz_out` se
+  escribe (y que su formato es el de xy + profundidad, el que lee `make_grids.py`).
 - `gui_check_mww.sh` valida el panel con AT-SPI contra el EarthWorm en marcha
   (`--dump` y `--shot` para calibrar/capturar). **En este entorno el puente AT-SPI no
   expone los módulos GTK4 y los clics sintéticos no llegan**, así que la revisión visual
@@ -168,9 +211,15 @@ ventana y puerta, así que no toca `nmag0..3` ni la tabla *Origins*.
 
 ## 8. Estado
 
-Sin pendientes funcionales de fase W: el grid search del centroide está integrado
-(`wpinversion_gs`; el wrapper del CSN `wp_grid_search.py` no se usa porque es python2) y
-el parser prefiere `xy_WCMTSOLUTION`.
+Sin pendientes funcionales de fase W: el screening es una sola corrida (`-th` + `-nr`), el
+grid search del centroide está integrado **en 3D** (pasada `-dz`/`-minz` → `grid_search_xyz_out`
+más pasada xy fina; el wrapper del CSN `wp_grid_search.py` no se usa porque es python2) y el
+parser prefiere `xy_WCMTSOLUTION`.
+
+Lo que **no** está cerrado es la integración del **`Mww` como magnitud de primera clase**:
+viaja en la BD (`magnitude.type = Mww`) pero no en el ARC, así que la única marca de
+preferencia es `ewguidb_set_preferred` y ningún otro módulo lo lee. Ver
+`docs/pendienteMww.md`.
 
 El único límite es de entorno: el motor y su base de funciones de Green (`GfDir`, ~21 GB)
 viven **fuera del repo**, así que en una máquina que no los tenga el panel lo reporta en su

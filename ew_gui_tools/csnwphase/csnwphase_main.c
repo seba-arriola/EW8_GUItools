@@ -44,7 +44,7 @@ static void print_config(const CsnwphaseCfg *c)
     printf("MinMagnitude %g\n", c->min_magnitude);
     printf("WinPre %d\n", c->win_pre_sec);
     printf("WinPost %d\n", c->win_post_sec);
-    printf("ScreenTh %g %g %g\n", c->screen_th[0], c->screen_th[1], c->screen_th[2]);
+    printf("ScreenTh %g\n", c->screen_th);
     printf("ScreenNr %g\n", c->screen_nr);
     printf("GridSearch %d\n", c->grid_search);
     printf("GsTsMin %g\n", c->gs_ts_min);
@@ -55,6 +55,12 @@ static void print_config(const CsnwphaseCfg *c)
     printf("GsXyNx %d\n", c->gs_xy_nx);
     printf("GsXyNopt %d\n", c->gs_xy_nopt);
     printf("GsXyNit %d\n", c->gs_xy_nit);
+    printf("GsXyzDz %g\n", c->gs_xyz_dz);
+    printf("GsXyzMinz %g\n", c->gs_xyz_minz);
+    printf("GsXyzDx %g\n", c->gs_xyz_dx);
+    printf("GsXyzNx %d\n", c->gs_xyz_nx);
+    printf("GsXyzNopt %d\n", c->gs_xyz_nopt);
+    printf("GsXyzNit %d\n", c->gs_xyz_nit);
     printf("TimeoutSec %d\n", c->timeout_sec);
     printf("KeepTmp %d\n", c->keep_tmp);
     printf("MaxConcurrent %d\n", c->max_concurrent);

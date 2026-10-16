@@ -33,9 +33,30 @@ chk_order '\$WBIN/rec_dec_filt'          "deconvolucion+filtrado"
 chk_order '\$WBIN/prep_kernels'          "kernels de las GF"
 chk_order 'wpinversion" -log'            "inversion con -med"
 chk_order 'wpinversion" -th'             "screening por RMS"
-chk_order 'wpinversion" -nr'             "screening por razon"
 chk_order 'wpinversion_gs" -imas'        "grid search del centroide"
+
+# Un solo screening: se elimino el bucle `for th in 5 3 1` del CSN y el RMS y la
+# razon van en la MISMA invocacion (el motor los aplica en secuencia).
+if grep -q 'for th in' "$D/run.sh"; then
+    echo "FALLO: sigue el bucle de screening -th"; fail=1
+fi
+ninv=$(grep -c '\$WBIN/wpinversion"' "$D/run.sh")
+[ "$ninv" -eq 2 ] || { echo "FALLO: se esperaban 2 corridas de wpinversion (-med y screening), hay $ninv"; fail=1; }
+grep -q '\-th .* -nr ' "$D/run.sh" || { echo "FALLO: -th y -nr no van en la misma corrida"; fail=1; }
+
+# Grid search 3D (xyz, replica de --xyz de wp_grid_search.py) y pasada xy fina
+# encadenada sobre la solucion 3D + la referencia.
+grep -q 'oxygsf grid_search_xyz_out' "$D/run.sh" || { echo "FALLO: falta la salida xyz del grid search"; fail=1; }
 grep -q 'xygsf grid_search_xy_out' "$D/run.sh" || { echo "FALLO: falta la salida xy del grid search"; fail=1; }
+grep -q '\-dz .* -minz ' "$D/run.sh" || { echo "FALLO: falta -dz/-minz (pasada 3D)"; fail=1; }
+nx=$(grep -n 'oxygsf grid_search_xyz_out' "$D/run.sh" | head -1 | cut -d: -f1)
+ny=$(grep -n 'oxygsf grid_search_xy_out'  "$D/run.sh" | head -1 | cut -d: -f1)
+if [ -z "$nx" ] || [ -z "$ny" ] || [ "$nx" -ge "$ny" ]; then
+    echo "FALLO: la pasada xyz debe ir antes de la xy fina"; fail=1
+fi
+grep -q 'tail -n +7' "$D/run.sh" || { echo "FALLO: falta el apendice de las lineas >=7 de la referencia"; fail=1; }
+grep -q 'icmtf _tmp_CMTSOLUTION.xyz' "$D/run.sh" || { echo "FALLO: la pasada xy no encadena la solucion 3D"; fail=1; }
+grep -q 'xyz_WCMTSOLUTION' "$D/run.sh" || { echo "FALLO: no se conserva la solucion 3D"; fail=1; }
 
 # El GFDIR del run dir no puede ser la base de Green (prep_kernels la borraria).
 grep -q 'GFDIR:   ./GF' "$D/i_master" || { echo "FALLO: GFDIR inesperado"; fail=1; }

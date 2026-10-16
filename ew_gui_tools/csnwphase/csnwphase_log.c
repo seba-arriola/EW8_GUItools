@@ -47,6 +47,7 @@ int csnwphase_log_write(const char *rundir, const char *path)
         "WCMTSOLUTION",
         "WCMTSOLUTION.noth",
         "xy_WCMTSOLUTION",
+        "xyz_WCMTSOLUTION",
         "ts_WCMTSOLUTION",
         "LOG/gs_o_wpinversion.log",
         "LOG/wpinversion.noth.log",

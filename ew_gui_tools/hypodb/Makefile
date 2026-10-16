@@ -14,7 +14,8 @@ EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
 
 LIB     = libhypodb.a
 LIBOBJS = hypodb_ids.o hypodb_config.o hypodb_ingest.o \
-          csnhypodbp_group.o csnhypodbp_magchan.o ewgui_config.o ewgui_db.o
+          csnhypodbp_group.o csnhypodbp_magchan.o ewgui_config.o ewgui_db.o \
+          ewgui_db_ids.o
 
 TESTS = test_ids test_group_events test_ingest_db test_mag_lines
 
@@ -36,7 +37,15 @@ ewgui_config.o: ../common/src/ewgui_config.c ../common/include/ewgui/config.h
 ewgui_db.o: ../common/src/ewgui_db.c ../common/include/ewgui/db.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-hypodb_ingest.o: hypodb_ingest.h hypodb_config.h hypodb_ids.h
+# IDs de las filas + metadatos del origen: común con la GUI (ewgui_db_ids.c). El
+# ingester y `csnhypodbp` son dos escritores de la misma base.
+ewgui_db_ids.o: ../common/src/ewgui_db_ids.c ../common/include/ewgui/db_ids.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+hypodb_ids.o: hypodb_ids.c hypodb_ids.h ../common/include/ewgui/db_ids.h
+
+hypodb_ingest.o: hypodb_ingest.h hypodb_config.h hypodb_ids.h \
+                 ../common/include/ewgui/db_ids.h
 
 hypodb_ingest: hypodb_ingest_main.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ hypodb_ingest_main.o $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)
@@ -45,8 +54,8 @@ hypodb_ingest: hypodb_ingest_main.o $(LIB)
 install: hypodb_ingest
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin hypodb_ingest
 
-test_ids: test_ids.c hypodb_ids.o
-	$(CC) $(CFLAGS) -o $@ test_ids.c hypodb_ids.o $(LIBS)
+test_ids: test_ids.c hypodb_ids.o ewgui_db_ids.o
+	$(CC) $(CFLAGS) -o $@ test_ids.c hypodb_ids.o ewgui_db_ids.o $(LIBS)
 
 test_group_events: test_group_events.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ test_group_events.c $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)

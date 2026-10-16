@@ -122,6 +122,9 @@ typedef struct {
 /* INSERT ... ON CONFLICT (PK) DO NOTHING. 0 si OK, -1 si error. */
 int ewguidb_upsert_event(EwGuiDb *db, const EwGuiEventRow *row);
 int ewguidb_upsert_origin(EwGuiDb *db, const EwGuiOriginRow *row);
+/* Igual pero sin pisar un origen ya existente (DO NOTHING): lo usa la GUI al
+ * confirmar (crea el origen que falta; si ya está, no lo toca). */
+int ewguidb_upsert_origin_if_absent(EwGuiDb *db, const EwGuiOriginRow *row);
 int ewguidb_upsert_magnitude(EwGuiDb *db, const EwGuiMagRow *row);
 /* Mecanismo focal + tensor de momento de un origen (fila de `tensor`). */
 int ewguidb_upsert_tensor(EwGuiDb *db, const EwGuiTensorRow *row);

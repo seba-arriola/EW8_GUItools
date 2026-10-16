@@ -60,6 +60,10 @@ int     g_ring_sync = 0;
 double  selected_otime = 0;
 double  selected_depth = 0;
 char    selected_id[32] = "None";
+/* `origin_id` de la BD del origen seleccionado (vacio si la fila aun no esta en
+ * la base, p.ej. un candidato recien localizado). Lo usa el panel `Mww` para
+ * engancharle su magnitud y su tensor al confirmar. */
+char    selected_origin_id[64] = "";
 double  g_pick_window_sec = 600.0;   /* PickCaptureWindowSec */
 char    g_pick_phase = 'P';          /* fase a picar en modo Repick */
 
@@ -1393,7 +1397,26 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             ".map-cap { font-size: 0.8em; font-weight: bold; padding: 1px 4px; }\n"
             /* Campos de fecha y hora del buscador: fuente un punto mas chica y
                ancho minimo para que "YYYY-MM-DD HH:MM:SS" entre completo. */
-            ".time-entry { font-size: 0.95em; min-width: 11em; }");
+            ".time-entry { font-size: 0.95em; min-width: 11em; }\n"
+            /* Panel `Mww`: la tabla de parametros es editable; los resultados y la
+               salida completa van al 60% para que quepan lado a lado. */
+            ".mww-param-name { font-size: 0.85em; }\n"
+            ".mww-param-src { font-size: 0.8em; color: alpha(@theme_fg_color, 0.7); }\n"
+            ".mww-param-value { font-weight: bold; }\n"
+            ".mww-param-cell { font-size: 0.85em; min-height: 0; padding: 0 2px; }\n"
+            ".mww-param-cell > text { min-height: 0; }\n"
+            ".mww-param-cell > button { min-width: 0; min-height: 0; padding: 0 1px; }\n"
+            ".mww-cell-bad { background-image: none; background-color: #fde7e7; }\n"
+            ".mww-summary { font-size: 60%; }\n"
+            ".mww-output { font-size: 60%; }\n"
+            /* Barra inferior de la pestaña *magnitudes*: las cajas de la puerta de
+               distancia y sus botones +/- al 60% (el resto de la barra no cambia).
+               En GTK4 el spin es `spinbutton > text` + `spinbutton > button`. */
+            ".mag-bar-cell { font-size: 60%; min-height: 0; padding: 0 1px; }\n"
+            ".mag-bar-cell > text { min-height: 0; }\n"
+            ".mag-bar-cell > button { min-width: 0; min-height: 0; padding: 0 1px;\n"
+            "    font-size: 60%; }\n"
+            ".mag-bar-label { font-size: 60%; }");
         gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
         css_done = TRUE;
     }
@@ -2137,22 +2160,22 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                              G_CALLBACK(on_mag_ov_changed), NULL);
             g_signal_connect(g_mag_ov_depth, "value-changed",
                              G_CALLBACK(on_mag_ov_changed), NULL);
-            /* Compacta la barra (~75%): asi caben tambien los dos botones nuevos
-               sin scroll horizontal. Los spins a 3 caracteres, las etiquetas al
-               75% (el ancho de la barra es lo que decide si todo entra). */
+            /* Compacta la barra al 60%: el usuario la vio demasiado grande (las
+               cajas de los overrides y sus botones +/-). Se hace con clases CSS
+               propias (`.mag-bar*`, ver la hoja del modulo) y NO con Pango, para
+               que el recorte del spin llegue tambien a sus subbotones. Los
+               checkboxes A/M/Teo y los botones reset/calculate NO se tocan. */
             {
                 GtkWidget *cw2;
 
+                gtk_widget_add_css_class(bar, "mag-bar");
                 for (cw2 = gtk_widget_get_first_child(bar); cw2;
                      cw2 = gtk_widget_get_next_sibling(cw2)) {
                     if (GTK_IS_SPIN_BUTTON(cw2)) {
                         gtk_editable_set_width_chars(GTK_EDITABLE(cw2), 3);
+                        gtk_widget_add_css_class(cw2, "mag-bar-cell");
                     } else if (GTK_IS_LABEL(cw2)) {
-                        PangoAttrList *al = pango_attr_list_new();
-
-                        pango_attr_list_insert(al, pango_attr_scale_new(0.75));
-                        gtk_label_set_attributes(GTK_LABEL(cw2), al);
-                        pango_attr_list_unref(al);
+                        gtk_widget_add_css_class(cw2, "mag-bar-label");
                     }
                 }
             }

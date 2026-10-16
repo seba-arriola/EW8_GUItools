@@ -13,6 +13,10 @@
  *
  * Todas devuelven 0 si OK, -1 si algún argumento es inválido o si el
  * resultado no cabe en `out` (garantiza <= 63 caracteres + NUL).
+ *
+ * La IMPLEMENTACIÓN es común (`ewgui/db_ids.h`) porque hay dos escritores de la
+ * base: este ingester y la GUI `csnhypodbp` (al confirmar una solución). Estas
+ * firmas se conservan como fachada del módulo para sus llamantes y tests.
  */
 
 /* event_id = "E<qid>-<yyyymmddhhmmss>". El sufijo (hora origen UTC) hace único

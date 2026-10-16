@@ -25,12 +25,19 @@
 
 #include "csnhypodbp.h"
 #include "csnhypodbp_mww.h"
+#include "csnhypodbp_mww_over.h"
 #include "csnhypodbp_mwwerr.h"
 #include "csnwphase.h"
 #include "ewgui/db.h"
+#include "ewgui/db_ids.h"
 #include "ewgui/view.h"
 
 #define MWW_PI 3.14159265358979323846
+
+/* Alto de la fila "resultados | salida completa": el mismo que tenia el bloque
+ * de resultados (playera 120x120 + margen). Es un valor FIJO, no un vexpand: el
+ * alto sobrante es para la tabla de parametros. */
+#define MWW_ROW_H 165
 
 /* Claves de csnhypodbp.d que usa este panel (definidas en csnhypodbp_main.c). */
 extern char MwwConfigFile[MAX_STR];
@@ -42,23 +49,22 @@ typedef struct {
     GtkWidget     *grid;       /* tabla de parametros (nombre|valor|fuente) */
     GtkWidget     *btn_calc;
     GtkWidget     *btn_cancel;
-    GtkWidget     *btn_save;   /* guarda en la BD: origen elegido + Mww + tensor */
-    GtkWidget     *seed;       /* GtkSpinButton: magnitud SEMILLA (banda + half-dur) */
-    GtkWidget     *seed_note;  /* de donde salio la semilla */
     GtkWidget     *spinner;
     GtkWidget     *status;
     GtkWidget     *summary;
     GtkWidget     *view;       /* visor de la salida completa */
     GtkTextBuffer *buf;
     EwGuiCanvas   *ball;
+    GtkWidget     *val_w[CSNWPHASE_MAX_PARAMS]; /* celda de valor de cada fila */
+    int            n_rows;
 
     /* estado */
     int            running;
     int            saved;      /* 0 = nada, 1 = guardado, -1 = fallo al guardar */
     char           save_msg[320];
-    double         seed_val;     /* semilla actual (la usa la corrida y la tabla) */
-    int            seed_syncing; /* evita recursion al sincronizar el spin */
-    long long      sig_seed;     /* firma de la semilla ya volcada a la tabla */
+    /* Overrides editados en la MISMA tabla (ver csnhypodbp_mww_over.h): la
+     * tabla, el i_master y el run.sh salen de la misma fuente. */
+    MwwOverrides   ov;
     char           last_err[256];/* error real del hilo (se muestra SIEMPRE) */
     int            abi_bad;      /* 1 = la libreria de fase W tiene otro layout */
     guint          tick_id;
@@ -68,6 +74,11 @@ typedef struct {
     CsnwphaseOut   out;
     int            have_out;
     unsigned       ver;        /* sube con cada resultado nuevo */
+    /* Identidad de la corrida vigente: si el usuario cambia de solucion en
+     * *Origins*, el resultado viejo NO se le atribuye (lo lee el preview). */
+    int            run_qid;
+    int            run_mod;
+    char           run_origin_id[64];
 
     /* firma de la solucion mostrada (para no reconstruir la tabla sin cambios) */
     long long      sig;
@@ -118,42 +129,86 @@ static double mww_selected_magnitude(void)
     return best;
 }
 
+static void mww_input_from_selection(CsnwphaseInput *in);
+
 /*
  * Magnitud SEMILLA: es la que el motor usa para elegir la banda del filtro y la
  * half-duration (no es una compuerta: sin ella la fase W tambien corre). Sale de
  * la solucion elegida y, si esa no trae ninguna, del default del .d
- * (MinMagnitude). El usuario puede editarla en el panel.
+ * (MinMagnitude); el usuario la edita en la PROPIA tabla de parametros.
  */
-static void mww_seed_reset(void)
-{
-    double m = mww_selected_magnitude();
-    const char *nota;
 
-    if (m <= 0.0) {
-        m = g_mww.have_cfg ? g_mww.cfg.min_magnitude : 6.0;
-        nota = "semilla: default de config (MinMagnitude)";
-    } else {
-        nota = "semilla: de la solución elegida";
-    }
-    g_mww.seed_val = m;
-    if (g_mww.seed) {
-        g_mww.seed_syncing = 1;
-        gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mww.seed), m);
-        g_mww.seed_syncing = 0;
-    }
-    if (g_mww.seed_note)
-        gtk_label_set_text(GTK_LABEL(g_mww.seed_note), nota);
+/*
+ * Config+hipocentro de la corrida: la solucion elegida (globals `selected_*`) y
+ * el .d, con los overrides de la tabla encima. Es la unica fuente de la tabla,
+ * del i_master y del run.sh.
+ */
+static void mww_run_config(CsnwphaseInput *in, CsnwphaseCfg *cfg)
+{
+    mww_input_from_selection(in);
+    *cfg = g_mww.cfg;
+    mww_over_apply(&g_mww.ov, in, cfg);
 }
 
-static void on_mww_seed_changed(GtkSpinButton *sp, gpointer data)
+/* Solucion nueva: la tabla vuelve a los valores de la solucion y del .d. */
+static void mww_over_reset(void)
 {
-    (void)data;
-    if (g_mww.seed_syncing)
+    CsnwphaseInput in;
+
+    mww_input_from_selection(&in);
+    mww_over_init(&in, &g_mww.cfg, &g_mww.ov);
+}
+
+/*
+ * La banda de inversion es lo UNICO derivado de la magnitud que se muestra: al
+ * editar la magnitud se recalcula su celda sin reconstruir la tabla (reconstruir
+ * dentro del callback destruiria el widget que se esta editando).
+ */
+static void mww_refresh_band(void)
+{
+    CsnwphaseInput in;
+    CsnwphaseCfg cfg;
+    CsnwphaseParamRow rows[CSNWPHASE_MAX_PARAMS];
+    int n = 0, i;
+
+    if (!g_mww.grid)
         return;
-    g_mww.seed_val = gtk_spin_button_get_value(sp);
-    if (g_mww.seed_note)
-        gtk_label_set_text(GTK_LABEL(g_mww.seed_note), "semilla: editada a mano");
-    csnhypodbp_mww_update();   /* recalcula la tabla: la banda depende de ella */
+    mww_run_config(&in, &cfg);
+    if (csnwphase_params_build(&cfg, &in, rows, CSNWPHASE_MAX_PARAMS, &n) != 0)
+        return;
+    for (i = 0; i < n && i < g_mww.n_rows; i++) {
+        if (strcmp(rows[i].name, "banda de inversion [Hz]") == 0 && g_mww.val_w[i])
+            gtk_label_set_text(GTK_LABEL(g_mww.val_w[i]), rows[i].value);
+    }
+}
+
+static void on_mww_cell_changed(GtkSpinButton *sp, gpointer data)
+{
+    int field = GPOINTER_TO_INT(data);
+    double v = gtk_spin_button_get_value(sp);
+
+    if (mww_over_set(&g_mww.ov, field, v) != 0)
+        return;
+    if (field == CSNWPHASE_PF_MAGNITUDE)
+        mww_refresh_band();
+    csnhypodbp_mww_update();
+}
+
+/* Celda del t0: se aplica SOLO si el texto es una fecha valida (misma regla que
+ * `mww_over_set_time`); si no, la celda se marca y la corrida sigue con la hora
+ * de la solucion (nunca un valor a medias). */
+static void on_mww_time_changed(GtkEditable *ed, gpointer data)
+{
+    const char *txt = gtk_editable_get_text(ed);
+    GtkWidget *w = GTK_WIDGET(ed);
+
+    (void)data;
+    if (mww_over_set_time(&g_mww.ov, txt) != 0) {
+        gtk_widget_add_css_class(w, "mww-cell-bad");
+        return;
+    }
+    gtk_widget_remove_css_class(w, "mww-cell-bad");
+    csnhypodbp_mww_update();
 }
 
 static void mww_input_from_selection(CsnwphaseInput *in)
@@ -176,8 +231,12 @@ static void mww_input_from_selection(CsnwphaseInput *in)
     in->latitude     = selected_lat;
     in->longitude    = selected_lon;
     in->depth_km     = selected_depth;
-    in->magnitude    = (g_mww.seed_val > 0.0) ? g_mww.seed_val
+    {
+        double m = mww_selected_magnitude();
+
+        in->magnitude = (m > 0.0) ? m
                       : (g_mww.have_cfg ? g_mww.cfg.min_magnitude : 6.0);
+    }
 
     if (selected_id[0])
         snprintf(in->event_id, sizeof in->event_id, "%s", selected_id);
@@ -371,33 +430,94 @@ static void mww_view_load(const char *path)
 /* Render unico                                                         */
 /* ------------------------------------------------------------------ */
 
+/*
+ * Celda de valor de una fila: etiqueta de solo lectura, o el widget editable del
+ * campo (`CSNWPHASE_PF_*`). El valor inicial sale de la MISMA tabla que se
+ * ejecuta (no de una copia aparte).
+ */
+static GtkWidget *mww_cell_new(const CsnwphaseParamRow *r)
+{
+    /* Rangos de los campos numericos editables (indice = CSNWPHASE_PF_*). */
+    static const struct { double lo, hi, step; int digits; } rng[] = {
+        [CSNWPHASE_PF_LAT]       = { -90.0,  90.0,   0.001, 4 },
+        [CSNWPHASE_PF_LON]       = { -180.0, 360.0,  0.001, 4 },
+        [CSNWPHASE_PF_DEPTH]     = { 0.0,    700.0,  1.0,   1 },
+        [CSNWPHASE_PF_MAGNITUDE] = { 0.0,    9.9,    0.1,   1 },
+        [CSNWPHASE_PF_WIN_PRE]   = { 0.0,    3600.0, 10.0,  0 },
+        [CSNWPHASE_PF_WIN_POST]  = { 0.0,    7200.0, 10.0,  0 },
+        [CSNWPHASE_PF_SCREEN_TH] = { 0.0,    50.0,   0.1,   1 },
+        [CSNWPHASE_PF_SCREEN_NR] = { 0.0,    50.0,   0.1,   2 },
+    };
+    GtkWidget *w;
+
+    if (r->field == CSNWPHASE_PF_NONE) {
+        w = gtk_label_new(r->value);
+        gtk_label_set_xalign(GTK_LABEL(w), 1.0f);
+        gtk_widget_add_css_class(w, "mww-param-value");
+        return w;
+    }
+
+    if (r->field == CSNWPHASE_PF_ORIGIN_TIME) {
+        w = gtk_entry_new();
+        gtk_editable_set_text(GTK_EDITABLE(w), r->value);
+        gtk_widget_set_hexpand(w, FALSE);
+        gtk_widget_set_tooltip_text(w, "t0 UTC de la inversión (el de la "
+            "solución elegida; editable antes de lanzar el cálculo)");
+        g_signal_connect(w, "changed", G_CALLBACK(on_mww_time_changed), NULL);
+        gtk_widget_add_css_class(w, "mww-param-cell");
+        return w;
+    }
+
+    if (r->field < 0 || r->field >= (int)(sizeof(rng) / sizeof(rng[0])))
+        return gtk_label_new(r->value);
+
+    w = gtk_spin_button_new_with_range(rng[r->field].lo, rng[r->field].hi,
+                                       rng[r->field].step);
+    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(w), rng[r->field].digits);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), strtod(r->value, NULL));
+    gtk_widget_add_css_class(w, "mww-param-cell");
+    /* Se conecta DESPUES de fijar el valor: si no, la propia precarga dispararia
+     * el callback y marcaria el campo como editado a mano. */
+    g_signal_connect(w, "value-changed", G_CALLBACK(on_mww_cell_changed),
+                     GINT_TO_POINTER(r->field));
+    return w;
+}
+
 static void mww_params_fill(void)
 {
     CsnwphaseInput in;
+    CsnwphaseCfg cfg;
     CsnwphaseParamRow rows[CSNWPHASE_MAX_PARAMS];
     int n = 0, i;
 
     mww_grid_clear(g_mww.grid);
+    g_mww.n_rows = 0;
+    for (i = 0; i < CSNWPHASE_MAX_PARAMS; i++)
+        g_mww.val_w[i] = NULL;
     if (!g_mww.have_cfg)
         return;
-    mww_input_from_selection(&in);
-    if (csnwphase_params_build(&g_mww.cfg, &in, rows, CSNWPHASE_MAX_PARAMS, &n) != 0 || n <= 0)
+    mww_run_config(&in, &cfg);
+    if (csnwphase_params_build(&cfg, &in, rows, CSNWPHASE_MAX_PARAMS, &n) != 0 || n <= 0)
         return;
 
     for (i = 0; i < n; i++) {
         GtkWidget *a = gtk_label_new(rows[i].name);
-        GtkWidget *b = gtk_label_new(rows[i].value);
+        GtkWidget *b = mww_cell_new(&rows[i]);
         GtkWidget *c = gtk_label_new(rows[i].source);
+
         gtk_label_set_xalign(GTK_LABEL(a), 0.0f);
-        gtk_label_set_xalign(GTK_LABEL(b), 1.0f);
         gtk_label_set_xalign(GTK_LABEL(c), 0.0f);
+        gtk_widget_set_valign(a, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(b, GTK_ALIGN_CENTER);
+        gtk_widget_set_valign(c, GTK_ALIGN_CENTER);
         gtk_widget_add_css_class(a, "mww-param-name");
-        gtk_widget_add_css_class(b, "mww-param-value");
         gtk_widget_add_css_class(c, "mww-param-src");
         gtk_grid_attach(GTK_GRID(g_mww.grid), a, 0, i, 1, 1);
         gtk_grid_attach(GTK_GRID(g_mww.grid), b, 1, i, 1, 1);
         gtk_grid_attach(GTK_GRID(g_mww.grid), c, 2, i, 1, 1);
+        g_mww.val_w[i] = b;
     }
+    g_mww.n_rows = n;
 }
 
 /*
@@ -424,22 +544,16 @@ void csnhypodbp_mww_update(void)
 {
     char txt[1200];
     long long sig = mww_signature();
-
     if (!g_mww.root)
         return;   /* el panel todavia no se construyo (seleccion previa) */
 
-    /* --- semilla y tabla de parametros --- */
+    /* --- tabla de parametros --- */
     {
-        long long ssig = (long long)llround(g_mww.seed_val * 100.0);
-
         if (sig != g_mww.sig) {
-            /* Solucion nueva: la semilla vuelve a la de la fila (o al default). */
+            /* Solucion nueva: la tabla vuelve a la solucion y al .d (se
+             * descartan los ajustes a mano, que son de la solucion anterior). */
             g_mww.sig = sig;
-            mww_seed_reset();
-            ssig = (long long)llround(g_mww.seed_val * 100.0);
-        }
-        if (sig != g_mww.sig || ssig != g_mww.sig_seed) {
-            g_mww.sig_seed = ssig;
+            mww_over_reset();
             mww_params_fill();
         }
     }
@@ -450,9 +564,6 @@ void csnhypodbp_mww_update(void)
                              !g_mww.running && g_mww.have_cfg && !g_mww.abi_bad
                              && selected_id[0] != '\0' && selected_otime > 0.0);
     gtk_widget_set_sensitive(g_mww.btn_cancel, g_mww.running);
-    gtk_widget_set_sensitive(g_mww.btn_save,
-                             !g_mww.running && g_mww.have_out && g_mww.out.ok
-                             && selected_id[0] != '\0' && csnhypodbp_db_ready());
     if (g_mww.running) {
         gtk_spinner_start(GTK_SPINNER(g_mww.spinner));
         gtk_widget_set_visible(g_mww.spinner, TRUE);
@@ -537,10 +648,36 @@ void csnhypodbp_mww_update(void)
     ewgui_canvas_queue_draw(g_mww.ball);
 }
 
+/*
+ * Resultado de la última inversión, si corresponde a la solución (qid, mod).
+ *
+ * El panel NO borra el resultado al cambiar de selección, así que hay que
+ * comprobar a qué solución pertenece: sin esto el preview le atribuiría a una
+ * solución el Mww calculado para otra. La identidad es (qid, mod) — el MISMO
+ * evento y el mismo localizador — porque la corrida se dispara desde la solución
+ * elegida y el candidato del `locate` es otra solución de ese evento (otra
+ * versión y otra hora de origen). NULL si no hay resultado o no es de esa
+ * solución.
+ */
+const CsnwphaseOut *csnhypodbp_mww_result_for(int qid, int mod)
+{
+    if (!g_mww.have_out || !g_mww.out.ok)
+        return NULL;
+    if (g_mww.run_qid != qid || g_mww.run_mod != mod)
+        return NULL;
+    return &g_mww.out;
+}
+
+void csnhypodbp_mww_report(int ok, const char *msg)
+{
+    g_mww.saved = ok ? 1 : -1;
+    snprintf(g_mww.save_msg, sizeof g_mww.save_msg, "%s", msg ? msg : "");
+    csnhypodbp_mww_update();
+}
+
 /* ------------------------------------------------------------------ */
 /* Hilo de trabajo                                                      */
 /* ------------------------------------------------------------------ */
-
 static gboolean mww_finish(gpointer data)
 {
     MwwJob *job = (MwwJob *)data;
@@ -661,9 +798,16 @@ static void on_mww_calculate(GtkButton *btn, gpointer data)
     snprintf(g_mww.log_path, sizeof g_mww.log_path, "%s/full_output.txt", g_mww.rundir);
 
     job = g_new0(MwwJob, 1);
-    job->cfg = g_mww.cfg;
-    mww_input_from_selection(&job->in);
+    /* Config + hipocentro con los overrides de la tabla: lo que se ve es lo que
+     * corre (la tabla se construye de la misma fuente). */
+    mww_run_config(&job->in, &job->cfg);
     snprintf(job->rundir, sizeof job->rundir, "%s", g_mww.rundir);
+    /* Identidad de esta corrida: el preview solo muestra/persiste su Mww si sigue
+     * correspondiendo a la solucion confirmada (mismo evento y localizador). */
+    g_mww.run_qid = selected_qid;
+    g_mww.run_mod = selected_mod;
+    snprintf(g_mww.run_origin_id, sizeof g_mww.run_origin_id, "%s",
+             selected_origin_id);
 
     g_mww.log_path[0] = '\0';
     snprintf(g_mww.log_path, sizeof g_mww.log_path, "%s/full_output.txt", g_mww.rundir);
@@ -699,69 +843,162 @@ static void on_mww_cancel(GtkButton *btn, gpointer data)
 }
 
 /*
- * `Save to DB`: guarda LA SOLUCION QUE SE ESTA ANALIZANDO (sus parametros
- * hipocentrales ya viven en `origin`, asi que solo se enlaza por su origin_id)
- * mas lo que aporta la inversion de fase W: la magnitud (Mww) y el mecanismo
- * focal. El centroide NO se escribe: el origen es el de la solucion elegida.
+ * Persistencia del resultado de la fase W sobre UNA solución: la magnitud (Mww)
+ * y el mecanismo focal (tensor). La llama el `Confirm` del cuadro de la
+ * candidata (`on_preview_confirm`): ya NO hay botón propio en el panel, porque el
+ * mecanismo se guarda al confirmar la solución (el usuario marca el radio `Mww`).
  *
- * Los ids siguen la convencion de hypodb_ids.c: `<origin_id>/mag/<tipo>` y
- * `<origin_id>/tensor/<metodo>`, para que un re-guardado sea idempotente.
+ * El origen es el de la SOLUCIÓN (no el centroide de la inversión). El ARC
+ * confirmado no pasa por ningún anillo, así que hypodb no escribe ese origen: si
+ * no está en la base se CREA (evento + origen) con los ids de `ewgui/db_ids.h` —
+ * los mismos que usa el ingester, así que un re-guardado o el propio ingester
+ * caen en la MISMA fila. Si el origen ya existe no se pisa (solo se le añaden la
+ * magnitud y el tensor).
+ *
+ * Idempotente: `<origin_id>/mag/Mww` y `<origin_id>/tensor/WPHASE`.
  */
-static void on_mww_save(GtkButton *btn, gpointer data)
+static int mww_perr(char *err, size_t errlen, const char *msg)
+{
+    if (err && errlen)
+        snprintf(err, errlen, "%s", msg);
+    return -1;
+}
+
+/*
+ * Copia acotada con precision explicita: el destino tiene el mismo tamano que la
+ * fuente (ids de 64), asi que `snprintf(dst, n, "%s", src)` dispara el aviso de
+ * truncado de gcc aunque los ids nunca lo hagan (las funciones de `db_ids`
+ * devuelven -1 si no caben).
+ */
+static void mww_copy(char *dst, size_t n, const char *src)
+{
+    if (!dst || n == 0)
+        return;
+    snprintf(dst, n, "%.*s", (int)(n - 1), src ? src : "");
+}
+
+/*
+ * Ids de BD de una solución. Si la solución es la elegida en *Origins* y esa fila
+ * ya trae su `origin_id` (vino del historial), se usa ESE; si no (candidata recién
+ * localizada, o el ARC confirmado), se derivan del qid + hora UTC + mod.
+ */
+static int mww_db_ids(const CsnhypodbpSolution *sol, char *oid, size_t no,
+                      char *eid, size_t ne)
+{
+    char qid[24];
+
+    if (!sol || !oid || !eid || no == 0 || ne == 0)
+        return -1;
+
+    if (selected_origin_id[0] && sol->qid == selected_qid &&
+        sol->mod == selected_mod && sol->version == selected_version) {
+        const char *colon = strrchr(selected_origin_id, ':');
+        size_t len;
+
+        if (!colon)
+            return -1;
+        len = (size_t)(colon - selected_origin_id);
+        if (len == 0 || len + 1 > ne)
+            return -1;
+        memcpy(eid, selected_origin_id, len);
+        eid[len] = '\0';
+        snprintf(oid, no, "%s", selected_origin_id);
+        return 0;
+    }
+
+    snprintf(qid, sizeof qid, "%d", sol->qid);
+    if (ewgui_event_id(eid, ne, qid, sol->otime) != 0)
+        return -1;
+    return ewgui_origin_id(oid, no, eid, sol->mod);
+}
+
+int csnhypodbp_mww_persist(const CsnhypodbpSolution *sol, const CsnwphaseOut *out,
+                           char *err, size_t errlen)
 {
     EwGuiDb *db = csnhypodbp_db();
+    EwGuiEventRow ev;
+    EwGuiOriginRow ori;
     EwGuiMagRow mag;
     EwGuiTensorRow ten;
-    char mid[64], tid[64];
+    char eid[64] = "", oid[64] = "", mid[128], tid[128];
 
-    (void)btn;
-    (void)data;
-    if (!db || !g_mww.have_out || !g_mww.out.ok || !selected_id[0]) {
-        g_mww.saved = -1;
-        snprintf(g_mww.save_msg, sizeof g_mww.save_msg,
-                 "Save to DB: falta la BD o no hay solucion");
-        csnhypodbp_mww_update();
-        return;
-    }
+    if (err && errlen)
+        err[0] = '\0';
+    if (!db || !csnhypodbp_db_ready())
+        return mww_perr(err, errlen, "no hay conexion con la base hipocentral");
+    if (!sol || !out || !out->ok)
+        return mww_perr(err, errlen, "sin resultado de la inversion de fase W");
+    if (mww_db_ids(sol, oid, sizeof oid, eid, sizeof eid) != 0)
+        return mww_perr(err, errlen, "no se pudieron componer los ids del origen");
+    if (ewgui_magnitude_id(mid, sizeof mid, oid, "Mww") != 0 ||
+        ewgui_tensor_id(tid, sizeof tid, oid, "WPHASE") != 0)
+        return mww_perr(err, errlen, "id de magnitud/tensor demasiado largo");
 
+    /* 1. evento + origen (solo si faltan). */
+    memset(&ev, 0, sizeof ev);
+    mww_copy(ev.event_id, sizeof ev.event_id, eid);
+    snprintf(ev.event_type, sizeof ev.event_type, "EARTHQUAKE");
+    if (ewguidb_upsert_event(db, &ev) != 0)
+        return mww_perr(err, errlen, ewguidb_last_error(db));
+
+    memset(&ori, 0, sizeof ori);
+    mww_copy(ori.origin_id, sizeof ori.origin_id, oid);
+    mww_copy(ori.event_id, sizeof ori.event_id, eid);
+    ewgui_epoch_to_iso(sol->otime, ori.origin_time, sizeof ori.origin_time);
+    ori.latitude = sol->lat;
+    ori.longitude = sol->lon;
+    ori.depth = sol->depth;
+    snprintf(ori.author, sizeof ori.author, "%s", "csnhypodbp");
+    snprintf(ori.software, sizeof ori.software, "%s", ewgui_software());
+    snprintf(ori.location_algorithm, sizeof ori.location_algorithm, "%s",
+             ewgui_mod_algorithm(sol->mod));
+    ori.azimuthal_gap = (sol->gap > 0) ? (double)sol->gap : NAN;
+    ori.station_count = sol->nph;
+    ori.standard_error = (sol->rms > 0.0) ? sol->rms : NAN;
+    /* Confirmada a mano => REVIEWED (mismo criterio que hypodb con el ARC manual). */
+    snprintf(ori.status, sizeof ori.status, "%s", ewgui_mod_status(sol->mod, 1));
+    if (ewguidb_upsert_origin_if_absent(db, &ori) != 0)
+        return mww_perr(err, errlen, ewguidb_last_error(db));
+
+    /* 2. lo que aporta la fase W: magnitud y mecanismo focal. */
     memset(&mag, 0, sizeof mag);
-    memset(&ten, 0, sizeof ten);
-    snprintf(mid, sizeof mid, "%s/mag/Mww", selected_id);
-    snprintf(tid, sizeof tid, "%s/tensor/WPHASE", selected_id);
-
-    snprintf(mag.magnitude_id, sizeof mag.magnitude_id, "%s", mid);
-    snprintf(mag.origin_id, sizeof mag.origin_id, "%s", selected_id);
-    mag.magnitude_value = g_mww.out.mw;
-    snprintf(mag.magnitude_type, sizeof mag.magnitude_type, "Mww");
+    mww_copy(mag.magnitude_id, sizeof mag.magnitude_id, mid);
+    mww_copy(mag.origin_id, sizeof mag.origin_id, oid);
+    mag.magnitude_value = out->mw;
+    snprintf(mag.magnitude_type, sizeof mag.magnitude_type, "%s", "Mww");
     mag.mag_uncertainty = NAN;
-    snprintf(mag.calculation_method, sizeof mag.calculation_method, "WPHASE");
-    mag.station_count = g_mww.out.n_used;
+    snprintf(mag.calculation_method, sizeof mag.calculation_method, "%s", "WPHASE");
+    mag.station_count = out->n_used;
 
-    snprintf(ten.tensor_id, sizeof ten.tensor_id, "%s", tid);
-    snprintf(ten.origin_id, sizeof ten.origin_id, "%s", selected_id);
-    snprintf(ten.method, sizeof ten.method, "WPHASE");
-    snprintf(ten.mechanism, sizeof ten.mechanism, "WCMT");
-    ten.have_planes = g_mww.out.have_planes;
-    ten.strike1 = g_mww.out.strike1; ten.dip1 = g_mww.out.dip1;
-    ten.rake1   = g_mww.out.rake1;
-    ten.strike2 = g_mww.out.strike2; ten.dip2 = g_mww.out.dip2;
-    ten.rake2   = g_mww.out.rake2;
-    ten.m_rr = g_mww.out.m_rr; ten.m_tt = g_mww.out.m_tt;
-    ten.m_pp = g_mww.out.m_pp; ten.m_rt = g_mww.out.m_rt;
-    ten.m_rp = g_mww.out.m_rp; ten.m_tp = g_mww.out.m_tp;
-    ten.scalar_moment = g_mww.out.m0;
+    memset(&ten, 0, sizeof ten);
+    mww_copy(ten.tensor_id, sizeof ten.tensor_id, tid);
+    mww_copy(ten.origin_id, sizeof ten.origin_id, oid);
+    snprintf(ten.method, sizeof ten.method, "%s", "WPHASE");
+    snprintf(ten.mechanism, sizeof ten.mechanism, "%s", "WCMT");
+    ten.have_planes = out->have_planes;
+    ten.strike1 = out->strike1;
+    ten.dip1 = out->dip1;
+    ten.rake1 = out->rake1;
+    ten.strike2 = out->strike2;
+    ten.dip2 = out->dip2;
+    ten.rake2 = out->rake2;
+    ten.m_rr = out->m_rr;
+    ten.m_tt = out->m_tt;
+    ten.m_pp = out->m_pp;
+    ten.m_rt = out->m_rt;
+    ten.m_rp = out->m_rp;
+    ten.m_tp = out->m_tp;
+    ten.scalar_moment = out->m0;
 
     if (ewguidb_upsert_magnitude(db, &mag) != 0 ||
-        ewguidb_upsert_tensor(db, &ten) != 0) {
-        g_mww.saved = -1;
-        snprintf(g_mww.save_msg, sizeof g_mww.save_msg,
-                 "Save to DB: FALLO (%s)", ewguidb_last_error(db));
-    } else {
-        g_mww.saved = 1;
-        snprintf(g_mww.save_msg, sizeof g_mww.save_msg,
-                 "Guardado en la BD: %s (Mw %.2f) + %s", mid, g_mww.out.mw, tid);
-    }
-    csnhypodbp_mww_update();
+        ewguidb_upsert_tensor(db, &ten) != 0)
+        return mww_perr(err, errlen, ewguidb_last_error(db));
+
+    /* 3. la solución confirmada pasa a ser la preferida del evento, con su Mww. */
+    if (ewguidb_set_preferred(db, eid, oid, mid) != 0)
+        return mww_perr(err, errlen, ewguidb_last_error(db));
+
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -814,42 +1051,23 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_grid_set_row_spacing(GTK_GRID(g_mww.grid), 2);
     frame = gtk_frame_new("Parámetros de la inversión de fase W");
     gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.grid, 90));
+    /* La tabla es lo que el usuario ajusta antes de calcular: se lleva el alto
+     * sobrante (los resultados y la salida tienen alto fijo, ver MWW_ROW_H). */
+    gtk_widget_set_vexpand(frame, TRUE);
     gtk_box_append(GTK_BOX(root), frame);
 
-    /* 2. semilla de magnitud: decide la banda del filtro y la half-duration */
-    hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-    gtk_box_append(GTK_BOX(hb), gtk_label_new("magnitud semilla (M):"));
-    g_mww.seed = gtk_spin_button_new_with_range(0.0, 9.9, 0.1);
-    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mww.seed), 1);
-    gtk_widget_set_tooltip_text(g_mww.seed,
-        "El motor NO la usa como umbral: la usa para elegir la banda del filtro y "
-        "la half-duration. Se precarga con la magnitud de la solución elegida (o "
-        "MinMagnitude del .d) y se puede ajustar a mano.");
-    g_signal_connect(g_mww.seed, "value-changed", G_CALLBACK(on_mww_seed_changed), NULL);
-    g_mww.seed_note = gtk_label_new("");
-    gtk_widget_add_css_class(g_mww.seed_note, "mww-seed-note");
-    gtk_box_append(GTK_BOX(hb), g_mww.seed);
-    gtk_box_append(GTK_BOX(hb), g_mww.seed_note);
-    gtk_box_append(GTK_BOX(root), hb);
-
-    /* 3. barra: Calculate / Cancel / estado */
+    /* 2. barra: Calculate / Cancel / estado */
     hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
     g_mww.btn_calc = gtk_button_new_with_label("Calculate");
     gtk_widget_add_css_class(g_mww.btn_calc, "suggested-action");
     gtk_widget_set_tooltip_text(g_mww.btn_calc,
         "Prepara y corre la inversión de fase W de la solución elegida "
-        "(ondas del store/SDS + motor eost/wphase)");
+        "(ondas del store/SDS + motor eost/wphase) con los parámetros de la tabla");
     g_signal_connect(g_mww.btn_calc, "clicked", G_CALLBACK(on_mww_calculate), NULL);
     g_mww.btn_cancel = gtk_button_new_with_label("Cancel");
     gtk_widget_set_tooltip_text(g_mww.btn_cancel,
         "Descarta el resultado de la corrida en curso");
     g_signal_connect(g_mww.btn_cancel, "clicked", G_CALLBACK(on_mww_cancel), NULL);
-    g_mww.btn_save = gtk_button_new_with_label("Save to DB");
-    gtk_widget_set_tooltip_text(g_mww.btn_save,
-        "Guarda la solución analizada (sus parámetros hipocentrales) con la "
-        "magnitud Mww y el mecanismo focal de la fase W. El origen es el de la "
-        "solución elegida, no el centroide de la inversión");
-    g_signal_connect(g_mww.btn_save, "clicked", G_CALLBACK(on_mww_save), NULL);
     g_mww.spinner = gtk_spinner_new();
     gtk_widget_set_visible(g_mww.spinner, FALSE);
     g_mww.status = gtk_label_new("");
@@ -859,13 +1077,17 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_widget_add_css_class(g_mww.status, "mww-status");
     gtk_box_append(GTK_BOX(hb), g_mww.btn_calc);
     gtk_box_append(GTK_BOX(hb), g_mww.btn_cancel);
-    gtk_box_append(GTK_BOX(hb), g_mww.btn_save);
     gtk_box_append(GTK_BOX(hb), g_mww.spinner);
     gtk_box_append(GTK_BOX(hb), g_mww.status);
     gtk_box_append(GTK_BOX(root), hb);
 
-    /* 4. resumen + playera */
+    /* 3. resultados (resumen + playera) y salida completa, UNO AL LADO DEL OTRO y
+     *    con la misma altura: el alto sobrante se lo lleva la tabla de parametros
+     *    (es lo que el usuario modifica antes de lanzar el calculo). */
     row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_widget_set_size_request(row, -1, MWW_ROW_H);
+    gtk_widget_set_vexpand(row, FALSE);
+
     g_mww.summary = gtk_label_new("sin resultado");
     gtk_label_set_xalign(GTK_LABEL(g_mww.summary), 0.0f);
     gtk_label_set_wrap(GTK_LABEL(g_mww.summary), TRUE);
@@ -879,13 +1101,15 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     vbox = ewgui_canvas_widget(g_mww.ball);
     /* Suelo pequeno (ver mww_scrolled): 120 px bastan para leer la playera. */
     gtk_widget_set_size_request(vbox, 120, 120);
-    frame = gtk_frame_new("Mecanismo focal (WCMT)");
-    gtk_frame_set_child(GTK_FRAME(frame), vbox);
-    gtk_box_append(GTK_BOX(row), g_mww.summary);
-    gtk_box_append(GTK_BOX(row), frame);
-    gtk_box_append(GTK_BOX(root), row);
 
-    /* 5. visor de la salida completa */
+    hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    gtk_box_append(GTK_BOX(hb), g_mww.summary);
+    gtk_box_append(GTK_BOX(hb), vbox);
+    frame = gtk_frame_new("Resultados de la inversión (WCMT)");
+    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(hb, 90));
+    gtk_widget_set_hexpand(frame, TRUE);
+    gtk_box_append(GTK_BOX(row), frame);
+
     g_mww.view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(g_mww.view), FALSE);
     gtk_text_view_set_monospace(GTK_TEXT_VIEW(g_mww.view), TRUE);
@@ -894,12 +1118,13 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     g_mww.buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_mww.view));
     frame = gtk_frame_new("Salida completa del motor (fase W)");
     gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.view, 90));
-    gtk_widget_set_vexpand(frame, TRUE);
-    gtk_box_append(GTK_BOX(root), frame);
+    gtk_widget_set_hexpand(frame, TRUE);
+    gtk_box_append(GTK_BOX(row), frame);
+
+    gtk_box_append(GTK_BOX(root), row);
 
     g_mww.root = root;
     mww_view_load(NULL);
-    mww_seed_reset();
     csnhypodbp_mww_update();
     return root;
 }

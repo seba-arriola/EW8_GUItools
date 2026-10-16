@@ -28,7 +28,7 @@ sólo magnitudes a `HYPO_RING_REF` (`algorithm="CSNMan"`, `:1679`) y picks a `PI
   autoría sólo en `pick.pick_status`/`status`.
 
 ### P2 = D4 · La versión de la solución no sobrevive al viaje por la BD
-`origin_id = <event>:<mod>` (`hypodb_ids.c:22`) y el UPSERT pisa; `Ver` en historial es la
+`origin_id = <event>:<mod>` (`ewgui/db_ids.c:38`) y el UPSERT pisa; `Ver` en historial es la
 constante `"0"` (`csnhypodbp_ws.c:716,752`), así que la columna `Ver` de *Origins* miente.
 
 - Opciones: (a) columna `version` en `origin` (toca `db/schema.sql`, que es copia literal de

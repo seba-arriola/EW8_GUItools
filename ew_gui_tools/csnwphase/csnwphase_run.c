@@ -18,9 +18,14 @@
  * ni csh ni python2 son necesarios) y salta `extract.csh`/rdseed porque
  * DATA_org ya se llena desde el SDS/store.
  *
- * El grid search del centroide lo hace `wpinversion_gs` (el wrapper del CSN,
- * `wp_grid_search.py`, es python2 y no se usa): deja `xy_WCMTSOLUTION`, que es
- * el archivo que este modulo prefiere al parsear.
+ * Dos desviaciones deliberadas de `RUNA3r.csh`:
+ *   - el screening es UNA sola ejecucion con `-th` y `-nr` juntos (el usuario
+ *     pidio un unico valor de RMS y una sola corrida), en vez de tres pasadas
+ *     `-th 5 3 1` encadenadas mas una `-nr`;
+ *   - el grid search del centroide replica el `--xyz` de `wp_grid_search.py`
+ *     (3D lat/lon/prof) llamando a `wpinversion_gs` con `-dz`/`-minz` y
+ *     nombrando su salida `grid_search_xyz_out`, mas una pasada xy fina que
+ *     deja `xy_WCMTSOLUTION` (el archivo que este modulo prefiere al parsear).
  */
 
 /* El `mkdir -p` vive en csnwphase_mkdir_p() (prep.c): lo comparten el run dir y
@@ -223,44 +228,57 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
     fprintf(f, "run \"$WBIN/rec_dec_filt\" coeffs_rec_lut i_master scr_dat_fil_list dec_bp_dat_fil_list\n");
     fprintf(f, "run \"$WBIN/prep_kernels\" scr_dat_fil_list l\n");
     fprintf(f, "run_out i_wpinversion cut -d' ' -f1 dec_bp_dat_fil_list\n");
-    fprintf(f, "\n# 6. inversion: screening de mediana y luego por RMS\n");
+    fprintf(f, "\n# 6. inversion base: screening de mediana (pre-screening)\n");
     fprintf(f, "run \"$WBIN/wpinversion\" -log LOG/wpinversion.noth.log -osyndir SYNTH \\\n");
     fprintf(f, "  -pdata fort.15.noth -med\n");
     fprintf(f, "cp -f o_wpinversion o_wpinv\n");
     fprintf(f, "cp -f WCMTSOLUTION WCMTSOLUTION.noth 2>/dev/null || true\n");
     fprintf(f, "cp -f p_wpinversion p_wpinversion.noth 2>/dev/null || true\n");
-    fprintf(f, "for th in %g %g %g; do\n", cfg->screen_th[0], cfg->screen_th[1],
-            cfg->screen_th[2]);
-    fprintf(f, "  run \"$WBIN/wpinversion\" -th $th -ifil o_wpinversion -ofil o_wpinv.th_$th \\\n");
-    fprintf(f, "    -log LOG/wpinversion.th_$th.log -osyndir SYNTH -pdata fort.15.th_$th \\\n");
-    fprintf(f, "    -ocmtf WCMTSOLUTION.th_$th -old\n");
-    fprintf(f, "  cp -f o_wpinv.th_$th o_wpinversion\n");
-    fprintf(f, "done\n");
-    fprintf(f, "\n# 7. screening por razon de amplitudes\n");
-    fprintf(f, "run \"$WBIN/wpinversion\" -nr %g -ifil o_wpinversion -ofil o_wpinv.r_%g \\\n",
-            cfg->screen_nr, cfg->screen_nr);
-    fprintf(f, "  -log LOG/wpinversion.r_%g.log -osyndir SYNTH -pdata fort.15.r_%g \\\n",
-            cfg->screen_nr, cfg->screen_nr);
-    fprintf(f, "  -ocmtf WCMTSOLUTION.r_%g -old\n", cfg->screen_nr);
-    fprintf(f, "cp -f o_wpinv.r_%g o_wpinversion\n", cfg->screen_nr);
-    fprintf(f, "cp -f WCMTSOLUTION.r_%g WCMTSOLUTION 2>/dev/null || true\n",
-            cfg->screen_nr);
-    fprintf(f, "cp -f p_wpinversion.r_%g p_wpinversion 2>/dev/null || true\n",
-            cfg->screen_nr);
+    fprintf(f, "\n# 7. screening: UNA sola ejecucion con -th y -nr juntos (el motor aplica\n");
+    fprintf(f, "#    ambos en secuencia sobre la misma corrida: screen_rms y luego\n");
+    fprintf(f, "#    screen_ratio, wpinversion.c:100-103). Antes eran cuatro corridas\n");
+    fprintf(f, "#    encadenadas (tres -th 5 3 1 y una -nr) como en RUNA3r.csh:34-53.\n");
+    fprintf(f, "#    El log final es LOG/wpinversion.log: es el que lee el parser como\n");
+    fprintf(f, "#    ultimo recurso cuando no hay grid search.\n");
+    fprintf(f, "run \"$WBIN/wpinversion\" -th %g -nr %g -ifil o_wpinversion \\\n",
+            cfg->screen_th, cfg->screen_nr);
+    fprintf(f, "  -ofil o_wpinv.screen -log LOG/wpinversion.log -osyndir SYNTH \\\n");
+    fprintf(f, "  -pdata fort.15.screen -ocmtf WCMTSOLUTION.screen -old\n");
+    fprintf(f, "cp -f o_wpinv.screen o_wpinversion\n");
+    fprintf(f, "cp -f WCMTSOLUTION.screen WCMTSOLUTION 2>/dev/null || true\n");
+    fprintf(f, "cp -f p_wpinversion.screen p_wpinversion 2>/dev/null || true\n");
     if (cfg->grid_search) {
-        /* El wrapper del CSN (wp_grid_search.py) es python2 y no se usa: se llama
-         * al binario. Los `-ts` salen del .d (el wrapper los derivaba de la
-         * duracion; aqui son visibles y editables). Salidas: `xy_WCMTSOLUTION`
-         * (la que prefiere el parser), `LOG/gs_o_wpinversion.log` y `gs_SYNTH/`. */
-        fprintf(f, "\n# 8. grid search del centroide (wpinversion_gs)\n");
+        /* Dos pasadas, como el `--xyz` de wp_grid_search.py (python2, no se usa):
+         *   1) 3D lat/lon/prof: la profundidad entra en la MISMA pasada xy con
+         *      `-dz`/`-minz` (el binario no tiene flag de xyz propio) y su grilla
+         *      sale por `-oxygsf grid_search_xyz_out`;
+         *   2) xy fina (sin ts) sobre la solucion 3D + la referencia, que deja
+         *      `grid_search_xy_out` y la solucion final `xy_WCMTSOLUTION`.
+         * `xyz_WCMTSOLUTION` conserva la solucion 3D (el wrapper la borraba) para
+         * que quede en la captura del log. */
+        fprintf(f, "\n# 8. grid search 3D del centroide (wpinversion_gs; replica de --xyz)\n");
         fprintf(f, "mkdir -p gs_SYNTH\n");
         fprintf(f, "run \"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
         fprintf(f, "  -icmtf %s -log LOG/gs_o_wpinversion.log -osyndir gs_SYNTH \\\n",
                 cfg->cmtfile);
         fprintf(f, "  -ts %g %g %g -ts_Nit %d -otsgsf grid_search_ts_out \\\n",
                 cfg->gs_ts_min, cfg->gs_ts_dt, cfg->gs_ts_max, cfg->gs_ts_nit);
-        fprintf(f, "  -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xy_out\n",
+        fprintf(f, "  -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xyz_out \\\n",
+                cfg->gs_xyz_nit, cfg->gs_xyz_dx, cfg->gs_xyz_nx, cfg->gs_xyz_nopt);
+        fprintf(f, "  -dz %g -minz %g\n", cfg->gs_xyz_dz, cfg->gs_xyz_minz);
+        fprintf(f, "cp -f xy_WCMTSOLUTION xyz_WCMTSOLUTION\n");
+        fprintf(f, "\n# 9. pasada xy fina sobre la solucion 3D. Se le apendean las lineas\n");
+        fprintf(f, "#    >=7 del CMT de referencia si trae la solucion completa (>=13\n");
+        fprintf(f, "#    lineas), como addrefsol de wp_grid_search.py:118-129.\n");
+        fprintf(f, "nref=$(wc -l < %s 2>/dev/null || echo 0)\n", cfg->cmtfile);
+        fprintf(f, "cp -f xyz_WCMTSOLUTION _tmp_CMTSOLUTION.xyz\n");
+        fprintf(f, "if [ \"$nref\" -ge 13 ]; then tail -n +7 %s >> _tmp_CMTSOLUTION.xyz; fi\n",
+                cfg->cmtfile);
+        fprintf(f, "run \"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
+        fprintf(f, "  -icmtf _tmp_CMTSOLUTION.xyz -log LOG/gs_o_wpinversion.log -osyndir gs_SYNTH \\\n");
+        fprintf(f, "  -nots -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xy_out\n",
                 cfg->gs_xy_nit, cfg->gs_xy_dx, cfg->gs_xy_nx, cfg->gs_xy_nopt);
+        fprintf(f, "rm -f _tmp_CMTSOLUTION.xyz\n");
     }
     fprintf(f, "\necho \"csnwphase run: OK\"\n");
 

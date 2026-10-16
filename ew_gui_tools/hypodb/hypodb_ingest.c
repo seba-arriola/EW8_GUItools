@@ -22,10 +22,11 @@
 
 #include "earthworm.h"      /* logit(): el modulo tiene log propio (ver el main) */
 
-#include "hypodb_ids.h"
+#include "hypodb_ids.h"           /* fachada de ewgui/db_ids.h (ver su .c) */
 #include "csnhypodbp_magchan.h"   /* canales del TYPE_MAGNITUDE (compartido) */
 
 #include "ewgui/arc_layout.h"
+#include "ewgui/db_ids.h"         /* metadatos del origen ($EW_VERSION, status) */
 
 #define HYPODB_MAX_GROUPS       128
 #define HYPODB_MAX_ORIGINS      8
@@ -94,24 +95,8 @@ struct HypodbState {
 /* Helpers de tiempo / nombres                                                */
 /* ------------------------------------------------------------------------- */
 
-static void epoch_to_iso(double t, char *out, size_t n)
-{
-    time_t s = (time_t)floor(t);
-    int ms = (int)lround((t - (double)s) * 1000.0);
-    struct tm tm;
-    char date[24];
-
-    if (ms >= 1000) {
-        ms -= 1000;
-        s += 1;
-    } else if (ms < 0) {
-        ms = 0;
-    }
-    gmtime_r(&s, &tm);
-    if (strftime(date, sizeof date, "%Y-%m-%d %H:%M:%S", &tm) == 0)
-        snprintf(date, sizeof date, "1970-01-01 00:00:00");
-    snprintf(out, n, "%s.%03d+00", date, ms);
-}
+/* `epoch_to_iso` (epoch UTC -> "YYYY-MM-DD HH:MM:SS.mmm+00") también es común:
+ * ver ewgui_epoch_to_iso. */
 
 static double iso_to_epoch(const char *s)
 {
@@ -155,34 +140,12 @@ static double pick_time_to_epoch(const char *s)
 }
 
 /* `origin.software`: la version del framework, de $EW_VERSION (la exporta
-   ew8_unix.sh) con fallback para tests y ejecuciones fuera de startstop. */
-static const char *ew_software(void)
-{
-    static char cached[64];
-    static int  done = 0;
+   ew8_unix.sh) con fallback para tests y ejecuciones fuera de startstop.
+   Unificada en common (ewgui_software): la GUI que confirma una solucion escribe
+   la misma cadena. */
 
-    if (!done) {
-        const char *v = getenv("EW_VERSION");
-        snprintf(cached, sizeof cached, "%s", (v && v[0]) ? v : "ew_8.0");
-        done = 1;
-    }
-    return cached;
-}
-
-static const char *mod_algorithm(int mod)
-{
-    if (mod == 162) return "csnloc";
-    if (mod == 163) return "HYPOINVERSE";
-    if (mod == 164) return "NLLoc";
-    return "unknown";
-}
-
-static const char *mod_status(int mod, int manual)
-{
-    if (manual) return "REVIEWED";
-    if (mod == 162) return "PRELIMINARY";
-    return "REVISED";
-}
+/* `origin.location_algorithm` y `origin.status`: tambien comunes (ewgui_mod_*),
+   para que el origen que crea la GUI sea indistinguible del que crea el ingester. */
 
 static const char *amplitude_type_for(const char *magtype)
 {
@@ -590,22 +553,22 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     memset(&o, 0, sizeof o);
     snprintf(o.origin_id, sizeof o.origin_id, "%s", origin_id);
     snprintf(o.event_id, sizeof o.event_id, "%s", g->event_id);
-    epoch_to_iso(sol->otime, o.origin_time, sizeof o.origin_time);
+    ewgui_epoch_to_iso(sol->otime, o.origin_time, sizeof o.origin_time);
     o.latitude = sol->lat;
     o.longitude = sol->lon;
     o.depth = sol->depth;
     /* `author` = modulo que revisa/produce el registro (constante); el
        localizador real viaja en `location_algorithm`. */
     snprintf(o.author, sizeof o.author, "csnhypodbp");
-    snprintf(o.software, sizeof o.software, "%s", ew_software());
+    snprintf(o.software, sizeof o.software, "%s", ewgui_software());
     snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s",
-             mod_algorithm(mod));
+             ewgui_mod_algorithm(mod));
     if (vmodel && vmodel[0])
         snprintf(o.velocity_model, sizeof o.velocity_model, "%s", vmodel);
     o.azimuthal_gap = (sol->gap > 0) ? (double)sol->gap : NAN;
     o.station_count = sol->nph;
     o.standard_error = (sol->rms > 0.0) ? sol->rms : NAN;
-    snprintf(o.status, sizeof o.status, "%s", mod_status(mod, sol->manual));
+    snprintf(o.status, sizeof o.status, "%s", ewgui_mod_status(mod, sol->manual));
     if (ewguidb_upsert_origin(st->db, &o) != 0)
         return -1;
 
@@ -624,7 +587,7 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
                  origin_id);
         hypodb_channel_nslco(rows[nrows].channel, sizeof rows[nrows].channel,
                              pk->net, pk->sta, pk->loc, pk->chan);
-        epoch_to_iso(pk->t_pick, rows[nrows].pick_time,
+        ewgui_epoch_to_iso(pk->t_pick, rows[nrows].pick_time,
                      sizeof rows[nrows].pick_time);
         snprintf(rows[nrows].phase, sizeof rows[nrows].phase, "%s", ph);
         rows[nrows].weight = pk->weight;

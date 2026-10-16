@@ -9,9 +9,34 @@
 /*
  * Lectura del .d. Se usa kom directamente (y no ewgui_config_load) porque
  * varias claves del motor llevan VARIOS valores en la misma línea
- * (IDEC_2, IDEC_3, WP_WIN, ScreenTh) y el helper de common sólo lee el primer
+ * (IDEC_2, IDEC_3, WP_WIN) y el helper de common sólo lee el primer
  * token de cada clave.
  */
+
+/*
+ * Campos separados por blancos de una línea cruda. Hace falta para `ScreenTh`:
+ * kom no expone "¿quedan tokens?" y `k_val()` sobre un token ausente devuelve
+ * 0 sin avisar, así que la detección del formato viejo (tres valores) se hace
+ * sobre el texto de la línea (`k_com()`).
+ */
+static int count_fields(const char *line)
+{
+    int n = 0;
+    const char *p = line;
+
+    if (!p)
+        return 0;
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n')
+            p++;
+        if (*p == '\0')
+            break;
+        n++;
+        while (*p && *p != ' ' && *p != '\t' && *p != '\r' && *p != '\n')
+            p++;
+    }
+    return n;
+}
 
 static void copy_str(char *dst, size_t n, const char *src)
 {
@@ -80,10 +105,8 @@ void csnwphase_cfg_defaults(CsnwphaseCfg *cfg)
     cfg->min_magnitude = 6.0;     /* task_wphase/config.py:12-14 */
     cfg->win_pre_sec = 300;       /* run.py:230-233 (duration=1200) */
     cfg->win_post_sec = 900;
-    cfg->screen_th[0] = 5.0;      /* RUNA3r.csh:34-35 */
-    cfg->screen_th[1] = 3.0;
-    cfg->screen_th[2] = 1.0;
-    cfg->screen_nr = 2.0;
+    cfg->screen_th = 2.0;         /* -th: un solo valor (antes 5.0 3.0 1.0) */
+    cfg->screen_nr = 2.0;         /* -nr */
     cfg->grid_search = 1;
     cfg->gs_ts_min = 1.0;         /* wp_grid_search.py:174-183 (ts1 = 1.) */
     cfg->gs_ts_dt = 4.0;          /* TS_DT */
@@ -93,6 +116,12 @@ void csnwphase_cfg_defaults(CsnwphaseCfg *cfg)
     cfg->gs_xy_nx = 3;            /* XY_NX */
     cfg->gs_xy_nopt = 5;          /* XY_NOPT */
     cfg->gs_xy_nit = 3;           /* XY_NIT */
+    cfg->gs_xyz_dz = 50.0;        /* DDEP   (wp_grid_search.py:54) */
+    cfg->gs_xyz_minz = 11.5;      /* MINDEP (wp_grid_search.py:55) */
+    cfg->gs_xyz_dx = 0.6;         /* XYZ_DX */
+    cfg->gs_xyz_nx = 1;           /* XYZ_NX */
+    cfg->gs_xyz_nopt = 4;         /* XYZ_NOPT */
+    cfg->gs_xyz_nit = 1;          /* XYZ_NIT */
     cfg->timeout_sec = 1800;
     cfg->keep_tmp = 0;
     cfg->max_concurrent = 1;
@@ -169,9 +198,12 @@ int csnwphase_cfg_load(CsnwphaseCfg *cfg, const char *path)
         } else if (k_its("WinPost")) {
             cfg->win_post_sec = k_int();
         } else if (k_its("ScreenTh")) {
-            cfg->screen_th[0] = k_val();
-            cfg->screen_th[1] = k_val();
-            cfg->screen_th[2] = k_val();
+            cfg->screen_th = k_val();
+            /* Formato viejo (5.0 3.0 1.0): se usa el primero y se avisa; las
+             * tres pasadas encadenadas ya no se generan (una sola ejecucion). */
+            if (count_fields(k_com()) > 2)
+                fprintf(stderr, "csnwphase: aviso: ScreenTh con varios valores "
+                        "en %s; se usa el primero (%g)\n", path, cfg->screen_th);
         } else if (k_its("ScreenNr")) {
             cfg->screen_nr = k_val();
         } else if (k_its("GridSearch")) {
@@ -192,6 +224,18 @@ int csnwphase_cfg_load(CsnwphaseCfg *cfg, const char *path)
             cfg->gs_xy_nopt = k_int();
         } else if (k_its("GsXyNit")) {
             cfg->gs_xy_nit = k_int();
+        } else if (k_its("GsXyzDz")) {
+            cfg->gs_xyz_dz = k_val();
+        } else if (k_its("GsXyzMinz")) {
+            cfg->gs_xyz_minz = k_val();
+        } else if (k_its("GsXyzDx")) {
+            cfg->gs_xyz_dx = k_val();
+        } else if (k_its("GsXyzNx")) {
+            cfg->gs_xyz_nx = k_int();
+        } else if (k_its("GsXyzNopt")) {
+            cfg->gs_xyz_nopt = k_int();
+        } else if (k_its("GsXyzNit")) {
+            cfg->gs_xyz_nit = k_int();
         } else if (k_its("TimeoutSec")) {
             cfg->timeout_sec = k_int();
         } else if (k_its("KeepTmp")) {

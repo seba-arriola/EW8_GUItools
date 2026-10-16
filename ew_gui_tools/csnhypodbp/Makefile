@@ -26,7 +26,8 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
        csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
        csnhypodbp_magsta.o csnhypodbp_magitem.o \
-        csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o csnhypodbp_mwwerr.o
+        csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o csnhypodbp_mwwerr.o \
+        csnhypodbp_mww_over.o
 
 all: csnhypodbp install
 
@@ -99,6 +100,13 @@ test_view: test_view.c csnhypodbp_view.o ../common/src/ewgui_config.o
 # Logica pura (solo stdio): no necesita GTK ni las librerias de EarthWorm.
 test_mww_error: test_mww_error.c csnhypodbp_mwwerr.o
 	$(CC) $(CFLAGS) -o test_mww_error test_mww_error.c csnhypodbp_mwwerr.o
+
+# Overrides de la tabla del panel Mww (logica pura, sin GTK) + libcsnwphase.
+# El archive arrastra csnwphase_cfg.o (usa kom): por eso libew_mt.a, igual que
+# los tests de csnwphase.
+test_mww_over: test_mww_over.c csnhypodbp_mww_over.o ../csnwphase/libcsnwphase.a
+	$(CC) $(CFLAGS) -o test_mww_over test_mww_over.c csnhypodbp_mww_over.o \
+	      ../csnwphase/libcsnwphase.a $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm
 
 ../common/src/ewgui_config.o:
 	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_config.o
@@ -199,7 +207,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
       test_master_store test_mag_msg test_magchan test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
       test_preview test_profile test_mapview test_magcfg test_magrow test_magsta \
-      test_magitem test_magmarks test_magview test_mww_error
+      test_magitem test_magmarks test_magview test_mww_error test_mww_over
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -229,6 +237,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_magmarks
 	./test_magview
 	./test_mww_error
+	./test_mww_over
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
 
@@ -251,7 +260,7 @@ clean:
 	      test_locator test_manual test_locate test_fetch_span test_view test_search \
 	      test_sds_read test_statable test_staitem test_preview test_profile \
 	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
-	      test_magmarks test_magview test_mww_error \
+	      test_magmarks test_magview test_mww_error test_mww_over \
 	      locate_chain *.o
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------

@@ -258,6 +258,54 @@ static int get_bool(PGresult *r, int row, int col)
 
 /* --- Escritura ------------------------------------------------------------ */
 
+/*
+ * Escritura de `origin`: misma lista de columnas para el upsert normal y para el
+ * de "solo si falta" (el que usa la GUI al confirmar).
+ */
+static int origin_write(EwGuiDb *db, const EwGuiOriginRow *row, int keep_existing)
+{
+    static const char *cols =
+        "INSERT INTO origin (origin_id,event_id,origin_time,latitude,longitude,"
+        "depth,author,software,location_algorithm,velocity_model,azimuthal_gap,"
+        "station_count,standard_error,status) "
+        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ";
+    static const char *upd =
+        "ON CONFLICT (origin_id) DO UPDATE SET "
+        "origin_time=EXCLUDED.origin_time,latitude=EXCLUDED.latitude,"
+        "longitude=EXCLUDED.longitude,depth=EXCLUDED.depth,"
+        "author=EXCLUDED.author,software=EXCLUDED.software,"
+        "location_algorithm=EXCLUDED.location_algorithm,"
+        "velocity_model=EXCLUDED.velocity_model,"
+        "azimuthal_gap=EXCLUDED.azimuthal_gap,"
+        "station_count=EXCLUDED.station_count,"
+        "standard_error=EXCLUDED.standard_error,status=EXCLUDED.status";
+    static const char *ins = "ON CONFLICT (origin_id) DO NOTHING";
+    char sql[1024];
+    char lat[32], lon[32], dep[32], gap[32], rms[32], nsta[16];
+    const char *v[14];
+
+    if (!db || !db->conn || !row)
+        return -1;
+
+    snprintf(sql, sizeof sql, "%s%s", cols, keep_existing ? ins : upd);
+    v[0] = row->origin_id;
+    v[1] = row->event_id;
+    v[2] = row->origin_time;
+    v[3] = dbl_fmt(row->latitude, lat, sizeof lat);
+    v[4] = dbl_fmt(row->longitude, lon, sizeof lon);
+    v[5] = dbl_fmt(row->depth, dep, sizeof dep);
+    v[6] = nn(row->author);
+    v[7] = nn(row->software);
+    v[8] = nn(row->location_algorithm);
+    v[9] = nn(row->velocity_model);
+    v[10] = dbl_or_null(row->azimuthal_gap, gap, sizeof gap);
+    v[11] = int_or_null(row->station_count, nsta, sizeof nsta);
+    v[12] = dbl_or_null(row->standard_error, rms, sizeof rms);
+    v[13] = nn(row->status);
+
+    return run_params(db, sql, 14, v);
+}
+
 int ewguidb_upsert_event(EwGuiDb *db, const EwGuiEventRow *row)
 {
     if (!db || !db->conn || !row)
@@ -280,37 +328,19 @@ int ewguidb_upsert_event(EwGuiDb *db, const EwGuiEventRow *row)
 
 int ewguidb_upsert_origin(EwGuiDb *db, const EwGuiOriginRow *row)
 {
-    if (!db || !db->conn || !row)
-        return -1;
+    return origin_write(db, row, 0);
+}
 
-    static const char *sql =
-        "INSERT INTO origin (origin_id,event_id,origin_time,latitude,longitude,"
-        "depth,author,software,location_algorithm,velocity_model,azimuthal_gap,"
-        "station_count,standard_error,status) "
-        "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) "
-        "ON CONFLICT (origin_id) DO UPDATE SET "
-        "origin_time=EXCLUDED.origin_time,latitude=EXCLUDED.latitude,"
-        "longitude=EXCLUDED.longitude,depth=EXCLUDED.depth,"
-        "author=EXCLUDED.author,software=EXCLUDED.software,"
-        "location_algorithm=EXCLUDED.location_algorithm,"
-        "velocity_model=EXCLUDED.velocity_model,"
-        "azimuthal_gap=EXCLUDED.azimuthal_gap,"
-        "station_count=EXCLUDED.station_count,"
-        "standard_error=EXCLUDED.standard_error,status=EXCLUDED.status";
-    char lat[32], lon[32], dep[32], gap[32], rms[32], nsta[16];
-    const char *v[14] = {
-        row->origin_id, row->event_id, row->origin_time,
-        dbl_fmt(row->latitude, lat, sizeof lat),
-        dbl_fmt(row->longitude, lon, sizeof lon),
-        dbl_fmt(row->depth, dep, sizeof dep),
-        nn(row->author), nn(row->software), nn(row->location_algorithm),
-        nn(row->velocity_model),
-        dbl_or_null(row->azimuthal_gap, gap, sizeof gap),
-        int_or_null(row->station_count, nsta, sizeof nsta),
-        dbl_or_null(row->standard_error, rms, sizeof rms),
-        nn(row->status),
-    };
-    return run_params(db, sql, 14, v);
+/*
+ * Igual, pero NO pisa un origen que ya exista. Lo usa la GUI al confirmar una
+ * solución (`csnhypodbp`): el ARC confirmado no pasa por los anillos, así que
+ * hypodb no escribe ese origen y hay que crearlo — pero si YA está (la solución
+ * vino del historial, o lo escribió el ingester) no es la GUI quien debe
+ * pisarlo: solo aporta su magnitud y su tensor.
+ */
+int ewguidb_upsert_origin_if_absent(EwGuiDb *db, const EwGuiOriginRow *row)
+{
+    return origin_write(db, row, 1);
 }
 
 int ewguidb_upsert_magnitude(EwGuiDb *db, const EwGuiMagRow *row)

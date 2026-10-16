@@ -84,7 +84,10 @@ una estación concreta.
   checkboxes A/M/Teo de `picking` (allí filtran qué picadas van al localizador).
 - **`distancia min/max/km`** — override manual de la puerta de la magnitud activa.
   Al activarlo se siembra con la puerta vigente, así activar no cambia nada hasta
-  que se edite un campo.
+  que se edite un campo. Las cajas de estos tres campos y sus botones `+/-` van al
+  **60 %** del tamaño del tema (clases CSS `.mag-bar-cell`/`.mag-bar-label`): con el
+  tamaño por defecto la barra se veía desproporcionada. `reset default`,
+  `calculate`/`calculate all` y los checkboxes `A/M/Teo` **no** cambian de tamaño.
 
 ## 4. Tabla de estaciones (panel izquierdo)
 

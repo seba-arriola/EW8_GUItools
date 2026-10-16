@@ -32,12 +32,15 @@ Dmax        50.0
 MinMagnitude 6.0
 WinPre      300
 WinPost     900
-ScreenTh    5.0 3.0 1.0
+ScreenTh    2.0
 ScreenNr    2.0
 GridSearch  1
 # Grid search del centroide (wpinversion_gs; NO se usa wp_grid_search.py, que es
 # python2). Los -ts salen de aqui (el wrapper del CSN los derivaba de la duracion)
-# y se ven en la tabla del panel. Salida: xy_WCMTSOLUTION, que el parser prefiere.
+# y se ven en la tabla del panel. Se hacen DOS pasadas: la 3D (xyz, lat/lon/prof
+# con -dz/-minz, salida grid_search_xyz_out) y una xy fina que deja
+# xy_WCMTSOLUTION, que es el archivo que prefiere el parser. Los GsXyz* son los
+# XYZ_*/DDEP/MINDEP del wrapper.
 GsTsMin     1.0
 GsTsDt      4.0
 GsTsMax     30.0
@@ -46,6 +49,12 @@ GsXyDx      0.4
 GsXyNx      3
 GsXyNopt    5
 GsXyNit     3
+GsXyzDz     50.0
+GsXyzMinz   11.5
+GsXyzDx     0.6
+GsXyzNx     1
+GsXyzNopt   4
+GsXyzNit    1
 TimeoutSec  1800
 KeepTmp     0
 MaxConcurrent 1

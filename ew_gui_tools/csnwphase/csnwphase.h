@@ -52,7 +52,11 @@ typedef struct {
     double min_magnitude;     /* umbral de disparo (default 6.0)                */
     int    win_pre_sec;       /* ventana de ondas antes de t0 (default 300)     */
     int    win_post_sec;      /* ventana de ondas después de t0 (default 900)   */
-    double screen_th[3];      /* RMS screening (RUNA3r.csh: 5.0 3.0 1.0)        */
+    /* Screening RMS del motor: UN solo valor (el usuario pidio una sola
+     * ejecucion con `-th` y `-nr` juntos). El patron historico del CSN eran
+     * tres pasadas encadenadas (5 3 1); el `ScreenTh` del .d con varios valores
+     * se acepta pero se usa el PRIMERO y se avisa por stderr. */
+    double screen_th;         /* -th  (default 2.0)                            */
     double screen_nr;         /* amplitude-ratio screening (2.0)                */
     int    grid_search;       /* 1 = ts+xy (wp_grid_search.py -s)               */
     /* Grid search del centroide (wpinversion_gs). Defaults = los del wrapper
@@ -66,6 +70,16 @@ typedef struct {
     int    gs_xy_nx;          /* -Nx       (3 -> semiancho = Nx*dx)             */
     int    gs_xy_nopt;        /* -Nopt     (5)                                  */
     int    gs_xy_nit;         /* -xy_Nit   (3)                                  */
+    /* Grid search 3D (xyz) del centroide: replica el `--xyz` de
+     * wp_grid_search.py (XYZ_NIT/XYZ_DX/XYZ_NX/XYZ_NOPT + DDEP/MINDEP). La
+     * profundidad NO tiene flag propio en wpinversion_gs: entra en la misma
+     * pasada xy con `-dz`/`-minz` y su salida se nombra grid_search_xyz_out. */
+    double gs_xyz_dz;         /* -dz     (50.0 = DDEP)     */
+    double gs_xyz_minz;       /* -minz   (11.5 = MINDEP)   */
+    double gs_xyz_dx;         /* -dx     (0.6  = XYZ_DX)   */
+    int    gs_xyz_nx;         /* -Nx     (1    = XYZ_NX)   */
+    int    gs_xyz_nopt;       /* -Nopt   (4    = XYZ_NOPT) */
+    int    gs_xyz_nit;        /* -xy_Nit (1    = XYZ_NIT)  */
     int    timeout_sec;       /* tope de la corrida (default 1800)              */
     int    keep_tmp;          /* 1 = conservar el run dir                       */
     int    max_concurrent;    /* 1 = serializar (default)                       */
@@ -100,10 +114,29 @@ typedef struct {
 } CsnwphaseInput;
 
 /* Una fila de la tabla de parámetros que la GUI muestra antes de ejecutar. */
+/*
+ * Campo de la tabla: qué miembro de Cfg/Input gobierna esa fila. Lo consume la
+ * GUI para decidir qué filas llevan widget editable (csnwphase no conoce GTK).
+ * NONE = solo lectura (derivado de la magnitud o informativo).
+ */
+typedef enum {
+    CSNWPHASE_PF_NONE = 0,
+    CSNWPHASE_PF_ORIGIN_TIME,   /* in->year..in->second (y origin_epoch) */
+    CSNWPHASE_PF_LAT,           /* in->latitude   */
+    CSNWPHASE_PF_LON,           /* in->longitude  */
+    CSNWPHASE_PF_DEPTH,         /* in->depth_km   */
+    CSNWPHASE_PF_MAGNITUDE,     /* in->magnitude  */
+    CSNWPHASE_PF_WIN_PRE,       /* cfg->win_pre_sec  */
+    CSNWPHASE_PF_WIN_POST,      /* cfg->win_post_sec */
+    CSNWPHASE_PF_SCREEN_TH,     /* cfg->screen_th    */
+    CSNWPHASE_PF_SCREEN_NR      /* cfg->screen_nr    */
+} CsnwphaseParamField;
+
 typedef struct {
     char name[48];
     char value[96];
     char source[48];          /* config / evento / derivado / i_master */
+    int  field;               /* CsnwphaseParamField; NONE = solo lectura */
 } CsnwphaseParamRow;
 
 /* Configuración: lee el .d. Devuelve 0 si OK, -1 si falta algo obligatorio. */
@@ -283,6 +316,29 @@ int csnwphase_run(const CsnwphaseCfg *cfg, const char *rundir, int dry_run,
 /* Tabla de parámetros (lógica pura; misma fuente que i_master y los comandos). */
 int csnwphase_params_build(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
                            CsnwphaseParamRow *rows, int max, int *n);
+
+/* ------------------------------------------------------------------ */
+/* Campos editables de la tabla                                        */
+/* ------------------------------------------------------------------ */
+
+/* t0 en epoch UTC a partir de sus componentes (independiente de TZ/locale:
+ * usa timegm). */
+double csnwphase_epoch_utc(int year, int mon, int day, int hh, int mm, double ss);
+
+/*
+ * Lee el texto de la celda "origen t0 (UTC)" ("YYYY-MM-DD HH:MM:SS[.ss]", el
+ * mismo que se muestra; se acepta 'T' en lugar del espacio) y deja el
+ * hipocentro en `in` (incluido `origin_epoch`). Devuelve 0 si OK, -1 si el
+ * texto no es una fecha válida (no se aplica nada a medias).
+ */
+int csnwphase_time_parse(const char *txt, CsnwphaseInput *in);
+
+/* Banda de la inversión por magnitud (i_master.py:31-40): es el único par de
+ * coeficientes del filtro que depende de la magnitud (filt_cf1/filt_cf2). */
+void   csnwphase_band_for_magnitude(double mag, double *cf1, double *cf2);
+
+/* half duration / time shift del CMT semilla (cmtsolution.py:39-41). */
+double csnwphase_half_duration(double mag);
 
 /* Resultado normalizado de una corrida: lo único que ven la GUI y la BD. */
 typedef struct {

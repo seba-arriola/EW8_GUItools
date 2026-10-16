@@ -148,6 +148,8 @@ extern int     g_ring_sync;      /* 1 = re-seleccion interna de una llegada */
 extern double  selected_otime;
 extern double  selected_depth;
 extern char    selected_id[32];
+/* origin_id de la BD del origen seleccionado ("" si todavia no esta en la base). */
+extern char    selected_origin_id[64];
 extern double  g_pick_window_sec;      /* ventana de asociacion de picks capturados */
 extern char    g_pick_phase;           /* fase a picar en modo Repick ('P'|'S') */
 

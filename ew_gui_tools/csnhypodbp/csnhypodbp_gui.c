@@ -1680,6 +1680,16 @@ static void preview_mag_text(double v, char *out, size_t n)
     else snprintf(out, n, "%.2f", v);
 }
 
+/* Celda `Mww` del preview: el valor de la inversión de fase W si esa corrida es
+   de esta solución (mismo qid+mod); un guion si no hay resultado para ella. */
+static void preview_mww_text(int qid, int mod, char *out, size_t n)
+{
+    const CsnwphaseOut *o = csnhypodbp_mww_result_for(qid, mod);
+
+    if (o) snprintf(out, n, "%.2f", o->mw);
+    else   snprintf(out, n, "-");
+}
+
 /* Radio de magnitud preferida del cuadro de la candidata. */
 void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
     int k = GPOINTER_TO_INT(data);
@@ -1695,12 +1705,15 @@ void csnhypodbp_preview_update(void) {
     int i;
     if (!g_preview_box || !g_preview_title) return;
     if (g_preview_valid) {
+        char mww_s[16];
+
+        preview_mww_text(g_preview_sol.qid, g_preview_sol.mod, mww_s, sizeof mww_s);
         csnhypodbp_preview_from_candidate(&v, g_active_locator,
                                           g_preview_sol.lat, g_preview_sol.lon,
                                           g_preview_sol.depth, g_preview_sol.nph,
                                           g_preview_sol.rms,
                                           g_preview_mag.ml, g_preview_mag.mwp,
-                                          g_preview_mag.mb, g_preview_mag.ms);
+                                          g_preview_mag.mb, g_preview_mag.ms, mww_s);
     } else {
         gpointer item = g_selection_detail
                         ? gtk_single_selection_get_selected_item(g_selection_detail)
@@ -1710,19 +1723,23 @@ void csnhypodbp_preview_update(void) {
             double lat = 0, lon = 0, depth = 0;
             double nm[CSNHYPODBP_MAG_NKIND] = { -1.0, -1.0, -1.0, -1.0 };
             char mtxt[CSNHYPODBP_MAG_NKIND][16];
-            int k;
+            char mww_s[16];
+            int k, qid = 0, mod = 0;
 
             g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth,
+                         "qid", &qid, "mod", &mod,
                          "nmag0", &nm[0], "nmag1", &nm[1],
                          "nmag2", &nm[2], "nmag3", &nm[3], NULL);
             for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++)
                 preview_mag_text(nm[k], mtxt[k], sizeof(mtxt[k]));
+            preview_mww_text(qid, mod, mww_s, sizeof mww_s);
             /* rms/nph: las celdas ya formateadas de la fila (c5/c7). Las cuatro
                magnitudes salen de nmag0..3, asi el formato es el mismo en las 4. */
             csnhypodbp_preview_from_selected(&v, lat, lon, depth,
                                              csnhypodbp_row_col(row, 5),
                                              csnhypodbp_row_col(row, 7),
-                                             mtxt[0], mtxt[1], mtxt[2], mtxt[3]);
+                                             mtxt[0], mtxt[1], mtxt[2], mtxt[3],
+                                             mww_s);
         } else {
             csnhypodbp_preview_clear(&v);
         }
@@ -1747,6 +1764,12 @@ void csnhypodbp_preview_update(void) {
         has[1] = g_preview_valid && g_preview_mag.mwp[0] != 0;
         has[2] = g_preview_valid && g_preview_mag.mb[0] != 0;
         has[3] = g_preview_valid && g_preview_mag.ms[0] != 0;
+        /* El Mww no viene del ARC: solo hay valor si la inversión de fase W se
+           corrió para esta solución (mismo evento y localizador). */
+        has[CSNHYPODBP_PREVIEW_MWW_KIND] =
+            g_preview_valid &&
+            csnhypodbp_mww_result_for(g_preview_sol.qid,
+                                      g_preview_sol.mod) != NULL;
         if (g_preview_valid && !csnhypodbp_mag_pref_ok(has, g_preview_pref_kind))
             g_preview_pref_kind = csnhypodbp_mag_pref_default(g_preview_mag.ml,
                                                              g_preview_mag.mwp,
@@ -1774,9 +1797,30 @@ void on_preview_discard(GtkWidget *w, gpointer d) {
 }
 
 void on_preview_confirm(GtkWidget *w, gpointer d) {
+    int pref = g_preview_pref_kind;
     (void)w; (void)d;
     if (!g_preview_valid) return;
-    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, g_preview_pref_kind);
+    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, pref);
+    /* El mecanismo focal (con su Mww) se guarda AL CONFIRMAR la solución, no con
+     * un botón aparte del panel. Solo si el usuario marcó el radio `Mww`: es el
+     * único caso en que la inversión es la magnitud preferida elegida (el `Mww`
+     * no viaja en el ARC, así que además queda como preferida de la base). */
+    if (pref == CSNHYPODBP_PREVIEW_MWW_KIND) {
+        const CsnwphaseOut *o = csnhypodbp_mww_result_for(g_preview_sol.qid,
+                                                          g_preview_sol.mod);
+        char err[256] = "";
+
+        if (!o) {
+            csnhypodbp_mww_report(0, "Sin resultado Mww para la solución confirmada");
+        } else if (csnhypodbp_mww_persist(&g_preview_sol, o, err, sizeof err) != 0) {
+            csnhypodbp_mww_report(0, err);
+            logit("t", "csnhypodbp: no se pudo guardar el mecanismo focal: %s\n",
+                  err);
+        } else {
+            csnhypodbp_mww_report(1, "Mecanismo focal (WCMT) y Mww guardados en "
+                                     "la base al confirmar la solución");
+        }
+    }
     g_preview_valid = FALSE;
     g_preview_pref_kind = -1;
     csnhypodbp_preview_update();
@@ -2814,6 +2858,14 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
         g_object_get(row, "otime", &otime, "qid", &qid, "lat", &lat, "lon", &lon,
                      "depth", &depth, "mod", &mod, "qver", &ver, NULL);
         if (id_str) strcpy(selected_id, id_str);
+        /* El origin_id de la BD vive en su propia propiedad (la columna 8 es el
+         * qid): el panel `Mww` lo necesita para colgarle su magnitud/tensor. */
+        {
+            const char *oid = csnhypodbp_row_origin_id(row);
+
+            snprintf(selected_origin_id, sizeof selected_origin_id, "%s",
+                     oid ? oid : "");
+        }
         /* Solo se reinicia el zoom si cambia la solucion elegida: reconstruir
            el detalle del mismo evento (upsert del anillo) no debe matar el
            zoom que el usuario ajusto. */
