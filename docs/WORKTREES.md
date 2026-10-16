@@ -37,8 +37,8 @@ sh ew_gui_tools/common/tools/check_install.sh -v   # 16/16 OK
 ./ew8_db.sh -i 1 up
 db/test_schema.sh -i 1                 # verifica las 6 tablas de ESTA instancia
 
-# 5) Trabajar
-source ./ew8_unix.sh
+# 5) Trabajar (el entorno ya se cargo en el paso 3; si abriste una terminal NUEVA
+#    —o la tuya tiene EW_PARAMS de OTRO repo— vuelve a hacer `source ./ew8_unix.sh`)
 ./ew_monitor.sh start
 ./ew_monitor.sh status          # sólo los módulos de ESTA instancia
 #  … o un módulo suelto:  cd run_working_v8/params && csnhypodbp csnhypodbp.d
