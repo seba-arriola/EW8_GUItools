@@ -26,4 +26,11 @@ long wstore_ingest_filtered(const WStoreIngest *ing);
 /* Bucle del anillo (bloqueante hasta TERMINATE). 0 = salida limpia. */
 int  wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg);
 
+/*
+ * Purga los segmentos mas viejos que `RetentionDays` y deja el conteo en `st`
+ * (puede ser NULL). NO imprime: el log lo pone el bucle del anillo, que es el
+ * unico que tiene `logit_init` hecho. 0 OK, <0 error.
+ */
+int  wstore_ingest_purge_now(WStoreIngest *ing, const WStoreConfig *cfg, WStorePruneStats *st);
+
 #endif /* WSTORE_INGEST_H */

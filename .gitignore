@@ -79,6 +79,7 @@ run_working_v8/params/db.env
 /ew_8.0/bin/tank2store
 /ew_8.0/bin/store2tank
 /ew_8.0/bin/wstore_query
+/ew_8.0/bin/wstore_prune
 
 # --- 4. Ejecutables generados por los Makefiles (sin extensión) -------------
 /ew_gui_tools/csnloc/csnloc

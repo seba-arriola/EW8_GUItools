@@ -371,9 +371,13 @@ csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.
   (shim a `/usr/bin/timeout`) para que `timeout` a secas sea GNU; los scripts usan la ruta absoluta
   `/usr/bin/timeout` (lo exige `common/tests/test_timeout_gnu.sh`).
 - **Su log**: `logit_init` lo escribe en `EW_LOG` como `<módulo>_*.log` (ver
-  `run_working_v8/log/`). `wstore_ingest` y `csnwphase` **no** usan ese log: sus errores van a la
-  terminal. (`hypodb_ingest` sí lo usa desde 2026-10-14: antes era mudo y por eso un fallo suyo no
-  dejaba ni una línea que mirar.)
+  `run_working_v8/log/`). Sólo `csnwphase` **no** usa ese log: escribe en la terminal (no es módulo de
+  anillos y puede correr sin `EW_LOG`). (`hypodb_ingest` lo usa desde 2026-10-14 y `wstore_ingest`
+  desde 2026-10-16: antes eran mudos en disco —sus mensajes iban a stderr, que `startstop` comparte
+  con todos los hijos— y un fallo suyo no dejaba ni una línea que mirar. El prefijo del log es el
+  nombre del **módulo**, no el del `.d`: `wstore_ingest` pasa el literal a `logit_init` porque su `.d`
+  es `wavestore.d` y el log habría salido como `wavestore_*.log`, fuera del alcance de
+  `diag.sh log wstore_ingest`.)
 - **Qué binario estás usando**: `command -v <binario>` debe apuntar a
   `ew_8.0/bin/<binario>`; el estado de todos los instalados:
   `sh ew_gui_tools/common/tools/check_install.sh -v`.
@@ -456,6 +460,17 @@ que pasan su `ChannelFilterFile` (`wavestore.d` → `params/wstore.sta`, campos 
 comodines `*`/`?`; `--` es la loc nula). Un canal que no pase el filtro **no está en `wstore`**, y
 `csnhypodbp`/`csnmags` no lo verán (caen al SDS si `SdsRoot` está configurado). El filtro no puede
 **añadir** canales: sólo reduce lo que `slink2ew` ya entrega.
+
+El store se acota solo por **antigüedad**: `RetentionDays` (`wavestore.d`, def. 7) y `wstore_ingest`
+purga al arrancar y cada hora los segmentos `<SCNL>/<YYYYMMDD>.tank`+`.idx` anteriores a la medianoche
+UTC de hoy menos esos días (conserva `RetentionDays+1` ficheros diarios porque el día del corte no se
+borra; `0` = sin purga y crecimiento ilimitado). Es la válvula del disco: con los 270 canales actuales
+son ~9 GB/día, así que 7 días estabilizan el store en ~70 GB. `wstore_prune --root <store> --days <N>
+--dry-run` mide el efecto sin borrar nada (y sirve para purgar con el módulo parado, porque el borrado
+sólo ocurre mientras `wstore_ingest` vive). Un día borrado **no** rompe a ningún lector: `wstore_get`
+devuelve "sin datos" y el llamador cae al SDS (`SdsFallbackHours` de `csnhypodbp.d`/`csnmags*.d`/
+`csnwphase.d`, alineado a 168 h ≈ 7 días: si bajas `RetentionDays`, bajalo también, o el lector pedirá
+primero al store algo que ya no está).
 
 
 

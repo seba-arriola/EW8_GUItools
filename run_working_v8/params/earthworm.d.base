@@ -240,6 +240,7 @@
  Module   MOD_MAGNITUDES_RAW    167
  Module   MOD_CSNMAGS_RAW       168
  Module   MOD_HYPODB            169
+ Module   MOD_WSTORE            170
 #--------------------------------------------------------------------------
 #                          Message Types
 #

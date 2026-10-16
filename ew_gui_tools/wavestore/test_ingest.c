@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 
 static int failures = 0;
@@ -26,6 +28,41 @@ static void rm_tree(const char *path)
         closedir(d);
     }
     remove(path);
+}
+
+/* Fecha YYYYMMDD (UTC) de "hoy - ago" dias: el MISMO reloj y la MISMA regla
+ * que usa la purga (medianoche UTC), nunca fechas fijas. */
+static void day_at(char *out, size_t n, int ago)
+{
+    time_t    now = time(NULL), t;
+    struct tm tm;
+
+    gmtime_r(&now, &tm);
+    tm.tm_hour = 0; tm.tm_min = 0; tm.tm_sec = 0;
+    t = timegm(&tm) - (time_t)ago * 86400;
+    gmtime_r(&t, &tm);
+    snprintf(out, n, "%04d%02d%02d", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+}
+
+static void mk_seg_dir(const char *dir, int ago)
+{
+    char day[64], p[1700];
+    FILE *f;
+
+    day_at(day, sizeof(day), ago);
+    snprintf(p, sizeof(p), "%s/%s.tank", dir, day);
+    f = fopen(p, "w"); if (f) fclose(f);
+    snprintf(p, sizeof(p), "%s/%s.idx", dir, day);
+    f = fopen(p, "w"); if (f) fclose(f);
+}
+
+static int seg_at(const char *dir, int ago, const char *ext)
+{
+    char day[64], p[1700];
+
+    day_at(day, sizeof(day), ago);
+    snprintf(p, sizeof(p), "%s/%s.%s", dir, day, ext);
+    return access(p, F_OK) == 0;
 }
 
 /* Inyecta NCH canales (ST00..ST0N-1, chan HHZ, HHY, ...) x NREC registros. */
@@ -153,6 +190,53 @@ int main(void)
 
         wstore_close(fs);
         rm_tree(froot);
+    }
+
+    /* --- Escenario 3: purga por retencion (wstore_ingest_purge_now) ------ */
+    {
+        char             proot[] = "/tmp/wstore_ingest_prune_XXXXXX";
+        char             pdir[1400];
+        WStoreConfig     pcfg;
+        WStoreIngest    *ping = NULL;
+        WStorePruneStats pst;
+        int              k;
+
+        if (!mkdtemp(proot)) { perror("mkdtemp"); return 1; }
+        snprintf(pdir, sizeof(pdir), "%s/CX.ST00.--.HHZ", proot);
+        CHECK(mkdir(pdir, 0777) == 0);
+        mk_seg_dir(pdir, 0);                        /* hoy: nunca se purga */
+        for (k = 1; k < 4; k++) mk_seg_dir(pdir, 29 + k);   /* 30, 31, 32 dias */
+
+        memset(&pcfg, 0, sizeof(pcfg));
+        snprintf(pcfg.root, sizeof(pcfg.root), "%s", proot);
+        pcfg.ingest_shards = 4;
+        pcfg.retention_days = 7;
+
+        CHECK(wstore_ingest_open(&ping, &pcfg) == 0);
+
+        memset(&pst, 0, sizeof(pst));
+        CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
+        CHECK(pst.tanks_removed == 3);
+        CHECK(pst.idx_removed == 3);
+        CHECK(seg_at(pdir, 0, "tank"));             /* el dia en curso queda */
+        for (k = 1; k < 4; k++) {
+            CHECK(!seg_at(pdir, 29 + k, "tank"));
+            CHECK(!seg_at(pdir, 29 + k, "idx"));
+        }
+
+        /* Segunda pasada: nada que borrar, y el conteo queda a cero. */
+        CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
+        CHECK(pst.tanks_removed == 0 && pst.idx_removed == 0);
+
+        /* RetentionDays 0 = sin retencion: no toca nada. */
+        mk_seg_dir(pdir, 40);
+        pcfg.retention_days = 0;
+        CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
+        CHECK(pst.tanks_removed == 0);
+        CHECK(seg_at(pdir, 40, "tank"));
+
+        wstore_ingest_close(ping);
+        rm_tree(proot);
     }
 
     if (failures) { printf("%d FALLOS\n", failures); return 1; }

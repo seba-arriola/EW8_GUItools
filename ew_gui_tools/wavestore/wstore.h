@@ -52,8 +52,23 @@ int   wstore_get  (WStore *s, const char *sta, const char *net, const char *chan
 /* Lista los SCNL presentes (nombres de directorio). Devuelve el total hallado. */
 int   wstore_scnls(WStore *s, char (*out)[WSTORE_SCNL_LEN], int cap);
 
+/* Conteo de una purga. */
+typedef struct {
+    long tanks_removed;   /* YYYYMMDD.tank borrados                  */
+    long idx_removed;     /* .idx companeros borrados                */
+    long bytes_freed;     /* suma de tamanos (stat previo al unlink) */
+} WStorePruneStats;
+
+#define WSTORE_PRUNE_DRY_RUN 1u   /* cuenta lo que se borraria, sin borrar */
+
 /* Borra segmentos (tank+idx) anteriores a `keep_days` dias UTC. 0 OK. */
 int   wstore_prune(WStore *s, long keep_days);
+
+/* Igual, pero devolviendo el conteo (`st` puede ser NULL). */
+int   wstore_prune_stats(WStore *s, long keep_days, WStorePruneStats *st);
+
+/* Nucleo: `flags` acepta WSTORE_PRUNE_DRY_RUN. Unico camino real. */
+int   wstore_prune_ex(WStore *s, long keep_days, unsigned flags, WStorePruneStats *st);
 
 /* Ruta del segmento diario para un SCNL y un instante. 0 OK, <0 error. */
 int   wstore_segment_path(char *buf, size_t n, const char *root, const char *sta,

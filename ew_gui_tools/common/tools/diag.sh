@@ -273,7 +273,7 @@ cmd_log() {  # log <modulo> [n]
     case "$n" in ""|*[!0-9]*) n="$MAXLINES";; esac
     [ "$n" -gt 200 ] && n=200
     f="$(ls -1t "$LOGDIR"/"${mod}"_*.log 2>/dev/null | head -n 1)"
-    [ -n "$f" ] || die "no hay logs de '$mod' en $LOGDIR (wstore_ingest y csnwphase no usan logit_init: escriben en la terminal)"
+    [ -n "$f" ] || die "no hay logs de '$mod' en $LOGDIR (csnwphase no usa logit_init: escribe en la terminal)"
     say "archivo: $(printf '%s' "$f" | sed "s|^$ROOT/||")"
     tail -n "$n" "$f"
     return 0
