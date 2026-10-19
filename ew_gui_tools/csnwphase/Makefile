@@ -78,10 +78,30 @@ check: $(TESTS)
 fixtures:
 	bash tools/gen_fixtures.sh
 
+# e2e del grid search del centroide contra el motor REAL (pasos 8 y 9 del
+# run.sh). Lento: corre wpinversion_gs dos veces sobre un run dir real. Opt-in
+# (no entra en `check`, que debe quedar rapido); SKIP si falta motor/rundir.
+check-engine: csnwphase
+	@echo "=== engine: grid search (e2e, lento) ==="; bash tests/test_engine_gs.sh
+
+# Corpus de eventos historicos M>=6.5: 3 corridas de punta a punta (ondas del
+# SDS + motor) y el informe con los criterios (CorpusMinNused del .d). Lento
+# (minutos por evento): opt-in. SKIP si no hay base historica o SDS.
+# Se toman los 3 eventos MAS CHICOS del corpus (--tail): el mayor (M8.36) barre
+# ts hasta 168 s y puede tardar decenas de minutos; para eso, correr el corpus
+# completo a mano (tools/run_corpus.sh sin --tail) y mirar su informe.
+check-corpus: csnwphase
+	@TSV=/tmp/csnwphase_corpus.tsv; \
+	 if [ ! -s "$$TSV" ]; then bash tools/gen_corpus.sh "$$TSV" || { echo "SKIP: sin base historica"; exit 0; }; fi; \
+	 echo "=== corpus: 3 eventos chicos (lento) ==="; \
+	 bash tools/run_corpus.sh "$$TSV" --tail 3 --out /tmp/csnwphase_corpus.csv; \
+	 echo "=== informe ==="; \
+	 bash tools/corpus_report.sh /tmp/csnwphase_corpus.csv
+
 clean:
 	rm -f *.o $(LIB) $(TESTS) csnwphase
 
-.PHONY: all test check clean install fixtures
+.PHONY: all test check check-engine check-corpus clean install fixtures
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

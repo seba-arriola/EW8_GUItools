@@ -82,7 +82,7 @@ ck  "preview: caja con clase propia"        'gtk_widget_add_css_class\(g_preview
 ck  "preview: siempre visible"              'gtk_widget_set_visible\(g_preview_box, TRUE\)' csnhypodbp_main.c
 ck  "preview: radios + cabecera + valores"    'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 2' csnhypodbp_main.c
 ck  "preview: radios en la fila 0"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], i, 0' csnhypodbp_main.c
-ck  "preview: 7 valores en la fila"         'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
+ck  "preview: 10 valores en la fila"        'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
 ck  "preview: cabeceras del nucleo puro"    'csnhypodbp_preview_headers'                  csnhypodbp_main.c
 ck  "preview: botones a la derecha"         'gtk_box_append\(GTK_BOX\(g_preview_box\), pc\)' csnhypodbp_main.c
 nck "preview: sin etiqueta de texto unica"  'g_preview_label'                             csnhypodbp_main.c
@@ -155,7 +155,8 @@ ck  "barra: grupo a la derecha"             'gtk_widget_set_hexpand\(spacer, TRU
 ck  "barra: reset en vez de auto"           'g_mag_ov_reset'                             csnhypodbp_main.c
 ck  "barra: unidad solo en la cabecera"     'gtk_label_new\("distancia \[°\]"\)'          csnhypodbp_main.c
 ck  "barra: grupo profundidad con piso"     'gtk_label_new\("prof\. \[km\]"\)'            csnhypodbp_main.c
-ck  "barra: editar activa el override"      'ov->on = 1;'                                csnhypodbp_gui.c
+ck  "barra: confirmar activa el override"     'csnhypodbp_mag_ov_from_text\(ov, txt\)'     csnhypodbp_gui.c
+ck  "barra: el override se enciende en el nucleo" 'ov->on = 1;'                            csnhypodbp_magcfg.c
 ck  "barra: corte de profundidad"           'csnhypodbp_magcfg_depth_ok'                 csnhypodbp_gui.c
 ck  "barra: reset al cambiar de solucion"   'csnhypodbp_mag_ov_reset_all\(\);'           csnhypodbp_gui.c
 ck  "ancla: handle dibujado"                'csnhypodbp_magmarks_handle_hit'             csnhypodbp_gui.c
@@ -183,7 +184,26 @@ ck  "magnitudes: puntero segun zona"         'gtk_widget_set_cursor_from_name'  
 ck  "magnitudes: controlador de movimiento"  'G_CALLBACK\(on_mag_canvas_motion\)'          csnhypodbp_main.c
 ck  "calculate: boton en la barra"           'gtk_button_new_with_label\("calculate"\)'    csnhypodbp_main.c
 ck  "calculate all: boton en la barra"       'gtk_button_new_with_label\("calculate all"\)' csnhypodbp_main.c
-ck  "calculate: barra compacta"              'pango_attr_scale_new\(0.75\)'                csnhypodbp_main.c
+ck  "barra: las cajas al 72% (60% + 20%)"     '\.mag-bar-cell \{ font-size: 72%'            csnhypodbp_main.c
+ck  "barra: los rotulos al 72%"               '\.mag-bar-label \{ font-size: 72%'           csnhypodbp_main.c
+ck  "barra: caja mal escrita en rojo"         '\.mag-bar-bad \{'                            csnhypodbp_main.c
+ck  "barra: los 3 botones al 90%"             '\.mag-bar-btn \{ font-size: 90%'             csnhypodbp_main.c
+ck  "barra: reset/calculate llevan su clase"  'add_css_class\(g_mag_ov_reset, "mag-bar-btn"\)' csnhypodbp_main.c
+nck "barra: sin el subboton +/- del spin"     'mag-bar-cell > button'                       csnhypodbp_main.c
+ck  "barra: las cajas son texto, no spin"     'GTK_IS_EDITABLE\(cw2\)'                      csnhypodbp_main.c
+nck "barra: sin GTK_IS_SPIN_BUTTON"           'GTK_IS_SPIN_BUTTON\(cw2\)'                   csnhypodbp_main.c
+nck "barra: sin los spins de los overrides"   'gtk_spin_button_new_with_range\(0\.0, (180|2000|700)\.0' csnhypodbp_main.c
+nck "barra: sin get_value de los overrides"   'gtk_spin_button_get_value\(GTK_SPIN_BUTTON\(g_mag_ov' csnhypodbp_gui.c
+ck  "barra: caja de texto por campo"          'mag_ov_entry_new\(CSNHYPODBP_MAG_OV_MIN_DELTA' csnhypodbp_main.c
+ck  "barra: rango y decimales de una fuente"  'csnhypodbp_mag_ov_field_limits'              csnhypodbp_magcfg.c
+ck  "barra: la tabla de rangos es la unica"   'MAG_OV_FIELD\[CSNHYPODBP_MAG_OV_FIELD_N\] = \{' csnhypodbp_magcfg.c
+ck  "barra: la caja acota su ancho natural"   'gtk_editable_set_max_width_chars'            csnhypodbp_main.c
+ck  "barra: el ancho de la caja sale del nucleo" 'csnhypodbp_mag_ov_width_chars'            csnhypodbp_main.c
+nck "barra: sin ancho de caja calculado a mano" 'set_width_chars\(GTK_EDITABLE\(e\), \(int\)strlen' csnhypodbp_main.c
+ck  "barra: se aplica al confirmar (Enter)"   'csnhypodbp_mag_ov_from_text'                 csnhypodbp_gui.c
+ck  "barra: sync usa los textos canonicos"    'csnhypodbp_mag_ov_texts'                     csnhypodbp_gui.c
+ck  "barra: al salir del campo se restaura"   'on_mag_ov_focus_leave'                       csnhypodbp_main.c
+nck "calculate: ya no compacta con Pango"    'pango_attr_scale_new'                        csnhypodbp_main.c
 ck  "calculate: no relocaliza"               'job->mags_only = mags_only;'                 csnhypodbp_gui.c
 ck  "calculate: corrida de magnitudes"       'csnhypodbp_mag_run\('                        csnhypodbp_gui.c
 ck  "calculate: mascara por magnitud"        'g_mag_calc_mask = 1u << g_mag_kind;'         csnhypodbp_gui.c
@@ -213,8 +233,14 @@ ck  "preferida: radios en el cuadro"         'g_preview_radio\[k\] = gtk_check_b
 ck  "preferida: radios en grupo (exclusivos)" 'gtk_check_button_set_group'                  csnhypodbp_main.c
 ck  "preferida: defecto con la regla de csnmags" 'csnhypodbp_mag_pref_default'              csnhypodbp_gui.c
 ck  "preferida: radio insensible sin valor"  'gtk_widget_set_sensitive\(GTK_WIDGET\(g_preview_radio' csnhypodbp_gui.c
-ck  "preferida: confirm la recibe"           'g_preview_pref_kind);'                        csnhypodbp_gui.c
+ck  "preferida: confirm la recibe"           'csnhypodbp_confirm_manual\(&g_preview_sol, &g_preview_mag, pref\);' csnhypodbp_gui.c
 ck  "preferida: se publican las 4 magnitudes" 'emit_mag_scnl'                               csnhypodbp_ws.c
+ck  "preferida: columna y radio Mww"         'CSNHYPODBP_PREVIEW_MWW_KIND'                 csnhypodbp_gui.c
+ck  "preferida: columna Mww del nucleo puro" '"Mww"'                                       csnhypodbp_preview.c
+ck  "preferida: el Mww sale de la inversion" 'csnhypodbp_mww_result_for'                   csnhypodbp_gui.c
+ck  "preferida: sin Mww de esa solucion -> guion" 'preview_mww_text'                        csnhypodbp_gui.c
+ck  "preferida: confirm guarda el mecanismo" 'csnhypodbp_mww_persist\(&g_preview_sol'       csnhypodbp_gui.c
+ck  "preferida: el fallo se muestra"         'csnhypodbp_mww_report\(0, err\)'             csnhypodbp_gui.c
 ck  "preferida: marca manual en algorithm"   'CSNMan'                                      csnhypodbp_ws.c
 ck  "preferida: 13.er token en la picada"    '%c M %c'                                     csnhypodbp_ws.c
 ck  "picking: ancla congelada (no la P ganadora)" 'g_win_ref_pick'                          csnhypodbp_gui.c
@@ -285,6 +311,47 @@ ck  "ventana: el panel Mww no infla el minimo"   'mww_scrolled\(g_mww\.grid, 90\
 ck  "ventana: idem para la salida del motor"     'mww_scrolled\(g_mww\.view, 90\)'    csnhypodbp_mww.c
 nck "ventana: sin size_request en mww_scrolled"  'gtk_widget_set_size_request\(sw, -1, h\)' csnhypodbp_mww.c
 ck  "ventana: la playera con suelo pequeno"      'gtk_widget_set_size_request\(vbox, 120, 120\)' csnhypodbp_mww.c
+ck  "mww: el resumen no se estira"               'set_hexpand\(g_mww\.summary, FALSE\)'    csnhypodbp_mww.c
+ck  "mww: reparto 1/3-2/3 con columnas homogeneas" 'gtk_grid_set_column_homogeneous\(GTK_GRID\(row\), TRUE\)' csnhypodbp_mww.c
+ck  "mww: los resultados en la columna 0 (1/3)"   'gtk_grid_attach\(GTK_GRID\(row\), frame, 0, 0, 1, 1\)' csnhypodbp_mww.c
+ck  "mww: la salida ocupa la columnas 1-2 (2/3)"  'gtk_grid_attach\(GTK_GRID\(row\), frame, 1, 0, 2, 1\)' csnhypodbp_mww.c
+nck "mww: sin reparto por hexpand en el bloque"   'set_hexpand\(frame, (TRUE|FALSE)\)'       csnhypodbp_mww.c
+ck  "mww: el tercio izquierdo ajusta el texto"    'GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC\)' csnhypodbp_mww.c
+ck  "mww: el tercio izquierdo no infla el minimo" 'set_min_content_width\(GTK_SCROLLED_WINDOW\(sw\), 90\)' csnhypodbp_mww.c
+ck  "mww: texto y playera juntos"                'GTK_ORIENTATION_HORIZONTAL, 4\)'         csnhypodbp_mww.c
+# --- Panel Mww: tabla editable, resultados lado a lado, sin boton de guardado ---
+ck  "mww: la tabla es editable (celda por campo)" 'mww_cell_new'                             csnhypodbp_mww.c
+ck  "mww: campos editables de la libreria"        'CSNWPHASE_PF_MAGNITUDE'                   csnhypodbp_mww.c
+ck  "mww: overrides sobre la corrida"             'mww_over_apply'                           csnhypodbp_mww.c
+nck "mww: sin NINGUN spin en la tabla"            'gtk_spin_button'                          csnhypodbp_mww.c
+ck  "mww: las celdas numericas son cajas de texto" 'gtk_entry_new\(\)'                        csnhypodbp_mww.c
+ck  "mww: el parseo de la celda es del nucleo"     'mww_field_parse'                          csnhypodbp_mww.c
+ck  "mww: el rango de la celda es del nucleo"      'mww_field_limits'                         csnhypodbp_mww.c
+nck "mww: sin rangos de campos escritos en la GUI" 'rng\['                                    csnhypodbp_mww.c
+ck  "mww: texto invalido marca la celda"           'add_css_class\(w, "mww-cell-bad"\)'       csnhypodbp_mww.c
+ck  "mww: texto valido quita la marca"             'remove_css_class\(w, "mww-cell-bad"\)'    csnhypodbp_mww.c
+ck  "mww: el texto invalido destoca el campo"      'mww_over_unset\(&g_mww\.ov, field\)'      csnhypodbp_mww.c
+nck "mww: sin la regla CSS de los +/- del spin"    'mww-param-cell > button'                  csnhypodbp_main.c
+ck  "mww: DMIN editable y pegada al screening"     'CSNWPHASE_PF_DMIN, "DMIN'                 ../csnwphase/csnwphase_prep.c
+ck  "mww: DMAX editable y pegada al screening"     'CSNWPHASE_PF_DMAX, "DMAX'                 ../csnwphase/csnwphase_prep.c
+nck "mww: sin la fila combinada de DMIN/DMAX"      'DMIN / DMAX \[deg\]'                      ../csnwphase/csnwphase_prep.c
+ck  "mww: DMIN/DMAX se vuelcan a la corrida"       'case CSNWPHASE_PF_DMIN'                   csnhypodbp_mww_over.c
+ck  "mww: destocar un campo es del nucleo puro"    'int mww_over_unset'                       csnhypodbp_mww_over.c
+ck  "mww: el rango de campos es del nucleo puro"   'mww_field_limits\(int field'              csnhypodbp_mww_over.c
+nck "mww: sin boton Save to DB"                   'Save to DB'                               csnhypodbp_mww.c
+ck  "mww: resultados y salida con la misma altura" 'set_size_request\(row, -1, MWW_ROW_H\)'   csnhypodbp_mww.c
+ck  "mww: los cuadros inferiores +50% (165->248)"  '#define MWW_ROW_H 248'                     csnhypodbp_mww.c
+ck  "mww: los cuadros inferiores no se estiran"    'set_vexpand\(row, FALSE\)'               csnhypodbp_mww.c
+ck  "mww: la fila del bloque se lleva todo el alto" 'gtk_grid_set_row_homogeneous\(GTK_GRID\(row\), TRUE\)' csnhypodbp_mww.c
+ck  "mww: los parametros se llevan el alto"        'set_vexpand\(frame, TRUE\)'              csnhypodbp_mww.c
+ck  "mww: el cuadro izquierdo un 70% mas grande"   '\.mww-summary \{ font-size: 134%'        csnhypodbp_main.c
+ck  "mww: la salida del motor +15% (79->91)"       '\.mww-output \{ font-size: 91%'          csnhypodbp_main.c
+ck2 "mww: resultados llena el alto de la fila"     'gtk_frame_new\("Resultados' 'set_vexpand\(frame, TRUE\)' csnhypodbp_mww.c
+ck2 "mww: la salida llena el alto de la fila"      'gtk_frame_new\("Salida completa' 'set_vexpand\(frame, TRUE\)' csnhypodbp_mww.c
+ck  "mww: persistencia al confirmar"               'int csnhypodbp_mww_persist'              csnhypodbp_mww.c
+ck  "mww: el origen se crea si falta"              'ewguidb_upsert_origin_if_absent'          csnhypodbp_mww.c
+ck  "mww: ids compartidos con hypodb"              'ewgui_origin_id'                          csnhypodbp_mww.c
+ck  "mww: la preferida del evento se actualiza"    'ewguidb_set_preferred'                    csnhypodbp_mww.c
 ck  "ventana: suelo pequeno del canvas de planta" '&plan_w, 160, 140'                 csnhypodbp_main.c
 ck  "ventana: suelo pequeno del canvas de perfil" '&prof_w, 160, 100'                 csnhypodbp_main.c
 nck "ventana: sin suelos de 300 px"              '&(plan|prof)_w, 300, [0-9]+'         csnhypodbp_main.c

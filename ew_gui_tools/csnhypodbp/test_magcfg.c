@@ -4,6 +4,7 @@
  * ventana por defecto de cada magnitud.
  */
 
+#include <locale.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -302,12 +303,175 @@ static void test_gate(void)
     }
 }
 
+/* Cajas de la barra de overrides (`GtkEntry` en la GUI): limites, formato,
+ * parseo (independiente de `LC_NUMERIC`) y volcado todo-o-nada. */
+static void test_ov_fields(void)
+{
+    CsnhypodbpMagGateOv ov, back;
+    char txt[CSNHYPODBP_MAG_OV_FIELD_N][24];
+    const char *p[CSNHYPODBP_MAG_OV_FIELD_N];
+    double lo = -1.0, hi = -1.0, v = -1.0;
+    int digits = -1, i;
+    const char *loc;
+
+    CHECK(csnhypodbp_mag_ov_field_limits(CSNHYPODBP_MAG_OV_MIN_DELTA,
+                                         &lo, &hi, &digits) == 0 &&
+          fabs(lo) < 1e-12 && fabs(hi - 180.0) < 1e-12 && digits == 1,
+          "ov: limites de la distancia minima");
+    CHECK(csnhypodbp_mag_ov_field_limits(CSNHYPODBP_MAG_OV_MAX_DIST_KM,
+                                         &lo, &hi, &digits) == 0 &&
+          fabs(hi - 2000.0) < 1e-12 && digits == 0,
+          "ov: limites del corte en km");
+    CHECK(csnhypodbp_mag_ov_field_limits(CSNHYPODBP_MAG_OV_MAX_DEPTH,
+                                         &lo, &hi, &digits) == 0 &&
+          fabs(hi - 700.0) < 1e-12 && digits == 0,
+          "ov: limites de la profundidad maxima");
+    CHECK(csnhypodbp_mag_ov_field_limits(-1, NULL, NULL, NULL) == -1 &&
+          csnhypodbp_mag_ov_field_limits(CSNHYPODBP_MAG_OV_FIELD_N, NULL, NULL, NULL) == -1,
+          "ov: campo fuera de rango");
+
+    /* Ancho de la caja: el del valor canonico mas el margen. En GTK4 el natural de
+       un GtkEntry es 150 px fijos salvo que se acote, asi que esto es lo que
+       decide el ancho visible (ver csnhypodbp_magcfg.h). */
+    CHECK(csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_MIN_DELTA) == 7 &&
+          csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_MAX_DELTA) == 7,
+          "ov: ancho de las cajas de distancia (\"180.0\" + margen)");
+    CHECK(csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_MAX_DIST_KM) == 6,
+          "ov: ancho de la caja del corte en km (\"2000\" + margen)");
+    CHECK(csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_MIN_DEPTH) == 5 &&
+          csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_MAX_DEPTH) == 5,
+          "ov: ancho de las cajas de profundidad (\"700\" + margen)");
+    CHECK(csnhypodbp_mag_ov_width_chars(-1) == -1 &&
+          csnhypodbp_mag_ov_width_chars(CSNHYPODBP_MAG_OV_FIELD_N) == -1,
+          "ov: ancho de un campo fuera de rango");
+    {
+        char wid[24];
+        double top = 0.0;
+        int ok = 1;
+
+        for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+            csnhypodbp_mag_ov_field_limits(i, NULL, &top, NULL);
+            csnhypodbp_mag_ov_fmt(wid, sizeof wid, i, top);
+            if (csnhypodbp_mag_ov_width_chars(i) !=
+                (int)strlen(wid) + CSNHYPODBP_MAG_OV_WIDTH_MARGIN) ok = 0;
+        }
+        CHECK(ok, "ov: el ancho sale del valor canonico + margen");
+    }
+
+    CHECK(csnhypodbp_mag_ov_fmt(txt[0], sizeof txt[0],
+                                CSNHYPODBP_MAG_OV_MIN_DELTA, 12.5) == 0 &&
+          strcmp(txt[0], "12.5") == 0, "ov: fmt de 1 decimal");
+    CHECK(csnhypodbp_mag_ov_fmt(txt[0], sizeof txt[0],
+                                CSNHYPODBP_MAG_OV_MAX_DIST_KM, 600.0) == 0 &&
+          strcmp(txt[0], "600") == 0, "ov: fmt sin decimales");
+    CHECK(csnhypodbp_mag_ov_fmt(txt[0], sizeof txt[0],
+                                CSNHYPODBP_MAG_OV_MAX_DEPTH, 200.4) == 0 &&
+          strcmp(txt[0], "200") == 0, "ov: fmt redondea al decimal del campo");
+    CHECK(csnhypodbp_mag_ov_fmt(txt[0], 3, CSNHYPODBP_MAG_OV_MAX_DIST_KM, 2000.0) == -1,
+          "ov: fmt con buffer corto");
+    CHECK(csnhypodbp_mag_ov_fmt(txt[0], sizeof txt[0],
+                                CSNHYPODBP_MAG_OV_MAX_DIST_KM, NAN) == -1,
+          "ov: fmt de un valor no finito");
+
+    CHECK(csnhypodbp_mag_ov_parse("12.5", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == 0 &&
+          fabs(v - 12.5) < 1e-9, "ov: parse de 1 decimal");
+    CHECK(csnhypodbp_mag_ov_parse("  180.0 ", CSNHYPODBP_MAG_OV_MAX_DELTA, &v) == 0 &&
+          fabs(v - 180.0) < 1e-9, "ov: parse con espacios alrededor");
+    CHECK(csnhypodbp_mag_ov_parse("12,5", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == 0 &&
+          fabs(v - 12.5) < 1e-9, "ov: parse con coma decimal");
+    CHECK(csnhypodbp_mag_ov_parse("12.56", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == 0 &&
+          fabs(v - 12.6) < 1e-9, "ov: parse redondea a los decimales del campo");
+    CHECK(csnhypodbp_mag_ov_parse("600.4", CSNHYPODBP_MAG_OV_MAX_DIST_KM, &v) == 0 &&
+          fabs(v - 600.0) < 1e-9, "ov: parse trunca el decimal de un campo entero");
+    CHECK(csnhypodbp_mag_ov_parse("99999", CSNHYPODBP_MAG_OV_MAX_DEPTH, &v) == 0 &&
+          fabs(v - 700.0) < 1e-9, "ov: parse acota al techo del campo");
+    CHECK(csnhypodbp_mag_ov_parse("-3", CSNHYPODBP_MAG_OV_MIN_DEPTH, &v) == 0 &&
+          fabs(v) < 1e-9, "ov: parse acota al piso del campo");
+
+    v = 7.5;
+    CHECK(csnhypodbp_mag_ov_parse("", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == -1 &&
+          fabs(v - 7.5) < 1e-9, "ov: vacio es invalido y no toca el valor");
+    CHECK(csnhypodbp_mag_ov_parse("   ", CSNHYPODBP_MAG_OV_MIN_DELTA, NULL) == -1,
+          "ov: solo espacios es invalido");
+    CHECK(csnhypodbp_mag_ov_parse("abc", CSNHYPODBP_MAG_OV_MIN_DELTA, NULL) == -1,
+          "ov: basura es invalida");
+    CHECK(csnhypodbp_mag_ov_parse("1.2.3", CSNHYPODBP_MAG_OV_MIN_DELTA, NULL) == -1,
+          "ov: resto sin consumir es invalido");
+    CHECK(csnhypodbp_mag_ov_parse("1e3", CSNHYPODBP_MAG_OV_MIN_DELTA, NULL) == -1,
+          "ov: notacion cientifica es invalida");
+    CHECK(csnhypodbp_mag_ov_parse(NULL, CSNHYPODBP_MAG_OV_MIN_DELTA, NULL) == -1,
+          "ov: texto NULL es invalido");
+    CHECK(csnhypodbp_mag_ov_parse("1", CSNHYPODBP_MAG_OV_FIELD_N, NULL) == -1,
+          "ov: campo fuera de rango al parsear");
+
+    /* El parseo NO depende de LC_NUMERIC: con es_CL un `strtod` de C se corta en
+       el punto decimal (AGENTS §7). Si el locale no esta instalado, el test sigue
+       valiendo (el parser es el mismo con locale C). */
+    loc = setlocale(LC_ALL, "es_CL.UTF-8");
+    if (!loc) loc = setlocale(LC_ALL, "es_ES.UTF-8");
+    if (!loc) loc = setlocale(LC_ALL, "de_DE.UTF-8");
+    CHECK(csnhypodbp_mag_ov_parse("12.5", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == 0 &&
+          fabs(v - 12.5) < 1e-9, "ov: parse de 12.5 con locale no-C");
+    CHECK(csnhypodbp_mag_ov_parse("12,5", CSNHYPODBP_MAG_OV_MIN_DELTA, &v) == 0 &&
+          fabs(v - 12.5) < 1e-9, "ov: parse de 12,5 con locale no-C");
+    setlocale(LC_ALL, "C");     /* `fmt` usa el separador del locale: el resto
+                                   de los textos esperados son con punto */
+
+    memset(&ov, 0, sizeof ov);
+    p[CSNHYPODBP_MAG_OV_MIN_DELTA]   = "2";
+    p[CSNHYPODBP_MAG_OV_MAX_DELTA]   = "25.5";
+    p[CSNHYPODBP_MAG_OV_MAX_DIST_KM] = "900";
+    p[CSNHYPODBP_MAG_OV_MIN_DEPTH]   = "10";
+    p[CSNHYPODBP_MAG_OV_MAX_DEPTH]   = "150";
+    CHECK(csnhypodbp_mag_ov_from_text(&ov, p) == 0 && ov.on == 1 &&
+          fabs(ov.min_delta - 2.0) < 1e-9 && fabs(ov.max_delta - 25.5) < 1e-9 &&
+          fabs(ov.max_dist_km - 900.0) < 1e-9 && fabs(ov.min_depth - 10.0) < 1e-9 &&
+          fabs(ov.max_depth - 150.0) < 1e-9,
+          "ov: los cinco validos activan el override");
+
+    csnhypodbp_mag_ov_texts(&ov, txt);
+    CHECK(strcmp(txt[CSNHYPODBP_MAG_OV_MIN_DELTA], "2.0") == 0 &&
+          strcmp(txt[CSNHYPODBP_MAG_OV_MAX_DELTA], "25.5") == 0 &&
+          strcmp(txt[CSNHYPODBP_MAG_OV_MAX_DIST_KM], "900") == 0 &&
+          strcmp(txt[CSNHYPODBP_MAG_OV_MIN_DEPTH], "10") == 0 &&
+          strcmp(txt[CSNHYPODBP_MAG_OV_MAX_DEPTH], "150") == 0,
+          "ov: los textos canonicos del override");
+
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) p[i] = txt[i];
+    memset(&back, 0, sizeof back);
+    CHECK(csnhypodbp_mag_ov_from_text(&back, p) == 0 &&
+          fabs(back.min_delta - ov.min_delta) < 1e-9 &&
+          fabs(back.max_delta - ov.max_delta) < 1e-9 &&
+          fabs(back.max_dist_km - ov.max_dist_km) < 1e-9 &&
+          fabs(back.min_depth - ov.min_depth) < 1e-9 &&
+          fabs(back.max_depth - ov.max_depth) < 1e-9,
+          "ov: ida y vuelta textos -> override");
+
+    /* Un solo campo invalido invalida los cinco (el rango que se ve es el que se
+       aplica) y dice cual es, sin tocar el override. */
+    p[CSNHYPODBP_MAG_OV_MIN_DEPTH] = "no";
+    memset(&back, 0, sizeof back);
+    back.on = 1; back.max_depth = 42.0;
+    CHECK(csnhypodbp_mag_ov_from_text(&back, p) == CSNHYPODBP_MAG_OV_MIN_DEPTH + 1 &&
+          back.on == 1 && fabs(back.max_depth - 42.0) < 1e-9 &&
+          fabs(back.min_delta) < 1e-9,
+          "ov: un campo invalido no toca el override y dice cual");
+    p[CSNHYPODBP_MAG_OV_MIN_DEPTH] = "10";
+    p[CSNHYPODBP_MAG_OV_MAX_DELTA] = "";
+    CHECK(csnhypodbp_mag_ov_from_text(&back, p) == CSNHYPODBP_MAG_OV_MAX_DELTA + 1,
+          "ov: una caja vacia es el campo invalido");
+    CHECK(csnhypodbp_mag_ov_from_text(NULL, p) == -1 &&
+          csnhypodbp_mag_ov_from_text(&back, NULL) == -1,
+          "ov: argumentos NULL");
+}
+
 int main(void)
 {
     test_defaults();
     test_names();
     test_load();
     test_gate();
+    test_ov_fields();
     if (fails) { printf("%d FALLOS\n", fails); return 1; }
     printf("OK test_magcfg\n");
     return 0;

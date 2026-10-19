@@ -2,6 +2,10 @@
 #define CSNHYPODBP_MWW_H
 
 #include <gtk/gtk.h>
+#include <stddef.h>
+
+#include "csnhypodbp_group.h"
+#include "csnwphase.h"
 
 /*
  * Panel `Mww` (inversión de fase W) de la pestaña *magnitudes*.
@@ -25,5 +29,26 @@ GtkWidget *csnhypodbp_mww_panel_new(void);
  * se desincronicen los botones, los valores y el color.
  */
 void csnhypodbp_mww_update(void);
+
+/*
+ * Resultado Mww VIGENTE para una solución (qid + mod del localizador). Devuelve
+ * el resultado (no NULL) solo si la última corrida es de ESA solución: el panel
+ * no borra el resultado viejo al cambiar de selección, así que sin esta
+ * comprobación el preview le atribuiría a una solución el Mww de otra.
+ */
+const CsnwphaseOut *csnhypodbp_mww_result_for(int qid, int mod);
+
+/*
+ * Guarda el mecanismo focal y la magnitud Mww del resultado pendiente sobre la
+ * solución confirmada: la llama `on_preview_confirm` (csnhypodbp_gui.c). Crea el
+ * evento y el origen si aún no están en la base. Devuelve 0 si OK y -1 con el
+ * error real en `err`.
+ */
+int csnhypodbp_mww_persist(const CsnhypodbpSolution *sol, const CsnwphaseOut *out,
+                           char *err, size_t errlen);
+
+/* Refleja en el estado del panel el resultado de `csnhypodbp_mww_persist`
+ * (mensaje y color). */
+void csnhypodbp_mww_report(int ok, const char *msg);
 
 #endif /* CSNHYPODBP_MWW_H */

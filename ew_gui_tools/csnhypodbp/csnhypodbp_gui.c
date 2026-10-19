@@ -398,28 +398,88 @@ static void mag_effective_cfg(CsnhypodbpMagCfg *out)
                                      &g_mag_gate_ov[g_mag_kind], out);
 }
 
-/* Vuelca en la barra la puerta vigente de la magnitud activa. */
+/* Los cinco widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
+   globales viven en csnhypodbp_main.c): un solo sitio donde el campo <-> caja. */
+static GtkWidget *mag_ov_widget(int field)
+{
+    switch (field) {
+    case CSNHYPODBP_MAG_OV_MIN_DELTA:   return g_mag_ov_min;
+    case CSNHYPODBP_MAG_OV_MAX_DELTA:   return g_mag_ov_max;
+    case CSNHYPODBP_MAG_OV_MAX_DIST_KM: return g_mag_ov_km;
+    case CSNHYPODBP_MAG_OV_MIN_DEPTH:   return g_mag_ov_dmin;
+    case CSNHYPODBP_MAG_OV_MAX_DEPTH:   return g_mag_ov_depth;
+    default: break;
+    }
+    return NULL;
+}
+
+static const char *mag_ov_text(int field)
+{
+    GtkWidget *w = mag_ov_widget(field);
+
+    return w ? gtk_editable_get_text(GTK_EDITABLE(w)) : NULL;
+}
+
+/* Pinta en rojo las cajas cuyo texto todavia no vale (`only_bad` = 0 las limpia
+   todas). El commit es todo-o-nada, asi que lo que se ve es lo que se aplica. */
+static void mag_ov_mark(int only_bad)
+{
+    int i;
+
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+        GtkWidget *w = mag_ov_widget(i);
+        double v;
+
+        if (!w) continue;
+        if (only_bad && csnhypodbp_mag_ov_parse(mag_ov_text(i), i, &v) != 0)
+            gtk_widget_add_css_class(w, "mag-bar-bad");
+        else
+            gtk_widget_remove_css_class(w, "mag-bar-bad");
+    }
+}
+
+/* 1 si alguno de los cinco textos no vale (el commit es todo-o-nada). */
+static int mag_ov_any_invalid(void)
+{
+    CsnhypodbpMagGateOv scratch;
+    const char *txt[CSNHYPODBP_MAG_OV_FIELD_N];
+    int i;
+
+    memset(&scratch, 0, sizeof scratch);
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) txt[i] = mag_ov_text(i);
+    return csnhypodbp_mag_ov_from_text(&scratch, txt) != 0;
+}
+
+/* Vuelca en la barra la puerta vigente de la magnitud activa. El texto lo arma
+   el nucleo puro (`csnhypodbp_mag_ov_texts`): la caja nunca muestra un valor que
+   no sea el que la puerta aplica, y no queda ninguna marca de error. */
 void csnhypodbp_mag_ov_sync(void)
 {
     CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
-    double lo = 0.0, hi = 0.0, km = 0.0, dmin = 0.0, dmax = 0.0;
+    CsnhypodbpMagGateOv shown;
+    char txt[CSNHYPODBP_MAG_OV_FIELD_N][24];
+    int i;
 
     if (!g_mag_ov_min) return;
     g_mag_ov_syncing = 1;
+    memset(&shown, 0, sizeof shown);
     if (ov->on) {
-        lo = ov->min_delta; hi = ov->max_delta; km = ov->max_dist_km;
-        dmin = ov->min_depth; dmax = ov->max_depth;
+        shown = *ov;
     } else {
-        csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind, &lo, &hi, &km);
-        dmin = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
-        dmax = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
+        csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind,
+                                      &shown.min_delta, &shown.max_delta,
+                                      &shown.max_dist_km);
+        shown.min_depth = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
+        shown.max_depth = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
     }
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_min), lo);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_max), hi);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_km), km);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_dmin), dmin);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_depth), dmax);
+    csnhypodbp_mag_ov_texts(&shown, txt);
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+        GtkWidget *w = mag_ov_widget(i);
+
+        if (w) gtk_editable_set_text(GTK_EDITABLE(w), txt[i]);
+    }
     g_mag_ov_syncing = 0;
+    mag_ov_mark(0);
 }
 
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data)
@@ -450,22 +510,46 @@ void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data)
     csnhypodbp_mag_ov_reset_all();
 }
 
-/* Editar cualquier campo de la barra activa el override de ESA magnitud: no hay
-   casilla (el rango que se ve es el que se aplica). */
-void on_mag_ov_changed(GtkSpinButton *s, gpointer data)
+/* Escribir en una caja NO aplica nada: solo se valida y, si el texto todavia no
+   es un numero valido, la caja se pinta en rojo. Editar un campo y confirmarlo
+   activa el override de ESA magnitud (no hay casilla: el rango que se ve es el
+   que se aplica). */
+void on_mag_ov_changed(GtkEditable *e, gpointer data)
+{
+    (void)e; (void)data;
+    if (g_mag_ov_syncing) return;
+    mag_ov_mark(1);      /* rojo en las cajas cuyo texto todavia no vale */
+}
+
+/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CINCO
+   campos validos (todo o nada): con uno invalido la puerta vigente no cambia y
+   las cajas que no valen quedan en rojo. */
+void on_mag_ov_commit(GtkWidget *w, gpointer data)
 {
     CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
+    const char *txt[CSNHYPODBP_MAG_OV_FIELD_N];
+    int i;
 
-    (void)s; (void)data;
+    (void)w; (void)data;
     if (g_mag_ov_syncing || !g_mag_ov_min) return;
-    ov->on = 1;
-    ov->min_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_min));
-    ov->max_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_max));
-    ov->max_dist_km = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_km));
-    ov->min_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_dmin));
-    ov->max_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_depth));
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) txt[i] = mag_ov_text(i);
+    if (csnhypodbp_mag_ov_from_text(ov, txt) != 0) {
+        mag_ov_mark(1);             /* la puerta vigente no cambia */
+        return;
+    }
+    mag_ov_mark(0);
     rebuild_mag_list();
     if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+/* Al salir del campo: si algo quedo invalido se restaura el texto vigente (una
+   caja no puede mostrar un valor que la puerta no aplica); si no, se aplica. */
+void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data)
+{
+    (void)fc; (void)data;
+    if (g_mag_ov_syncing || !g_mag_ov_min) return;
+    if (mag_ov_any_invalid()) csnhypodbp_mag_ov_sync();
+    else                      on_mag_ov_commit(NULL, NULL);
 }
 
 /* --- Canvas de la sub-pestaña `magnitudes` ------------------------------- */
@@ -1680,6 +1764,16 @@ static void preview_mag_text(double v, char *out, size_t n)
     else snprintf(out, n, "%.2f", v);
 }
 
+/* Celda `Mww` del preview: el valor de la inversión de fase W si esa corrida es
+   de esta solución (mismo qid+mod); un guion si no hay resultado para ella. */
+static void preview_mww_text(int qid, int mod, char *out, size_t n)
+{
+    const CsnwphaseOut *o = csnhypodbp_mww_result_for(qid, mod);
+
+    if (o) snprintf(out, n, "%.2f", o->mw);
+    else   snprintf(out, n, "-");
+}
+
 /* Radio de magnitud preferida del cuadro de la candidata. */
 void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
     int k = GPOINTER_TO_INT(data);
@@ -1695,12 +1789,15 @@ void csnhypodbp_preview_update(void) {
     int i;
     if (!g_preview_box || !g_preview_title) return;
     if (g_preview_valid) {
+        char mww_s[16];
+
+        preview_mww_text(g_preview_sol.qid, g_preview_sol.mod, mww_s, sizeof mww_s);
         csnhypodbp_preview_from_candidate(&v, g_active_locator,
                                           g_preview_sol.lat, g_preview_sol.lon,
                                           g_preview_sol.depth, g_preview_sol.nph,
                                           g_preview_sol.rms,
                                           g_preview_mag.ml, g_preview_mag.mwp,
-                                          g_preview_mag.mb, g_preview_mag.ms);
+                                          g_preview_mag.mb, g_preview_mag.ms, mww_s);
     } else {
         gpointer item = g_selection_detail
                         ? gtk_single_selection_get_selected_item(g_selection_detail)
@@ -1710,19 +1807,23 @@ void csnhypodbp_preview_update(void) {
             double lat = 0, lon = 0, depth = 0;
             double nm[CSNHYPODBP_MAG_NKIND] = { -1.0, -1.0, -1.0, -1.0 };
             char mtxt[CSNHYPODBP_MAG_NKIND][16];
-            int k;
+            char mww_s[16];
+            int k, qid = 0, mod = 0;
 
             g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth,
+                         "qid", &qid, "mod", &mod,
                          "nmag0", &nm[0], "nmag1", &nm[1],
                          "nmag2", &nm[2], "nmag3", &nm[3], NULL);
             for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++)
                 preview_mag_text(nm[k], mtxt[k], sizeof(mtxt[k]));
+            preview_mww_text(qid, mod, mww_s, sizeof mww_s);
             /* rms/nph: las celdas ya formateadas de la fila (c5/c7). Las cuatro
                magnitudes salen de nmag0..3, asi el formato es el mismo en las 4. */
             csnhypodbp_preview_from_selected(&v, lat, lon, depth,
                                              csnhypodbp_row_col(row, 5),
                                              csnhypodbp_row_col(row, 7),
-                                             mtxt[0], mtxt[1], mtxt[2], mtxt[3]);
+                                             mtxt[0], mtxt[1], mtxt[2], mtxt[3],
+                                             mww_s);
         } else {
             csnhypodbp_preview_clear(&v);
         }
@@ -1747,6 +1848,12 @@ void csnhypodbp_preview_update(void) {
         has[1] = g_preview_valid && g_preview_mag.mwp[0] != 0;
         has[2] = g_preview_valid && g_preview_mag.mb[0] != 0;
         has[3] = g_preview_valid && g_preview_mag.ms[0] != 0;
+        /* El Mww no viene del ARC: solo hay valor si la inversión de fase W se
+           corrió para esta solución (mismo evento y localizador). */
+        has[CSNHYPODBP_PREVIEW_MWW_KIND] =
+            g_preview_valid &&
+            csnhypodbp_mww_result_for(g_preview_sol.qid,
+                                      g_preview_sol.mod) != NULL;
         if (g_preview_valid && !csnhypodbp_mag_pref_ok(has, g_preview_pref_kind))
             g_preview_pref_kind = csnhypodbp_mag_pref_default(g_preview_mag.ml,
                                                              g_preview_mag.mwp,
@@ -1774,9 +1881,30 @@ void on_preview_discard(GtkWidget *w, gpointer d) {
 }
 
 void on_preview_confirm(GtkWidget *w, gpointer d) {
+    int pref = g_preview_pref_kind;
     (void)w; (void)d;
     if (!g_preview_valid) return;
-    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, g_preview_pref_kind);
+    csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, pref);
+    /* El mecanismo focal (con su Mww) se guarda AL CONFIRMAR la solución, no con
+     * un botón aparte del panel. Solo si el usuario marcó el radio `Mww`: es el
+     * único caso en que la inversión es la magnitud preferida elegida (el `Mww`
+     * no viaja en el ARC, así que además queda como preferida de la base). */
+    if (pref == CSNHYPODBP_PREVIEW_MWW_KIND) {
+        const CsnwphaseOut *o = csnhypodbp_mww_result_for(g_preview_sol.qid,
+                                                          g_preview_sol.mod);
+        char err[256] = "";
+
+        if (!o) {
+            csnhypodbp_mww_report(0, "Sin resultado Mww para la solución confirmada");
+        } else if (csnhypodbp_mww_persist(&g_preview_sol, o, err, sizeof err) != 0) {
+            csnhypodbp_mww_report(0, err);
+            logit("t", "csnhypodbp: no se pudo guardar el mecanismo focal: %s\n",
+                  err);
+        } else {
+            csnhypodbp_mww_report(1, "Mecanismo focal (WCMT) y Mww guardados en "
+                                     "la base al confirmar la solución");
+        }
+    }
     g_preview_valid = FALSE;
     g_preview_pref_kind = -1;
     csnhypodbp_preview_update();
@@ -2814,6 +2942,14 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
         g_object_get(row, "otime", &otime, "qid", &qid, "lat", &lat, "lon", &lon,
                      "depth", &depth, "mod", &mod, "qver", &ver, NULL);
         if (id_str) strcpy(selected_id, id_str);
+        /* El origin_id de la BD vive en su propia propiedad (la columna 8 es el
+         * qid): el panel `Mww` lo necesita para colgarle su magnitud/tensor. */
+        {
+            const char *oid = csnhypodbp_row_origin_id(row);
+
+            snprintf(selected_origin_id, sizeof selected_origin_id, "%s",
+                     oid ? oid : "");
+        }
         /* Solo se reinicia el zoom si cambia la solucion elegida: reconstruir
            el detalle del mismo evento (upsert del anillo) no debe matar el
            zoom que el usuario ajusto. */

@@ -148,6 +148,8 @@ extern int     g_ring_sync;      /* 1 = re-seleccion interna de una llegada */
 extern double  selected_otime;
 extern double  selected_depth;
 extern char    selected_id[32];
+/* origin_id de la BD del origen seleccionado ("" si todavia no esta en la base). */
+extern char    selected_origin_id[64];
 extern double  g_pick_window_sec;      /* ventana de asociacion de picks capturados */
 extern char    g_pick_phase;           /* fase a picar en modo Repick ('P'|'S') */
 
@@ -379,7 +381,12 @@ void csnhypodbp_mag_status_update(void);
 void csnhypodbp_mag_canvas_fit(void);
 void csnhypodbp_mag_ov_sync(void);
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data);
-void on_mag_ov_changed(GtkSpinButton *s, gpointer data);
+/* Cajas de la barra de overrides (`GtkEntry`, sin los +/- del spin): `changed`
+   solo valida y pinta en rojo; el valor se aplica al CONFIRMAR (`activate`, o al
+   salir del campo) y solo si los cinco campos valen. Ver csnhypodbp_magcfg.h. */
+void on_mag_ov_changed(GtkEditable *e, gpointer data);
+void on_mag_ov_commit(GtkWidget *w, gpointer data);
+void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data);
 void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data);
 /* Devuelve las cuatro magnitudes a la puerta del .d (lo usa `reset default` y
    el cambio de solucion elegida en Origins). */

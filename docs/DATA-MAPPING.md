@@ -31,7 +31,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 
 | Columna | Valor | Fuente |
 |---|---|---|
-| `event_id` | `E<qid>-<yyyymmddhhmmss>` (UTC de la hora origen de la 1.ª solución del grupo) | `hypodb_ids.c:15`, `hypodb_ingest.c:335` |
+| `event_id` | `E<qid>-<yyyymmddhhmmss>` (UTC de la hora origen de la 1.ª solución del grupo) | `ewgui/db_ids.c:20`, `hypodb_ingest.c:335` |
 | `event_type` | `'EARTHQUAKE'` fijo | `hypodb_ingest.c:535` |
 | `felt` / `published` | `false` / `false` fijos | `hypodb_ingest.c:533` |
 | `creation_time` | DEFAULT `CURRENT_TIMESTAMP` (nadie la escribe) | `schema.sql:16`, `ewgui_db.c:266-269` |
@@ -42,7 +42,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 
 | Columna | Valor | Fuente |
 |---|---|---|
-| `origin_id` | `<event_id>:<mod>` | `hypodb_ids.c:22` |
+| `origin_id` | `<event_id>:<mod>` | `ewgui/db_ids.c:38` |
 | `origin_time` | ARC línea 1 `[0:16]` (`YYYYMMDDHHMMSS`+frac) | `csnhypodbp_group.c:101` |
 | `latitude` / `longitude` | ARC `16..22` (+`S`) / `23..30` (+`W`) | `csnhypodbp_group.c:106-116` |
 | `depth` | ARC `31..35` ÷ 100 (km) | `csnhypodbp_group.c:118-120` |
@@ -61,8 +61,8 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 
 | Columna | Valor | Fuente |
 |---|---|---|
-| `pick_id` | `<origin_id>/pick/<STA>.<FASE>` | `hypodb_ingest.c:568`, `hypodb_ids.c:48` |
-| `channel` | NSLCO `NET.STA.LOC.CHAN`, location `--`/vacío → `""` (`C1.GO01..HHZ`) | `hypodb_ids.c:61-63` |
+| `pick_id` | `<origin_id>/pick/<STA>.<FASE>` | `hypodb_ingest.c:568`, `ewgui/db_ids.c:70` |
+| `channel` | NSLCO `NET.STA.LOC.CHAN`, location `--`/vacío → `""` (`C1.GO01..HHZ`) | `ewgui/db_ids.c:79-91` |
 | `pick_time` | ARC línea de fase `17..33` | `csnhypodbp_group.c:170` |
 | `phase` | `'P'` / `'S'` | `hypodb_ingest.c:576` |
 | `weight` | `1 − LPWT/4` (P off 16, S off 49); 1.0 si el código no está en 0..4 | `csnhypodbp_group.c:176-179` |
@@ -74,34 +74,37 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 
 | Columna | Valor | Fuente |
 |---|---|---|
-| `magnitude_id` | `<origin_id>/mag/<TIPO>` (el UPSERT **pisa** el mismo tipo) | `hypodb_ids.c:30`, `hypodb_ingest.c:415` |
+| `magnitude_id` | `<origin_id>/mag/<TIPO>` (el UPSERT **pisa** el mismo tipo) | `ewgui/db_ids.c:45`, `hypodb_ingest.c:415` |
 | `magnitude_value` / `magnitude_type` | `mag.mag` / `mag.szmagtype` | `hypodb_ingest.c:697` |
 | `mag_uncertainty` | `mag.error` o NULL si < 0 | `hypodb_ingest.c:426` |
 | `calculation_method` | `MAG_INFO.algorithm` del mensaje (`CSNNet` automática, `CSNMan` manual) | `hypodb_ingest.c:427` |
 | `station_count` | `mag.nstations` | `hypodb_ingest.c:428` |
-| `station_magnitude_id` | `<magnitude_id>/<NSLCO>` | `hypodb_ids.c:39` |
+| `station_magnitude_id` | `<magnitude_id>/<NSLCO>` | `ewgui/db_ids.c:61` |
 | `station_magnitude.channel` | NSLCO (mismo formato que `pick.channel`) | `hypodb_ingest.c:389` |
 | `read_amplitude` / `calculated_magnitude` | `MAG_CHAN_INFO.Amp1` / `.mag` | `hypodb_ingest.c:390-394` |
 | `amplitude_type` | `ML→AML`, `Mb→AMb`, `Ms→AMS`, otro → `AMP` | `hypodb_ingest.c:176-182` |
-| **`Mww` (GUI)** | `<origin_id>/mag/Mww`, `magnitude_type=Mww`, `calculation_method=WPHASE`, `station_count` = estaciones usadas | panel `Mww` → `Save to DB` (`csnhypodbp_mww.c`), vía `ewguidb_upsert_magnitude` |
+| **`Mww` (GUI)** | `<origin_id>/mag/Mww`, `magnitude_type=Mww`, `calculation_method=WPHASE`, `station_count` = estaciones usadas | `csnhypodbp_mww_persist` (`csnhypodbp_mww.c`), al **confirmar** la solución con el radio `Mww` marcado, vía `ewguidb_upsert_magnitude` |
 
 ### 1.5 `tensor`
 
-Lo escribe el panel **`Mww`** con el mecanismo focal de la inversión de fase W
-(`Save to DB` → `ewguidb_upsert_tensor`, `common/src/ewgui_db.c`):
+Lo escribe la GUI con el mecanismo focal de la inversión de fase W, **al confirmar la
+solución** con el radio `Mww` del preview (`csnhypodbp_mww_persist` →
+`ewguidb_upsert_tensor`, `common/src/ewgui_db.c`):
 
 | Columna | Valor | Fuente |
 |---|---|---|
 | `tensor_id` | `<origin_id>/tensor/WPHASE` (re-guardar es idempotente) | `csnhypodbp_mww.c` |
-| `origin_id` | el de la **solución analizada** (NO el centroide de la fase W) | `selected_id` |
+| `origin_id` | el de la **solución confirmada** (NO el centroide de la fase W). Si ese origen todavía no está en la base, la GUI **crea** `event` + `origin` con los ids de `ewgui/db_ids.h` y no pisa uno existente (`ewguidb_upsert_origin_if_absent`) | `csnhypodbp_mww.c` |
 | `method` / `mechanism` | `WPHASE` / `WCMT` | `csnhypodbp_mww.c` |
 | `strike1/dip1/rake1`, `strike2/dip2/rake2` | planos nodales `W_bestnodal`; NULL si el log no los trae | `CsnwphaseOut.have_planes` |
 | `m_rr,m_tt,m_pp,m_rt,m_rp,m_tp` | `WCMTSOLUTION` (N·m, base `r`=arriba, `t`=sur, `p`=este) | `csnwphase_parse` |
 | `scalar_moment` | `Wmom` | `CsnwphaseOut.m0` |
 
 El **centroide** de la inversión (lat/lon/prof y el `time shift`) **no** se escribe en
-`origin`: el origen es el de la solución elegida, y de la fase W sólo se rescatan la
-magnitud y el mecanismo. Ver `docs/WPHASE.md`.
+`origin`: el origen es el de la solución confirmada, y de la fase W sólo se rescatan la
+magnitud y el mecanismo. La **preferida del evento** pasa a ser esa solución con su `Mww`
+(`ewguidb_set_preferred`), porque el `Mww` no viaja en el ARC (ver `docs/pendienteMww.md`).
+Ver `docs/WPHASE.md`.
 
 ## 2. Vuelta: base de datos → GUI
 

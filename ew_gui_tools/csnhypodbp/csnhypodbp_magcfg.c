@@ -308,3 +308,144 @@ void csnhypodbp_magcfg_gate_text(const CsnhypodbpMagCfg *c, int kind,
     else
         snprintf(out, n, "%.0f-%.0f deg", lo, hi);
 }
+
+/* --- Cajas de la barra de overrides --------------------------------------- */
+
+/* Rango y decimales de cada caja: los del `GtkSpinButton` que la barra usaba
+ * (rango, paso y `set_digits`), para que el cambio a `GtkEntry` no mueva ni un
+ * limite. El orden es el de `CSNHYPODBP_MAG_OV_*`. */
+static const struct {
+    double lo, hi;
+    int    digits;
+} MAG_OV_FIELD[CSNHYPODBP_MAG_OV_FIELD_N] = {
+    {   0.0,  180.0, 1 },   /* min_delta   [deg] */
+    {   0.0,  180.0, 1 },   /* max_delta   [deg] */
+    {   0.0, 2000.0, 0 },   /* max_dist_km [km]  */
+    {   0.0,  700.0, 0 },   /* min_depth   [km]  */
+    {   0.0,  700.0, 0 }    /* max_depth   [km]  */
+};
+
+/* Redondeo al mas cercano con `digits` decimales (`.5` hacia arriba en valor
+ * absoluto, `round()`): el spin mostraba el valor redondeado y aqui se escribe a
+ * mano, asi que un "12.56" en un campo de 1 decimal vale 12.6. */
+static double mag_ov_round(double v, int digits)
+{
+    double f = 1.0;
+    int i;
+
+    for (i = 0; i < digits; i++) f *= 10.0;
+    return round(v * f) / f;
+}
+
+int csnhypodbp_mag_ov_field_limits(int field, double *lo, double *hi, int *digits)
+{
+    if (field < 0 || field >= CSNHYPODBP_MAG_OV_FIELD_N) return -1;
+    if (lo)     *lo = MAG_OV_FIELD[field].lo;
+    if (hi)     *hi = MAG_OV_FIELD[field].hi;
+    if (digits) *digits = MAG_OV_FIELD[field].digits;
+    return 0;
+}
+
+int csnhypodbp_mag_ov_fmt(char *out, size_t n, int field, double v)
+{
+    int digits, len;
+
+    if (!out || n == 0 || field < 0 || field >= CSNHYPODBP_MAG_OV_FIELD_N)
+        return -1;
+    out[0] = '\0';
+    if (!isfinite(v)) return -1;
+    digits = MAG_OV_FIELD[field].digits;
+    /* `%.0f` de una profundidad con decimales redondearia sin avisar: se recorta
+     * el valor al decimal del campo antes de formatear. */
+    v = mag_ov_round(v, digits);
+    len = snprintf(out, n, "%.*f", digits, v);
+    return (len < 0 || (size_t)len >= n) ? -1 : 0;
+}
+
+int csnhypodbp_mag_ov_width_chars(int field)
+{
+    double hi = 0.0;
+    char wid[24];
+
+    /* El ancho sigue al texto canonico (no a una constante a mano): si cambia el
+     * formato del campo, cambia la caja. */
+    if (csnhypodbp_mag_ov_field_limits(field, NULL, &hi, NULL) != 0) return -1;
+    if (csnhypodbp_mag_ov_fmt(wid, sizeof wid, field, hi) != 0) return -1;
+    return (int)strlen(wid) + CSNHYPODBP_MAG_OV_WIDTH_MARGIN;
+}
+
+/* Parseo manual e independiente de `LC_NUMERIC`: `strtod` honra el locale y en
+ * este entorno suele ser es_CL, donde "12.5" se corta en el punto (AGENTS §7).
+ * Gramatica: espacios, signo, digitos, [. ,] digitos, espacios. Cualquier otra
+ * cosa (incluido un resto sin consumir) es invalido. */
+static int mag_ov_parse_number(const char *s, double *out)
+{
+    const char *p = s;
+    double v = 0.0, scale = 0.1;
+    int ndig = 0, neg = 0;
+
+    if (!s) return -1;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (*p == '+') p++;
+    else if (*p == '-') { neg = 1; p++; }
+    while (*p >= '0' && *p <= '9') { v = v * 10.0 + (double)(*p - '0'); p++; ndig++; }
+    if (*p == '.' || *p == ',') {
+        p++;
+        while (*p >= '0' && *p <= '9') {
+            v += (double)(*p - '0') * scale; scale *= 0.1; p++; ndig++;
+        }
+    }
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (ndig == 0 || *p != '\0') return -1;      /* vacio, basura o resto */
+    *out = neg ? -v : v;
+    return 0;
+}
+
+int csnhypodbp_mag_ov_parse(const char *txt, int field, double *out)
+{
+    double v = 0.0;
+
+    if (field < 0 || field >= CSNHYPODBP_MAG_OV_FIELD_N) return -1;
+    if (mag_ov_parse_number(txt, &v) != 0) return -1;
+    v = mag_ov_round(v, MAG_OV_FIELD[field].digits);
+    if (v < MAG_OV_FIELD[field].lo) v = MAG_OV_FIELD[field].lo;
+    if (v > MAG_OV_FIELD[field].hi) v = MAG_OV_FIELD[field].hi;
+    if (out) *out = v;
+    return 0;
+}
+
+int csnhypodbp_mag_ov_from_text(CsnhypodbpMagGateOv *ov,
+                                const char *txt[CSNHYPODBP_MAG_OV_FIELD_N])
+{
+    double v[CSNHYPODBP_MAG_OV_FIELD_N];
+    int i;
+
+    if (!ov || !txt) return -1;
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+        if (csnhypodbp_mag_ov_parse(txt[i] ? txt[i] : "", i, &v[i]) != 0)
+            return i + 1;            /* 1..N: el primer campo invalido, ov intacto */
+    }
+    ov->on = 1;
+    ov->min_delta   = v[CSNHYPODBP_MAG_OV_MIN_DELTA];
+    ov->max_delta   = v[CSNHYPODBP_MAG_OV_MAX_DELTA];
+    ov->max_dist_km = v[CSNHYPODBP_MAG_OV_MAX_DIST_KM];
+    ov->min_depth   = v[CSNHYPODBP_MAG_OV_MIN_DEPTH];
+    ov->max_depth   = v[CSNHYPODBP_MAG_OV_MAX_DEPTH];
+    return 0;
+}
+
+void csnhypodbp_mag_ov_texts(const CsnhypodbpMagGateOv *ov,
+                             char out[CSNHYPODBP_MAG_OV_FIELD_N][24])
+{
+    if (!ov || !out) return;
+    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MIN_DELTA], 24,
+                          CSNHYPODBP_MAG_OV_MIN_DELTA, ov->min_delta);
+    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DELTA], 24,
+                          CSNHYPODBP_MAG_OV_MAX_DELTA, ov->max_delta);
+    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DIST_KM], 24,
+                          CSNHYPODBP_MAG_OV_MAX_DIST_KM, ov->max_dist_km);
+    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MIN_DEPTH], 24,
+                          CSNHYPODBP_MAG_OV_MIN_DEPTH, ov->min_depth);
+    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DEPTH], 24,
+                          CSNHYPODBP_MAG_OV_MAX_DEPTH, ov->max_depth);
+}
