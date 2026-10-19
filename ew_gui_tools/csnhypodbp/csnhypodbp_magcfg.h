@@ -104,4 +104,58 @@ void csnhypodbp_magcfg_apply_override(const CsnhypodbpMagCfg *c, int kind,
                                       const CsnhypodbpMagGateOv *ov,
                                       CsnhypodbpMagCfg *out);
 
+/* --- Cajas de la barra de overrides (sub-pestaña `magnitudes`) -------------
+ * La barra usa `GtkEntry` y no `GtkSpinButton` (los botones +/- no aportaban y
+ * su marco se llevaba el ancho). El rango, los decimales y el formato de cada
+ * caja viven AQUI, en una sola fuente: la UI solo pinta y lee. El orden del
+ * enum es el orden en que la barra crea las cajas. */
+enum {
+    CSNHYPODBP_MAG_OV_MIN_DELTA = 0,  /* distancia epicentral minima [deg] */
+    CSNHYPODBP_MAG_OV_MAX_DELTA,      /* distancia epicentral maxima [deg] */
+    CSNHYPODBP_MAG_OV_MAX_DIST_KM,    /* corte de distancia hipocentral [km] */
+    CSNHYPODBP_MAG_OV_MIN_DEPTH,      /* profundidad minima del evento [km] */
+    CSNHYPODBP_MAG_OV_MAX_DEPTH,      /* profundidad maxima del evento [km] */
+    CSNHYPODBP_MAG_OV_FIELD_N
+};
+
+/* Caracteres de aire de cada caja, ademas de los del valor canonico del campo
+ * (el usuario las queria ~70% mas angostas que los 150 px de GTK4). */
+#define CSNHYPODBP_MAG_OV_WIDTH_MARGIN 2
+
+/* Rango y decimales del campo: los mismos que tenia el `GtkSpinButton` que la
+ * barra usaba antes, para que el cambio de widget no mueva ni un limite.
+ * 0 = ok; -1 = `field` fuera de rango. */
+int csnhypodbp_mag_ov_field_limits(int field, double *lo, double *hi, int *digits);
+
+/* Ancho en caracteres de la caja de `field`: el del valor canonico mas largo del
+ * campo (`fmt` de su tope; p. ej. "180.0") mas `CSNHYPODBP_MAG_OV_WIDTH_MARGIN`.
+ * La barra lo fija como `width-chars` Y como `max-width-chars`: en GTK4
+ * `width-chars` es solo un SUELO y el ancho natural de un `GtkEntry` es 150 px
+ * fijos (`NAT_ENTRY_WIDTH`) si no se acota con `max-width-chars`, que es por lo
+ * que las cajas se veian anchas. -1 si `field` esta fuera de rango. */
+int csnhypodbp_mag_ov_width_chars(int field);
+
+/* Texto canonico de un valor con los decimales del campo ("12.5", "600").
+ * 0 = ok; -1 = buffer nulo/corto o valor no finito. */
+int csnhypodbp_mag_ov_fmt(char *out, size_t n, int field, double v);
+
+/* Parsea el texto de una caja: espacios alrededor ok; `.` o `,` como separador
+ * decimal (nunca de miles); redondeo al mas cercano con los decimales del campo
+ * y acotado a su rango. Vacio, basura o resto sin consumir -> -1 sin tocar
+ * `*out`. Independiente de `LC_NUMERIC` (con locale es_CL un `strtod` de C se
+ * corta en el punto del decimal; ver AGENTS §7). */
+int csnhypodbp_mag_ov_parse(const char *txt, int field, double *out);
+
+/* Vuelca los cinco textos en `ov` (TODO O NADA): 0 y `ov->on = 1` si los cinco
+ * valen; si no, `field+1` (1..N) del PRIMER invalido y `ov` sin tocar. `txt`
+ * lleva los textos en el orden de `CSNHYPODBP_MAG_OV_*`; NULL = vacio.
+ * -1 si `ov` o `txt` son NULL. */
+int csnhypodbp_mag_ov_from_text(CsnhypodbpMagGateOv *ov,
+                                const char *txt[CSNHYPODBP_MAG_OV_FIELD_N]);
+
+/* Los cinco textos canonicos de `ov`: lo que la barra muestra al sincronizar.
+ * `out` es `[CSNHYPODBP_MAG_OV_FIELD_N][24]`. */
+void csnhypodbp_mag_ov_texts(const CsnhypodbpMagGateOv *ov,
+                             char out[CSNHYPODBP_MAG_OV_FIELD_N][24]);
+
 #endif

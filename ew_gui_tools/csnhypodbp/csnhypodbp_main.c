@@ -1351,6 +1351,38 @@ static void on_mag_stack_changed(GObject *stack, GParamSpec *pspec, gpointer dat
         gtk_widget_set_visible(g_mag_bar_w, !mww);
 }
 
+/* Caja de texto de un campo de la barra de overrides (barra inferior de la
+   sub-pestaña `magnitudes`). Es `GtkEntry` y no `GtkSpinButton`: los botones +/-
+   no aportaban y su marco se llevaba el ancho de la barra. Rango, decimales y
+   ancho (el del valor canonico del campo + margen) salen del nucleo puro, y el
+   valor se aplica al CONFIRMAR (Enter o salir del campo): ver
+   `on_mag_ov_commit`. */
+static GtkWidget *mag_ov_entry_new(int field, const char *tip)
+{
+    GtkWidget *e = gtk_entry_new();
+    GtkEventController *fc;
+    int n = csnhypodbp_mag_ov_width_chars(field);
+
+    /* GTK4 da a TODO `GtkEntry` un ancho natural de 150 px y `width-chars` es solo
+       un suelo, asi que hay que acotarlo con `max-width-chars` o la caja se queda
+       ancha por mucho que su texto pida 5 caracteres. Se fijan los dos al mismo
+       valor: la caja no baila al cambiar el valor. */
+    if (n < 1) n = 4;                  /* campo invalido: ancho de emergencia */
+    gtk_entry_set_input_purpose(GTK_ENTRY(e), GTK_INPUT_PURPOSE_NUMBER);
+    gtk_entry_set_max_length(GTK_ENTRY(e), 8);
+    gtk_editable_set_width_chars(GTK_EDITABLE(e), n);
+    gtk_editable_set_max_width_chars(GTK_EDITABLE(e), n);
+    gtk_widget_set_tooltip_text(e, tip);
+    g_signal_connect(e, "changed", G_CALLBACK(on_mag_ov_changed), NULL);
+    g_signal_connect(e, "activate", G_CALLBACK(on_mag_ov_commit),
+                     GINT_TO_POINTER(field));
+    fc = gtk_event_controller_focus_new();
+    g_signal_connect(fc, "leave", G_CALLBACK(on_mag_ov_focus_leave),
+                     GINT_TO_POINTER(field));
+    gtk_widget_add_controller(e, fc);
+    return e;
+}
+
 static void on_activate(GtkApplication *app, gpointer user_data) {
     static gboolean css_done = FALSE;
     (void)user_data;
@@ -1398,25 +1430,28 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             /* Campos de fecha y hora del buscador: fuente un punto mas chica y
                ancho minimo para que "YYYY-MM-DD HH:MM:SS" entre completo. */
             ".time-entry { font-size: 0.95em; min-width: 11em; }\n"
-            /* Panel `Mww`: la tabla de parametros es editable; los resultados y la
-               salida completa van al 60% para que quepan lado a lado. */
+            /* Panel `Mww`: la tabla de parametros es editable con cajas de TEXTO
+               (sin los +/- del spin); el cuadro de resultados va al 134% y la salida
+               del motor al 91% (79% + 15%). */
             ".mww-param-name { font-size: 0.85em; }\n"
             ".mww-param-src { font-size: 0.8em; color: alpha(@theme_fg_color, 0.7); }\n"
             ".mww-param-value { font-weight: bold; }\n"
             ".mww-param-cell { font-size: 0.85em; min-height: 0; padding: 0 2px; }\n"
             ".mww-param-cell > text { min-height: 0; }\n"
-            ".mww-param-cell > button { min-width: 0; min-height: 0; padding: 0 1px; }\n"
             ".mww-cell-bad { background-image: none; background-color: #fde7e7; }\n"
-            ".mww-summary { font-size: 60%; }\n"
-            ".mww-output { font-size: 60%; }\n"
-            /* Barra inferior de la pestaña *magnitudes*: las cajas de la puerta de
-               distancia y sus botones +/- al 60% (el resto de la barra no cambia).
-               En GTK4 el spin es `spinbutton > text` + `spinbutton > button`. */
-            ".mag-bar-cell { font-size: 60%; min-height: 0; padding: 0 1px; }\n"
-            ".mag-bar-cell > text { min-height: 0; }\n"
-            ".mag-bar-cell > button { min-width: 0; min-height: 0; padding: 0 1px;\n"
-            "    font-size: 60%; }\n"
-            ".mag-bar-label { font-size: 60%; }");
+            ".mww-summary { font-size: 134%; }\n"
+            ".mww-output { font-size: 91%; }\n"
+            /* Barra inferior de la pestaña *magnitudes*: los rotulos de los grupos
+               y las cajas de la puerta de distancia van al 72% (60% + 20%). Las
+               cajas son `GtkEntry` (sin los +/- del spin), asi que no hay
+               subbotones que recortar; `mag-bar-bad` marca la caja cuyo texto
+               todavia no es un numero valido. Los botones reset/calculate van al
+               90% (`mag-bar-btn`) y el resto de la barra no cambia. */
+            ".mag-bar-cell { font-size: 72%; min-height: 0; padding: 0 1px; }\n"
+            ".mag-bar-cell > text { min-height: 0; min-width: 0; }\n"
+            ".mag-bar-bad { background-image: none; background-color: #fde7e7; }\n"
+            ".mag-bar-label { font-size: 72%; }\n"
+            ".mag-bar-btn { font-size: 90%; min-height: 0; padding: 1px 6px; }");
         gtk_style_context_add_provider_for_display(gdk_display_get_default(), GTK_STYLE_PROVIDER(provider), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
         css_done = TRUE;
     }
@@ -2036,8 +2071,9 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
            todo el grupo a la DERECHA). Las UNIDADES van solo en la cabecera de
            cada grupo; cada caja se rotula solo `min`/`max`, para que no haya duda
            de a que caja pertenece cada texto. Sin casilla: el rango que se ve ES
-           el que se aplica (editar un campo activa el override de la magnitud
-           activa) y `reset default` devuelve las cuatro al .d.
+           el que se aplica (confirmar un campo con Enter, o salir de el, activa
+           el override de la magnitud activa) y `reset default` devuelve las
+           cuatro al .d.
            Va dentro de un scrolled window: asi su ancho no infla el minimo de la
            ventana, que era lo que dejaba la columna de mapas sin ancho. */
         {
@@ -2074,21 +2110,16 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             }
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
-            /* Grupo distancia: `distancia [°]  min [ ]  max [ ]`. */
+            /* Grupo distancia: `distancia [°]  min [ ]  max [ ]`. Las cajas son
+               `GtkEntry` (sin los +/- del spin): ver `mag_ov_entry_new`. */
             gtk_box_append(GTK_BOX(bar), gtk_label_new("distancia [°]"));
             gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
-            g_mag_ov_min = gtk_spin_button_new_with_range(0.0, 180.0, 0.5);
-            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_min), 1);
-            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_min), 4);
-            gtk_widget_set_tooltip_text(g_mag_ov_min,
-                "Distancia epicentral MINIMA en grados. Editar cualquier campo de "
-                "la barra activa el override para la magnitud activa.");
+            g_mag_ov_min = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MIN_DELTA,
+                "Distancia epicentral MINIMA en grados. Al confirmar el campo "
+                "(Enter o salir de el) la barra se aplica a la magnitud activa.");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_min);
             gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
-            g_mag_ov_max = gtk_spin_button_new_with_range(0.0, 180.0, 0.5);
-            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_max), 1);
-            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_max), 4);
-            gtk_widget_set_tooltip_text(g_mag_ov_max,
+            g_mag_ov_max = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DELTA,
                 "Distancia epicentral MAXIMA en grados.");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_max);
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
@@ -2096,10 +2127,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             /* Grupo distancia hipocentral: el corte en km de ML. */
             gtk_box_append(GTK_BOX(bar), gtk_label_new("dist. hip. [km]"));
             gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
-            g_mag_ov_km = gtk_spin_button_new_with_range(0.0, 2000.0, 10.0);
-            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_km), 0);
-            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_km), 4);
-            gtk_widget_set_tooltip_text(g_mag_ov_km,
+            g_mag_ov_km = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DIST_KM,
                 "Tope de distancia HIPOCENTRAL en km (el corte en km de ML; "
                 "0 = sin tope).");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_km);
@@ -2108,18 +2136,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             /* Grupo profundidad del EVENTO: `prof. [km]  min [ ]  max [ ]`. */
             gtk_box_append(GTK_BOX(bar), gtk_label_new("prof. [km]"));
             gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
-            g_mag_ov_dmin = gtk_spin_button_new_with_range(0.0, 700.0, 5.0);
-            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_dmin), 0);
-            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_dmin), 4);
-            gtk_widget_set_tooltip_text(g_mag_ov_dmin,
+            g_mag_ov_dmin = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MIN_DEPTH,
                 "Profundidad MINIMA del evento para esta magnitud, en km "
                 "(0 = sin piso).");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_dmin);
             gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
-            g_mag_ov_depth = gtk_spin_button_new_with_range(0.0, 700.0, 5.0);
-            gtk_spin_button_set_digits(GTK_SPIN_BUTTON(g_mag_ov_depth), 0);
-            gtk_editable_set_width_chars(GTK_EDITABLE(g_mag_ov_depth), 4);
-            gtk_widget_set_tooltip_text(g_mag_ov_depth,
+            g_mag_ov_depth = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DEPTH,
                 "Profundidad MAXIMA del evento para esta magnitud, en km (0 = sin "
                 "corte). El veto por defecto de Ms es 60 km.");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_depth);
@@ -2150,34 +2172,26 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
                              G_CALLBACK(on_mag_calc_all_clicked), NULL);
             gtk_box_append(GTK_BOX(bar), g_mag_btn_calc_all);
 
-            g_signal_connect(g_mag_ov_min, "value-changed",
-                             G_CALLBACK(on_mag_ov_changed), NULL);
-            g_signal_connect(g_mag_ov_max, "value-changed",
-                             G_CALLBACK(on_mag_ov_changed), NULL);
-            g_signal_connect(g_mag_ov_km, "value-changed",
-                             G_CALLBACK(on_mag_ov_changed), NULL);
-            g_signal_connect(g_mag_ov_dmin, "value-changed",
-                             G_CALLBACK(on_mag_ov_changed), NULL);
-            g_signal_connect(g_mag_ov_depth, "value-changed",
-                             G_CALLBACK(on_mag_ov_changed), NULL);
-            /* Compacta la barra al 60%: el usuario la vio demasiado grande (las
-               cajas de los overrides y sus botones +/-). Se hace con clases CSS
-               propias (`.mag-bar*`, ver la hoja del modulo) y NO con Pango, para
-               que el recorte del spin llegue tambien a sus subbotones. Los
-               checkboxes A/M/Teo y los botones reset/calculate NO se tocan. */
+            /* Cada caja se aplica al confirmar: las señales las conecta
+               `mag_ov_entry_new`. Compacta la barra: rotulos y cajas al 72% (el
+               usuario la vio demasiado chica despues del 60%) y los tres botones
+               al 90%. Se hace con clases CSS propias (`.mag-bar*`, ver la hoja
+               del modulo) y NO con Pango. Los checkboxes A/M/Teo no se tocan. */
             {
                 GtkWidget *cw2;
 
                 gtk_widget_add_css_class(bar, "mag-bar");
                 for (cw2 = gtk_widget_get_first_child(bar); cw2;
                      cw2 = gtk_widget_get_next_sibling(cw2)) {
-                    if (GTK_IS_SPIN_BUTTON(cw2)) {
-                        gtk_editable_set_width_chars(GTK_EDITABLE(cw2), 3);
+                    if (GTK_IS_EDITABLE(cw2)) {
                         gtk_widget_add_css_class(cw2, "mag-bar-cell");
                     } else if (GTK_IS_LABEL(cw2)) {
                         gtk_widget_add_css_class(cw2, "mag-bar-label");
                     }
                 }
+                gtk_widget_add_css_class(g_mag_ov_reset, "mag-bar-btn");
+                gtk_widget_add_css_class(g_mag_btn_calc, "mag-bar-btn");
+                gtk_widget_add_css_class(g_mag_btn_calc_all, "mag-bar-btn");
             }
             gtk_box_append(GTK_BOX(page_mags), barsw);
             csnhypodbp_mag_ov_sync();   /* la barra arranca con la puerta del .d */

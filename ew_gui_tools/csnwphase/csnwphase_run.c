@@ -170,8 +170,12 @@ int csnwphase_input_prep(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
 /* ------------------------------------------------------------------ */
 
 int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
-                         const char *script)
+                         const char *script, double magnitude)
 {
+    /* ts2 del barrido de time-shift: derivado de la magnitud como el wrapper del
+     * CSN, salvo que el .d lo fije (GsTsAuto 0 -> GsTsMax). */
+    double ts_max = cfg->gs_ts_auto ? csnwphase_ts_max_for_magnitude(magnitude)
+                                    : cfg->gs_ts_max;
     FILE *f = fopen(script, "w");
 
     if (!f)
@@ -258,26 +262,45 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
          * que quede en la captura del log. */
         fprintf(f, "\n# 8. grid search 3D del centroide (wpinversion_gs; replica de --xyz)\n");
         fprintf(f, "mkdir -p gs_SYNTH\n");
+        /* `-old` lee los parametros por traza de o_wpinversion (13 columnas:
+         * az/gcarc/rms/p2p/avg/wgt, wpinversion_sub.c:2814-2904). Si el motor
+         * escribio una lista corta el fallo seria opaco: se avisa antes. */
+        if (cfg->gs_old)
+            fprintf(f, "ncol=$(awk 'NF{print NF; exit}' o_wpinversion)\n"
+                       "if [ \"${ncol:-0}\" -lt 13 ]; then \\\n"
+                       "  echo \"##### -old exige 13 columnas en o_wpinversion (hay ${ncol:-0}) #####\"; \\\n"
+                       "  exit 1; fi\n");
         fprintf(f, "run \"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
         fprintf(f, "  -icmtf %s -log LOG/gs_o_wpinversion.log -osyndir gs_SYNTH \\\n",
                 cfg->cmtfile);
         fprintf(f, "  -ts %g %g %g -ts_Nit %d -otsgsf grid_search_ts_out \\\n",
-                cfg->gs_ts_min, cfg->gs_ts_dt, cfg->gs_ts_max, cfg->gs_ts_nit);
+                cfg->gs_ts_min, cfg->gs_ts_dt, ts_max, cfg->gs_ts_nit);
         fprintf(f, "  -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xyz_out \\\n",
                 cfg->gs_xyz_nit, cfg->gs_xyz_dx, cfg->gs_xyz_nx, cfg->gs_xyz_nopt);
-        fprintf(f, "  -dz %g -minz %g\n", cfg->gs_xyz_dz, cfg->gs_xyz_minz);
+        fprintf(f, "  -dz %g -minz %g%s%s\n", cfg->gs_xyz_dz, cfg->gs_xyz_minz,
+                cfg->gs_hdsafe ? " -hdsafe" : "", cfg->gs_old ? " -old" : "");
         fprintf(f, "cp -f xy_WCMTSOLUTION xyz_WCMTSOLUTION\n");
-        fprintf(f, "\n# 9. pasada xy fina sobre la solucion 3D. Se le apendean las lineas\n");
-        fprintf(f, "#    >=7 del CMT de referencia si trae la solucion completa (>=13\n");
-        fprintf(f, "#    lineas), como addrefsol de wp_grid_search.py:118-129.\n");
+        fprintf(f, "\n# 9. pasada xy fina sobre la solucion 3D. El cmtfile que se le pasa\n");
+        fprintf(f, "#    debe tener EXACTAMENTE 13 campos: get_cmtf del motor (flag==2)\n");
+        fprintf(f, "#    cuenta 1 (PDE) + 6 (event name/time shift/half duration/latitude/\n");
+        fprintf(f, "#    longitude/depth) + 6 (Mrr..Mtp) y aborta con `field(s) redundancy`\n");
+        fprintf(f, "#    si alguno se repite (read_i_files.c:243-245). Por eso la base son\n");
+        fprintf(f, "#    las 7 lineas del xyz, SIN los momentos, y el apendice son las 6\n");
+        fprintf(f, "#    lineas de momentos de la referencia (L[7:], wp_grid_search.py:127).\n");
+        fprintf(f, "#    La version anterior copiaba el xyz completo (con momentos) y apendaba\n");
+        fprintf(f, "#    desde la linea 7: 20 campos (depth y los 6 momentos dos veces) y el\n");
+        fprintf(f, "#    paso 10 fallaba en TODAS las corridas (medido 2026-10-16). Con <13\n");
+        fprintf(f, "#    lineas la base queda en 7 campos y el motor degrada solo a flag==1\n");
+        fprintf(f, "#    (`NO REF. SOL. USED`, read_i_files.c:99).\n");
         fprintf(f, "nref=$(wc -l < %s 2>/dev/null || echo 0)\n", cfg->cmtfile);
-        fprintf(f, "cp -f xyz_WCMTSOLUTION _tmp_CMTSOLUTION.xyz\n");
-        fprintf(f, "if [ \"$nref\" -ge 13 ]; then tail -n +7 %s >> _tmp_CMTSOLUTION.xyz; fi\n",
+        fprintf(f, "head -n 7 xyz_WCMTSOLUTION > _tmp_CMTSOLUTION.xyz\n");
+        fprintf(f, "if [ \"$nref\" -ge 13 ]; then tail -n +8 %s >> _tmp_CMTSOLUTION.xyz; fi\n",
                 cfg->cmtfile);
         fprintf(f, "run \"$WBIN/wpinversion_gs\" -imas i_master -ifil o_wpinversion \\\n");
         fprintf(f, "  -icmtf _tmp_CMTSOLUTION.xyz -log LOG/gs_o_wpinversion.log -osyndir gs_SYNTH \\\n");
-        fprintf(f, "  -nots -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xy_out\n",
-                cfg->gs_xy_nit, cfg->gs_xy_dx, cfg->gs_xy_nx, cfg->gs_xy_nopt);
+        fprintf(f, "  -nots -xy_Nit %d -dx %g -Nx %d -Nopt %d -oxygsf grid_search_xy_out%s%s\n",
+                cfg->gs_xy_nit, cfg->gs_xy_dx, cfg->gs_xy_nx, cfg->gs_xy_nopt,
+                cfg->gs_hdsafe ? " -hdsafe" : "", cfg->gs_old ? " -old" : "");
         fprintf(f, "rm -f _tmp_CMTSOLUTION.xyz\n");
     }
     fprintf(f, "\necho \"csnwphase run: OK\"\n");
@@ -286,7 +309,7 @@ int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
 }
 
 int csnwphase_run(const CsnwphaseCfg *cfg, const char *rundir, int dry_run,
-                  char *err, size_t errlen)
+                  double magnitude, char *err, size_t errlen)
 {
     char script[1024], cmd[1200], line[2048];
     FILE *log, *p;
@@ -302,7 +325,7 @@ int csnwphase_run(const CsnwphaseCfg *cfg, const char *rundir, int dry_run,
     }
 
     snprintf(script, sizeof(script), "%s/run.sh", rundir);
-    if (csnwphase_run_script(cfg, rundir, script) != 0) {
+    if (csnwphase_run_script(cfg, rundir, script, magnitude) != 0) {
         if (err && errlen)
             snprintf(err, errlen, "no se pudo escribir %s", script);
         return -1;

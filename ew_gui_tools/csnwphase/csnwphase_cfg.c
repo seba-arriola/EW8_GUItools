@@ -122,6 +122,10 @@ void csnwphase_cfg_defaults(CsnwphaseCfg *cfg)
     cfg->gs_xyz_nx = 1;           /* XYZ_NX */
     cfg->gs_xyz_nopt = 4;         /* XYZ_NOPT */
     cfg->gs_xyz_nit = 1;          /* XYZ_NIT */
+    cfg->gs_hdsafe = 1;           /* `-s` del wrapper -> `-hdsafe` */
+    cfg->gs_old = 1;              /* WPINV_XY += ' -old' (linea 298) */
+    cfg->gs_ts_auto = 1;          /* ts2 = f(mag) (lineas 173-185) */
+    cfg->corpus_min_nused = 7;    /* umbral del corpus de validacion */
     cfg->timeout_sec = 1800;
     cfg->keep_tmp = 0;
     cfg->max_concurrent = 1;
@@ -236,6 +240,14 @@ int csnwphase_cfg_load(CsnwphaseCfg *cfg, const char *path)
             cfg->gs_xyz_nopt = k_int();
         } else if (k_its("GsXyzNit")) {
             cfg->gs_xyz_nit = k_int();
+        } else if (k_its("GsHdsafe")) {
+            cfg->gs_hdsafe = k_int();
+        } else if (k_its("GsOld")) {
+            cfg->gs_old = k_int();
+        } else if (k_its("GsTsAuto")) {
+            cfg->gs_ts_auto = k_int();
+        } else if (k_its("CorpusMinNused")) {
+            cfg->corpus_min_nused = k_int();
         } else if (k_its("TimeoutSec")) {
             cfg->timeout_sec = k_int();
         } else if (k_its("KeepTmp")) {

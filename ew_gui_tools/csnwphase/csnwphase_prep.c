@@ -76,6 +76,21 @@ double csnwphase_half_duration(double magnitude)
            pow(pow(10.0, 1.5 * (magnitude + 10.73)), 1.0 / 3.0);
 }
 
+/*
+ * ts2 del barrido de time-shift por magnitud (wp_grid_search.py:173-185): el
+ * wrapper del CSN lo derivaba de la magnitud PDE (`<=7` -> 30 s, `<=8` -> 100 s,
+ * `>8` -> 168 s). La rama `mag < 5.5` (ts2 = 3*ts_eq recortado a 100) queda
+ * fuera: MinMagnitude (6.0) bloquea esos eventos antes de llegar aqui.
+ */
+double csnwphase_ts_max_for_magnitude(double mag)
+{
+    if (mag <= 7.0)
+        return 30.0;
+    if (mag <= 8.0)
+        return 100.0;
+    return 168.0;
+}
+
 /* ------------------------------------------------------------------ */
 /* Campos editables de la tabla                                        */
 /* ------------------------------------------------------------------ */
@@ -575,6 +590,13 @@ int csnwphase_params_build(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
         "%g", cfg->screen_th);
     row(rows, max, n, CSNWPHASE_PF_SCREEN_NR, "screening ratio (-nr)", "config",
         "%g", cfg->screen_nr);
+    /* Cribado de estaciones del motor: editables y PEGADAS a los demas campos
+     * editables (van justo debajo del screening); antes eran una sola fila de
+     * solo lectura mas abajo, junto a los informativos. */
+    row(rows, max, n, CSNWPHASE_PF_DMIN, "DMIN [deg]", "config", "%g",
+        cfg->dmin_deg);
+    row(rows, max, n, CSNWPHASE_PF_DMAX, "DMAX [deg]", "config", "%g",
+        cfg->dmax_deg);
     /* Derivado de la magnitud semilla: NO editable (se recalcula al editarla). */
     row(rows, max, n, CSNWPHASE_PF_NONE, "banda de inversion [Hz]",
         "derivado de mag", "%g - %g", cf1, cf2);
@@ -587,8 +609,6 @@ int csnwphase_params_build(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
         cfg->idec3_tol);
     row(rows, max, n, CSNWPHASE_PF_NONE, "WP_WIN (t_end clip1 clip2)", "config",
         "%g. %.1f %.1f", cfg->wpwin[0], cfg->wpwin[1], cfg->wpwin[2]);
-    row(rows, max, n, CSNWPHASE_PF_NONE, "DMIN / DMAX [deg]", "config", "%g / %g",
-        cfg->dmin_deg, cfg->dmax_deg);
     row(rows, max, n, CSNWPHASE_PF_NONE, "GFDIR (relativo al run dir)", "config",
         "%s", cfg->gfdir_rel);
     row(rows, max, n, CSNWPHASE_PF_NONE, "GF_PATH (base de Green)", "config", "%s",

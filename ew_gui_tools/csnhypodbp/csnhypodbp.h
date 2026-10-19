@@ -381,7 +381,12 @@ void csnhypodbp_mag_status_update(void);
 void csnhypodbp_mag_canvas_fit(void);
 void csnhypodbp_mag_ov_sync(void);
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data);
-void on_mag_ov_changed(GtkSpinButton *s, gpointer data);
+/* Cajas de la barra de overrides (`GtkEntry`, sin los +/- del spin): `changed`
+   solo valida y pinta en rojo; el valor se aplica al CONFIRMAR (`activate`, o al
+   salir del campo) y solo si los cinco campos valen. Ver csnhypodbp_magcfg.h. */
+void on_mag_ov_changed(GtkEditable *e, gpointer data);
+void on_mag_ov_commit(GtkWidget *w, gpointer data);
+void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data);
 void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data);
 /* Devuelve las cuatro magnitudes a la puerta del .d (lo usa `reset default` y
    el cambio de solucion elegida en Origins). */

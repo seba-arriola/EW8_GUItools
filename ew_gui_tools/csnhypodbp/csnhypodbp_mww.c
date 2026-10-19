@@ -35,9 +35,10 @@
 #define MWW_PI 3.14159265358979323846
 
 /* Alto de la fila "resultados | salida completa": el mismo que tenia el bloque
- * de resultados (playera 120x120 + margen). Es un valor FIJO, no un vexpand: el
- * alto sobrante es para la tabla de parametros. */
-#define MWW_ROW_H 165
+ * de resultados (playera 120x120 + margen) +50%, que es lo que se pidio para los
+ * DOS cuadros. Es un valor FIJO, no un vexpand: el alto sobrante es para la tabla
+ * de parametros. */
+#define MWW_ROW_H 248
 
 /* Claves de csnhypodbp.d que usa este panel (definidas en csnhypodbp_main.c). */
 extern char MwwConfigFile[MAX_STR];
@@ -182,11 +183,22 @@ static void mww_refresh_band(void)
     }
 }
 
-static void on_mww_cell_changed(GtkSpinButton *sp, gpointer data)
+/* Celda numerica (caja de texto): la corrida solo se mueve si el texto es un
+ * numero valido y dentro del rango del campo (mismo criterio que el t0). Un
+ * texto a medias o fuera de rango NO se aplica y ademas DESTOCA el campo, para
+ * que la corrida use el valor de la solucion/`.d` y nunca un prefijo tecleado. */
+static void on_mww_cell_changed(GtkEditable *ed, gpointer data)
 {
     int field = GPOINTER_TO_INT(data);
-    double v = gtk_spin_button_get_value(sp);
+    GtkWidget *w = GTK_WIDGET(ed);
+    double v = 0.0;
 
+    if (mww_field_parse(field, gtk_editable_get_text(ed), &v) != 0) {
+        mww_over_unset(&g_mww.ov, field);
+        gtk_widget_add_css_class(w, "mww-cell-bad");
+        return;
+    }
+    gtk_widget_remove_css_class(w, "mww-cell-bad");
     if (mww_over_set(&g_mww.ov, field, v) != 0)
         return;
     if (field == CSNWPHASE_PF_MAGNITUDE)
@@ -431,23 +443,15 @@ static void mww_view_load(const char *path)
 /* ------------------------------------------------------------------ */
 
 /*
- * Celda de valor de una fila: etiqueta de solo lectura, o el widget editable del
- * campo (`CSNWPHASE_PF_*`). El valor inicial sale de la MISMA tabla que se
- * ejecuta (no de una copia aparte).
+ * Celda de valor de una fila: etiqueta de solo lectura, o la CAJA DE TEXTO del
+ * campo editable (`CSNWPHASE_PF_*`). El valor inicial sale de la MISMA tabla que
+ * se ejecuta (no de una copia aparte) y el rango/parseo de cada campo los define
+ * el nucleo puro (`mww_field_limits`/`mww_field_parse`), asi que aqui no queda
+ * ningun numero escrito a mano. Sin `max-width-chars`: en esta tabla las cajas
+ * se quieren anchas (GTK4 da 150 px de ancho natural a todo `GtkEntry`).
  */
 static GtkWidget *mww_cell_new(const CsnwphaseParamRow *r)
 {
-    /* Rangos de los campos numericos editables (indice = CSNWPHASE_PF_*). */
-    static const struct { double lo, hi, step; int digits; } rng[] = {
-        [CSNWPHASE_PF_LAT]       = { -90.0,  90.0,   0.001, 4 },
-        [CSNWPHASE_PF_LON]       = { -180.0, 360.0,  0.001, 4 },
-        [CSNWPHASE_PF_DEPTH]     = { 0.0,    700.0,  1.0,   1 },
-        [CSNWPHASE_PF_MAGNITUDE] = { 0.0,    9.9,    0.1,   1 },
-        [CSNWPHASE_PF_WIN_PRE]   = { 0.0,    3600.0, 10.0,  0 },
-        [CSNWPHASE_PF_WIN_POST]  = { 0.0,    7200.0, 10.0,  0 },
-        [CSNWPHASE_PF_SCREEN_TH] = { 0.0,    50.0,   0.1,   1 },
-        [CSNWPHASE_PF_SCREEN_NR] = { 0.0,    50.0,   0.1,   2 },
-    };
     GtkWidget *w;
 
     if (r->field == CSNWPHASE_PF_NONE) {
@@ -468,17 +472,17 @@ static GtkWidget *mww_cell_new(const CsnwphaseParamRow *r)
         return w;
     }
 
-    if (r->field < 0 || r->field >= (int)(sizeof(rng) / sizeof(rng[0])))
+    if (mww_field_limits(r->field, NULL, NULL) != 0)   /* campo no numerico */
         return gtk_label_new(r->value);
 
-    w = gtk_spin_button_new_with_range(rng[r->field].lo, rng[r->field].hi,
-                                       rng[r->field].step);
-    gtk_spin_button_set_digits(GTK_SPIN_BUTTON(w), rng[r->field].digits);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(w), strtod(r->value, NULL));
+    w = gtk_entry_new();
+    gtk_editable_set_text(GTK_EDITABLE(w), r->value);
+    gtk_entry_set_input_purpose(GTK_ENTRY(w), GTK_INPUT_PURPOSE_NUMBER);
+    gtk_widget_set_hexpand(w, FALSE);
     gtk_widget_add_css_class(w, "mww-param-cell");
     /* Se conecta DESPUES de fijar el valor: si no, la propia precarga dispararia
      * el callback y marcaria el campo como editado a mano. */
-    g_signal_connect(w, "value-changed", G_CALLBACK(on_mww_cell_changed),
+    g_signal_connect(w, "changed", G_CALLBACK(on_mww_cell_changed),
                      GINT_TO_POINTER(r->field));
     return w;
 }
@@ -731,7 +735,8 @@ static gpointer mww_thread(gpointer data)
 
     /* `run.sh` lo escribe csnwphase_run() DENTRO del run dir; llamar aqui a
        run_script con un nombre relativo lo dejaba en el CWD del proceso. */
-    job->rc = csnwphase_run(&job->cfg, job->rundir, 0, job->err, sizeof job->err);
+    job->rc = csnwphase_run(&job->cfg, job->rundir, 0, job->in.magnitude,
+                            job->err, sizeof job->err);
 
     /* La solucion y la salida completa se capturan aunque la corrida falle. */
     csnwphase_parse(job->rundir, &job->out);
@@ -1022,7 +1027,7 @@ static GtkWidget *mww_scrolled(GtkWidget *child, int h)
 
 GtkWidget *csnhypodbp_mww_panel_new(void)
 {
-    GtkWidget *root, *row, *frame, *hb, *vbox;
+    GtkWidget *root, *row, *frame, *hb, *vbox, *sw;
     char path[512];
 
     memset(&g_mww, 0, sizeof g_mww);
@@ -1081,10 +1086,25 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_box_append(GTK_BOX(hb), g_mww.status);
     gtk_box_append(GTK_BOX(root), hb);
 
-    /* 3. resultados (resumen + playera) y salida completa, UNO AL LADO DEL OTRO y
-     *    con la misma altura: el alto sobrante se lo lleva la tabla de parametros
-     *    (es lo que el usuario modifica antes de lanzar el calculo). */
-    row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    /* 3. resultados (resumen + playera) y salida completa, UNO AL LADO DEL OTRO, con
+     *    la misma altura y en proporcion 1/3 - 2/3: un grid de columnas HOMOGENEAS
+     *    reparte el ancho ASIGNADO por igual entre sus tres columnas no vacias, asi
+     *    que el cuadro de resultados (1 columna) se queda con un tercio y la salida
+     *    (2 columnas) con dos tercios, y el reparto aguanta el redimensionado. El
+     *    alto sobrante se lo lleva la tabla de parametros (es lo que el usuario
+     *    modifica antes de lanzar el calculo).
+     *
+     *    OJO: el alto de `MWW_ROW_H` lo cobran los DOS frames con `vexpand`. Un grid
+     *    NO reparte entre sus filas el alto que sus hijos no piden (el sobrante se
+     *    queda vacio al fondo): sin el `vexpand` de los frames, subir `MWW_ROW_H`
+     *    solo movia el bloque hacia arriba y los cuadros seguian con su alto natural
+     *    (~165 px: la playera de 120 + margen), dejando el hueco abajo. */
+    row = gtk_grid_new();
+    gtk_grid_set_column_homogeneous(GTK_GRID(row), TRUE);
+    /* Una sola fila: con `row-homogeneous` el bloque se lleva TODO el alto del
+     * grid (y el `vexpand` de los frames, el de la fila). */
+    gtk_grid_set_row_homogeneous(GTK_GRID(row), TRUE);
+    gtk_grid_set_column_spacing(GTK_GRID(row), 10);
     gtk_widget_set_size_request(row, -1, MWW_ROW_H);
     gtk_widget_set_vexpand(row, FALSE);
 
@@ -1092,7 +1112,10 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_label_set_xalign(GTK_LABEL(g_mww.summary), 0.0f);
     gtk_label_set_wrap(GTK_LABEL(g_mww.summary), TRUE);
     gtk_label_set_selectable(GTK_LABEL(g_mww.summary), TRUE);
-    gtk_widget_set_hexpand(g_mww.summary, TRUE);
+    /* El resumen NO se estira: con `hexpand` el texto se quedaba a la izquierda y
+       la playera al fondo del cuadro, con un hueco en medio. El ancho sobrante se
+       lo lleva la salida del motor (el frame de la derecha). */
+    gtk_widget_set_hexpand(g_mww.summary, FALSE);
     gtk_widget_set_valign(g_mww.summary, GTK_ALIGN_CENTER);
     gtk_widget_add_css_class(g_mww.summary, "mww-summary");
 
@@ -1102,13 +1125,23 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     /* Suelo pequeno (ver mww_scrolled): 120 px bastan para leer la playera. */
     gtk_widget_set_size_request(vbox, 120, 120);
 
-    hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+    hb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
     gtk_box_append(GTK_BOX(hb), g_mww.summary);
     gtk_box_append(GTK_BOX(hb), vbox);
+    /* Se lleva el alto de la fila (ver el comentario del grid). */
     frame = gtk_frame_new("Resultados de la inversión (WCMT)");
-    gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(hb, 90));
-    gtk_widget_set_hexpand(frame, TRUE);
-    gtk_box_append(GTK_BOX(row), frame);
+    gtk_widget_set_vexpand(frame, TRUE);
+    /* El cuadro de resultados se queda con su tercio: su scrolled window no propaga
+       el ancho natural del texto (`EXTERNAL`) y lo acota con un minimo, para que el
+       resumen se ajuste por lineas dentro del tercio en vez de sacar una barra
+       horizontal, y para que el minimo del grid no se multiplique por tres
+       (AGENTS §7: el minimo de la ventana tiene que caber en el maximizado). */
+    sw = mww_scrolled(hb, 90);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw),
+                                   GTK_POLICY_EXTERNAL, GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_min_content_width(GTK_SCROLLED_WINDOW(sw), 90);
+    gtk_frame_set_child(GTK_FRAME(frame), sw);
+    gtk_grid_attach(GTK_GRID(row), frame, 0, 0, 1, 1);
 
     g_mww.view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(g_mww.view), FALSE);
@@ -1116,10 +1149,12 @@ GtkWidget *csnhypodbp_mww_panel_new(void)
     gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(g_mww.view), GTK_WRAP_NONE);
     gtk_widget_add_css_class(g_mww.view, "mww-output");
     g_mww.buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(g_mww.view));
+    /* Se lleva el alto de la fila (ver el comentario del grid). */
     frame = gtk_frame_new("Salida completa del motor (fase W)");
+    gtk_widget_set_vexpand(frame, TRUE);
     gtk_frame_set_child(GTK_FRAME(frame), mww_scrolled(g_mww.view, 90));
-    gtk_widget_set_hexpand(frame, TRUE);
-    gtk_box_append(GTK_BOX(row), frame);
+    /* Las columnas 1 y 2 del grid: dos tercios del ancho. */
+    gtk_grid_attach(GTK_GRID(row), frame, 1, 0, 2, 1);
 
     gtk_box_append(GTK_BOX(root), row);
 

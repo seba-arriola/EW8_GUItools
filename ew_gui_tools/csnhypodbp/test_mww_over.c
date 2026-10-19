@@ -84,6 +84,8 @@ int main(void)
             { CSNWPHASE_PF_WIN_POST,  555.0 },
             { CSNWPHASE_PF_SCREEN_TH, 7.5 },
             { CSNWPHASE_PF_SCREEN_NR, 3.5 },
+            { CSNWPHASE_PF_DMIN,      6.5 },
+            { CSNWPHASE_PF_DMAX,      75.0 },
         };
 
         for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
@@ -121,6 +123,14 @@ int main(void)
                 assert(rcfg.screen_nr == cases[i].value);
                 assert(rcfg.screen_th == cfg.screen_th);
                 break;
+            case CSNWPHASE_PF_DMIN:
+                assert(rcfg.dmin_deg == cases[i].value);
+                assert(rcfg.dmax_deg == cfg.dmax_deg);
+                break;
+            case CSNWPHASE_PF_DMAX:
+                assert(rcfg.dmax_deg == cases[i].value);
+                assert(rcfg.dmin_deg == cfg.dmin_deg);
+                break;
             default:
                 assert(0 && "caso no cubierto");
             }
@@ -155,6 +165,87 @@ int main(void)
     assert(mww_over_set_time(&ov, "1230") == -1);
     assert(mww_over_set_time(&ov, "2015-09-16T99:00:00") == -1);
     assert(ov.minute == 30 && ov.second == 10.0);   /* no se aplicó a medias */
+
+    /* DMIN/DMAX: se aplican solo si se tocan y `unset` los devuelve al origen. */
+    {
+        double d0 = cfg.dmin_deg;
+
+        mww_over_init(&in, &cfg, &ov);
+        assert(mww_over_set(&ov, CSNWPHASE_PF_DMIN, 12.0) == 0);
+        assert(mww_over_set(&ov, CSNWPHASE_PF_DMAX, 88.0) == 0);
+        run = in;
+        rcfg = cfg;
+        mww_over_apply(&ov, &run, &rcfg);
+        assert(rcfg.dmin_deg == 12.0 && rcfg.dmax_deg == 88.0);
+
+        /* Un texto invalido destoca el campo: vuelve al valor del .d, nunca a un
+           prefijo tecleado a medias. */
+        assert(mww_over_unset(&ov, CSNWPHASE_PF_DMIN) == 0);
+        rcfg = cfg;
+        mww_over_apply(&ov, &run, &rcfg);
+        assert(rcfg.dmin_deg == d0 && rcfg.dmax_deg == 88.0);
+        assert(mww_over_unset(&ov, CSNWPHASE_PF_DMIN) == 0);    /* idempotente */
+
+        /* Los campos no numericos no se pueden destocar. */
+        assert(mww_over_unset(&ov, CSNWPHASE_PF_NONE) == -1);
+        assert(mww_over_unset(&ov, CSNWPHASE_PF_ORIGIN_TIME) == -1);
+        assert(mww_over_unset(NULL, CSNWPHASE_PF_DMIN) == -1);
+        rcfg = cfg;
+        mww_over_apply(&ov, &run, &rcfg);
+        assert(rcfg.dmin_deg == d0 && rcfg.dmax_deg == 88.0);
+    }
+
+    /* Rango y parseo de las cajas de texto (lo que sustituye al spin). */
+    {
+        double v = 0.0, lo = 0.0, hi = 0.0;
+        static const struct { int field; const char *txt; int ok; double v; } cs[] = {
+            { CSNWPHASE_PF_LAT,         "-31.573",  1, -31.573 },
+            { CSNWPHASE_PF_LAT,         "-31,573",  1, -31.573 },  /* coma */
+            { CSNWPHASE_PF_LAT,         "  -20.5 ", 1, -20.5   },  /* espacios */
+            { CSNWPHASE_PF_DEPTH,       "123",      1, 123.0   },
+            { CSNWPHASE_PF_MAGNITUDE,   "8.3",      1, 8.3     },
+            { CSNWPHASE_PF_WIN_PRE,     "300",      1, 300.0   },
+            { CSNWPHASE_PF_WIN_POST,    "900",      1, 900.0   },
+            { CSNWPHASE_PF_SCREEN_TH,   "2",        1, 2.0     },
+            { CSNWPHASE_PF_SCREEN_NR,   "2",        1, 2.0     },
+            { CSNWPHASE_PF_DMIN,        "5.5",      1, 5.5     },
+            { CSNWPHASE_PF_DMAX,        "90",       1, 90.0    },
+            { CSNWPHASE_PF_LAT,         "95",       0, 0.0     },  /* fuera de rango */
+            { CSNWPHASE_PF_DEPTH,       "-1",       0, 0.0     },
+            { CSNWPHASE_PF_DMAX,        "181",      0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "",         0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "   ",      0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "abc",      0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "12abc",    0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "nan",      0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "inf",      0, 0.0     },
+            { CSNWPHASE_PF_LAT,         "1e999",    0, 0.0     },  /* ERANGE */
+            { CSNWPHASE_PF_NONE,        "1",        0, 0.0     },  /* no editable */
+            { CSNWPHASE_PF_ORIGIN_TIME, "1",        0, 0.0     },
+        };
+        size_t k;
+
+        for (k = 0; k < sizeof(cs) / sizeof(cs[0]); k++) {
+            v = -12345.0;
+            if (cs[k].ok) {
+                assert(mww_field_parse(cs[k].field, cs[k].txt, &v) == 0);
+                assert(v == cs[k].v);
+            } else {
+                assert(mww_field_parse(cs[k].field, cs[k].txt, &v) == -1);
+                assert(v == -12345.0);          /* un texto malo no escribe nada */
+            }
+        }
+        assert(mww_field_parse(CSNWPHASE_PF_LAT, NULL, &v) == -1);
+        assert(mww_field_parse(CSNWPHASE_PF_LAT, "1", NULL) == 0);  /* solo validar */
+
+        assert(mww_field_limits(CSNWPHASE_PF_LAT, &lo, &hi) == 0);
+        assert(lo == -90.0 && hi == 90.0);
+        assert(mww_field_limits(CSNWPHASE_PF_DMIN, &lo, &hi) == 0);
+        assert(lo == 0.0 && hi == 180.0);
+        assert(mww_field_limits(CSNWPHASE_PF_LAT, NULL, NULL) == 0);
+        assert(mww_field_limits(CSNWPHASE_PF_NONE, NULL, NULL) == -1);
+        assert(mww_field_limits(CSNWPHASE_PF_ORIGIN_TIME, NULL, NULL) == -1);
+    }
 
     /* Los campos no editables se rechazan. */
     assert(mww_over_set(&ov, CSNWPHASE_PF_NONE, 1.0) == -1);

@@ -80,6 +80,17 @@ typedef struct {
     int    gs_xyz_nx;         /* -Nx     (1    = XYZ_NX)   */
     int    gs_xyz_nopt;       /* -Nopt   (4    = XYZ_NOPT) */
     int    gs_xyz_nit;        /* -xy_Nit (1    = XYZ_NIT)  */
+    /* --- paridad con el wrapper de produccion del CSN --------------------- */
+    int    gs_hdsafe;         /* 1 = -hdsafe: ts_gridsearch re-sintetiza el
+                                 kernel con hd=ts en vez de desplazar la ventana
+                                 (wp_grid_search.py:187-188 via `-s`)        */
+    int    gs_old;            /* 1 = -old: reusa az/gcarc/p2p/avg/wgt de la lista
+                                 de 13 columnas o_wpinversion
+                                 (wp_grid_search.py:298)                     */
+    int    gs_ts_auto;        /* 1 = ts2 = csnwphase_ts_max_for_magnitude(mag)
+                                 (wp_grid_search.py:173-185); 0 = GsTsMax    */
+    int    corpus_min_nused;  /* n_used minimo para que un evento cuente en el
+                                 corpus de validacion (default 7)            */
     int    timeout_sec;       /* tope de la corrida (default 1800)              */
     int    keep_tmp;          /* 1 = conservar el run dir                       */
     int    max_concurrent;    /* 1 = serializar (default)                       */
@@ -129,7 +140,9 @@ typedef enum {
     CSNWPHASE_PF_WIN_PRE,       /* cfg->win_pre_sec  */
     CSNWPHASE_PF_WIN_POST,      /* cfg->win_post_sec */
     CSNWPHASE_PF_SCREEN_TH,     /* cfg->screen_th    */
-    CSNWPHASE_PF_SCREEN_NR      /* cfg->screen_nr    */
+    CSNWPHASE_PF_SCREEN_NR,     /* cfg->screen_nr    */
+    CSNWPHASE_PF_DMIN,          /* cfg->dmin_deg (cribado de estaciones) */
+    CSNWPHASE_PF_DMAX           /* cfg->dmax_deg     */
 } CsnwphaseParamField;
 
 typedef struct {
@@ -302,16 +315,20 @@ int csnwphase_input_prep(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
                          const char *rundir, int *n_sta_out, int *n_traces_out,
                          char *err, size_t errlen);
 
-/* Escribe <rundir>/run.sh (auditable: es lo que se ejecuta). */
+/*
+ * Escribe <rundir>/run.sh (auditable: es lo que se ejecuta). `magnitude` es la
+ * del evento sembrado: con `GsTsAuto 1` fija el ts2 del barrido de time-shift
+ * (el wrapper del CSN lo derivaba de la PDE del CMT).
+ */
 int csnwphase_run_script(const CsnwphaseCfg *cfg, const char *rundir,
-                         const char *script);
+                         const char *script, double magnitude);
 
 /*
  * Ejecuta la secuencia del motor en <rundir> acumulando la salida completa en
  * <rundir>/run.log. Con dry_run=1 sólo deja el script y el log con las órdenes.
  */
 int csnwphase_run(const CsnwphaseCfg *cfg, const char *rundir, int dry_run,
-                  char *err, size_t errlen);
+                  double magnitude, char *err, size_t errlen);
 
 /* Tabla de parámetros (lógica pura; misma fuente que i_master y los comandos). */
 int csnwphase_params_build(const CsnwphaseCfg *cfg, const CsnwphaseInput *in,
@@ -339,6 +356,15 @@ void   csnwphase_band_for_magnitude(double mag, double *cf1, double *cf2);
 
 /* half duration / time shift del CMT semilla (cmtsolution.py:39-41). */
 double csnwphase_half_duration(double mag);
+
+/*
+ * ts2 del barrido de time-shift por magnitud (wp_grid_search.py:173-185): el
+ * wrapper del CSN lo derivaba de la magnitud PDE (`<=7` -> 30 s, `<=8` ->
+ * 100 s, `>8` -> 168 s) y con un tope fijo de 30 s el barrido se quedaba corto
+ * para M>7 (la half duration de un 8.3 es 39.28 s). La rama `mag < 5.5` del
+ * wrapper queda fuera de alcance: MinMagnitude (6.0) la bloquea antes.
+ */
+double csnwphase_ts_max_for_magnitude(double mag);
 
 /* Resultado normalizado de una corrida: lo único que ven la GUI y la BD. */
 typedef struct {

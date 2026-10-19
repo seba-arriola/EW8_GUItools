@@ -21,9 +21,11 @@ run_working_v8/log/.noexec_fifo.txt
 # Directorios de trabajo que cada modulo crea en runtime (no se versionan):
 #   hyp2000_ring/ = arcIn/arcOut · nlloc_ring/ = obs.nll, nll_ring.in, loc/
 #   csnhypodbp/   = estado manual + corridas Mww
+#   csnwphase/    = corpus de validacion (tools/run_corpus.sh)
 run_working_v8/hyp2000_ring/
 run_working_v8/nlloc_ring/
 run_working_v8/csnhypodbp/
+run_working_v8/csnwphase/
 run_working_v8/params/db.env
 
 # ===========================================================================

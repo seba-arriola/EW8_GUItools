@@ -112,6 +112,9 @@ python3 "$EWGUI_PROBE" --assert-text "sin resultado" --timeout 25 || rc=1
 # focal se persiste al confirmar la solución (radio `Mww` del preview).
 python3 "$EWGUI_PROBE" --assert-text "magnitud semilla" --timeout 25 || rc=1
 python3 "$EWGUI_PROBE" --assert-text "ventana de ondas pre" --timeout 25 || rc=1
+# DMIN/DMAX son dos filas editables mas, en cajas de texto.
+python3 "$EWGUI_PROBE" --assert-text "DMIN [deg]" --timeout 25 || rc=1
+python3 "$EWGUI_PROBE" --assert-text "DMAX [deg]" --timeout 25 || rc=1
 if python3 "$EWGUI_PROBE" --assert-text "Save to DB" --timeout 10 >/dev/null 2>&1; then
     printf 'FALLO: sigue el boton Save to DB\n'; rc=1
 fi

@@ -84,10 +84,24 @@ una estación concreta.
   checkboxes A/M/Teo de `picking` (allí filtran qué picadas van al localizador).
 - **`distancia min/max/km`** — override manual de la puerta de la magnitud activa.
   Al activarlo se siembra con la puerta vigente, así activar no cambia nada hasta
-  que se edite un campo. Las cajas de estos tres campos y sus botones `+/-` van al
-  **60 %** del tamaño del tema (clases CSS `.mag-bar-cell`/`.mag-bar-label`): con el
-  tamaño por defecto la barra se veía desproporcionada. `reset default`,
-  `calculate`/`calculate all` y los checkboxes `A/M/Teo` **no** cambian de tamaño.
+  que se edite un campo. Las cajas son **`GtkEntry`**, no `GtkSpinButton`: los
+  botones `+/-` no aportaban y su marco se llevaba el ancho de la barra. El
+  texto del campo solo se convierte en valor al **confirmarlo** (Enter) o al
+  **salir del campo**; mientras no sea un número válido la caja se marca en rojo
+  y la puerta vigente no cambia (al salir con el texto inválido se restaura el
+  valor que sí se está aplicando). El volcado es **todo o nada**: con un campo
+  inválido no se aplica ninguno. El rango (0–180°, 0–2000 km, 0–700 km), los
+  decimales (1/0/0) y el ancho de cada caja salen de
+  `csnhypodbp_mag_ov_field_limits`/`_width_chars`/`_fmt`/`_parse`
+  (`csnhypodbp_magcfg.{h,c}`), la misma fuente que el parseo, y se acepta `.` o `,`
+  como separador decimal. El ancho de la caja es el del valor canónico del campo
+  (5/5/4/3/3 caracteres) más `CSNHYPODBP_MAG_OV_WIDTH_MARGIN` (2), y se fija como
+  `width-chars` **y** `max-width-chars` (≈45 px, en vez de los 150 px de ancho
+  natural que GTK4 da a todo `GtkEntry` cuando no se acota). Los rótulos de los grupos
+  y el texto de las cajas van al **72 %** del tamaño del tema (clases CSS
+  `.mag-bar-cell`/`.mag-bar-label`; antes al 60 % y el usuario los vio chicos).
+  `reset default`, `calculate` y `calculate all` van al **90 %** (clase
+  `.mag-bar-btn`); los checkboxes `A/M/Teo` **no** cambian de tamaño.
 
 ## 4. Tabla de estaciones (panel izquierdo)
 

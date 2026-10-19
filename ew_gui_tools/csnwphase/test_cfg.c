@@ -53,6 +53,10 @@ static void test_defaults(void)
     assert(cfg.idec2_preevent == 280.0 && cfg.idec2_fend == 0.1);
     assert(cfg.idec3_nf == 100);
     assert(cfg.wpwin[1] == 15.0 && cfg.wpwin[2] == 12.0);
+    /* Paridad con el wrapper del CSN: -hdsafe y -old en las dos pasadas del
+     * grid search, y ts2 derivado de la magnitud. */
+    assert(cfg.gs_hdsafe == 1 && cfg.gs_old == 1 && cfg.gs_ts_auto == 1);
+    assert(cfg.corpus_min_nused == 7);
     printf("  defaults ok\n");
 }
 
@@ -73,6 +77,7 @@ static void test_load(void)
     fprintf(f, "Idec3 0.002  0.2  50  0.05\n");
     fprintf(f, "WpWin 1. 20.0 10.0\n");
     fprintf(f, "GridSearch 0\nTimeoutSec 600\n");
+    fprintf(f, "GsHdsafe 0\nGsOld 0\nGsTsAuto 0\nCorpusMinNused 9\n");
     fclose(f);
 
     assert(csnwphase_cfg_load(&cfg, path) == 0);
@@ -86,6 +91,8 @@ static void test_load(void)
     assert(cfg.idec3_fl == 0.002 && cfg.idec3_nf == 50 && cfg.idec3_tol == 0.05);
     assert(cfg.wpwin[0] == 1.0 && cfg.wpwin[1] == 20.0);
     assert(cfg.grid_search == 0 && cfg.timeout_sec == 600);
+    assert(cfg.gs_hdsafe == 0 && cfg.gs_old == 0 && cfg.gs_ts_auto == 0);
+    assert(cfg.corpus_min_nused == 9);
     assert(cfg.keep_tmp == 0);              /* default */
     remove(path);
     printf("  load ok\n");

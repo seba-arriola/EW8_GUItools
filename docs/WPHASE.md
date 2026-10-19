@@ -32,11 +32,16 @@ en el código C del motor.
 | `GfDir` | base de funciones de Green: **absoluta y fuera del repo** (~21 GB) |
 | `StoreRoot`, `SdsRoot`, `SdsFallbackHours` | ondas: store indexado y SDS (un evento más viejo que las horas de fallback va directo al SDS) |
 | `StaFile`, `ResponseDir`, `ResponsePattern`, `ResponseInNm` | metadata y respuestas (`.pz`) |
-| `Dmin`, `Dmax`, `MinMagnitude` | cribado de estaciones y umbral de disparo |
+| `Dmin`, `Dmax`, `MinMagnitude` | cribado de estaciones y umbral de disparo (el `Dmin`/`Dmax` es editable en el panel `Mww`) |
 | `WinPre`, `WinPost` | ventana de ondas alrededor del origen |
 | `ScreenTh`, `ScreenNr` | screenings del motor: **un solo** `-th` y un `-nr` (`RUNA3r.csh` encadenaba `5 3 1`; aquí se pide **una sola corrida** con los dos flags juntos). Un `ScreenTh` con varios valores se acepta por compatibilidad: se usa el **primero** y se avisa por `stderr` |
-| `GsTsMin`, `GsTsDt`, `GsTsMax`, `GsTsNit`, `GsXyDx`, `GsXyNx`, `GsXyNopt`, `GsXyNit` | **pasada xy fina** del grid search del centroide (`wpinversion_gs`); los `-ts` los derivaba el wrapper del CSN de la duración, aquí son visibles y editables |
+| `GsTsMin`, `GsTsDt`, `GsTsNit`, `GsXyDx`, `GsXyNx`, `GsXyNopt`, `GsXyNit` | **pasada xy fina** del grid search del centroide (`wpinversion_gs`) |
+| `GsTsMax` | tope del barrido de time-shift; **solo se usa con `GsTsAuto 0`** |
+| `GsTsAuto` | `1` (default) = el tope del barrido ts sale de la magnitud como en el wrapper del CSN (`<=7` → 30 s, `<=8` → 100 s, `>8` → 168 s; `wp_grid_search.py:173-185`). Con un tope fijo de 30 s el barrido se quedaba corto para M>7 (la half duration de un 8.3 es 39.28 s) |
+| `GsHdsafe` | `1` (default) = `-hdsafe` en `wpinversion_gs`, como la producción del CSN (`wphase_scripts.sh` → `wp_grid_search.py -s`): el ts search re-sintetiza el kernel con `hd=ts` en vez de desplazar la ventana |
+| `GsOld` | `1` (default) = `-old` (también del wrapper, `wp_grid_search.py:298`): reusa `az/gcarc/p2p/avg/wgt` de la lista de 13 columnas `o_wpinversion`. El `run.sh` lo comprueba y aborta con mensaje propio si esa lista trae menos de 13 campos |
 | `GsXyzDz`, `GsXyzMinz`, `GsXyzDx`, `GsXyzNx`, `GsXyzNopt`, `GsXyzNit` | **pasada 3D** (lat/lon/prof) del grid search: `-dz`/`-minz` y la salida `grid_search_xyz_out`. Son los `DDEP`/`MINDEP`/`XYZ_*` del wrapper del CSN |
+| `CorpusMinNused` | umbral de `n_used` del corpus de validación (`tools/corpus_report.sh`): las corridas con menos trazas usadas no se juzgan contra el catálogo, se cuentan aparte. Default **7** |
 | `GridSearch`, `TimeoutSec`, `KeepTmp`, `MaxConcurrent`, `Debug` | orquestación |
 | `Evname`, `SeedRef`, `CmtFile`, `GfdirRel`, `FiltOrder`, `FiltPass`, `Idec2`, `Idec3`, `WpWin` | valores de `i_master`, con los defaults del generador del CSN |
 
@@ -55,6 +60,13 @@ ew_gui_tools/csnwphase/csnwphase run_working_v8/params/csnwphase.d --fetch <rund
 ew_gui_tools/csnwphase/csnwphase run_working_v8/params/csnwphase.d --run   <rundir> [--dry-run]
 ew_gui_tools/csnwphase/csnwphase run_working_v8/params/csnwphase.d --parse <rundir>
 make -C ew_gui_tools/csnwphase check          # unitarios + tests contra los binarios reales del motor
+make -C ew_gui_tools/csnwphase check-engine   # e2e del grid search contra el motor real (lento)
+make -C ew_gui_tools/csnwphase check-corpus   # 3 eventos historicos M>=6.5 de punta a punta (lento)
+
+# Corpus de validación (eventos históricos del catálogo, ondas del SDS)
+ew_gui_tools/csnwphase/tools/gen_corpus.sh   /tmp/corpus.tsv   # M>=6.5 de los últimos 10 años
+ew_gui_tools/csnwphase/tools/run_corpus.sh   /tmp/corpus.tsv   # corre y deja corpus.csv
+ew_gui_tools/csnwphase/tools/corpus_report.sh corpus.csv       # Mww vs magnitud del catálogo
 ```
 
 ## 4. Qué deja en el run dir
@@ -92,8 +104,26 @@ desviaciones deliberadas**:
 
    Así `grid_search_xyz_out` deja de ser un nombre huérfano en la captura de `full_output.txt`.
 
+   Las dos invocaciones de `wpinversion_gs` llevan además `-hdsafe` y `-old`, como la
+   producción del CSN (`GsHdsafe`/`GsOld`), y el tope del barrido ts sale de la magnitud
+   (`GsTsAuto`); el screening (`-th` + `-nr`) sigue siendo una sola corrida.
+
 ## 5. Trampas (todas medidas en este repo)
 
+- **El cmtfile de la pasada xy fina lleva EXACTAMENTE 13 campos**: el lector del motor
+  (`read_i_files.c:238-247`, `get_cmtf` con `flag==2`) cuenta 1 (`PDE`) + 6 (`event name`,
+  `time shift`, `half duration`, `latitude`, `longitude`, `depth`) + 6 (`Mrr`..`Mtp`) y
+  **aborta con `ERROR: reading cmtfile … (field(s) redundancy)`** si alguno se repite. El
+  `addrefsol` del CSN apendea `L[7:]` (solo los 6 momentos, `wp_grid_search.py:127`) sobre una
+  cabecera de **7 líneas sin momentos** (`EQ.py:46-59`); copiar la salida completa del motor
+  (13 líneas, ya con momentos) y apendar desde la línea 7 daba **20 campos** y el paso 10
+  fallaba en **todas** las corridas (medido 2026-10-16 en dos run dirs: `field(s) redundancy`
+  + `fin run.sh (rc=256)`, con `grid_search_xy_out` ausente). Hoy el `run.sh` hace
+  `head -n 7 xyz_WCMTSOLUTION` + `tail -n +8 CMTSOLUTION`; si la referencia trae <13 líneas
+  quedan 7 campos y el motor degrada solo a `flag==1` (`NO REF. SOL. USED`, `:99`).
+- **`-old` exige la lista de 13 columnas**: reusa `az/gcarc/p2p/avg/wgt` de `o_wpinversion`
+  (`wpinversion_sub.c:2814-2904`); con una lista de 1 columna el fallo es opaco, así que el
+  `run.sh` lo comprueba antes y aborta con su propio mensaje.
 - **Offsets del bloque de texto del SAC**: son **índices de palabra** y hay que
   contarlos sobre el `SACHEAD` real (`sac.h`: 158 palabras). `kstnm`=110, `kevnm`=112
   (4 palabras), `khole`=116, `ko`=118, `kcmpnm`=150, `knetwk`=152, `kdatrd`=154,
@@ -138,22 +168,39 @@ desviaciones deliberadas**:
 (`Estaciones` | `Mww`). El panel `Mww` trae:
 
 - la **tabla de parámetros** de la corrida (misma fuente que `i_master`: config, evento,
-  derivados y grid search) **editable**: cada fila de un `CSNWPHASE_PF_*` lleva su widget
-  (spin numérico o entrada de texto para el t0) y lo que se edita se vuelca sobre la corrida
+  derivados y grid search) **editable**: cada fila de un `CSNWPHASE_PF_*` lleva su widget, una
+  **caja de texto** (ya no el `GtkSpinButton` con `+`/`-`; las cajas se dejan anchas, sin
+  `max-width-chars`), y lo que se edita se vuelca sobre la corrida
   (`csnhypodbp_mww_over.c`), así que la tabla, el `i_master` y el `run.sh` siguen teniendo una
   sola fuente. Son editables el **t0 (UTC)**, **lat**, **lon**, **profundidad**, **magnitud
-  semilla**, **ventana de ondas** (pre/post), **screening RMS** y **screening ratio**; la
-  **banda de inversión** es derivada de la magnitud (se recalcula al editarla) y el resto es
-  informativo. Al cambiar de solución elegida los ajustes se descartan. El t0 se aplica **solo**
+  semilla**, **ventana de ondas** (pre/post), **screening RMS**, **screening ratio** y el
+  **cribado de estaciones `DMIN`/`DMAX`** (dos filas, cada una con su caja, pegadas al final de
+  los editables); la **banda de inversión** es derivada de la magnitud (se recalcula al editarla)
+  y el resto es informativo. El rango y el parseo de cada caja viven en el núcleo puro
+  (`mww_field_limits`/`mww_field_parse`, `csnhypodbp_mww_over.{h,c}`): un texto inválido o fuera
+  de rango **no** se aplica, la celda se marca en rojo y ese campo vuelve al valor de la
+  solución/`.d` (`mww_over_unset`), para que un texto a medias no deje aplicado un prefijo.
+  Al cambiar de solución elegida los ajustes se descartan. El t0 se aplica **solo**
   si el texto es una fecha válida (la celda se marca en rojo si no lo es);
 - **`Calculate`** (corre `input_prep` + el motor en un hilo, con indicador de progreso) y
   **`Cancel`** (descarta el resultado en curso: el `TimeoutSec` acota la corrida);
 - el **resumen** (Mw, M0, centroide, planos nodales, estaciones usadas) con la
   **playera** dibujada en cairo desde el tensor de la solución, **al lado** del visor de la
-  salida completa del motor (`full_output.txt`) y ambos con la misma altura (`MWW_ROW_H`);
-  el alto sobrante es para la tabla de parámetros, que es lo que se ajusta antes de calcular.
-  Las fuentes de esas dos ventanas van al 60 %. Cualquier fallo (preparación, ondas o motor)
-  se muestra con su texto real en la línea de estado.
+  salida completa del motor (`full_output.txt`) y ambos con la misma altura (`MWW_ROW_H`, 248 px:
+  el bloque de resultados +50 %; los dos marcos llevan `vexpand` y el bloque `row-homogeneous`,
+  porque un `GtkGrid` no reparte el alto que sus hijos no piden: sin eso el bloque solo subía, sin
+  crecer). El
+  alto sobrante es para la tabla de parámetros, que es lo que se ajusta antes de calcular. Solo el
+  cuadro **izquierdo** lleva la fuente grande, al **134 %** (un 70 % más que el 79 % anterior); la
+  salida del motor se queda al **79 %**. El reparto es **1/3 – 2/3**: los dos
+  cuadros viven en un `GtkGrid` de columnas **homogéneas** (reparte el ancho asignado por igual
+  entre sus tres columnas no vacías, así que el de resultados, 1 columna, se queda con un tercio,
+  y la salida, 2 columnas, con dos tercios; el reparto aguanta el redimensionado). El cuadro de
+  resultados se queda con su tercio y el resumen se ajusta por líneas dentro de él —su
+  `GtkScrolledWindow` usa `GTK_POLICY_EXTERNAL` y `min_content_width` 90 px, así no saca barra
+  horizontal y no multiplica por tres el mínimo de la ventana—, con el texto y la playera
+  separados por 4 px. Cualquier fallo (preparación,
+  ondas o motor) se muestra con su texto real en la línea de estado.
 
 **El mecanismo focal se guarda al confirmar la solución, no con un botón aparte** (el
 `Save to DB` ya no existe). El preview del tope de la pestaña *Ondas* tiene **cinco** radios de
@@ -199,11 +246,22 @@ queda además en el log del módulo con su texto real), porque el `Confirm` vive
   centroide se desplaza a **-23.15, -67.76, 120.5 km** (shift 14 s) con los planos
   nodales `180.7/20.9/-78.7` y `348.7/69.5/-94.3`. El parser lo prefiere sobre
   `WCMTSOLUTION`.
-- **La pasada 3D (`-dz`/`-minz` → `grid_search_xyz_out`) y la pasada xy fina encadenada
-  están cubiertas por `tests/test_run_dry.sh`** (orden, `.xyz` intermedio, apéndice de la
-  referencia y `xyz_WCMTSOLUTION` en la captura), pero **no** por una corrida real en este
-  entorno: falta ejecutar el motor con `GsXyz*` y comprobar que `grid_search_xyz_out` se
-  escribe (y que su formato es el de xy + profundidad, el que lee `make_grids.py`).
+- **La pasada 3D y la pasada xy fina están cubiertas por dos vías complementarias**:
+  - `tests/test_run_dry.sh` (orden, `.xyz` intermedio, apéndice de la referencia,
+    `xyz_WCMTSOLUTION`) **más el contrato de 13 campos** del cmtfile temporal, simulado con el
+    fixture: cuenta cada campo reconocido y exige que aparezca **una sola vez**;
+  - `make check-engine` (`tests/test_engine_gs.sh`, lento): ejecuta el bloque del grid search
+    del `run.sh` **generado ahora** contra el **motor real**, sobre un run dir montado con
+    enlaces a una corrida anterior, y exige `grid_search_xyz_out` + `grid_search_xy_out` +
+    `xy_WCMTSOLUTION` + `Wmag:` y ningún `ERROR: reading cmtfile`. Medido 2026-10-16 sobre
+    `run_working_v8/csnhypodbp/mww/0801000068-20261016T131725`: la grilla 3D reproduce la del
+    run original (misfit `0.00009391`, igual con y sin `-hdsafe`/`-old`) y la xy fina **sí**
+    se escribe (antes no existía: el paso 10 abortaba).
+- **Corpus histórico** (`tools/gen_corpus.sh` + `run_corpus.sh` + `corpus_report.sh`,
+  `make check-corpus`): eventos M≥6.5 de los últimos 10 años del catálogo histórico
+  (`EW8_GUItools`, 36 eventos), ondas del SDS y el pipeline completo por evento. Primera
+  corrida medida (2026-10-16; M6.5 del 2023-03-22, 240 km): 102 estaciones en [5,50°],
+  184 trazas, **`n_used` 28, Mww 6.32** frente a 6.5 del catálogo (|ΔM| 0.18) en 85 s.
 - `gui_check_mww.sh` valida el panel con AT-SPI contra el EarthWorm en marcha
   (`--dump` y `--shot` para calibrar/capturar). **En este entorno el puente AT-SPI no
   expone los módulos GTK4 y los clics sintéticos no llegan**, así que la revisión visual
@@ -213,8 +271,11 @@ queda además en el log del módulo con su texto real), porque el `Confirm` vive
 
 Sin pendientes funcionales de fase W: el screening es una sola corrida (`-th` + `-nr`), el
 grid search del centroide está integrado **en 3D** (pasada `-dz`/`-minz` → `grid_search_xyz_out`
-más pasada xy fina; el wrapper del CSN `wp_grid_search.py` no se usa porque es python2) y el
-parser prefiere `xy_WCMTSOLUTION`.
+más pasada xy fina; el wrapper del CSN `wp_grid_search.py` no se usa porque es python2), el
+parser prefiere `xy_WCMTSOLUTION`, la invocación del motor va como la de producción del CSN
+(`-hdsafe` + `-old`, tope del barrido ts derivado de la magnitud) y hay validación contra el
+motor real (`check-engine`) y contra eventos históricos (`check-corpus`). La única desviación
+que queda es el screening en **una sola pasada** (los `-th 5 3 1` encadenados de `RUNA3r.csh`).
 
 Lo que **no** está cerrado es la integración del **`Mww` como magnitud de primera clase**:
 viaja en la BD (`magnitude.type = Mww`) pero no en el ARC, así que la única marca de

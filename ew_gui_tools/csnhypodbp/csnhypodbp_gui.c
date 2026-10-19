@@ -398,28 +398,88 @@ static void mag_effective_cfg(CsnhypodbpMagCfg *out)
                                      &g_mag_gate_ov[g_mag_kind], out);
 }
 
-/* Vuelca en la barra la puerta vigente de la magnitud activa. */
+/* Los cinco widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
+   globales viven en csnhypodbp_main.c): un solo sitio donde el campo <-> caja. */
+static GtkWidget *mag_ov_widget(int field)
+{
+    switch (field) {
+    case CSNHYPODBP_MAG_OV_MIN_DELTA:   return g_mag_ov_min;
+    case CSNHYPODBP_MAG_OV_MAX_DELTA:   return g_mag_ov_max;
+    case CSNHYPODBP_MAG_OV_MAX_DIST_KM: return g_mag_ov_km;
+    case CSNHYPODBP_MAG_OV_MIN_DEPTH:   return g_mag_ov_dmin;
+    case CSNHYPODBP_MAG_OV_MAX_DEPTH:   return g_mag_ov_depth;
+    default: break;
+    }
+    return NULL;
+}
+
+static const char *mag_ov_text(int field)
+{
+    GtkWidget *w = mag_ov_widget(field);
+
+    return w ? gtk_editable_get_text(GTK_EDITABLE(w)) : NULL;
+}
+
+/* Pinta en rojo las cajas cuyo texto todavia no vale (`only_bad` = 0 las limpia
+   todas). El commit es todo-o-nada, asi que lo que se ve es lo que se aplica. */
+static void mag_ov_mark(int only_bad)
+{
+    int i;
+
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+        GtkWidget *w = mag_ov_widget(i);
+        double v;
+
+        if (!w) continue;
+        if (only_bad && csnhypodbp_mag_ov_parse(mag_ov_text(i), i, &v) != 0)
+            gtk_widget_add_css_class(w, "mag-bar-bad");
+        else
+            gtk_widget_remove_css_class(w, "mag-bar-bad");
+    }
+}
+
+/* 1 si alguno de los cinco textos no vale (el commit es todo-o-nada). */
+static int mag_ov_any_invalid(void)
+{
+    CsnhypodbpMagGateOv scratch;
+    const char *txt[CSNHYPODBP_MAG_OV_FIELD_N];
+    int i;
+
+    memset(&scratch, 0, sizeof scratch);
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) txt[i] = mag_ov_text(i);
+    return csnhypodbp_mag_ov_from_text(&scratch, txt) != 0;
+}
+
+/* Vuelca en la barra la puerta vigente de la magnitud activa. El texto lo arma
+   el nucleo puro (`csnhypodbp_mag_ov_texts`): la caja nunca muestra un valor que
+   no sea el que la puerta aplica, y no queda ninguna marca de error. */
 void csnhypodbp_mag_ov_sync(void)
 {
     CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
-    double lo = 0.0, hi = 0.0, km = 0.0, dmin = 0.0, dmax = 0.0;
+    CsnhypodbpMagGateOv shown;
+    char txt[CSNHYPODBP_MAG_OV_FIELD_N][24];
+    int i;
 
     if (!g_mag_ov_min) return;
     g_mag_ov_syncing = 1;
+    memset(&shown, 0, sizeof shown);
     if (ov->on) {
-        lo = ov->min_delta; hi = ov->max_delta; km = ov->max_dist_km;
-        dmin = ov->min_depth; dmax = ov->max_depth;
+        shown = *ov;
     } else {
-        csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind, &lo, &hi, &km);
-        dmin = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
-        dmax = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
+        csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind,
+                                      &shown.min_delta, &shown.max_delta,
+                                      &shown.max_dist_km);
+        shown.min_depth = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
+        shown.max_depth = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
     }
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_min), lo);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_max), hi);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_km), km);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_dmin), dmin);
-    gtk_spin_button_set_value(GTK_SPIN_BUTTON(g_mag_ov_depth), dmax);
+    csnhypodbp_mag_ov_texts(&shown, txt);
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) {
+        GtkWidget *w = mag_ov_widget(i);
+
+        if (w) gtk_editable_set_text(GTK_EDITABLE(w), txt[i]);
+    }
     g_mag_ov_syncing = 0;
+    mag_ov_mark(0);
 }
 
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data)
@@ -450,22 +510,46 @@ void on_mag_ov_reset_clicked(GtkWidget *w, gpointer data)
     csnhypodbp_mag_ov_reset_all();
 }
 
-/* Editar cualquier campo de la barra activa el override de ESA magnitud: no hay
-   casilla (el rango que se ve es el que se aplica). */
-void on_mag_ov_changed(GtkSpinButton *s, gpointer data)
+/* Escribir en una caja NO aplica nada: solo se valida y, si el texto todavia no
+   es un numero valido, la caja se pinta en rojo. Editar un campo y confirmarlo
+   activa el override de ESA magnitud (no hay casilla: el rango que se ve es el
+   que se aplica). */
+void on_mag_ov_changed(GtkEditable *e, gpointer data)
+{
+    (void)e; (void)data;
+    if (g_mag_ov_syncing) return;
+    mag_ov_mark(1);      /* rojo en las cajas cuyo texto todavia no vale */
+}
+
+/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CINCO
+   campos validos (todo o nada): con uno invalido la puerta vigente no cambia y
+   las cajas que no valen quedan en rojo. */
+void on_mag_ov_commit(GtkWidget *w, gpointer data)
 {
     CsnhypodbpMagGateOv *ov = &g_mag_gate_ov[g_mag_kind];
+    const char *txt[CSNHYPODBP_MAG_OV_FIELD_N];
+    int i;
 
-    (void)s; (void)data;
+    (void)w; (void)data;
     if (g_mag_ov_syncing || !g_mag_ov_min) return;
-    ov->on = 1;
-    ov->min_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_min));
-    ov->max_delta = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_max));
-    ov->max_dist_km = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_km));
-    ov->min_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_dmin));
-    ov->max_depth = gtk_spin_button_get_value(GTK_SPIN_BUTTON(g_mag_ov_depth));
+    for (i = 0; i < CSNHYPODBP_MAG_OV_FIELD_N; i++) txt[i] = mag_ov_text(i);
+    if (csnhypodbp_mag_ov_from_text(ov, txt) != 0) {
+        mag_ov_mark(1);             /* la puerta vigente no cambia */
+        return;
+    }
+    mag_ov_mark(0);
     rebuild_mag_list();
     if (g_mag_canvas) ewgui_canvas_queue_draw(g_mag_canvas);
+}
+
+/* Al salir del campo: si algo quedo invalido se restaura el texto vigente (una
+   caja no puede mostrar un valor que la puerta no aplica); si no, se aplica. */
+void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data)
+{
+    (void)fc; (void)data;
+    if (g_mag_ov_syncing || !g_mag_ov_min) return;
+    if (mag_ov_any_invalid()) csnhypodbp_mag_ov_sync();
+    else                      on_mag_ov_commit(NULL, NULL);
 }
 
 /* --- Canvas de la sub-pestaña `magnitudes` ------------------------------- */

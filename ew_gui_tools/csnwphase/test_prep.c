@@ -168,6 +168,30 @@ static void test_band_table(void)
     printf("  banda por magnitud y half duration ok\n");
 }
 
+/* AC-6b: ts2 del barrido de time-shift por magnitud (wp_grid_search.py:173-185,
+ * via `GsTsAuto`). Antes era un tope fijo de 30 s para toda magnitud, que se
+ * quedaba corto para M>7 (la half duration de un 8.3 es 39.28 s). */
+static void test_ts_max_table(void)
+{
+    static const struct {
+        double mag, ts_max;
+    } t[] = {
+        { 6.00,  30.0 },   /* mag <= 7 -> 30 s */
+        { 7.00,  30.0 },
+        { 7.01, 100.0 },   /* mag <= 8 -> 100 s */
+        { 8.00, 100.0 },
+        { 8.01, 168.0 },   /* mag > 8 -> 168 s */
+        { 9.50, 168.0 },
+    };
+    size_t i;
+
+    for (i = 0; i < sizeof(t) / sizeof(t[0]); i++)
+        assert(csnwphase_ts_max_for_magnitude(t[i].mag) == t[i].ts_max);
+
+    assert(csnwphase_half_duration(8.3) > 30.0);
+    printf("  ts2 del grid search por magnitud ok\n");
+}
+
 int main(void)
 {
     CsnwphaseCfg cfg;
@@ -221,6 +245,8 @@ int main(void)
             { "ventana de ondas post [s]", CSNWPHASE_PF_WIN_POST,   "900" },
             { "screening RMS (-th)",       CSNWPHASE_PF_SCREEN_TH,  "2" },
             { "screening ratio (-nr)",     CSNWPHASE_PF_SCREEN_NR,  "2" },
+            { "DMIN [deg]",                CSNWPHASE_PF_DMIN,       "5" },
+            { "DMAX [deg]",                CSNWPHASE_PF_DMAX,       "50" },
         };
         int have_band = 0, have_gf = 0, nedit = 0;
         size_t w;
@@ -256,6 +282,24 @@ int main(void)
                 fprintf(stderr, "FALTA la fila editable %s\n", want[w].name);
                 assert(0 && "fila editable ausente");
             }
+        }
+
+        /* DMIN/DMAX van PEGADAS a los demas editables: justo despues del
+           screening y antes del derivado de la magnitud. La fila combinada de
+           solo lectura que habia antes ya no existe. */
+        {
+            int i_scnr = -1, i_dmin = -1, i_dmax = -1, i_band = -1;
+
+            for (i = 0; i < n; i++) {
+                if (strcmp(rows[i].name, "screening ratio (-nr)") == 0) i_scnr = i;
+                if (strcmp(rows[i].name, "DMIN [deg]") == 0) i_dmin = i;
+                if (strcmp(rows[i].name, "DMAX [deg]") == 0) i_dmax = i;
+                if (strcmp(rows[i].name, "banda de inversion [Hz]") == 0) i_band = i;
+                assert(strcmp(rows[i].name, "DMIN / DMAX [deg]") != 0);
+            }
+            assert(i_dmin == i_scnr + 1);
+            assert(i_dmax == i_dmin + 1);
+            assert(i_band == i_dmax + 1);
         }
     }
 
@@ -302,6 +346,7 @@ int main(void)
 
     test_epoch_utc();
     test_band_table();
+    test_ts_max_table();
     printf("ALL CSNWPHASE PREP TESTS PASSED\n");
     return 0;
 }

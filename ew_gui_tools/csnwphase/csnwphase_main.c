@@ -61,6 +61,10 @@ static void print_config(const CsnwphaseCfg *c)
     printf("GsXyzNx %d\n", c->gs_xyz_nx);
     printf("GsXyzNopt %d\n", c->gs_xyz_nopt);
     printf("GsXyzNit %d\n", c->gs_xyz_nit);
+    printf("GsHdsafe %d\n", c->gs_hdsafe);
+    printf("GsOld %d\n", c->gs_old);
+    printf("GsTsAuto %d\n", c->gs_ts_auto);
+    printf("CorpusMinNused %d\n", c->corpus_min_nused);
     printf("TimeoutSec %d\n", c->timeout_sec);
     printf("KeepTmp %d\n", c->keep_tmp);
     printf("MaxConcurrent %d\n", c->max_concurrent);
@@ -255,7 +259,8 @@ int main(int argc, char **argv)
                 fprintf(stderr, "csnwphase: %s\n", err);
                 return 1;
             }
-            if (csnwphase_run(&cfg, argv[3], 1, err, sizeof(err)) != 0) {
+            if (csnwphase_run(&cfg, argv[3], 1, in.magnitude, err,
+                              sizeof(err)) != 0) {
                 fprintf(stderr, "csnwphase: %s\n", err);
                 return 1;
             }
@@ -277,7 +282,7 @@ int main(int argc, char **argv)
                    nsta, cfg.dmin_deg, cfg.dmax_deg, ntr);
         }
 
-        if (csnwphase_run(&cfg, argv[3], 0, err, sizeof(err)) != 0) {
+        if (csnwphase_run(&cfg, argv[3], 0, in.magnitude, err, sizeof(err)) != 0) {
             fprintf(stderr, "csnwphase: %s\n", err);
             return 1;
         }
