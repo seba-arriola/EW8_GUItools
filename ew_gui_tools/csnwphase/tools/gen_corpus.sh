@@ -4,7 +4,7 @@
 #
 # Uso: tools/gen_corpus.sh [salida.tsv] [--min-mag 6.5] [--desde 2015-01-01]
 #                          [--max-prof 700]
-#      DB_ROOT=<worktree con db/>      default /home/seba/Dev/ew8/EW8_GUItools
+#      DB_ROOT=<worktree con db/>      default <raíz de este repo>
 #
 # La consulta usa la receta de docs/HYPODB.md:104-109 contra la instancia 0 de
 # ese worktree (puerto 5435). Un evento entra solo si tiene origen PREFERIDO y
@@ -24,7 +24,7 @@ set -eu
 export LC_ALL=C
 
 MOD="$(cd "$(dirname "$0")/.." && pwd)"
-DB_ROOT="${DB_ROOT:-/home/seba/Dev/ew8/EW8_GUItools}"
+DB_ROOT="${DB_ROOT:-$(cd "$MOD/../.." && pwd)}"
 OUT="${1:-$MOD/tests/data/corpus.tsv}"
 MIN_MAG=6.5
 DESDE="$(date -u -d '10 years ago' +%F)"
