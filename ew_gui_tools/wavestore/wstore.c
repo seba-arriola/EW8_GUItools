@@ -204,13 +204,27 @@ int wstore_scnls(WStore *s, char (*out)[WSTORE_SCNL_LEN], int cap)
     return n;
 }
 
-int wstore_prune(WStore *s, long keep_days)
+/* Borra (o, en dry-run, solo mide) un fichero de segmento. Solo cuenta lo que
+ * se borro DE VERDAD: si el `unlink` falla, no suma ni bytes ni fichero. */
+static void prune_one(const char *path, int dry, long *removed, long *bytes)
 {
+    struct stat sb;
+
+    if (stat(path, &sb) != 0) return;          /* no existe: nada que contar */
+    if (dry) { (*removed)++; *bytes += (long)sb.st_size; return; }
+    if (unlink(path) == 0) { (*removed)++; *bytes += (long)sb.st_size; }
+}
+
+int wstore_prune_ex(WStore *s, long keep_days, unsigned flags, WStorePruneStats *st)
+{
+    WStorePruneStats c = { 0, 0, 0 };
     DIR           *dp;
     struct dirent *de;
     time_t         now, today, cutoff;
     struct tm      tm;
+    int            dry = (flags & WSTORE_PRUNE_DRY_RUN) != 0;
 
+    if (st) memset(st, 0, sizeof(*st));
     if (!s) return -1;
     if (keep_days <= 0) return 0;
     now = time(NULL);
@@ -230,25 +244,48 @@ int wstore_prune(WStore *s, long keep_days)
         sd = opendir(dir);
         if (!sd) continue;
         while ((fe = readdir(sd)) != NULL) {
-            int       y, mo, d;
-            struct tm ft;
-            time_t    day;
-            if (sscanf(fe->d_name, "%4d%2d%2d.tank", &y, &mo, &d) != 3) continue;
+            char      *nm = fe->d_name;
+            int        i, y, mo, d, ok = 1;
+            struct tm  ft, chk;
+            time_t     day;
+            /* Nombre EXACTO `YYYYMMDD.tank` con una fecha REAL. Un `sscanf` a
+             * secas daba 3 aciertos con cola (`20260101.txt`), con 7 digitos
+             * (`2026010.tank`), o con una fecha imposible (`20260100.tank`), y
+             * `timegm` normaliza lo imposible, asi que los tres se borraban. */
+            if (strlen(nm) != 13 || strcmp(nm + 8, ".tank") != 0) continue;
+            for (i = 0; i < 8; i++) if (nm[i] < '0' || nm[i] > '9') ok = 0;
+            if (!ok) continue;
+            if (sscanf(nm, "%4d%2d%2d", &y, &mo, &d) != 3) continue;
             memset(&ft, 0, sizeof(ft));
             ft.tm_year = y - 1900;
             ft.tm_mon = mo - 1;
             ft.tm_mday = d;
             day = timegm(&ft);
+            /* El ida-y-vuelta descarta fechas que `timegm` tuvo que normalizar
+             * (mes 13, dia 00, 31 de febrero). */
+            if (!gmtime_r(&day, &chk)) continue;
+            if (chk.tm_year + 1900 != y || chk.tm_mon + 1 != mo || chk.tm_mday != d) continue;
             if (day < cutoff) {
                 char p[1500], ip[1500];
                 snprintf(p, sizeof(p), "%s/%s", dir, fe->d_name);
-                unlink(p);
                 snprintf(ip, sizeof(ip), "%s/%.8s.idx", dir, fe->d_name);
-                unlink(ip);
+                prune_one(p,  dry, &c.tanks_removed, &c.bytes_freed);
+                prune_one(ip, dry, &c.idx_removed,   &c.bytes_freed);
             }
         }
         closedir(sd);
     }
     closedir(dp);
+    if (st) *st = c;
     return 0;
+}
+
+int wstore_prune(WStore *s, long keep_days)
+{
+    return wstore_prune_ex(s, keep_days, 0u, NULL);
+}
+
+int wstore_prune_stats(WStore *s, long keep_days, WStorePruneStats *st)
+{
+    return wstore_prune_ex(s, keep_days, 0u, st);
 }

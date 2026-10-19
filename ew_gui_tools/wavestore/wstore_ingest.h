@@ -9,17 +9,28 @@
  * Ingester: enruta registros TRACE2 a escritores por canal, repartidos en
  * `ingest_shards` hilos (cada canal pertenece a un unico shard, asi que dos
  * hilos nunca escriben el mismo archivo). El nucleo (`_feed`) es testeable sin
- * anillo; `_run_ring` es el bucle fino que lee del anillo.
+ * anillo: aplica el filtro de canales (`ChannelFilterFile`, ver wstore_filter.h)
+ * y descarta el registro antes de copiarlo. `_run_ring` es el bucle fino que lee
+ * del anillo.
  */
 typedef struct WStoreIngest WStoreIngest;
 
 int  wstore_ingest_open (WStoreIngest **out, const WStoreConfig *cfg);
+/* 0 = encolado (o descartado por el filtro), <0 = error. */
 int  wstore_ingest_feed (WStoreIngest *ing, const TRACE2_HEADER *h, const int32_t *samples);
 int  wstore_ingest_flush(WStoreIngest *ing);
 void wstore_ingest_close(WStoreIngest *ing);
 long wstore_ingest_dropped(const WStoreIngest *ing);
+long wstore_ingest_filtered(const WStoreIngest *ing);
 
 /* Bucle del anillo (bloqueante hasta TERMINATE). 0 = salida limpia. */
 int  wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg);
+
+/*
+ * Purga los segmentos mas viejos que `RetentionDays` y deja el conteo en `st`
+ * (puede ser NULL). NO imprime: el log lo pone el bucle del anillo, que es el
+ * unico que tiene `logit_init` hecho. 0 OK, <0 error.
+ */
+int  wstore_ingest_purge_now(WStoreIngest *ing, const WStoreConfig *cfg, WStorePruneStats *st);
 
 #endif /* WSTORE_INGEST_H */

@@ -1,0 +1,27 @@
+# wstore.sta — SCNL que wstore_ingest guarda en el store (clave ChannelFilterFile)
+#
+# Una linea por patron, cuatro campos separados por espacios o tabs:
+#
+#     STA NET CHAN LOC
+#
+#   * = cualquier secuencia (incluida vacia)     ? = exactamente 1 caracter
+#   LOC: "--" es la localizacion nula de EarthWorm; "*" casa con cualquiera
+#   El canal es el del STORE (HHZ, HHN, HHE, ...), NO el selector de
+#   slink2ew (que se escribe "HH?.D").
+#   La comparacion es case-sensitive y los campos se recortan de espacios.
+#
+# Lineas vacias, y todo lo que sigue a '#', se ignora.
+# Sin la clave en wavestore.d (o si este archivo no tiene patrones) se guarda
+# todo. Una linea mal formada impide arrancar el modulo (se avisa con el
+# numero de linea): un filtro a medias es perdida de datos en silencio.
+#
+# El filtro solo puede recortar lo que slink2ew ya entrega: un canal que no
+# este en slink2ew_*.d no se recupera aqui.
+#
+# Ejemplos:
+#   ST01  CX  HH?  --        # ST01 vertical + horizontales, loc nula
+#   *     C1_AC01  *   *     # cualquier estacion de la red C1_AC01, cualquier
+#                            # canal y cualquier localizacion
+#
+# 'todo' explicito (mismo comportamiento que no tener filtro):
+* * * *

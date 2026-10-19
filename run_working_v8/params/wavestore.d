@@ -14,6 +14,10 @@
 MyModuleId    MOD_WSTORE
 RingName      SLINK_RING
 StoreRoot     ../wstore
+# Que canales se guardan: lista SCNL en wstore.sta (STA NET CHAN LOC, con
+# comodines * y ?; "--" = localizacion nula). Sin esta clave, o con el archivo
+# sin patrones, se guarda todo.
+ChannelFilterFile wstore.sta
 RetentionDays 7
 IngestShards  4
 HeartbeatInt  30

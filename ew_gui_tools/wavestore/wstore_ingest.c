@@ -1,5 +1,6 @@
 #define _GNU_SOURCE
 #include "wstore_ingest.h"
+#include "wstore_filter.h"
 #include "wstore_writer.h"
 #include "wstore_internal.h"
 
@@ -45,11 +46,13 @@ typedef struct {
 } WShard;
 
 struct WStoreIngest {
-    WStoreConfig cfg;
-    WShard      *sh;
-    int          nsh;
-    long         dropped;
-    WStore      *store;   /* solo para la retencion */
+    WStoreConfig  cfg;
+    WShard       *sh;
+    int           nsh;
+    long          dropped;
+    WStoreFilter *filter;   /* ChannelFilterFile; NULL = sin filtro (se guarda todo) */
+    long          filtered; /* descartados por el filtro (no es `dropped`) */
+    WStore       *store;    /* solo para la retencion */
 };
 
 static unsigned scnl_hash(const char *sta, const char *net, const char *loc, const char *chan)
@@ -142,9 +145,16 @@ int wstore_ingest_open(WStoreIngest **out, const WStoreConfig *cfg)
     ing = (WStoreIngest *)calloc(1, sizeof(*ing));
     if (!ing) return -1;
     ing->cfg = *cfg;
+    if (cfg->channel_filter_file[0] &&
+        wstore_filter_load(cfg->channel_filter_file, &ing->filter) != 0) {
+        fprintf(stderr, "wstore_ingest: filtro de canales invalido ('%s')\n",
+                cfg->channel_filter_file);
+        free(ing);
+        return -1;
+    }
     ing->nsh = cfg->ingest_shards;
     ing->sh = (WShard *)calloc((size_t)ing->nsh, sizeof(*ing->sh));
-    if (!ing->sh) { free(ing); return -1; }
+    if (!ing->sh) { ing->nsh = 0; wstore_ingest_close(ing); return -1; }
 
     for (i = 0; i < ing->nsh; i++) {
         WShard *s = &ing->sh[i];
@@ -152,6 +162,10 @@ int wstore_ingest_open(WStoreIngest **out, const WStoreConfig *cfg)
         pthread_cond_init(&s->c, NULL);
         snprintf(s->root, sizeof(s->root), "%s", cfg->root);
         if (pthread_create(&s->th, NULL, shard_fn, s) != 0) {
+            /* El shard que fallo ya inicializo su mutex/cond y no entra en el
+             * rango que recorre `close` (nsh = i): se liberan aqui. */
+            pthread_mutex_destroy(&s->m);
+            pthread_cond_destroy(&s->c);
             ing->nsh = i;
             wstore_ingest_close(ing);
             return -1;
@@ -169,6 +183,10 @@ int wstore_ingest_feed(WStoreIngest *ing, const TRACE2_HEADER *h, const int32_t 
     unsigned     idx;
 
     if (!ing || !h || !samples) return -1;
+    if (!wstore_filter_accept(ing->filter, h->sta, h->net, h->chan, h->loc)) {
+        ing->filtered++;
+        return 0;
+    }
     if (h->nsamp <= 0 || h->nsamp > 200000) return -1;
 
     it = (WIngestItem *)malloc(sizeof(*it) + (size_t)h->nsamp * sizeof(int32_t));
@@ -228,6 +246,7 @@ void wstore_ingest_close(WStoreIngest *ing)
         pthread_cond_destroy(&s->c);
     }
     if (ing->store) wstore_close(ing->store);
+    wstore_filter_free(ing->filter);
     free(ing->sh);
     free(ing);
 }
@@ -242,6 +261,35 @@ long wstore_ingest_dropped(const WStoreIngest *ing)
     return d;
 }
 
+long wstore_ingest_filtered(const WStoreIngest *ing)
+{
+    return ing ? ing->filtered : 0;
+}
+
+int wstore_ingest_purge_now(WStoreIngest *ing, const WStoreConfig *cfg, WStorePruneStats *st)
+{
+    if (st) memset(st, 0, sizeof(*st));
+    if (!ing || !cfg) return -1;
+    if (cfg->retention_days <= 0 || !ing->store) return 0;
+    return wstore_prune_stats(ing->store, cfg->retention_days, st);
+}
+
+/* Purga por retencion + su linea de log (`when`: arranque u horaria). Solo el
+ * hilo principal: `logit` no se usa desde los shards (ver invariante de fuente). */
+static void purge_and_log(WStoreIngest *ing, const WStoreConfig *cfg, const char *when)
+{
+    WStorePruneStats st;
+
+    if (!ing || !cfg || cfg->retention_days <= 0) return;
+    if (wstore_ingest_purge_now(ing, cfg, &st) != 0) {
+        logit("et", "wstore_ingest: purga fallida\n");
+        return;
+    }
+    if (st.tanks_removed > 0)
+        logit("t", "wstore_ingest: purga %s: %ld segmentos, %ld MB liberados\n",
+              when, st.tanks_removed, (st.bytes_freed + 1048575) / 1048576);
+}
+
 int wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg)
 {
     SHM_INFO      region;
@@ -254,13 +302,13 @@ int wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg)
 
     if (!ing || !cfg) return -1;
     if (GetType("TYPE_TRACEBUF2", &type_trace) != 0) {
-        fprintf(stderr, "wstore_ingest: TYPE_TRACEBUF2 desconocido\n");
+        logit("e", "wstore_ingest: TYPE_TRACEBUF2 desconocido\n");
         return -1;
     }
     snprintf(ring, sizeof(ring), "%s", cfg->ring_name);
     key = GetKey(ring);
     if (key == -1) {
-        fprintf(stderr, "wstore_ingest: anillo invalido <%s>\n", ring);
+        logit("e", "wstore_ingest: anillo invalido <%s>\n", ring);
         return -1;
     }
     bufsz = MAX_TRACEBUF_SIZ + sizeof(TRACE2_HEADER) + 64;
@@ -277,7 +325,19 @@ int wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg)
 
     time(&then);
     last_prune = then;
-    fprintf(stderr, "wstore_ingest: anillo %s -> %s\n", cfg->ring_name, cfg->root);
+    logit("t", "wstore_ingest: anillo %s -> %s\n", cfg->ring_name, cfg->root);
+    if (ing->filter)
+        logit("t", "wstore_ingest: filtro '%s' con %d patrones\n",
+              cfg->channel_filter_file, wstore_filter_count(ing->filter));
+    if (cfg->retention_days > 0)
+        logit("t", "wstore_ingest: retencion %ld dias (purga al arrancar y cada 3600 s)\n",
+              cfg->retention_days);
+    else
+        logit("t", "wstore_ingest: sin retencion (el store crece sin limite)\n");
+
+    /* Purga inicial: con la horaria sola, un modulo que se reiniciara antes de
+     * una hora no purgaba jamas. */
+    purge_and_log(ing, cfg, "inicial");
 
     while (tport_getflag(&region) != TERMINATE) {
         int rc = tport_getmsg(&region, &wavelogo, 1, &logo, &size, buf, bufsz);
@@ -299,7 +359,7 @@ int wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg)
         if (now - then >= cfg->heartbeat_int) then = now;
         if (cfg->retention_days > 0 && now - last_prune >= 3600) {
             last_prune = now;
-            if (ing->store) wstore_prune(ing->store, cfg->retention_days);
+            purge_and_log(ing, cfg, "horaria");
         }
         if (rc == GET_NONE) usleep(50000);
     }
