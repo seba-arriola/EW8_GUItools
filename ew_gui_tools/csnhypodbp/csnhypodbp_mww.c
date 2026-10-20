@@ -897,16 +897,12 @@ static int mww_db_ids(const CsnhypodbpSolution *sol, char *oid, size_t no,
 
     if (selected_origin_id[0] && sol->qid == selected_qid &&
         sol->mod == selected_mod && sol->version == selected_version) {
-        const char *colon = strrchr(selected_origin_id, ':');
-        size_t len;
-
-        if (!colon)
+        /* El id puede traer el sufijo de confirmacion ("<event>:<mod>:<ver>"):
+           el event_id es el PREFIJO hasta el primer ':' del mod, no hasta el
+           ultimo (que seria la version). */
+        if (ewgui_origin_id_parse(selected_origin_id, eid, ne, NULL, NULL,
+                                  NULL) != 0)
             return -1;
-        len = (size_t)(colon - selected_origin_id);
-        if (len == 0 || len + 1 > ne)
-            return -1;
-        memcpy(eid, selected_origin_id, len);
-        eid[len] = '\0';
         snprintf(oid, no, "%s", selected_origin_id);
         return 0;
     }

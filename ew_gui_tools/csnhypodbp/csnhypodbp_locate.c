@@ -575,6 +575,20 @@ int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, s
     return 0;
 }
 
+int csnhypodbp_confirmation_arc(const CsnhypodbpSolution *sol, char *out,
+                                size_t outn)
+{
+    if (!sol || !out)
+        return -1;
+    /* La version es el campo de 4 caracteres del ARC (y el sufijo de
+       `origin_id`): sin ella la confirmacion no se puede identificar. */
+    if (sol->version == 0 || sol->version > 9999u)
+        return -1;
+    if (sol->qid <= 0)
+        return -1;
+    return csnhypodbp_arc_build(sol, 1, out, outn);
+}
+
 /* Valor de "key" dentro del objeto JSON [obj,end): copia el contenido de un
  * string o el token de un numero/booleano. Devuelve 1 si lo encontro. */
 static int json_get(const char *obj, const char *end, const char *key,

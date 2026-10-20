@@ -4,6 +4,7 @@
 MyModuleId MOD_HYPODB
 InRing HYPO_RING
 InRingRef HYPO_RING_REF
+InRingConf HYPO_RING_REF2
 InPickRing PICK_RING
 DbEnvFile db.env
 GroupPickTolSec 0.1

@@ -57,7 +57,7 @@ extern int NLLoc(char *pid_main, char *fn_control_main,
 
 static char  MyModName[MAX_STR]   = "MOD_NLLOC_RING";
 static char  InRingName[MAX_STR]  = "HYPO_RING";
-static char  OutRingName[MAX_STR] = "HYPO_RING_REF2";
+static char  OutRingName[MAX_STR] = "HYPO_RING_REF";   /* REF2 = confirmaciones de la GUI */
 static char  ControlFile[MAX_STR] = "";
 static char  TtimeRoot[MAX_STR]   = "";
 static char  OutRoot[MAX_STR]     = "";

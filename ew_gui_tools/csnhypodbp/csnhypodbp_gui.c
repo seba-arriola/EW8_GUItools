@@ -38,6 +38,46 @@ static int cmp_node_chan(const void *a, const void *b) {
     return (na->dist > nb->dist) - (na->dist < nb->dist);
 }
 
+/* --- Rejilla de trazas por pantalla (tracesPerScreen) --------------------
+ * El alto de banda sale del VIEWPORT del scrolled de trazas, nunca del alto
+ * pedido por el canvas: si se midiera contra el canvas, pedir mas alto agrandaria
+ * la banda y volveria a pedir mas alto (realimentacion). El canvas no tiene
+ * signal de resize en GTK4 (`size-allocate` ya no existe), asi que el reajuste
+ * se pide desde el dibujo, en idle y una sola vez por cambio de viewport.
+ * ------------------------------------------------------------------------ */
+static int g_canvas_fit_pending = 0;     /* idle de reajuste en vuelo */
+static int g_canvas_last_viewport = -1;  /* ultimo viewport con el que se ajusto */
+
+static int canvas_viewport_h(void)
+{
+    return g_sw_ondas ? gtk_widget_get_height(g_sw_ondas) : 0;
+}
+
+static CsnhypodbpTracesLayout traces_layout_now(int n_rows)
+{
+    return csnhypodbp_traces_layout(n_rows, g_traces_per_screen,
+                                    canvas_viewport_h(), CSNHYPODBP_BAND_MIN);
+}
+
+static gboolean canvas_refit_cb(gpointer data)
+{
+    (void)data;
+    g_canvas_fit_pending = 0;
+    actualizar_altura_canvas();   /* reasigna el alto; GTK reasigna y redibuja */
+    return G_SOURCE_REMOVE;
+}
+
+void csnhypodbp_canvas_refit_if_needed(void)
+{
+    int viewport;
+    if (!g_sw_ondas || !canvas_global || g_canvas_fit_pending) return;
+    viewport = canvas_viewport_h();
+    if (viewport <= 0 || viewport == g_canvas_last_viewport) return;
+    g_canvas_last_viewport = viewport;
+    g_canvas_fit_pending = 1;
+    g_idle_add(canvas_refit_cb, NULL);
+}
+
 void actualizar_altura_canvas() {
     if (!canvas_global) return;
     int count = 0;
@@ -47,16 +87,15 @@ void actualizar_altura_canvas() {
         if ((g_StaDist[i] * 111.19) > g_max_dist_km) continue;
         count++;
     }
-    /* MINIMO, no altura fija: el canvas llena el area que le da el scrolled
-       window y on_draw_signal reparte el alto REAL entre las bandas, asi que el
-       dibujo es proporcional al tamano de la ventana. Por debajo del minimo
-       (muchas componentes), aparece el scroll. */
-    if (count > 0)
-        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
-                                    (count * CSNHYPODBP_BAND_MIN) + 60);
-    else
-        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
-                                    CSNHYPODBP_BAND_MIN + 60);
+    /* Rejilla de `tracesPerScreen` huecos (1, 2 o 3): el canvas pide justo el
+       alto que ocupan las bandas visibles, asi que si la estacion tiene mas
+       canales el resto queda por debajo y aparece el scroll vertical. El alto de
+       banda se mide contra el VIEWPORT del scrolled, no contra el canvas: pedir
+       mas alto no realimenta el calculo. on_draw_signal usa el mismo `band_h`,
+       de modo que anadir/quitar canales no encoge las bandas. */
+    CsnhypodbpTracesLayout lay = traces_layout_now(count);
+    gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, lay.canvas_h);
+    g_canvas_last_viewport = canvas_viewport_h();
 }
 
 /* --- Tabla de estaciones (panel izquierdo) -------------------------------
@@ -3728,6 +3767,10 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
     (void)data;
     cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
 
+    /* Ventana o divisor redimensionado: reajusta el alto del canvas a la nueva
+       rejilla (una vez por cambio; ver csnhypodbp_canvas_refit_if_needed). */
+    csnhypodbp_canvas_refit_if_needed();
+
     int margin_right = 10;
     int draw_width = width - g_margin_left - margin_right;
     if (draw_width <= 0) return;
@@ -3751,9 +3794,12 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         qsort(g_SortedNodes, (size_t)g_NumSortedNodes, sizeof(StaNode), cmp_node_chan);
     }
 
-    /* Alto de banda: reparte la altura del canvas entre las trazas visibles
-       (~una componente por pantalla por defecto). */
-    int row_h = (g_NumSortedNodes > 0 && height > 160) ? (height - 60) / g_NumSortedNodes : g_spacing;
+    /* Alto de banda: rejilla de `tracesPerScreen` huecos (1, 2 o 3). Sale del
+       viewport del scrolled, no de `height`, para no realimentarse: si la
+       estacion tiene mas canales que huecos, el sobrante queda debajo y se
+       alcanza con la rueda; si tiene menos, la traza NO se estira (los huecos
+       libres quedan vacios). */
+    int row_h = traces_layout_now(g_NumSortedNodes).band_h;
     if (row_h < 80) row_h = g_spacing;
 
     /* Una P y una S por estacion (M > A > T), con el overlay manual incluido.
@@ -3799,7 +3845,7 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
 
     for (int n = 0; n < g_NumSortedNodes; n++) {
         int i = g_SortedNodes[n].idx;
-        int y_center = (n * row_h) + (row_h / 2) + 30;
+        int y_center = (n * row_h) + (row_h / 2) + CSNHYPODBP_TRACES_TOP;
         g_SortedNodes[n].y_top = y_center - (row_h / 2);
         g_SortedNodes[n].y_bottom = y_center + (row_h / 2);
 

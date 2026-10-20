@@ -42,6 +42,17 @@ nck "parada: ya no mira solo TERMINATE"                'tport_getflag\(&r\[0\]\)
 ck  "log: el modulo tiene log propio (logit_init)"     'logit_init\('                     hypodb_ingest_main.c
 ck  "log: honra el LogFile del .d"                     'cfg\.log_file\)'                  hypodb_ingest_main.c
 
+# --- Confirmaciones manuales: fila `origin` propia, sin parsear el id a mano ---
+ck  "confirmacion: se ingiere por su propia ruta"      'hypodb_feed_confirmed\('          hypodb_ingest_main.c
+ck  "confirmacion: id con la version del ARC"          'confirmed \? sol->version : 0'    hypodb_ingest.c
+ck  "confirmacion: sin guarda de version"              'NO pasa por la guarda de version' hypodb_ingest.c
+ck  "confirmacion: no toca la meta del grupo"          'if \(!confirmed\)'                hypodb_ingest.c
+ck  "preferida: se calcula desde la BD"                'ewguidb_query_origins\(st->db, g->event_id' hypodb_ingest.c
+ck  "preferida: no borra la magnitud si no hay candidata" 'ewguidb_set_preferred_origin'  hypodb_ingest.c
+ck  "picks: se drenan ANTES que los ARC"               'PICK_RING PRIMERO'                hypodb_ingest_main.c
+nck "ids: sin strrchr sobre origin_id"                 'strrchr\(ors\[j\]\.origin_id'     hypodb_ingest.c
+nck "ids: sin derivar el mod a mano"                   'colon \? atoi\(colon \+ 1\)'      hypodb_ingest.c
+
 if [ "$fails" -eq 0 ]; then
     echo "OK: invariantes de hypodb_ingest"
 fi

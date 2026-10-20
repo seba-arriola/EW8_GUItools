@@ -15,6 +15,7 @@ char InRingName[MAX_STR];
 char InRingRawName[MAX_STR];   /* 2.º anillo de entrada (csnloc crudo, opcional) */
 char OutRingName[MAX_STR];
 char InRingPickName[MAX_STR];  /* anillo de picks a leer (TYPE_PICK_SCNL) */
+char ConfRingName[MAX_STR];    /* anillo de confirmaciones (ARC confirmado) */
 char DbEnvFile[MAX_STR];       /* credenciales PostgreSQL (historial) */
 char MagConfigFile[MAX_STR] = "csnmags.d";  /* .d de csnmags: defaults de magnitud */
 char MwwConfigFile[MAX_STR] = "csnwphase.d";          /* .d de csnwphase (panel Mww) */
@@ -40,6 +41,7 @@ SHM_INFO InRegion;
 SHM_INFO InRegionRaw;    
 SHM_INFO InRegionPick;   
 SHM_INFO PRegion;        
+SHM_INFO CRegion;        /* confirmaciones: ARC confirmado -> hypodb */
 MSG_LOGO GetLogo[2]; 
 MSG_LOGO PickLogo[1]; 
 
@@ -68,6 +70,7 @@ double  g_pick_window_sec = 600.0;   /* PickCaptureWindowSec */
 char    g_pick_phase = 'P';          /* fase a picar en modo Repick */
 
 EwGuiCanvas *canvas_global = NULL;
+GtkWidget *g_sw_ondas = NULL;   /* scrolled de las trazas: su alto asignado es el viewport */
 GListStore *g_store_hypo = NULL;
 GListStore *g_store_events = NULL;
 GListStore *g_store_detail = NULL;
@@ -89,6 +92,7 @@ int    g_group_max_solutions = 100;
 /* Config de la pestaña Ondas (channelsOrder/componentsOrder/locators). */
 char g_channels_order[128] = "HH BH HN LH";
 char g_components_order[64] = "Z N E";
+int  g_traces_per_screen = CSNHYPODBP_TRACES_PER_SCREEN_MIN; /* tracesPerScreen */
 CsnhypodbpLocator g_locators[MAX_LOCATORS];
 int  g_nlocators = 0;
 char g_active_locator[32] = "";
@@ -325,6 +329,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("StateFile")) { str = k_str(); if (str) strcpy(StateFile, str); init[6] = 1; }
         else if (k_its("InRingRaw")) { str = k_str(); if (str) strcpy(InRingRawName, str); }
         else if (k_its("InRingPick")) { str = k_str(); if (str) strcpy(InRingPickName, str); }
+        else if (k_its("ConfRing")) { str = k_str(); if (str) strcpy(ConfRingName, str); }
         else if (k_its("TauModel")) { str = k_str(); if (str) strcpy(TauModel, str); }
         else if (k_its("PickCaptureWindowSec")) { g_pick_window_sec = k_val(); }
         else if (k_its("MaxDistKm")) { double v = k_val(); if (v > 0.0) g_max_dist_km = v; }
@@ -356,6 +361,25 @@ int ReadConfig(char *configfile) {
         else if (k_its("componentsOrder")) {
             char buf[64]; k_rest_join(buf, sizeof(buf));
             if (buf[0]) snprintf(g_components_order, sizeof(g_components_order), "%s", buf);
+        }
+        else if (k_its("tracesPerScreen")) {
+            /* Solo 1, 2 o 3 (un digito): mas trazas por pantalla saturan la vista.
+               Cualquier otra cosa ("0", "4", "-1", "2.7", "abc") no se aplica:
+               se avisa con el TEXTO recibido y se conserva el previo (patron de
+               MapZoom). Se lee como token y se parsea aqui para no dejar k_err()
+               (abortaria la lectura del .d) y para no truncar "2.7" a 2. */
+            char *tok = k_str();
+            int v = 0;
+            (void)k_err();
+            if (tok && tok[0] != '\0' && tok[1] == '\0')
+                v = csnhypodbp_traces_per_screen_norm(tok[0] - '0');
+            if (v > 0)
+                g_traces_per_screen = v;
+            else
+                logit("et", "csnhypodbp: tracesPerScreen <%s> fuera de [%d,%d], uso %d\n",
+                      tok && tok[0] ? tok : "(none)",
+                      CSNHYPODBP_TRACES_PER_SCREEN_MIN,
+                      CSNHYPODBP_TRACES_PER_SCREEN_MAX, g_traces_per_screen);
         }
         else if (k_its("locator")) {
             char *nm = k_str(), *bn = k_str(), *cf = k_str();
@@ -523,6 +547,7 @@ static int maps_print_config(void) {
     /* Estado inicial de la tabla de estaciones en la sesion (el menu lo alterna
        sin reescribir el .d). */
     printf("HideStationsWithoutData %d\n", g_hide_empty ? 1 : 0);
+    printf("tracesPerScreen %d\n", g_traces_per_screen);
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
     /* Espacio de proyeccion efectivo, sin abrir GTK: sin MapImageFile el mapa de
        planta se dibuja igual sobre el lienzo virtual (grilla, capas y puntos). */
@@ -726,6 +751,17 @@ void ConnectToEarthworm() {
     }
     logit("t", "=== csnhypodbp: Conectado a %s%s%s, %s (picks) y %s ===\n",
           InRingName, InRingRawName[0] ? " + " : "", InRingRawName, InRingPickName, OutRingName);
+    /* Anillo de CONFIRMACIONES: por ahi viaja el ARC de cada solucion
+     * confirmada a mano, para que `hypodb` le de una fila `origin` propia. */
+    if (ConfRingName[0]) {
+        long ConfKey = GetKey(ConfRingName);
+        if (ConfKey != -1) tport_attach(&CRegion, ConfKey);
+        else {
+            logit("e", "csnhypodbp: ConfRing %s no existe: las confirmaciones no se guardaran\n",
+                  ConfRingName);
+            ConfRingName[0] = '\0';
+        }
+    }
 }
 
 static void drain_ring(SHM_INFO *region, GtkWidget *tree) {
@@ -1790,6 +1826,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *page_waves = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     GtkWidget *sw_ondas = gtk_scrolled_window_new();
+    g_sw_ondas = sw_ondas;   /* el canvas de trazas mide su rejilla con este alto */
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_ondas), GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
     gtk_widget_set_vexpand(sw_ondas, TRUE);
     gtk_widget_set_hexpand(sw_ondas, TRUE);
@@ -2453,8 +2490,8 @@ int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
-    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideStationsWithoutData=%d\n",
-          g_channels_order, g_components_order, g_hide_empty);
+    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] tracesPerScreen=%d HideStationsWithoutData=%d\n",
+          g_channels_order, g_components_order, g_traces_per_screen, g_hide_empty);
     logit("t", "csnhypodbp: busqueda SearchMaxEvents=%d  SDS enabled=%d root=%s fallbackHours=%d\n",
           g_search_max_events, g_sds_enabled, g_sds_root, g_sds_fallback_hours);
     /* La BD se abre DESPUES de logit_init: si falla (p. ej. falta db.env), el

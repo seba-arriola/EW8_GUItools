@@ -415,10 +415,30 @@ int csnhypodbp_mag_match(int qid_msg, int mod_msg, int qid_sol, int mod_sol)
 /* ------------------------------------------------------------------------- */
 int csnhypodbp_preferred_index(const CsnhypodbpSolMeta *sols, int n)
 {
-    int i, best = -1, any_manual = 0;
+    int i, best = -1, any_manual = 0, any_confirmed = 0;
 
     if (!sols || n <= 0) return -1;
-    for (i = 0; i < n; i++) if (sols[i].manual) { any_manual = 1; break; }
+    for (i = 0; i < n; i++) {
+        if (sols[i].confirmed) any_confirmed = 1;
+        if (sols[i].manual) any_manual = 1;
+    }
+
+    /* 1) Confirmadas a mano: manda la confirmacion MAS RECIENTE (`created`),
+       porque la version es el contador de csnloc y no el orden del clic.
+       Desempate: mayor version y luego mayor hora origen. */
+    if (any_confirmed) {
+        for (i = 0; i < n; i++) {
+            if (!sols[i].confirmed) continue;
+            if (best < 0 ||
+                sols[i].created > sols[best].created + 1e-9 ||
+                (fabs(sols[i].created - sols[best].created) <= 1e-9 &&
+                 (sols[i].version > sols[best].version ||
+                  (sols[i].version == sols[best].version &&
+                   sols[i].otime > sols[best].otime))))
+                best = i;
+        }
+        return best;
+    }
 
     if (any_manual) {
         for (i = 0; i < n; i++) {

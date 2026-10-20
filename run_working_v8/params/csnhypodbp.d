@@ -7,6 +7,7 @@ InRing          HYPO_RING_REF    # Anillo de hipocentros refinados (hyp2000_ring
 InRingRaw       HYPO_RING        # 2.º anillo: soluciones crudas de csnloc (opcional)
 OutRing         PICK_RING        # Anillo donde inyectaremos los repicks manuales (TYPE_PICK_SCNL)
 InRingPick      PICK_RING        # Anillo de picks a LEER (fase P/S + origen A/M); default OutRing
+ConfRing        HYPO_RING_REF2   # Anillo de CONFIRMACIONES: el ARC confirmado que hypodb guarda como origen propio
 HeartBeatInt    30               
 LogFile         1                
 TauModel        iasp91           # Modelo de tiempos de viaje (P teorica); tablas iasp91.* en params/
@@ -21,6 +22,9 @@ GroupMaxSolutions   100          # tope de versiones por evento
 # El orden es canal externo x componente interno: HHZ, HHN, HHE, BHZ, ...
 channelsOrder   HH BH HN LH
 componentsOrder Z N E
+# Trazas por pantalla en la pestaña picking: 1, 2 o 3 (solo esos valores; el
+# resto de canales de la estación queda debajo y se alcanza con la rueda).
+tracesPerScreen 1
 # locator <nombre> <binario> <config.d> (sin '/' se resuelven contra
 # $EW_HOME/$EW_VERSION/bin y $EW_PARAMS).
 locator         csnloc       csnloc       csnloc.d

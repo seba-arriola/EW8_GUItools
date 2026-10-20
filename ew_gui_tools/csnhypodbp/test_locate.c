@@ -218,6 +218,38 @@ int main(void)
         assert(fabs(out.picks[1].residual - (-0.10)) < 1e-6);
     }
 
+    /* --- confirmation_arc: snapshot que va al anillo de confirmaciones --- */
+    {
+        CsnhypodbpSolution in, out;
+        char arc[4096];
+
+        memset(&in, 0, sizeof(in));
+        in.qid = 987654; in.version = 7; in.otime = 1600000000.5;
+        in.lat = -33.10; in.lon = -70.20; in.depth = 25.0; in.rms = 0.42;
+        in.nph = 8; in.gap = 120;
+        in.npicks = 1;
+        snprintf(in.picks[0].sta, 8, "GO01"); snprintf(in.picks[0].chan, 8, "HHZ");
+        snprintf(in.picks[0].net, 4, "C1"); snprintf(in.picks[0].loc, 4, "10");
+        in.picks[0].phase = 'P'; in.picks[0].t_pick = 1600000010.0;
+
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == 0);
+        assert(csnhypodbp_parse_solution(arc, strlen(arc), 162, &out) == 0);
+        assert(out.version == 7);        /* sufijo de origin_id */
+        assert(out.qid == 987654);
+        assert(out.manual == 1);         /* byte 174 'M' */
+        assert(out.npicks == 1);
+
+        /* sin version (o fuera del campo de 4 caracteres) no es identificable */
+        in.version = 0;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        in.version = 10000;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        in.version = 7;
+        in.qid = 0;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        assert(csnhypodbp_confirmation_arc(NULL, arc, sizeof(arc)) == -1);
+    }
+
     /* --- sol_apply_jsonl: residual del JSONL de csnloc (el ARC va en blanco) --- */
     {
         CsnhypodbpSolution js;

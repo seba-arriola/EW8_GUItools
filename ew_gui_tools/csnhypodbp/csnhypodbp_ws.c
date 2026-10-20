@@ -6,6 +6,7 @@
 #include <math.h>
 
 #include "ewgui/db.h"
+#include "ewgui/db_ids.h"
 
 void LoadStationsFromFile() {
     FILE *fp = fopen(StaFile, "r");
@@ -127,6 +128,8 @@ typedef struct {
     CsnhypodbpRow *row;      /* prestada (dueña: g_store_hypo) */
     int      qid;            /* qid de ESTA solucion (difiere del grupo si se fusiona) */
     int      manual;
+    int      confirmed;      /* 1 = snapshot confirmado a mano */
+    double   created;        /* epoch en que se inserto la fila */
     unsigned version;
     int      nph;
     double   rms;
@@ -301,6 +304,8 @@ static void event_group_update_preferred(EventGroup *g)
     for (i = 0; i < g->sols->len && i < CSNHYPODBP_MAX_PICKS; i++) {
         EventSol *es = g_ptr_array_index(g->sols, i);
         meta[i].manual  = es->manual;
+        meta[i].confirmed = es->confirmed;
+        meta[i].created = es->created;
         meta[i].version = es->version;
         meta[i].nph     = es->nph;
         meta[i].rms     = es->rms;
@@ -689,9 +694,11 @@ static int cargar_grupos_db(const char *const *ids, int nev)
 
         g = event_group_new(qid);
         for (j = 0; j < nor; j++) {
-            const char *colon = strrchr(ors[j].origin_id, ':');
-            int mod = colon ? atoi(colon + 1) : 0;
+            char eid[64];
+            int mod = 0, confirmed = 0;
+            unsigned version = 0;
             double otime = iso_epoch(ors[j].origin_time);
+            double created_epoch = iso_epoch(ors[j].creation_time);
             char fecha[32], hora[32], created[32], szLat[32], szLon[32], szDep[32];
             char szRes[32], szAzm[32], szStn[32], szID[32], szMod[32], szVer[32];
             char szMl[32] = "-", szMwp[32] = "-", szMb[32] = "-", szMs[32] = "-";
@@ -701,12 +708,21 @@ static int cargar_grupos_db(const char *const *ids, int nev)
             CsnhypodbpRow *row;
             EventSol *es;
 
+            /* `origin_id` = "<event>:<mod>" (fila viva) o "<event>:<mod>:<version>"
+               (snapshot confirmado a mano). De ahi salen el mod y la version. */
+            if (ewgui_origin_id_parse(ors[j].origin_id, eid, sizeof eid, &mod,
+                                      &version, &confirmed) != 0) {
+                mod = 0;
+                version = 0;
+                confirmed = 0;
+            }
+
             /* Fecha y hora juntas (ISO UTC) y hora de creacion en la BD (es el
                orden por defecto del detalle). */
             csnhypodbp_search_fmt_utc((time_t)otime, fecha, sizeof(fecha));
             snprintf(hora, sizeof(hora), "%s",
                      strlen(fecha) >= 19 ? fecha + 11 : "--:--:--");
-            csnhypodbp_search_fmt_utc(iso_epoch(ors[j].creation_time), created,
+            csnhypodbp_search_fmt_utc((time_t)created_epoch, created,
                                       sizeof(created));
             snprintf(szLat, sizeof szLat, "%.2f%c",
                      fabs(ors[j].latitude), ors[j].latitude < 0 ? 'S' : 'N');
@@ -721,7 +737,8 @@ static int cargar_grupos_db(const char *const *ids, int nev)
                      ors[j].station_count < 0 ? 0 : ors[j].station_count);
             snprintf(szID, sizeof szID, "%010d", qid);
             snprintf(szMod, sizeof szMod, "%s", ModLabel(mod));
-            snprintf(szVer, sizeof szVer, "0");
+            /* `Ver` real solo para los confirmados (el resto no guarda version). */
+            snprintf(szVer, sizeof szVer, "%u", confirmed ? version : 0u);
 
             if (ewguidb_query_magnitudes(g_db, ors[j].origin_id, &mgs, &nm) > 0) {
                 for (k = 0; k < nm; k++) {
@@ -743,9 +760,11 @@ static int cargar_grupos_db(const char *const *ids, int nev)
 
             row = csnhypodbp_row_new(fecha, hora, szLat, szLon, szDep, szRes,
                                      szAzm, szStn, szID, szMl, szMwp, szMb, szMs,
-                                     szMod, szVer, otime, 0, qid, ors[j].latitude,
-                                     ors[j].longitude, ors[j].depth, mod);
+                                     szMod, szVer, otime, (int)version, qid,
+                                     ors[j].latitude, ors[j].longitude,
+                                     ors[j].depth, mod);
             csnhypodbp_row_set_origin_id(row, ors[j].origin_id);
+            g_object_set_data(G_OBJECT(row), "confirmed", GINT_TO_POINTER(confirmed));
             g_object_set(row, "estado",
                          strcmp(ors[j].status, "REVIEWED") == 0 ? "M" : "A", NULL);
             g_object_set(row, "created", created, NULL);
@@ -757,7 +776,9 @@ static int cargar_grupos_db(const char *const *ids, int nev)
             es->row = row;
             es->qid = qid;
             es->manual = (strcmp(ors[j].status, "REVIEWED") == 0);
-            es->version = 0;
+            es->confirmed = confirmed;
+            es->created = created_epoch;
+            es->version = version;
             es->nph = ors[j].station_count;
             es->rms = isnan(ors[j].standard_error) ? 0.0 : ors[j].standard_error;
             es->otime = otime;
@@ -899,7 +920,8 @@ void search_clear(void)
     logit("t", "csnhypodbp: busqueda limpiada -> vista vivo+historial\n");
 }
 
-int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
+int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
+                              int confirmed) {
     (void)tree;
     CsnhypodbpSolution sol;
     char fecha[32], hora[32], szLat[32], szLon[32], szDep[32], szRes[32], szAzm[32];
@@ -913,6 +935,7 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
 
     ensure_groups();
     if (csnhypodbp_parse_solution(payload, strlen(payload), mod, &sol) < 0) return 0;
+    sol.confirmed = confirmed;
 
     {
         csnhypodbp_search_fmt_utc((time_t)(sol.otime), fecha, sizeof(fecha));
@@ -930,15 +953,18 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     snprintf(szVer, sizeof(szVer), "%u", sol.version);
     szEstado[0] = sol.manual ? 'M' : 'A'; szEstado[1] = '\0';
 
-    /* Upsert de la fila de solucion, clave (qid, mod, version). */
+    /* Upsert de la fila de solucion, clave (qid, mod, version, confirmed): el
+       snapshot confirmado convive con la fila viva de la misma version. */
     {
         guint n = g_list_model_get_n_items(G_LIST_MODEL(g_store_hypo));
         guint i;
         for (i = 0; i < n; i++) {
             CsnhypodbpRow *r = CSNHYPODBP_ROW(g_list_model_get_item(G_LIST_MODEL(g_store_hypo), i));
             int rq = 0, rm = 0, rv = 0;
+            int rc = r ? GPOINTER_TO_INT(g_object_get_data(G_OBJECT(r), "confirmed")) : 0;
             if (r) g_object_get(r, "qid", &rq, "mod", &rm, "qver", &rv, NULL);
-            if (r && rq == sol.qid && rm == mod && rv == (int)sol.version) { row = r; g_object_unref(r); break; }
+            if (r && rq == sol.qid && rm == mod && rv == (int)sol.version &&
+                rc == confirmed) { row = r; g_object_unref(r); break; }
             if (r) g_object_unref(r);
         }
     }
@@ -970,6 +996,7 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
             g_object_set(row, "created", created, NULL);
         }
         g_list_store_append(g_store_hypo, row);
+        g_object_set_data(G_OBJECT(row), "confirmed", GINT_TO_POINTER(confirmed));
         g_object_unref(row);
         new_row = TRUE;
     }
@@ -1029,8 +1056,13 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
     }
 
     es = event_group_find_sol(g, row);
-    if (!es) { es = g_new0(EventSol, 1); es->row = row; g_ptr_array_add(g->sols, es); }
+    if (!es) {
+        es = g_new0(EventSol, 1); es->row = row;
+        es->created = (double)time(NULL);
+        g_ptr_array_add(g->sols, es);
+    }
     es->qid = sol.qid; es->manual = sol.manual; es->version = sol.version; es->nph = sol.nph;
+    es->confirmed = confirmed;
     es->rms = sol.rms; es->otime = sol.otime; es->mod = mod;
     event_group_add_picks(g, sol.picks, sol.npicks, g_group_pick_tol_sec);
     /* Picadas de ESTA solucion, con su residual (misma solucion re-emitida: se
@@ -1067,6 +1099,11 @@ int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod) {
         return 2;
     }
     return sel_status;
+}
+
+int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod)
+{
+    return procesar_mensaje_sismo_ex(tree, payload, mod, 0);
 }
 
 /* FIX 1: Lectura segura de Magnitudes utilizando rd_mag() nativo de Earthworm */
@@ -1707,9 +1744,10 @@ int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMag
     if (!sol) return -1;
     s = *sol;
     s.manual = 1;
+    s.confirmed = 1;
     if (s.version == 0) s.version = (unsigned)time(NULL);
     if (csnhypodbp_arc_build(&s, 1, arc, sizeof(arc)) != 0) return -1;
-    procesar_mensaje_sismo(tree_global, arc, s.mod);
+    procesar_mensaje_sismo_ex(tree_global, arc, s.mod, 1);
     /* Se asignan TODAS las magnitudes calculadas; la preferida es la que eligio
        el radio del cuadro de la candidata. */
     if (mag) {
@@ -1725,6 +1763,24 @@ int csnhypodbp_confirm_manual(const CsnhypodbpSolution *sol, const CsnhypodbpMag
     for (i = 0; i < s.npicks; i++)
         emit_pick_scnl(s.picks[i].sta, s.picks[i].chan, s.picks[i].net,
                        s.picks[i].loc, s.picks[i].phase, s.picks[i].t_pick, pref);
+    /* Snapshot para la BD: viaja por el anillo de confirmaciones y `hypodb` le
+       da una fila `origin` propia (<event>:<mod>:<version>). Usa la version del
+       CANDIDATO (la local pudo recibir una sintetica si venia sin ella). */
+    if (csnhypodbp_confirmation_arc(sol, arc, sizeof(arc)) == 0) {
+        MSG_LOGO logo;
+        logo.instid = MyInstId;
+        logo.mod = (unsigned char)sol->mod;
+        logo.type = TypeHyp2000Arc;
+        if (!ConfRingName[0])
+            logit("e", "csnhypodbp: ConfRing no configurado: la confirmacion qid=%d no se guardara en la BD\n",
+                  sol->qid);
+        else if (tport_putmsg(&CRegion, &logo, strlen(arc), arc) != PUT_OK)
+            logit("e", "csnhypodbp: error publicando la confirmacion qid=%d\n",
+                  sol->qid);
+    } else {
+        logit("e", "csnhypodbp: confirmacion sin version valida (qid=%d version=%u): no se guardara en la BD\n",
+              sol->qid, sol->version);
+    }
     csnhypodbp_manual_state_save(g_manual_state_file, &s, mag);
     logit("t", "csnhypodbp: solucion manual confirmada qid=%d nph=%d (%d picks, pref=%c)\n",
           s.qid, s.nph, s.npicks, pref);

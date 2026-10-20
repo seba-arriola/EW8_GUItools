@@ -26,12 +26,17 @@ hace **`csnloc`** localmente.
     soluciones del mismo evento (un ID por evento, aunque sean de módulos distintos) por `qid`
     **o** por firma de picadas compatible (subconjunto dentro de `GroupPickTolSec` con al menos
     `GroupMinMatchPicks`); la picada de tiempo no incluye canal y el ARC viaja con las fases P y S.
-    UI **maestro-detalle**: arriba una fila por evento (la solución **preferida**: la manual más
-    reciente si hay alguna manual, si no la automática con más fases y menor RMS) y abajo las
-    soluciones del evento al seleccionarlo. Lee `HYPO_RING_REF` (refinados 163/164) **y**, con
-    `InRingRaw`, `HYPO_RING` (csnloc crudo 162) en vivo. La marca de solución manual viaja en el
-    ARC en el byte 174 (`'M'`/`'A'`, ver `common/include/ewgui/arc_layout.h`), propagada por
-    `csnloc` (12.º token `A/M` de `TYPE_PICK_SCNL`) y copiada por `hyp2000_ring`/`nlloc_ring`.
+    UI **maestro-detalle**: arriba una fila por evento (la solución **preferida**: la confirmada a
+    mano más reciente si hay alguna, si no la manual más reciente, si no la automática con más fases
+    y menor RMS) y abajo las soluciones del evento al seleccionarlo. Lee `HYPO_RING_REF` (refinados
+    163/164) **y**, con `InRingRaw`, `HYPO_RING` (csnloc crudo 162) en vivo. La marca de solución
+    manual viaja en el ARC en el byte 174 (`'M'`/`'A'`, ver
+    `common/include/ewgui/arc_layout.h`), propagada por `csnloc` (12.º token `A/M` de
+    `TYPE_PICK_SCNL`) y copiada por `hyp2000_ring`/`nlloc_ring`. Cada `Confirm` publica además el ARC
+    confirmado en `ConfRing` (`HYPO_RING_REF2`) y `hypodb_ingest` (`InRingConf`) lo guarda como
+    **fila `origin` propia e inmutable** con `origin_id = <event>:<mod>:<version>`
+    (`ewgui_origin_id_build/parse`); la confirmación más reciente pasa a `preferred_origin_id` y las
+    anteriores quedan como orígenes manuales históricos.
     Las **magnitudes** (`csnmags`, por `qid`) se guardan a nivel de evento y se proyectan a todas
     las soluciones, así la maestra las muestra siempre; para eventos solo-csnloc corre una 2.ª
     instancia `csnmags csnmags_raw.d` sobre `HYPO_RING` (`MOD_MAGNITUDES_RAW`).
@@ -143,7 +148,9 @@ hace **`csnloc`** localmente.
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
     PostgreSQL (esquema QuakeML simplificado, `db/schema.sql`). Entradas: `HYPO_RING` (csnloc 162)
     y `HYPO_RING_REF` (hyp2000 163 / nlloc 164, distinguidos por el `mod` del logo) + `PICK_RING`
-    (para `pick_status` manual). Agrupa soluciones por **firma de picadas** (reutiliza
+    (para `pick_status` manual) + `HYPO_RING_REF2` (`InRingConf`: ARC de cada `Confirm` de la GUI,
+    que se guarda como fila `origin` propia `<event>:<mod>:<version>` sin pasar por la guarda de
+    versión). Agrupa soluciones por **firma de picadas** (reutiliza
     `csnhypodbp_group`) para asignar un `event_id` por sismo aunque cambie el qid: el id es
     **`E<qid>-<yyyymmddhhmmss>`** (hora origen UTC de la 1.ª solución del grupo), porque el rango de
     qid de `csnloc` se repite cada ~27,7 h; el atajo de agrupación por qid exige además

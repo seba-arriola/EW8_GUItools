@@ -135,24 +135,33 @@ docker compose -f db/docker-compose.yml exec -T db psql -U csn -d csn_hypo -c \
 
 ## Mapeo de datos (ingester `hypodb_ingest`)
 
-- **IDs** (VARCHAR(64)): `event_id = E<qid>-<yyyymmddhhmmss>` · `origin_id = <event_id>:<mod>` ·
-  `magnitude_id = <origin_id>/mag/<TIPO>` · `station_magnitude_id = <magnitude_id>/<NSLCO>` ·
-  `pick_id = <origin_id>/pick/<STA>.<FASE>`.
+- **IDs** (VARCHAR(64)): `event_id = E<qid>-<yyyymmddhhmmss>` · `origin_id = <event_id>:<mod>` (fila
+  viva) **o** `<event_id>:<mod>:<version>` (**confirmación manual**; `version` = campo 178..181 del
+  ARC, 1..9999) · `magnitude_id = <origin_id>/mag/<TIPO>` ·
+  `station_magnitude_id = <magnitude_id>/<NSLCO>` · `pick_id = <origin_id>/pick/<STA>.<FASE>`.
 - **`event`**: agrupación por firma de picadas (reutiliza `csnhypodbp_group.c`); un `event` por
   sismo físico aunque cambie el qid (el atajo por qid exige además
   `|Δotime| <= EventMaxDtSec`, clave de `hypodb.d`, default 300 s, para no fusionar dos sismos de
   sesiones distintas de csnloc). Al arrancar reconstruye los grupos desde la BD
   (`EventLoadHours`) para conservar los `event_id`.
-- **`origin`**: una fila por `(event, mod)` con la **última versión**; `status` = `REVIEWED` si la
-  solución es manual (byte 174), si no `PRELIMINARY`(162)/`REVISED`(163/164). `author` es constante
-  (`csnhypodbp`, el módulo que revisa/produce el registro), `software` sale de `$EW_VERSION` y el
-  localizador real queda en `location_algorithm` (`csnloc`/`HYPOINVERSE`/`NLLoc`).
+- **`origin`**: una fila viva por `(event, mod)` con la **última versión** que publica el pipeline
+  (se actualiza en sitio), **más una fila por cada confirmación manual** (`csnhypodbp` → `ConfRing`
+  → `InRingConf`) con `origin_id = <event>:<mod>:<version>`; esas filas son **inmutables** y quedan
+  como orígenes manuales históricos. `status` = `REVIEWED` si la solución es manual (byte 174), si no
+  `PRELIMINARY`(162)/`REVISED`(163/164). `author` es constante (`csnhypodbp`, el módulo que
+  revisa/produce el registro), `software` sale de `$EW_VERSION` y el localizador real queda en
+  `location_algorithm` (`csnloc`/`HYPOINVERSE`/`NLLoc`). Las confirmaciones **no** pasan por la
+  guarda de versión (su `version` es la del candidato, no la del pipeline).
 - **`pick`**: fases del ARC; `pick_status` = `manual` si correlaciona con un pick de `PICK_RING`
   (12.º token `M`), si no `automatic`.
 - **`magnitude`**: `TYPE_MAGNITUDE`; `station_magnitude` desde las líneas por estación
   (`wr_mag_scnl` en `csnmags`). `calculation_method` copia el `algorithm` del mensaje (`CSNNet`
   automática, `CSNMan` ajustada a mano), que es la marca que `csnhypodbp` busca al releer de la BD.
-- `preferred_*` se recalculan (preferred_index + Mwp>Ms>Mb>ML).
+- `preferred_*` se recalculan **leyendo los `origin` del evento en la BD**: si hay confirmaciones
+  manuales manda la **más reciente** (`creation_time`; desempate `version` y hora origen), si no la
+  manual más reciente y si no más fases / menor RMS. La magnitud preferida es
+  `Mwp>Ms>Mb>ML` (o el tipo que pidió el ARC) y **no se borra** cuando aún no hay candidata (p. ej.
+  tras reiniciar, antes del primer `TYPE_MAGNITUDE`).
 
 ## Mapeo de velocidad (`origin.velocity_model`)
 

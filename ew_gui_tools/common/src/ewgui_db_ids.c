@@ -35,11 +35,95 @@ int ewgui_event_id(char *out, size_t n, const char *qid, double otime)
     return fits(snprintf(out, n, "E%s%s", qid, stamp), n) ? 0 : -1;
 }
 
+static int all_digits(const char *s)
+{
+    if (!s || !*s)
+        return 0;
+    for (; *s; s++)
+        if (*s < '0' || *s > '9')
+            return 0;
+    return 1;
+}
+
+int ewgui_origin_id_build(char *out, size_t n, const char *event_id, int mod,
+                          unsigned version)
+{
+    int written;
+
+    if (!out || n == 0 || !event_id || !*event_id || mod <= 0)
+        return -1;
+    /* El campo de version del ARC son 4 caracteres (arc_layout.h). */
+    if (version > 9999u)
+        return -1;
+    if (version == 0)
+        written = snprintf(out, n, "%s:%d", event_id, mod);
+    else
+        written = snprintf(out, n, "%s:%d:%u", event_id, mod, version);
+    return fits(written, n) ? 0 : -1;
+}
+
 int ewgui_origin_id(char *out, size_t n, const char *event_id, int mod)
 {
-    if (!out || n == 0 || !event_id || !*event_id)
+    return ewgui_origin_id_build(out, n, event_id, mod, 0);
+}
+
+int ewgui_origin_id_parse(const char *id, char *event_id, size_t n,
+                          int *mod, unsigned *version, int *confirmed)
+{
+    const char *c1, *c2;
+    char mtmp[16];
+    size_t elen, mlen;
+    long m;
+    unsigned v = 0;
+
+    if (mod)
+        *mod = 0;
+    if (version)
+        *version = 0;
+    if (confirmed)
+        *confirmed = 0;
+    if (event_id && n)
+        event_id[0] = '\0';
+    if (!id || !*id)
         return -1;
-    return fits(snprintf(out, n, "%s:%d", event_id, mod), n) ? 0 : -1;
+    c1 = strchr(id, ':');
+    if (!c1 || c1 == id)
+        return -1;
+    elen = (size_t)(c1 - id);
+    c2 = strchr(c1 + 1, ':');
+
+    mlen = c2 ? (size_t)(c2 - (c1 + 1)) : strlen(c1 + 1);
+    if (mlen == 0 || mlen >= sizeof mtmp)
+        return -1;
+    memcpy(mtmp, c1 + 1, mlen);
+    mtmp[mlen] = '\0';
+    if (!all_digits(mtmp))
+        return -1;
+    m = strtol(mtmp, NULL, 10);
+    if (m <= 0 || m > 999999)
+        return -1;
+
+    if (c2) {
+        if (strlen(c2 + 1) > 4 || !all_digits(c2 + 1))
+            return -1;
+        v = (unsigned)strtoul(c2 + 1, NULL, 10);
+        if (v == 0 || v > 9999u)
+            return -1;
+    }
+
+    if (event_id && n) {
+        if (elen + 1 > n)
+            return -1;
+        memcpy(event_id, id, elen);
+        event_id[elen] = '\0';
+    }
+    if (mod)
+        *mod = (int)m;
+    if (version)
+        *version = v;
+    if (confirmed)
+        *confirmed = c2 ? 1 : 0;
+    return 0;
 }
 
 int ewgui_magnitude_id(char *out, size_t n, const char *origin_id,

@@ -61,6 +61,13 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn);
    normal de procesar_mensaje_sismo). Devuelve 0 si OK. */
 int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, size_t outn);
 
+/* ARC del snapshot CONFIRMADO a mano: el que se publica en el anillo de
+   confirmaciones para que `hypodb` guarde una fila `origin` propia. Exige una
+   version 1..9999 (es el sufijo de `origin_id`; 0 no identificaria la fila).
+   Devuelve 0 si OK y -1 si la solucion no es identificable. */
+int csnhypodbp_confirmation_arc(const CsnhypodbpSolution *sol, char *out,
+                                size_t outn);
+
 /* Rellena sol->picks[].residual desde el JSONL que csnloc offline emite a
    stdout: el ARC del log no trae residual, pero el JSONL si ("residual" por
    fase). Solo toca picks con residual NAN, para no pisar el residual que ya

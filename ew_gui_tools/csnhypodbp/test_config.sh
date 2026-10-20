@@ -119,6 +119,30 @@ ck  "print-config: ventana de peticion" '^MagFetchSeconds 700\.0$'          "$TM
 ck  "print-config: puerta de Ms"    '^MagGate Ms 20\.0 160\.0 0\.0$'        "$TMP/pc.txt"
 ck  "print-config: puerta de ML"    '^MagGate ML 0\.0 8\.0 600\.0$'         "$TMP/pc.txt"
 
+# --- tracesPerScreen: 1..3 validos; fuera de rango se avisa y se conserva ---
+tps() {  # tps <valor> ; deja la salida en $TMP/pc_tps.txt
+    cp "$TMP/ok.d" "$TMP/tps.d"
+    printf 'tracesPerScreen %s\n' "$1" >> "$TMP/tps.d"
+    "$BIN" --print-config "$TMP/tps.d" > "$TMP/pc_tps.txt" 2>/dev/null
+}
+ck  "print-config: tracesPerScreen por defecto" '^tracesPerScreen 1$' "$TMP/pc.txt"
+tps 2
+ck  "print-config: tracesPerScreen 2" '^tracesPerScreen 2$' "$TMP/pc_tps.txt"
+tps 3
+ck  "print-config: tracesPerScreen 3" '^tracesPerScreen 3$' "$TMP/pc_tps.txt"
+tps 4
+ck  "print-config: tracesPerScreen 4 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps 0
+ck  "print-config: tracesPerScreen 0 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps -1
+ck  "print-config: tracesPerScreen -1 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps abc
+ck  "print-config: tracesPerScreen abc conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps 2.7
+ck  "print-config: tracesPerScreen 2.7 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+ck  "config: el .d versionado declara tracesPerScreen" '^tracesPerScreen [123]' ../../run_working_v8/params/csnhypodbp.d
+ck  "config: README documenta tracesPerScreen"        'tracesPerScreen'        README.md
+
 "$BIN" --check-profiles "$TMP/ok.d" > "$TMP/cp.txt" 2>&1
 rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : check-profiles rc 0" || { echo "FAIL: check-profiles rc=$rc"; fails=$((fails+1)); }

@@ -2,8 +2,9 @@
  * hypodb_ingest — escribe la información hipocentral de los anillos en
  * PostgreSQL. Núcleo sin GTK; ver hypodb_ingest.h.
  *
- * Anillos: HYPO_RING (162, csnloc), HYPO_RING_REF (163, hyp2000),
- * HYPO_RING_REF2 (164, nlloc) y PICK_RING (picks manuales). Agrupa soluciones
+ * Anillos: HYPO_RING (162, csnloc), HYPO_RING_REF (163/164, refinadores),
+ * HYPO_RING_REF2 (confirmaciones de la GUI, via InRingConf) y PICK_RING (picks
+ * manuales). Agrupa soluciones
  * por firma de picadas (reutiliza csnhypodbp_group) para asignar un event_id
  * por sismo físico, aunque cambie el qid.
  */
@@ -450,25 +451,53 @@ static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
 
 static int update_preferred(HypodbState *st, HypodbGroup *g)
 {
-    CsnhypodbpSolMeta metas[HYPODB_MAX_ORIGINS];
-    const char *pref_origin = NULL;
+    EwGuiOriginRow *ors = NULL;
+    CsnhypodbpSolMeta *metas = NULL;
     const char *pref_mag = NULL;
+    char pref_origin[64] = "";
     static const char *order[] = { "Mwp", "Ms", "Mb", "ML" };
-    int pi;
+    int nor = 0, pi, rc;
 
     if (!st->db)
         return 0;
 
-    for (int i = 0; i < g->norigins; i++) {
-        metas[i].manual = g->origins[i].manual;
-        metas[i].version = g->origins[i].version;
-        metas[i].nph = g->origins[i].nph;
-        metas[i].rms = isnan(g->origins[i].rms) ? 9999.0 : g->origins[i].rms;
-        metas[i].otime = g->origins[i].otime;
+    /* La preferida se calcula sobre TODAS las filas `origin` del evento, no
+       sobre la memoria del proceso: asi un reinicio no pierde la confirmada y
+       los historicos entran en la regla. */
+    if (ewguidb_query_origins(st->db, g->event_id, &ors, &nor) <= 0 || nor <= 0) {
+        ewguidb_rows_free(ors);
+        logit("e", "hypodb_ingest: no se pudieron leer los origenes de %s: preferida sin tocar\n",
+              g->event_id);
+        return 0;
     }
-    pi = g->norigins > 0 ? csnhypodbp_preferred_index(metas, g->norigins) : -1;
+    metas = calloc((size_t)nor, sizeof(*metas));
+    if (!metas) {
+        ewguidb_rows_free(ors);
+        return -1;
+    }
+    for (int i = 0; i < nor; i++) {
+        int mod = 0, confirmed = 0;
+        unsigned version = 0;
+
+        if (ewgui_origin_id_parse(ors[i].origin_id, NULL, 0, &mod, &version,
+                                  &confirmed) != 0) {
+            mod = 0;
+            version = 0;
+            confirmed = 0;
+        }
+        metas[i].manual = strcmp(ors[i].status, "REVIEWED") == 0;
+        metas[i].confirmed = confirmed;
+        metas[i].version = version;
+        metas[i].nph = ors[i].station_count;
+        metas[i].rms = isnan(ors[i].standard_error) ? 9999.0
+                                                    : ors[i].standard_error;
+        metas[i].otime = iso_to_epoch(ors[i].origin_time);
+        metas[i].created = iso_to_epoch(ors[i].creation_time);
+    }
+    pi = csnhypodbp_preferred_index(metas, nor);
     if (pi >= 0)
-        pref_origin = g->origins[pi].origin_id;
+        snprintf(pref_origin, sizeof pref_origin, "%s", ors[pi].origin_id);
+    free(metas);
 
     /* Preferida elegida a mano: el ARC trae en BMTYPI el tipo (L/W/B/S) que la GUI
        puso en el 13.er token de las picadas, y manda sobre el orden fijo. */
@@ -496,7 +525,17 @@ static int update_preferred(HypodbState *st, HypodbGroup *g)
                 break;
             }
 
-    return ewguidb_set_preferred(st->db, g->event_id, pref_origin, pref_mag);
+    /* Sin candidata de magnitud NO se borra la que ya habia (el reinicio deja
+       `mags[]` vacio y antes se ponia NULL). */
+    if (pref_mag)
+        rc = ewguidb_set_preferred(st->db, g->event_id,
+                                   pref_origin[0] ? pref_origin : NULL,
+                                   pref_mag);
+    else
+        rc = ewguidb_set_preferred_origin(st->db, g->event_id,
+                                          pref_origin[0] ? pref_origin : NULL);
+    ewguidb_rows_free(ors);
+    return rc;
 }
 
 static int is_manual_pick(HypodbState *st, const CsnhypodbpPick *pk)
@@ -531,7 +570,7 @@ static void arc_vmodel(const char *msg, size_t len, char *out, size_t n)
 
 static int write_origin(HypodbState *st, HypodbGroup *g,
                         const CsnhypodbpSolution *sol, int mod,
-                        const char *vmodel)
+                        const char *vmodel, int confirmed)
 {
     char origin_id[64];
     EwGuiEventRow ev;
@@ -539,7 +578,10 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     EwGuiPickRow *rows;
     int nrows = 0;
 
-    if (hypodb_origin_id(origin_id, sizeof origin_id, g->event_id, mod) != 0)
+    /* Una confirmacion manual es un snapshot: su id lleva la version del ARC
+       ("<event>:<mod>:<version>") y nunca pisa la fila viva "<event>:<mod>". */
+    if (ewgui_origin_id_build(origin_id, sizeof origin_id, g->event_id, mod,
+                              confirmed ? sol->version : 0) != 0)
         return -1;
 
     /* event */
@@ -603,8 +645,11 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     }
     free(rows);
 
-    update_origin_meta(g, origin_id, mod, sol->manual, sol->version, sol->nph,
-                       sol->rms, sol->otime);
+    /* La meta del grupo es la guarda de version y la asociacion de magnitudes:
+       un snapshot confirmado no participa de ninguna de las dos. */
+    if (!confirmed)
+        update_origin_meta(g, origin_id, mod, sol->manual, sol->version,
+                           sol->nph, sol->rms, sol->otime);
     return 0;
 }
 
@@ -688,7 +733,7 @@ int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
     if (st->db) {
         char vmodel[64];
         arc_vmodel(msg, len, vmodel, sizeof vmodel);
-        if (write_origin(st, g, &sol, mod, vmodel) != 0)
+        if (write_origin(st, g, &sol, mod, vmodel, 0) != 0)
             return -1;
         flush_pending_mags(st, g, mod);
         if (sol.pref_mag) g->pref_mag = sol.pref_mag;
@@ -700,6 +745,53 @@ int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
                                sol.nph, sol.rms, sol.otime);
     }
     return 0;
+}
+
+/*
+ * Confirmacion manual (ARC publicado por `csnhypodbp` en el anillo de
+ * confirmaciones). A diferencia de `hypodb_feed_arc`:
+ *   - NO pasa por la guarda de version (la version del candidato suele ser <=
+ *     la ultima del pipeline; la confirmacion es un snapshot, no una version);
+ *   - escribe con `origin_id` versionado, asi que cada confirmacion es una fila
+ *     propia e inmutable;
+ *   - no toca la meta del grupo (ni magnitud preferida ni guarda de version).
+ */
+int hypodb_feed_confirmed(HypodbState *st, const char *msg, size_t len, int mod)
+{
+    CsnhypodbpSolution sol;
+    HypodbGroup *g;
+    char eid[64];
+
+    if (!st || !msg)
+        return -1;
+    if (csnhypodbp_parse_solution(msg, len, mod, &sol) != 0) {
+        if (st->cfg.debug)
+            logit("et", "hypodb_ingest: confirmacion ilegible, descartada (len=%zu, mod=%d)\n",
+                  len, mod);
+        return -1;
+    }
+    if (sol.version == 0 || sol.version > 9999u) {
+        logit("e", "hypodb_ingest: confirmacion sin version valida (qid=%d version=%u): descartada\n",
+              sol.qid, sol.version);
+        return -1;
+    }
+    if (hypodb_assign_event(st, &sol, eid, sizeof eid) != 0)
+        return -1;
+    g = find_group_by_event(st, eid);
+    if (!g)
+        return -1;
+    if (!st->db)
+        return 0;
+
+    {
+        char vmodel[64];
+        arc_vmodel(msg, len, vmodel, sizeof vmodel);
+        if (write_origin(st, g, &sol, mod, vmodel, 1) != 0)
+            return -1;
+    }
+    logit("t", "hypodb_ingest: confirmacion %s:%d:%u guardada (qid=%d, %d picks)\n",
+          eid, mod, sol.version, sol.qid, sol.npicks);
+    return update_preferred(st, g);
 }
 
 int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len)
@@ -814,14 +906,24 @@ int hypodb_load_from_db(HypodbState *st)
 
         if (ewguidb_query_origins(st->db, evs[i].event_id, &ors, &nor) > 0) {
             for (int j = 0; j < nor; j++) {
-                const char *colon = strrchr(ors[j].origin_id, ':');
-                int mod = colon ? atoi(colon + 1) : 0;
+                int mod = 0, confirmed = 0;
+                unsigned version = 0;
                 EwGuiPickRow *pks = NULL;
                 int npk = 0;
 
+                /* El id puede ser "<event>:<mod>" (viva) o
+                   "<event>:<mod>:<version>" (confirmada): `strrchr(':')` daria
+                   la version como mod. */
+                if (ewgui_origin_id_parse(ors[j].origin_id, NULL, 0, &mod,
+                                          &version, &confirmed) != 0) {
+                    mod = 0;
+                    version = 0;
+                    confirmed = 0;
+                }
                 update_origin_meta(g, ors[j].origin_id, mod,
                                    strcmp(ors[j].status, "REVIEWED") == 0,
-                                   0, ors[j].station_count,
+                                   confirmed ? 0u : version,
+                                   ors[j].station_count,
                                    isnan(ors[j].standard_error)
                                        ? 9999.0 : ors[j].standard_error, 0.0);
                 if (!(g->otime > 0.0))

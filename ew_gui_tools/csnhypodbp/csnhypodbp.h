@@ -30,6 +30,7 @@
 #include "ewgui/overlay.h"
 #include "csnhypodbp_tt.h"
 #include "csnhypodbp_view.h"
+#include "csnhypodbp_traces.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -94,6 +95,7 @@ typedef struct {
 #define MAX_LOCATORS 8
 extern char g_channels_order[128];     /* channelsOrder (orden externo de canales) */
 extern char g_components_order[64];    /* componentsOrder (orden interno) */
+extern int  g_traces_per_screen;       /* tracesPerScreen (trazas por pantalla, 1..3) */
 extern CsnhypodbpLocator g_locators[MAX_LOCATORS];
 extern int  g_nlocators;
 extern char g_active_locator[32];      /* localizador elegido para `locate` */
@@ -131,6 +133,8 @@ extern SHM_INFO InRegion;
 extern SHM_INFO InRegionRaw;    /* anillo crudo de csnloc (si InRingRaw) */
 extern SHM_INFO InRegionPick;   /* lectura del anillo de picks (TYPE_PICK_SCNL) */
 extern SHM_INFO PRegion;        
+extern SHM_INFO CRegion;        /* anillo de confirmaciones (si ConfRing) */
+extern char ConfRingName[MAX_STR];
 extern MSG_LOGO GetLogo[2]; 
 extern MSG_LOGO PickLogo[1];    /* filtro de lectura de TYPE_PICK_SCNL */
 
@@ -155,6 +159,7 @@ extern double  g_pick_window_sec;      /* ventana de asociacion de picks captura
 extern char    g_pick_phase;           /* fase a picar en modo Repick ('P'|'S') */
 
 extern EwGuiCanvas *canvas_global;
+extern GtkWidget *g_sw_ondas;                 /* scrolled de las trazas (su alto = viewport) */
 extern GtkWidget *tree_global;                /* GtkColumnView maestro (eventos) */
 extern GtkWidget *tree_detail;                /* GtkColumnView detalle (soluciones) */
 extern GListStore *g_store_hypo;              /* todas las soluciones (GTK4) */
@@ -180,7 +185,7 @@ extern int     g_NumSortedNodes;
 extern gboolean g_history_needs_saving; 
 
 /* --- LISTA DE ESTACIONES (pestaña Ondas) --- */
-#define CSNHYPODBP_BAND_MIN 110       /* alto MINIMO por banda: por debajo, scroll */
+#define CSNHYPODBP_BAND_MIN CSNHYPODBP_TRACES_BAND_MIN  /* alto MINIMO por banda (fuente: traces.h) */
 #define CSNHYPODBP_CANVAS_MIN_W 260   /* ancho minimo del canvas (la tabla no lo come) */
 /* La columna de mapas NO lleva `size_request`: su minimo ya lo fijan los dos
    canvas (300 px) y un minimo propio se suma al de la ventana, que es lo que
@@ -343,6 +348,9 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
 
 void cargar_sismos_iniciales(GtkWidget *tree);
 int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod);
+/* `confirmed=1` = snapshot confirmado a mano (fila propia en la tabla/BD). */
+int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
+                              int confirmed);
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload);
 void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid, int mod, int version);
 void FetchStationWaveforms(const char *sta);
@@ -359,6 +367,8 @@ gboolean ew_background_tasks(gpointer user_data);
 
 /* Callbacks de GUI */
 void actualizar_altura_canvas(void);
+/* Reajusta el alto del canvas de trazas si cambio el viewport (resize). */
+void csnhypodbp_canvas_refit_if_needed(void);
 /* --- Sub-pestaña `magnitudes` (tabla de una fila por estacion) --- */
 #define CSNHYPODBP_MAG_NKIND 4
 extern CsnhypodbpMagCfg g_magcfg;             /* parametros del .d de csnmags */

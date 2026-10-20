@@ -61,9 +61,10 @@ int main(int argc, char **argv)
     EwGuiDbConfig  dbcfg;
     EwGuiDb       *db = NULL;
     unsigned char  t_arc, t_mag, t_pick;
-    SHM_INFO       r[2], r_pick;
+    SHM_INFO       r[3], r_pick;   /* [0]=InRing [1]=InRingRef [2]=InRingConf */
     MSG_LOGO       logos[2], plogo, logo;
     const char    *ring_names[2];
+    int            nring = 2;
     long           bufsz = 65536 + 1, size;   /* +1: los parsers exigen NUL final */
     char          *buf;
     time_t         last_retry;
@@ -111,6 +112,21 @@ int main(int argc, char **argv)
         }
         tport_attach(&r_pick, key);
     }
+    /* Anillo de CONFIRMACIONES (opcional): por ahi llega el ARC que la GUI
+       publica en cada `Confirm`, y cada uno se guarda como fila `origin`
+       propia (`<event>:<mod>:<version>`). Sin el, el modulo arranca igual. */
+    if (cfg.in_ring_conf[0]) {
+        long key = GetKey(cfg.in_ring_conf);
+        if (key == -1) {
+            logit("e", "hypodb_ingest: anillo invalido <%s>: las confirmaciones no se persistiran\n",
+                  cfg.in_ring_conf);
+        } else {
+            tport_attach(&r[2], key);
+            nring = 3;
+        }
+    } else {
+        logit("e", "hypodb_ingest: sin InRingConf: las confirmaciones no se persistiran\n");
+    }
 
     logos[0].instid = INST_WILDCARD;
     logos[0].mod = MOD_WILDCARD;
@@ -127,7 +143,7 @@ int main(int argc, char **argv)
         return 1;
 
     /* Purga inicial de los anillos hypo: arrancamos en el presente. */
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < nring; i++)
         while (tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
                    == GET_OK)
             ;
@@ -152,28 +168,18 @@ int main(int argc, char **argv)
         logit("e", "hypodb_ingest: no se pudo leer %s\n", cfg.db_env_file);
     }
 
-    logit("et", "hypodb_ingest: %s + %s + %s -> BD\n",
-          cfg.in_ring, cfg.in_ring_ref, cfg.in_pick_ring);
+    logit("et", "hypodb_ingest: %s + %s%s%s + %s -> BD\n",
+          cfg.in_ring, cfg.in_ring_ref,
+          nring > 2 ? " + " : "", nring > 2 ? cfg.in_ring_conf : "",
+          cfg.in_pick_ring);
 
     last_retry = time(NULL);
     while (!terminate_requested(&r[0], mypid)) {
         int any = 0;
 
-        for (int i = 0; i < 2; i++) {
-            int n = 0;
-            while (n < MAX_PER_RING &&
-                   !terminate_requested(&r[0], mypid) &&
-                   tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
-                       == GET_OK) {
-                /* El buffer del anillo NO viene terminado en NUL, y los parsers
-                   lo exigen (rd_mag, sscanf, csnhypodbp_parse_solution). */
-                buf[size] = '\0';
-                dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163, buf,
-                         size);
-                any = 1;
-                n++;
-            }
-        }
+        /* PICK_RING PRIMERO: `is_manual_pick` solo conoce las picadas ya vistas,
+           y el ARC de una confirmacion se escribe con `pick_status` a partir de
+           ellas (la GUI publica picks y confirmacion en el mismo instante). */
         {
             int n = 0;
             while (n < MAX_PER_RING &&
@@ -182,6 +188,27 @@ int main(int argc, char **argv)
                        == GET_OK) {
                 buf[size] = '\0';
                 hypodb_feed_pick(st, buf, (size_t)size);
+                any = 1;
+                n++;
+            }
+        }
+        for (int i = 0; i < nring; i++) {
+            int n = 0;
+            while (n < MAX_PER_RING &&
+                   !terminate_requested(&r[0], mypid) &&
+                   tport_getmsg(&r[i], logos, 2, &logo, &size, buf, bufsz - 1)
+                       == GET_OK) {
+                /* El buffer del anillo NO viene terminado en NUL, y los parsers
+                   lo exigen (rd_mag, sscanf, csnhypodbp_parse_solution). */
+                buf[size] = '\0';
+                if (i == 2) {
+                    /* Confirmacion: fila `origin` propia e inmutable. */
+                    int mod = logo.mod ? (int)logo.mod : 158;
+                    hypodb_feed_confirmed(st, buf, (size_t)size, mod);
+                } else {
+                    dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163, buf,
+                             size);
+                }
                 any = 1;
                 n++;
             }
@@ -203,7 +230,7 @@ int main(int argc, char **argv)
             usleep(20000);
     }
 
-    for (int i = 0; i < 2; i++)
+    for (int i = 0; i < nring; i++)
         tport_detach(&r[i]);
     tport_detach(&r_pick);
     hypodb_state_free(st);

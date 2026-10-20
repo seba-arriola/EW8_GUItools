@@ -193,6 +193,11 @@ ck  "magnitudes: todas las componentes"     'if \(strcmp\(StaArray\[i\]\.szStati
 ck  "magnitudes: banda sin traza"           'cairo_show_text\(cr, "sin traza"\);'        csnhypodbp_gui.c
 ck  "fetch: asegura componentes de todas"   'ensure_all_station_channels\(\);'           csnhypodbp_ws.c
 ck  "layout: canvas con alto minimo"        'CSNHYPODBP_BAND_MIN'                        csnhypodbp_gui.c
+ck  "layout: alto de banda por tracesPerScreen" 'csnhypodbp_traces_layout\('              csnhypodbp_gui.c
+nck "layout: el dibujo ya no reparte entre TODAS las bandas" '\(height - 60\) / g_NumSortedNodes' csnhypodbp_gui.c
+ck  "layout: la clave se lee del .d"        'k_its\("tracesPerScreen"\)'                 csnhypodbp_main.c
+ck  "layout: la clave sale en print-config" 'printf\("tracesPerScreen %d'                csnhypodbp_main.c
+ck  "layout: la clave esta documentada"     'tracesPerScreen'                            README.md
 ck  "layout: canvas con ancho minimo"       'CSNHYPODBP_CANVAS_MIN_W'                    csnhypodbp_main.c
 ck  "layout: el paned de mapas deja encoger" 'set_shrink_end_child\(GTK_PANED\(paned_maps\), TRUE\)' csnhypodbp_main.c
 ck  "layout: barra en scrolled window"      'gtk_scrolled_window_set_child\(GTK_SCROLLED_WINDOW\(barsw\), bar\)' csnhypodbp_main.c
@@ -292,6 +297,18 @@ ck  "preferida: confirm guarda el mecanismo" 'csnhypodbp_mww_persist\(&g_preview
 ck  "preferida: el fallo se muestra"         'csnhypodbp_mww_report\(0, err\)'             csnhypodbp_gui.c
 ck  "preferida: marca manual en algorithm"   'CSNMan'                                      csnhypodbp_ws.c
 ck  "preferida: 13.er token en la picada"    '%c M %c'                                     csnhypodbp_ws.c
+# --- Confirmacion manual = fila `origin` propia en la BD (anillo de confirmaciones) ---
+ck  "confirm: snapshot con version valida"   'csnhypodbp_confirmation_arc\(sol'             csnhypodbp_ws.c
+ck  "confirm: publica el ARC confirmado"     'tport_putmsg\(&CRegion, &logo'               csnhypodbp_ws.c
+ck  "confirm: logo con el mod real"          'logo.mod = \(unsigned char\)sol->mod'        csnhypodbp_ws.c
+ck  "confirm: el snapshot exige version"     'sol->version == 0 \|\| sol->version > 9999u' csnhypodbp_locate.c
+ck  "confirm: avisa si no hay ConfRing"      'ConfRing no configurado'                     csnhypodbp_ws.c
+ck  "confirm: la fila confirmada es propia"  'procesar_mensaje_sismo_ex\(tree_global, arc, s.mod, 1\)' csnhypodbp_ws.c
+ck  "historial: id con parser (no strrchr)"  'ewgui_origin_id_parse\(ors\[j\].origin_id'   csnhypodbp_ws.c
+nck "historial: sin strrchr sobre origin_id" 'strrchr\(ors\[j\].origin_id'                 csnhypodbp_ws.c
+ck  "historial: Ver real del confirmado"     'confirmed \? version : 0u'                   csnhypodbp_ws.c
+ck  "preferida: propaga confirmed/created"   'meta\[i\].confirmed = es->confirmed'         csnhypodbp_ws.c
+ck  "preferida: manda la confirmada mas nueva" 'sols\[i\].created > sols\[best\].created'   csnhypodbp_group.c
 ck  "picking: ancla congelada (no la P ganadora)" 'g_win_ref_pick'                          csnhypodbp_gui.c
 nck "picking: el dibujo no re-ancla con la P" 'sta_pick_t'                                   csnhypodbp_gui.c
 nck "picking: sin earliest_pick"              'earliest_pick'                               csnhypodbp_gui.c
@@ -360,6 +377,7 @@ ck  "ventana: el panel Mww no infla el minimo"   'mww_scrolled\(g_mww\.grid, 90\
 ck  "ventana: idem para la salida del motor"     'mww_scrolled\(g_mww\.view, 90\)'    csnhypodbp_mww.c
 nck "ventana: sin size_request en mww_scrolled"  'gtk_widget_set_size_request\(sw, -1, h\)' csnhypodbp_mww.c
 ck  "ventana: la playera con suelo pequeno"      'gtk_widget_set_size_request\(vbox, 120, 120\)' csnhypodbp_mww.c
+nck "ventana: el scrolled de trazas no propaga su alto natural" 'set_propagate_natural_height.*TRUE' csnhypodbp_main.c
 ck  "mww: el resumen no se estira"               'set_hexpand\(g_mww\.summary, FALSE\)'    csnhypodbp_mww.c
 ck  "mww: reparto 1/3-2/3 con columnas homogeneas" 'gtk_grid_set_column_homogeneous\(GTK_GRID\(row\), TRUE\)' csnhypodbp_mww.c
 ck  "mww: los resultados en la columna 0 (1/3)"   'gtk_grid_attach\(GTK_GRID\(row\), frame, 0, 0, 1, 1\)' csnhypodbp_mww.c

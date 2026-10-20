@@ -493,6 +493,20 @@ int ewguidb_set_preferred(EwGuiDb *db, const char *event_id,
     return run_params(db, sql, 3, v);
 }
 
+/* Solo la preferida del origen: la magnitud preferida se conserva (hypodb la
+ * borraba al reiniciar, cuando aun no ha visto ningun TYPE_MAGNITUDE). */
+int ewguidb_set_preferred_origin(EwGuiDb *db, const char *event_id,
+                                 const char *origin_id)
+{
+    if (!db || !db->conn || !event_id)
+        return -1;
+
+    static const char *sql =
+        "UPDATE event SET preferred_origin_id=$2 WHERE event_id=$1";
+    const char *v[2] = { event_id, nn(origin_id) };
+    return run_params(db, sql, 2, v);
+}
+
 /* --- Lectura -------------------------------------------------------------- */
 
 int ewguidb_query_recent_events(EwGuiDb *db, int hours,

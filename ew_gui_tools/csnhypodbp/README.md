@@ -279,8 +279,12 @@ elegir otro origen en *Origins*. El refinador recibe un `.d` temporal con un `Wo
 solución elegida (lat/lon/profundidad/qid) para que NLLoc busque en la banda correcta y el candidato
 siga perteneciendo al evento.
 `Confirm` la convierte en la **solución manual preferida** (se reinyecta por el camino normal de ARC,
-se emiten **una vez** las picadas a `PICK_RING` con origen `M` y se persiste en `ManualStateFile`, que
-se relee al arrancar); `Discard` la descarta para seguir picando (vuelve a mostrar la elegida).
+se emiten **una vez** las picadas a `PICK_RING` con origen `M`, se publica el **ARC confirmado** en
+`ConfRing` —`HYPO_RING_REF2`— para que `hypodb` guarde una fila `origin` propia e inmutable
+`<event>:<mod>:<version>`, y se persiste en `ManualStateFile`, que se relee al arrancar); `Discard`
+la descarta para seguir picando (vuelve a mostrar la elegida). Cada confirmación es una fila más: la
+**más reciente** es la preferida del evento y las anteriores quedan como orígenes manuales históricos
+en *Origins*.
 El texto y el formato de los valores viven en la lógica pura `csnhypodbp_preview.{h,c}`
 (`make test` → `test_preview`), y la capa GTK solo vuelca el resultado en las etiquetas desde
 `csnhypodbp_preview_update()`, el **único** punto que escribe la tablita.
@@ -416,6 +420,7 @@ resto del módulo (y EarthWorm) lo espera así.
 | `GroupMinMatchPicks` | `3` | mínimo de picadas para fusionar por firma |
 | `channelsOrder` | `HH BH HN LH` | orden externo de canales de la pestaña Ondas |
 | `componentsOrder` | `Z N E` | orden interno de componentes (Z/N/E) |
+| `tracesPerScreen` | `1` | trazas (canales de la estación seleccionada) visibles a la vez en la pestaña picking: **1, 2 o 3**; el resto se alcanza con la rueda. Un valor fuera de `[1,3]` no se aplica: se avisa en el log y se conserva el previo |
 | `pColor` | `FF0000` | color de la marca P **manual** (y círculo del indicador de picado) |
 | `pColorAuto` | heredado (`FF6666`) | marca P automática; ausente = `pColor` aclarado 40 % |
 | `pColorTheo` | heredado (`FFB3B3`) | marca P teórica; ausente = `pColor` aclarado 70 % |

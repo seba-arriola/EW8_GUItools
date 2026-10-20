@@ -138,6 +138,9 @@ int ewguidb_replace_station_magnitudes(EwGuiDb *db, const char *magnitude_id,
 /* UPDATE de las soluciones preferidas de un evento. */
 int ewguidb_set_preferred(EwGuiDb *db, const char *event_id,
                           const char *origin_id, const char *magnitude_id);
+/* Solo `preferred_origin_id` (conserva la magnitud preferida). */
+int ewguidb_set_preferred_origin(EwGuiDb *db, const char *event_id,
+                                 const char *origin_id);
 
 /* --- Lectura -------------------------------------------------------------- */
 
