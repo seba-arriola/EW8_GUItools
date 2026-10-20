@@ -192,7 +192,7 @@ por defecto), como avisa el tooltip. El resto de controles viven en el
 menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* los grupos `Search`
 (`Search events…`, `Clear search`) y `View`; en *Ondas* añade, **primero**, el grupo
 `Stations` con la casilla `Hide stations without data`; después el grupo `Waveforms` con
-`Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia) y
+`Filters…` (presets del `.d` + tipo/F1/F2/orden manual, ventana modal), `Fetch waveforms` (distancia) y
 `Time window…` (ventana de registro); el grupo `Colours` con
 `P manual` / `P automatic` / `P theoretical` / `S manual` / `S automatic` / `S theoretical`
 (diálogo de color GTK4; el hex de las seis claves queda en el log para copiarlo al `.d`) y, **al
@@ -433,6 +433,11 @@ resto del módulo (y EarthWorm) lo espera así.
 | `PrefetchNeighbors` | `2` | estaciones vecinas a precargar |
 | `HideStationsWithoutData` | `0` | estado **inicial** de la tabla: `1` = ocultar las estaciones sin datos (el menú lo alterna en la sesión sin reescribir el `.d`) |
 | `MaxDistKm` | `500` | distancia (km) máxima de las estaciones de la tabla (y por tanto del `locate`) |
+| `FilterPhase` | `zero` | fase del filtro de la vista: `zero` (forward+backward, sin desfase) o `causal` (una pasada; retrasa el onset). Ver `docs/FILTERS.md` |
+| `FilterMenu` | `f` | tecla que abre `Filters…` |
+| `FilterRaw` | `0` | tecla que vuelve a la traza cruda |
+| `Filter` | ver README/`.d` | preset con atajo: `Filter [<nombre>] <HP|LP|BP> <tecla> <f1> [<f2>] <orden>` (repetible; orden 2 o 4) |
+| `StaLta` | `t 0.5 10 3 1.5` | STA/LTA visual: `<tecla> <sta_s> <lta_s> <on> <off> [<corr_s>]`; solo dibuja CF y marcas, no crea picks |
 | `LocateKeepTmp` | `0` | `1` = no borrar el directorio temporal del `locate` y anexar su ruta al error |
 | `GroupMaxSolutions` | `100` | tope de versiones por evento |
 | `SearchMaxEvents` | `1000` | tope de eventos que devuelve la búsqueda hipocentral |

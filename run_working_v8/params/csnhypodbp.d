@@ -37,6 +37,46 @@ ManualStateFile ../csnhypodbp/csnhypodbp_manual.events
 LocatorTimeoutSec 600                      # timeout (s) por localizador offline (NLLoc es lento)
 PrefetchNeighbors 2                        # estaciones vecinas a precargar
 
+# ---------------------------------------------------------------------------
+# Filtros de la pestaña `picking` y sus atajos de teclado
+# ---------------------------------------------------------------------------
+# El filtro es SOLO de la vista: `locate` manda las muestras crudas y el pick
+# guardado es el instante del clic, asi que el filtro no desplaza el tiempo.
+# FilterPhase zero  = forward+backward, fase neta CERO (default; el orden de la
+#                     respuesta en amplitud se duplica: orden 2 ≡ Butterworth 4).
+# FilterPhase causal = una pasada (como csntvp): retardo de grupo de decenas a
+#                     cientos de ms cerca del corte. Solo para comparar.
+FilterPhase     zero
+
+# Teclas especiales.
+FilterMenu      f            # abre la ventana Filters…
+FilterRaw       0            # vuelve a la traza cruda (Raw)
+
+# Filter [<nombre>] <HP|LP|BP> <tecla> <f1> [<f2>] <orden>
+#   - tecla: un caracter; 'p' y 's' estan reservadas por el picado de fases.
+#   - orden: 2 o 4. Con fase cero, 2 ya da la selectividad de un 4 causal.
+#   - el nombre es opcional y solo se usa para el HUD y la ventana Filters.
+Filter HP  r 1.0   2         # high-pass desde 1.0 Hz
+Filter LP  k 0.1   2         # low-pass  hasta 0.1 Hz
+Filter BP  d 0.001 12 4      # band-pass 0.001-12 Hz
+
+# Filtros RECOMENDADOS por distancia (cada uno con SU tecla: el analista elige;
+# no hay seleccion automatica). Evidencia y bandas: docs/FILTERS.md.
+#   P local (<200 km):        HP 1 Hz (NMSOP IS 11.4) + contenido 1-20 Hz
+#   P regional (200-1000 km): default operativo SeisComP BW(4,0.7,2)
+#   P telesismo (>1000 km):   detector 0.5-2 Hz (Murdock & Hutt 1983)
+#   S local (<200 km):        S en la coda de P, mas baja en frecuencia
+Filter P_local       BP 1 1.0 20.0 2
+Filter P_regional    BP 2 0.7 10.0 2
+Filter P_teleseismic BP 3 0.5  2.0 2
+Filter S_local       BP 4 0.5  8.0 2
+
+# STA/LTA (solo visual: curva CF + marca de disparo; NO crea picks).
+# StaLta <tecla> <sta_s> <lta_s> <on> <off> [<corr_s>]
+# La marca se dibuja en t_disparo + corr (default -sta/2): es una ESTIMACION;
+# el retardo real depende del SNR, por eso no se usa como pick.
+StaLta          t 0.5 10.0 3.0 1.5
+
 # Colores de las picadas (formato RRGGBB, con o sin '#'). La TRAZA se dibuja
 # siempre negra: lo que cambia segun el origen es el color de la marca del pick.
 #   pColor/sColor           -> marca MANUAL (y circulo del indicador de picado)

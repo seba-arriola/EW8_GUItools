@@ -487,6 +487,22 @@ ck  "fix: parseo del nucleo puro"           'csnhypodbp_fixdepth_parse'         
 ck  "fix: precarga desde la solucion"       'fix_depth_current_solution'                  csnhypodbp_gui.c
 ck  "fix: locate insensible si invalido"    'g_fix_depth_on && g_fix_depth_km < 0\.0'     csnhypodbp_gui.c
 ck  "fix: tooltip propio de NLLoc"          'NLLoc no fija la profundidad'                csnhypodbp_gui.c
+
+# --- Filtros de picking: presets/atajos del .d, fase cero, HUD y foco -------
+ck  "filtros: claves Filter* del .d"        'k_its\("Filter"\)'                           csnhypodbp_main.c
+ck  "filtros: presets en print-config"      'printf\("Filters %d'                         csnhypodbp_main.c
+ck  "filtros: fase cero en el dibujo"       'g_filtercfg.phase_zero'                      csnhypodbp_gui.c
+ck  "filtros: el locate manda la traza cruda" 'ewgui_trace_raw'                           csnhypodbp_gui.c
+nck "filtros: sin teclas de filtro hardcodeadas" 'GDK_KEY_r|GDK_KEY_k|GDK_KEY_d'            csnhypodbp_gui.c
+ck  "filtros: atajos resueltos por la config" 'csnhypodbp_filtercfg_key_action'            csnhypodbp_gui.c
+ck  "filtros: solo en la sub-pestaña picking" 'get_current_page\(GTK_NOTEBOOK\(g_subnotebook\)\) == 0' csnhypodbp_gui.c
+ck2 "filtros: guarda de foco antes de consumir" 'gtk_window_get_focus' 'GTK_IS_EDITABLE'    csnhypodbp_gui.c
+ck  "filtros: HUD con ellipsize"            'gtk_label_set_ellipsize\(GTK_LABEL\(g_filter_label\)' csnhypodbp_main.c
+ck  "filtros: HUD acotado (max-width-chars)" 'gtk_label_set_max_width_chars\(GTK_LABEL\(g_filter_label\)' csnhypodbp_main.c
+nck "filtros: HUD sin size_request"         'set_size_request\(g_filter_label'            csnhypodbp_main.c
+ck  "filtros: la ayuda sale de la config"   'csnhypodbp_filtercfg_help_text'              csnhypodbp_gui.c
+ck  "filtros: la ventana lista los presets" 'csnhypodbp_filtercfg_format_preset'          csnhypodbp_gui.c
+ck  "filtros: la ventana no persiste"       'g_active_filter = -2'                        csnhypodbp_gui.c
 ck  "fix: el job lleva la profundidad"      'job->fix_depth_km'                           csnhypodbp_gui.c
 ck  "fix: locate_run la recibe"             'job->fix_depth_km, g_locator_timeout_sec'    csnhypodbp_gui.c
 ck  "fix: aviso si el motor no la respeta"  'no respeto la profundidad fija'              csnhypodbp_gui.c

@@ -71,7 +71,19 @@ hace **`csnloc`** localmente.
     la tabla (con su canal, filtradas por esos checks; `MaxDistKm` 500 km), y el **residual por fase**
     lo aporta el propio localizador (JSONL de `csnloc` en stdout; cols. 35-38 P / 51-54 S del ARC de
     los refinadores). Los comandos de teclado están en ☰ → `Help` → `Commands…` (ya no hay texto de
-    ayuda en la barra). La pestaña raíz **`Procesar`** agrupa dos sub-pestañas:
+    ayuda en la barra). Los **filtros de la vista** son presets con atajo declarados en el `.d`
+    (`FilterPhase zero|causal`, `FilterMenu`, `FilterRaw`, `Filter [<nombre>] <HP|LP|BP> <tecla> <f1>
+    [<f2>] <orden>`, `StaLta <tecla> <sta> <lta> <on> <off> [<corr>]`; ver `docs/FILTERS.md`): por
+    defecto `1` P local, `2` P regional, `3` P telesísmico, `4` S local, `r`/`k`/`d` HP/LP/BP, `f`
+    abre `Filters…`, `0` vuelve a `Raw`, `t` alterna el STA/LTA; la tecla del filtro activo lo apaga.
+    El filtro es **solo de la vista** (`locate` manda la traza cruda) y con `FilterPhase zero`
+    (default) es forward+backward: **fase neta cero**, así el clic no se sesga por el retardo de grupo
+    (un causal de 1 Hz/orden 2 retrasa ~0.22 s ≈ 1.3 km a Vp 6 km/s). Ojo: fase cero es `|H|²` —
+    orden efectivo doble, `-6 dB` en `fc` y `-3 dB` en `0.80·fc` para orden 2— y `fc·n/fs < 0.5` es
+    no-op. Los atajos solo actúan en la sub-pestaña `picking` y **no** se consumen si el foco está en
+    una caja de texto. El STA/LTA es visual (curva CF + marca estimada en `t_disparo + corr`); no crea
+    picks.
+    La pestaña raíz **`Procesar`** agrupa dos sub-pestañas:
     **`picking`** (la vista de ondas de siempre) y **`magnitudes`** (una fila por
     estación con `dist[km]`, el ancla de la ventana (`M`/`A`/`Teo`), `t0`/`t1`, la
     magnitud y su residual, el canvas de la traza procesada por magnitud con la

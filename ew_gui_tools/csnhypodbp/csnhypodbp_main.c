@@ -246,6 +246,9 @@ int      g_filter_type = 0;      /* 0=Raw, 1=HP, 2=LP, 3=BP */
 double   g_filter_f1 = 0.7;      /* F1 (Hz) */
 double   g_filter_f2 = 2.0;      /* F2 (Hz) */
 int      g_filter_order = 4;     /* orden IIR (2 o 4) */
+CsnhypodbpFilterCfg g_filtercfg; /* presets y atajos (defaults + .d) */
+int      g_active_filter = -1;   /* -1 = Raw; -2 = filtro manual del dialogo */
+GtkWidget *g_filter_label = NULL;
 double   g_align_lead = 20.0;    /* segundos antes de la onda P */
 
 gboolean pending_waveform_reload = FALSE;
@@ -317,6 +320,7 @@ static void read_pick_color(const char *key, const char *str,
  * -------------------------------------------------------------------- */
 int ReadConfig(char *configfile) {
     int ncommand = 7, nmiss = 0, i; char init[8] = {0}; char *com, *str;
+    csnhypodbp_filtercfg_defaults(&g_filtercfg);
     if (!k_open(configfile)) { fprintf(stderr, "Error abriendo archivo config <%s>\n", configfile); return -1; }
     while (k_rd()) {
         com = k_str(); if (!com || com[0] == '#') continue;
@@ -500,6 +504,19 @@ int ReadConfig(char *configfile) {
                 return -1;
             }
         }
+        else if (k_its("Filter") || k_its("FilterMenu") || k_its("FilterRaw") ||
+                 k_its("FilterPhase") || k_its("StaLta")) {
+            /* Presets de filtro y atajos. El parseo y la validacion viven en el
+               nucleo puro csnhypodbp_filtercfg (test_filtercfg.c). Una linea
+               invalida NO se ignora: aborta la lectura, como Profile. */
+            char rest[256] = "", err[256] = "";
+            k_rest_join(rest, sizeof(rest));
+            if (csnhypodbp_filtercfg_add(&g_filtercfg, com, rest, err, sizeof(err)) != 0) {
+                fprintf(stderr, "Error en la linea %s: %s\n", com,
+                        err[0] ? err : "valor invalido");
+                return -1;
+            }
+        }
         else { continue; }
         if (k_err()) { fprintf(stderr, "Error parseando <%s>\n", com); return -1; }
     }
@@ -569,6 +586,25 @@ static int maps_print_config(void) {
     printf("OverlayHides %d\n", g_overlay_nhides);
     for (i = 0; i < g_overlay_nhides; i++)
         printf("OverlayHide %s\n", g_overlay_hide_layer[i]);
+    /* Filtros de la vista de ondas: fase, atajos y presets vigentes. */
+    printf("FilterPhase %s\n", g_filtercfg.phase_zero ? "zero" : "causal");
+    printf("FilterMenu %c\n", g_filtercfg.menu_key);
+    printf("FilterRaw %c\n", g_filtercfg.raw_key);
+    printf("Filters %d\n", g_filtercfg.nf);
+    for (i = 0; i < g_filtercfg.nf; i++) {
+        const CsnhypodbpFilterPreset *fp = &g_filtercfg.f[i];
+        if (fp->type == 3)
+            printf("Filter %s BP %c %.4g %.4g %d\n", fp->name, fp->key,
+                   fp->f1, fp->f2, fp->order);
+        else
+            printf("Filter %s %s %c %.4g %d\n", fp->name,
+                   fp->type == 1 ? "HP" : "LP", fp->key, fp->f1, fp->order);
+    }
+    if (g_filtercfg.stalta_declared)
+        printf("StaLta %c %.3f %.3f %.2f %.2f %.3f\n", g_filtercfg.stalta_key,
+               g_filtercfg.stalta_sta, g_filtercfg.stalta_lta,
+               g_filtercfg.stalta_on_thr, g_filtercfg.stalta_off_thr,
+               g_filtercfg.stalta_corr);
     /* Colores de las picadas (la traza es siempre negra): auto y teorica
        heredan del manual aclarado si el .d no les da valor propio. */
     print_pick_color("pColor", &g_colors_p, CSNHYPODBP_PICK_MANUAL);
@@ -2084,13 +2120,24 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         GtkWidget *btn_locators = gtk_button_new_with_label("locators");
         GtkWidget *btn_locate = gtk_button_new_with_label("locate");
-
         g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_btn_cancel_clicked), NULL);
         g_signal_connect(btn_locators, "clicked", G_CALLBACK(on_btn_locators_clicked), NULL);
         gtk_widget_add_css_class(btn_locate, "suggested-action");
         g_signal_connect(btn_locate, "clicked", G_CALLBACK(on_btn_locate_clicked), NULL);
 
         gtk_box_append(GTK_BOX(hbox_bottom), btn_cancel);
+
+        /* HUD del filtro activo: nombre, banda, orden y tecla. Se acota con
+           ellipsize + max-width-chars para no inflar el minimo de la ventana
+           (AGENTS §7: el minimo de un GtkLabel es su texto completo). */
+        g_filter_label = gtk_label_new("");
+        gtk_label_set_ellipsize(GTK_LABEL(g_filter_label), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(g_filter_label), 48);
+        gtk_label_set_xalign(GTK_LABEL(g_filter_label), 0.0);
+        gtk_widget_add_css_class(g_filter_label, "dim-label");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_filter_label);
+        csnhypodbp_filter_hud_update();
+
         gtk_widget_set_hexpand(spacer, TRUE);
         gtk_box_append(GTK_BOX(hbox_bottom), spacer);
 

@@ -32,7 +32,7 @@ int main(void)
     long cap = (long)(RATE * SECS);
     int32_t **buf = malloc(NSTA * sizeof(int32_t *));
     EwTraceCache *caches = calloc(NSTA, sizeof(EwTraceCache));
-    EwFilterParams fp = {0, 0.0, 0.0, 0};
+    EwFilterParams fp = {0, 0.0, 0.0, 0, 0};
 
     for (int i = 0; i < NSTA; i++) {
         buf[i] = malloc((size_t)cap * sizeof(int32_t));

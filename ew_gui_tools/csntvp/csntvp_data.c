@@ -423,6 +423,7 @@ static void compute_station_envelope(int i, int width) {
     fp.f1 = g_f1;
     fp.f2 = g_f2;
     fp.order = g_order;
+    fp.zerophase = 0;   /* csntvp mantiene el filtro causal historico */
 
     ewgui_trace_envelope(sta->plRawCircBuff, sta->lRawCircSize, sta->lLastAbsIdx,
                          rate, t_end, window_secs, pad_secs, width, &fp,

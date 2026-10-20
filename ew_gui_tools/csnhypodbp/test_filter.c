@@ -31,7 +31,7 @@ int main(void) {
         raw[100] = INT_MAX; raw[101] = INT_MAX;
         ewgui_trace_set_length(t, 200);
         ewgui_trace_set_rate(t, 100.0);
-        EwFilterParams hp = {1, 0.7, 0.0, 4};
+        EwFilterParams hp = {1, 0.7, 0.0, 4, 0};
         ewgui_trace_filter(t, &hp);
         int32_t *f = ewgui_trace_filtered(t);
         CHECK(f[100] == INT_MAX && f[101] == INT_MAX, "HP: el gap se mantiene INT_MAX");
@@ -49,7 +49,7 @@ int main(void) {
         for (int i = 0; i < 100; i++) raw[i] = (int32_t)(1000.0 * sin(2*M_PI*30.0*i/100.0));
         ewgui_trace_set_length(t, 100);
         ewgui_trace_set_rate(t, 100.0);
-        EwFilterParams lp = {2, 2.0, 0.0, 4};
+        EwFilterParams lp = {2, 2.0, 0.0, 4, 0};
         ewgui_trace_filter(t, &lp);
         int32_t *f = ewgui_trace_filtered(t);
         long mx = 0;

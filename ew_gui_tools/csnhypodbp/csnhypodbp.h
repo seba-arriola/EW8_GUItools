@@ -27,6 +27,7 @@
 #include "csnhypodbp_magitem.h"
 #include "csnhypodbp_magmarks.h"
 #include "csnhypodbp_magview.h"
+#include "csnhypodbp_filtercfg.h"
 #include "ewgui/overlay.h"
 #include "csnhypodbp_tt.h"
 #include "csnhypodbp_view.h"
@@ -308,6 +309,11 @@ extern int      g_filter_type;     /* 0=Raw, 1=High-Pass, 2=Low-Pass, 3=Band-Pas
 extern double   g_filter_f1;       /* F1 (Hz) */
 extern double   g_filter_f2;       /* F2 (Hz) */
 extern int      g_filter_order;    /* orden IIR (2 o 4) */
+extern CsnhypodbpFilterCfg g_filtercfg;  /* presets y atajos del .d */
+extern int      g_active_filter;   /* indice en g_filtercfg.f; -1=Raw, -2=manual */
+extern GtkWidget *g_filter_label;  /* HUD de la barra inferior (picking) */
+void csnhypodbp_filter_apply_preset(int idx);   /* cambia y redibuja */
+void csnhypodbp_filter_hud_update(void);        /* refresca la etiqueta */
 extern double   g_align_lead;      /* segundos de ventana antes de la onda P */
 extern double   g_mag_fetch_sec;   /* ventana pedida por solucion (s) */
 

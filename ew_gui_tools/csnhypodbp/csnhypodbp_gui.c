@@ -2,7 +2,9 @@
 #include "csnhypodbp_fixdepth.h"
 #include "csnhypodbp_mww.h"
 #include "csnhypodbp_statable.h"
+#include "ewgui/stalta.h"
 #include <adwaita.h>
+#include <ctype.h>
 
 /* F3: buffers reutilizables para el binning por columna (evita una segunda
    pasada sobre las muestras solo para el auto-escalado). */
@@ -1412,23 +1414,59 @@ static GtkWidget *labeled_entry(GtkWidget *grid, int row, const char *label, con
 
 void on_btn_filters_clicked(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
-    GtkWidget *grid = gtk_grid_new(), *r[4], *e1, *e2, *o[2], *win = NULL;
-    const char *names[] = {"Raw (No Filter)","High-Pass","Low-Pass","Band-Pass"};
-    char b1[16], b2[16];
-    int i;
+    const int np = g_filtercfg.nf;
+    const int manual_idx = 1 + np;
+    GtkWidget *grid = gtk_grid_new();
+    GtkWidget *r[2 + CSNHYPODBP_MAX_FILTERS];
+    GtkWidget *mt[3], *e1, *e2, *o[2];
+    GtkWindow *win = NULL;
+    char b1[16], b2[16], label[192];
+    int i, row = 0, sel = -1, manual = 0;
+
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-    for (i = 0; i < 4; i++) {
-        r[i] = gtk_check_button_new_with_label(names[i]);
-        if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(r[i]), GTK_CHECK_BUTTON(r[0]));
-        gtk_grid_attach(GTK_GRID(grid), r[i], 0, i, 2, 1);
+
+    /* Raw + un radio por preset del .d (con su tecla) + Manual. */
+    snprintf(label, sizeof(label), "Raw (No Filter) [%c]", g_filtercfg.raw_key);
+    r[0] = gtk_check_button_new_with_label(label);
+    gtk_grid_attach(GTK_GRID(grid), r[0], 0, row++, 2, 1);
+
+    for (i = 0; i < np; i++) {
+        char desc[160];
+        csnhypodbp_filtercfg_format_preset(&g_filtercfg.f[i], desc, sizeof(desc));
+        r[1 + i] = gtk_check_button_new_with_label(desc);
+        gtk_check_button_set_group(GTK_CHECK_BUTTON(r[1 + i]), GTK_CHECK_BUTTON(r[0]));
+        gtk_grid_attach(GTK_GRID(grid), r[1 + i], 0, row++, 2, 1);
     }
-    if (g_filter_type >= 0 && g_filter_type < 4)
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[g_filter_type]), TRUE);
-    snprintf(b1, sizeof(b1), "%.2f", g_filter_f1);
-    snprintf(b2, sizeof(b2), "%.2f", g_filter_f2);
-    e1 = labeled_entry(grid, 4, "F1 (Hz)", b1);
-    e2 = labeled_entry(grid, 5, "F2 (Hz)", b2);
+
+    r[manual_idx] = gtk_check_button_new_with_label("Manual…");
+    gtk_check_button_set_group(GTK_CHECK_BUTTON(r[manual_idx]), GTK_CHECK_BUTTON(r[0]));
+    gtk_grid_attach(GTK_GRID(grid), r[manual_idx], 0, row++, 2, 1);
+
+    snprintf(b1, sizeof(b1), "%.3f", g_filter_f1);
+    snprintf(b2, sizeof(b2), "%.3f", g_filter_f2);
+    e1 = labeled_entry(grid, row++, "F1 (Hz)", b1);
+    e2 = labeled_entry(grid, row++, "F2 (Hz)", b2);
+
+    {
+        GtkWidget *l = gtk_label_new("Type");
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        static const char *tn[3] = {"HP", "LP", "BP"};
+        gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+        for (i = 0; i < 3; i++) {
+            mt[i] = gtk_check_button_new_with_label(tn[i]);
+            if (i)
+                gtk_check_button_set_group(GTK_CHECK_BUTTON(mt[i]),
+                                           GTK_CHECK_BUTTON(mt[0]));
+            gtk_box_append(GTK_BOX(box), mt[i]);
+        }
+        int ti = (g_filter_type >= 1 && g_filter_type <= 3) ? g_filter_type - 1 : 0;
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(mt[ti]), TRUE);
+        gtk_grid_attach(GTK_GRID(grid), l, 0, row, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), box, 1, row, 1, 1);
+        row++;
+    }
+
     {
         GtkWidget *l = gtk_label_new("Order");
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -1438,17 +1476,43 @@ void on_btn_filters_clicked(GtkWidget *w, gpointer d) {
         gtk_check_button_set_group(GTK_CHECK_BUTTON(o[1]), GTK_CHECK_BUTTON(o[0]));
         gtk_check_button_set_active(GTK_CHECK_BUTTON(g_filter_order == 2 ? o[0] : o[1]), TRUE);
         gtk_box_append(GTK_BOX(box), o[0]); gtk_box_append(GTK_BOX(box), o[1]);
-        gtk_grid_attach(GTK_GRID(grid), l, 0, 6, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), box, 1, 6, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), l, 0, row, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), box, 1, row, 1, 1);
     }
-    if (ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL, "Filter Settings", grid, "Apply", &win)) {
-        for (i = 0; i < 4; i++)
-            if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r[i]))) { g_filter_type = i; break; }
-        g_filter_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(e1)));
-        g_filter_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(e2)));
-        g_filter_order = gtk_check_button_get_active(GTK_CHECK_BUTTON(o[0])) ? 2 : 4;
-        ApplySelectedFilter();
-        if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+
+    if (g_active_filter >= 0 && g_active_filter < np)
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[1 + g_active_filter]), TRUE);
+    else if (g_filter_type == 0)
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[0]), TRUE);
+    else
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[manual_idx]), TRUE);
+
+    if (ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL,
+                     "Filter Settings", grid, "Apply", &win)) {
+        if (!gtk_check_button_get_active(GTK_CHECK_BUTTON(r[0]))) {
+            for (i = 0; i < np; i++)
+                if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r[1 + i]))) {
+                    sel = i;
+                    break;
+                }
+            if (sel < 0)
+                manual = 1;
+        }
+
+        if (manual) {
+            /* Manual no tiene tecla: deselecciona el preset activo. */
+            g_active_filter = -2;
+            g_filter_type = gtk_check_button_get_active(GTK_CHECK_BUTTON(mt[0])) ? 1 :
+                            gtk_check_button_get_active(GTK_CHECK_BUTTON(mt[1])) ? 2 : 3;
+            g_filter_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(e1)));
+            g_filter_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(e2)));
+            g_filter_order = gtk_check_button_get_active(GTK_CHECK_BUTTON(o[0])) ? 2 : 4;
+            ApplySelectedFilter();
+            csnhypodbp_filter_hud_update();
+            if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+        } else {
+            csnhypodbp_filter_apply_preset(sel);
+        }
     }
     if (win) gtk_window_destroy(win);
 }
@@ -2474,7 +2538,7 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
     GtkWidget *lbl = gtk_label_new(NULL);
     GtkWidget *btn = gtk_button_new_with_label("Close");
 
-    static const char *help =
+    static const char *help_base =
         "<b>ZOOM (modo por defecto)</b>\n"
         "  P / S            elegir fase a picar (entra en modo PICAR)\n"
         "  clic izq         1.º clic: ancla; 2.º clic der: zoom / izq: reset\n"
@@ -2486,6 +2550,14 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
         "<b>PICAR (tras pulsar P o S)</b>\n"
         "  clic izq         coloca la fase en la traza y vuelve a ZOOM\n"
         "  Esc              cancelar";
+
+    /* Los atajos de filtro salen de la config vigente (.d), no hardcodeados. */
+    char fhelp[2048];
+    char *fesc, *help;
+    csnhypodbp_filtercfg_help_text(&g_filtercfg, fhelp, sizeof(fhelp));
+    fesc = g_markup_escape_text(fhelp, -1);
+    help = g_strdup_printf("%s\n\n<b>FILTROS</b>\n%s", help_base, fesc ? fesc : "");
+    g_free(fesc);
 
     gtk_window_set_title(GTK_WINDOW(win), "Commands");
     if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
@@ -2500,6 +2572,7 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
     gtk_label_set_justify(GTK_LABEL(lbl), GTK_JUSTIFY_LEFT);
     gtk_label_set_selectable(GTK_LABEL(lbl), TRUE);
     gtk_label_set_markup(GTK_LABEL(lbl), help);
+    g_free(help);
     gtk_widget_set_hexpand(lbl, TRUE);
     gtk_box_append(GTK_BOX(box), lbl);
 
@@ -2514,6 +2587,14 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
 gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
     (void)ctrl; (void)keycode; (void)data;
     gboolean shift;
+    /* Guarda de foco: si se esta escribiendo en una caja (depth, buscador,
+       puertas de magnitud), las teclas son para la caja. Sin esto, p.ej. "p"
+       en `depth` entraba en modo PICAR y se perdia el caracter. */
+    if (window_global && GTK_IS_WINDOW(window_global)) {
+        GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window_global));
+        if (focus && GTK_IS_EDITABLE(focus))
+            return FALSE;
+    }
     if (!waves_page_active()) return FALSE;   /* no interceptar en Eventos/Config */
     shift = (state & GDK_SHIFT_MASK) != 0;
     /* Shift+flechas: exageracion vertical. Las ↑/↓ solas NO se consumen aqui,
@@ -2562,6 +2643,33 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
         g_pick_phase = 'S'; g_click_mode = CSNHYPODBP_CLICK_PICK;
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         return TRUE;
+    }
+
+    /* Atajos de FILTRO: solo en la sub-pestaña `picking` (indice 0), que es
+       donde vive el HUD y donde el filtro cambia lo que se ve. En magnitudes
+       el filtro no aplica: no se consume la tecla. */
+    if (g_subnotebook && GTK_IS_NOTEBOOK(g_subnotebook) &&
+        gtk_notebook_get_current_page(GTK_NOTEBOOK(g_subnotebook)) == 0) {
+        guint u = gdk_keyval_to_unicode(keyval);
+        if (u >= 33 && u <= 126) {
+            char lk = (char)tolower((unsigned char)u);
+            int act = csnhypodbp_filtercfg_key_action(&g_filtercfg,
+                                                      g_active_filter, lk);
+            if (act == CSNHYPODBP_FILTER_KEY_MENU) {
+                on_btn_filters_clicked(NULL, NULL);
+                return TRUE;
+            }
+            if (act >= CSNHYPODBP_FILTER_KEY_RAW) {
+                csnhypodbp_filter_apply_preset(act);
+                return TRUE;
+            }
+            if (g_filtercfg.stalta_declared && lk == g_filtercfg.stalta_key) {
+                g_filtercfg.stalta_on = !g_filtercfg.stalta_on;
+                csnhypodbp_filter_hud_update();
+                if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+                return TRUE;
+            }
+        }
     }
     return FALSE;
 }
@@ -3673,6 +3781,8 @@ void on_canvas_leave(GtkEventControllerMotion *ctrl, gpointer data) {
 /* --------------------------------------------------------------------
  * ApplySelectedFilter: aplica el filtro IIR configurado (Filters) a todas
  * las estaciones con datos, validando Nyquist y quitando el DC antes.
+ * En modo fase cero (default) NO desplaza el onset: el instante del clic
+ * coincide con el de la muestra cruda (el que se manda al localizador).
  * -------------------------------------------------------------------- */
 void ApplySelectedFilter(void) {
     EwFilterParams fp;
@@ -3680,11 +3790,48 @@ void ApplySelectedFilter(void) {
     fp.f1 = g_filter_f1;
     fp.f2 = g_filter_f2;
     fp.order = g_filter_order;
+    fp.zerophase = g_filtercfg.phase_zero ? 1 : 0;
 
     for (int i = 0; i < NumEstaciones; i++) {
         if (ewgui_trace_length(StaArray[i].trace) <= 0) continue;
         ewgui_trace_filter(StaArray[i].trace, &fp);
     }
+}
+
+/* --------------------------------------------------------------------
+ * Presets con atajo: cambian el filtro activo y redibujan. `idx` < 0 = Raw.
+ * El filtro sigue siendo SOLO de la vista: `locate` manda la traza cruda.
+ * -------------------------------------------------------------------- */
+void csnhypodbp_filter_apply_preset(int idx) {
+    g_active_filter = idx;
+
+    if (idx >= 0 && idx < g_filtercfg.nf) {
+        const CsnhypodbpFilterPreset *p = &g_filtercfg.f[idx];
+        g_filter_type = p->type;
+        g_filter_f1 = p->f1;
+        g_filter_f2 = p->f2;
+        g_filter_order = p->order;
+    } else {
+        g_filter_type = 0;
+    }
+
+    ApplySelectedFilter();
+    csnhypodbp_filter_hud_update();
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+
+    logit("t", "csnhypodbp: filtro activo %d (type=%d f1=%.4g f2=%.4g order=%d zero=%d)\n",
+          idx, g_filter_type, g_filter_f1, g_filter_f2, g_filter_order,
+          g_filtercfg.phase_zero);
+}
+
+/* Etiqueta de la barra inferior: "Raw (0)" / "P_regional BP ... (2)". */
+void csnhypodbp_filter_hud_update(void) {
+    char buf[192];
+    if (!g_filter_label) return;
+    csnhypodbp_filtercfg_format_active(&g_filtercfg, g_active_filter,
+                                       g_filter_type, g_filter_f1, g_filter_f2,
+                                       g_filter_order, buf, sizeof(buf));
+    gtk_label_set_text(GTK_LABEL(g_filter_label), buf);
 }
 
 /* --- Ancla de la ventana del picking -------------------------------------- */
@@ -3761,6 +3908,136 @@ void csnhypodbp_pick_anchor_refresh(void)
 
     g_win_ref_pick = t;
     g_win_ref_has_p = have;
+}
+
+/* --- STA/LTA de la vista (solo visual) ------------------------------------
+ * CF de energia sobre la traza DIBUJADA (filtrada, fase cero): queda alineada
+ * 1:1 con el eje x. Se cachea por estacion y se invalida al cambiar el filtro,
+ * los parametros o la traza. NO crea picks: la marca es una ESTIMACION.
+ */
+typedef struct {
+    const EwGuiTrace *tr;
+    long   len;
+    double oldest, rate;
+    int    type, order, zero;
+    double f1, f2, sta, lta;
+    int32_t sig0, sig1;   /* firma barata del contenido (extremos) */
+    double *cf;
+    long    cap;
+    int     valid;
+} StaLtaDraw;
+
+static StaLtaDraw g_stalta_draw[MAX_ESTA];
+
+static int stalta_cf_for(int i, EwGuiTrace *tr)
+{
+    StaLtaDraw *c = &g_stalta_draw[i];
+    long n = ewgui_trace_length(tr);
+    double rate = ewgui_trace_rate(tr);
+    double oldest = ewgui_trace_oldest(tr);
+    int32_t *filt = ewgui_trace_filtered(tr);
+
+    if (n <= 0 || rate <= 0.0)
+        return 0;
+
+    int32_t sig0 = filt[0], sig1 = filt[n - 1];
+
+    if (c->valid && c->tr == tr && c->len == n && c->oldest == oldest &&
+        c->rate == rate && c->sig0 == sig0 && c->sig1 == sig1 &&
+        c->type == g_filter_type &&
+        c->order == g_filter_order && c->zero == (g_filtercfg.phase_zero != 0) &&
+        c->f1 == g_filter_f1 && c->f2 == g_filter_f2 &&
+        c->sta == g_filtercfg.stalta_sta && c->lta == g_filtercfg.stalta_lta)
+        return 1;
+
+    if (c->cap < n) {
+        double *nb = realloc(c->cf, (size_t)n * sizeof(double));
+        if (!nb)
+            return 0;
+        c->cf = nb;
+        c->cap = n;
+    }
+    ewgui_stalta_run(filt, (size_t)n, rate,
+                     g_filtercfg.stalta_sta, g_filtercfg.stalta_lta, c->cf);
+
+    c->tr = tr; c->len = n; c->oldest = oldest; c->rate = rate;
+    c->sig0 = sig0; c->sig1 = sig1;
+    c->type = g_filter_type; c->order = g_filter_order;
+    c->zero = (g_filtercfg.phase_zero != 0);
+    c->f1 = g_filter_f1; c->f2 = g_filter_f2;
+    c->sta = g_filtercfg.stalta_sta; c->lta = g_filtercfg.stalta_lta;
+    c->valid = 1;
+    return 1;
+}
+
+static void draw_stalta_overlay(cairo_t *cr, int i, EwGuiTrace *tr,
+                                double winStart, double span, int draw_width,
+                                int y_center, int row_h)
+{
+    if (!g_filtercfg.stalta_on || !g_filtercfg.stalta_declared)
+        return;
+    if (!stalta_cf_for(i, tr))
+        return;
+
+    StaLtaDraw *c = &g_stalta_draw[i];
+    int32_t *filt = ewgui_trace_filtered(tr);
+    double cmax = g_filtercfg.stalta_on_thr * 1.5;
+    if (cmax < 2.0) cmax = 2.0;
+    if (cmax > 10.0) cmax = 10.0;
+
+    double half = row_h * 0.42;
+    int ncol = draw_width < MAX_DRAW_W ? draw_width : MAX_DRAW_W;
+
+    cairo_save(cr);
+    cairo_rectangle(cr, g_margin_left, y_center - half, draw_width, 2 * half);
+    cairo_clip(cr);
+
+    cairo_set_source_rgba(cr, 0.15, 0.45, 0.85, 0.55);
+    cairo_set_line_width(cr, 1.0);
+    int pen = 0;
+    for (int px = 0; px < ncol; px++) {
+        double t = winStart + g_view.t0 + ((double)px + 0.5) / ncol * span;
+        long k = (long)((t - c->oldest) * c->rate);
+        if (k < 0 || k >= c->len || filt[k] == INT_MAX) {
+            pen = 0;
+            continue;
+        }
+        double cf = c->cf[k];
+        if (!(cf > 0.0)) cf = 0.0;
+        if (cf > cmax) cf = cmax;
+        double x = g_margin_left + px;
+        double y = y_center + half - (cf / cmax) * (2.0 * half);
+        if (pen) cairo_line_to(cr, x, y);
+        else     cairo_move_to(cr, x, y);
+        pen = 1;
+    }
+    cairo_stroke(cr);
+
+    /* Marcas de disparo (corregidas por stalta_corr). */
+    size_t idx[16];
+    int nt = ewgui_stalta_triggers(c->cf, (size_t)c->len,
+                                   g_filtercfg.stalta_on_thr,
+                                   g_filtercfg.stalta_off_thr, idx, 16);
+    if (nt > 0) {
+        const double dash_t[] = { 3.0, 2.0 };
+        cairo_set_dash(cr, dash_t, 2, 0.0);
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_source_rgba(cr, 0.75, 0.25, 0.15, 0.85);
+        for (int k = 0; k < nt; k++) {
+            double tt = c->oldest + (double)idx[k] / c->rate + g_filtercfg.stalta_corr;
+            double rel = tt - winStart;
+            if (rel < g_view.t0 || rel > g_view.t1)
+                continue;
+            double x = g_margin_left + csnhypodbp_view_sample_x(
+                           tt, winStart + g_view.t0, span, ncol);
+            cairo_move_to(cr, x, y_center - half);
+            cairo_line_to(cr, x, y_center + half);
+            cairo_stroke(cr);
+        }
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    }
+
+    cairo_restore(cr);
 }
 
 void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
@@ -3970,6 +4247,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
                 cairo_stroke(cr); cairo_restore(cr);
             }
         }
+
+        /* Curva CF del STA/LTA (si esta activa): debajo de las marcas P/S. */
+        if (tr_rate > 0 && tr_len > 0)
+            draw_stalta_overlay(cr, i, tr, winStart, span, draw_width,
+                                y_center, row_h);
 
         /* Marca P (una sola por estacion: M > A > T). Si el zoom la deja fuera de
            la ventana se dibuja pegada al borde con una flecha: nunca desaparece

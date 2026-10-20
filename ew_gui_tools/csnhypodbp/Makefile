@@ -27,7 +27,7 @@ OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
        csnhypodbp_magsta.o csnhypodbp_magitem.o \
         csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o csnhypodbp_mwwerr.o \
-        csnhypodbp_mww_over.o
+        csnhypodbp_mww_over.o csnhypodbp_filtercfg.o
 
 all: csnhypodbp install
 
@@ -211,11 +211,15 @@ test_magchan: test_magchan.c csnhypodbp_magchan.o
 	      $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
 	      $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm
 
+# Presets de filtro y atajos: logica pura, sin GTK/EW.
+test_filtercfg: test_filtercfg.c csnhypodbp_filtercfg.o
+	$(CC) $(CFLAGS) -o test_filtercfg test_filtercfg.c csnhypodbp_filtercfg.o -lm
+
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
       test_master_store test_mag_msg test_magchan test_station_order test_locator test_manual test_locate \
       test_fetch_span test_view test_traces test_search test_sds_read test_statable test_staitem \
       test_preview test_fixdepth test_profile test_mapview test_magcfg test_magrow test_magsta \
-      test_magitem test_magmarks test_magview test_mww_error test_mww_over
+      test_magitem test_magmarks test_magview test_mww_error test_mww_over test_filtercfg
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -248,6 +252,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_magview
 	./test_mww_error
 	./test_mww_over
+	./test_filtercfg
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
 
@@ -270,7 +275,7 @@ clean:
 	      test_locator test_manual test_locate test_fetch_span test_view test_traces test_search \
 	      test_sds_read test_statable test_staitem test_preview test_fixdepth test_profile \
 	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
-	      test_magmarks test_magview test_mww_error test_mww_over \
+	      test_magmarks test_magview test_mww_error test_mww_over test_filtercfg \
 	      locate_chain *.o
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------

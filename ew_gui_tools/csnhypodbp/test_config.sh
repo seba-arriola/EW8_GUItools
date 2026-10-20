@@ -246,6 +246,33 @@ rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : color invalido no rompe" || { echo "FAIL: color invalido rc=$rc"; fails=$((fails+1)); }
 ck  "colores: invalido sigue heredando" '^pColorAuto FF6666 \(derived 40%\)$' "$TMP/bcol.txt"
 
+# --- Filtros de picking: presets/atajos del .d ---
+ck  "filtros: fase cero por defecto"   '^FilterPhase zero$'                    "$TMP/pc.txt"
+ck  "filtros: FilterMenu"              '^FilterMenu f$'                        "$TMP/pc.txt"
+ck  "filtros: FilterRaw"               '^FilterRaw 0$'                         "$TMP/pc.txt"
+ck  "filtros: 7 presets por defecto"   '^Filters 7$'                           "$TMP/pc.txt"
+ck  "filtros: P_local"                 '^Filter P_local BP 1 1 20 2$'          "$TMP/pc.txt"
+ck  "filtros: S_local"                 '^Filter S_local BP 4 0\.5 8 2$'        "$TMP/pc.txt"
+ck  "filtros: HP r"                    '^Filter HP HP r 1 2$'                  "$TMP/pc.txt"
+ck  "filtros: BP d orden 4"            '^Filter BP BP d 0\.001 12 4$'          "$TMP/pc.txt"
+ck  "filtros: StaLta"                  '^StaLta t 0\.500 10\.000 3\.00 1\.50 -0\.250$' "$TMP/pc.txt"
+
+# Un preset extra del .d entra; una tecla duplicada es error de config.
+{ cat "$TMP/ok.d"; echo "Filter BP x 2.0 5.0 2"; } > "$TMP/filt.d"
+"$BIN" --print-config "$TMP/filt.d" > "$TMP/filt.txt" 2>&1
+ck  "filtros: preset extra"            '^Filter BP BP x 2 5 2$'                "$TMP/filt.txt"
+ck  "filtros: ahora 8 presets"         '^Filters 8$'                           "$TMP/filt.txt"
+
+{ cat "$TMP/ok.d"; echo "Filter HP r 1.0 2"; echo "Filter LP r 0.5 2"; } > "$TMP/dupflt.d"
+"$BIN" --print-config "$TMP/dupflt.d" > "$TMP/dupflt.txt" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && echo "ok  : tecla de filtro duplicada -> rc != 0" || { echo "FAIL: tecla duplicada rc=$rc"; fails=$((fails+1)); }
+
+{ cat "$TMP/ok.d"; echo "FilterPhase foo"; } > "$TMP/badphase.d"
+"$BIN" --print-config "$TMP/badphase.d" > "$TMP/badphase.txt" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && echo "ok  : FilterPhase invalida -> rc != 0" || { echo "FAIL: FilterPhase invalida rc=$rc"; fails=$((fails+1)); }
+
 rm -rf "$TMP"
 if [ "$fails" -gt 0 ]; then echo "FALLOS: $fails"; exit 1; fi
 echo "OK test_config"
