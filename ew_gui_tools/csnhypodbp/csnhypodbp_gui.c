@@ -2353,24 +2353,59 @@ void csnhypodbp_show_procesar(void) {
     if (n >= 0) gtk_notebook_set_current_page(GTK_NOTEBOOK(g_notebook), n);
 }
 
-/* Loguea los colores de fase en hex, listos para copiar al .d. */
+/* Loguea los seis colores en hex, listos para copiar al .d. Marca los que aun
+ * heredan del manual (los que no tienen clave propia). */
 void csnhypodbp_log_colors(void) {
-    logit("t", "csnhypodbp: pColor %02X%02X%02X  sColor %02X%02X%02X (copiar a csnhypodbp.d)\n",
-          (unsigned)(g_color_p[0] * 255.0 + 0.5),
-          (unsigned)(g_color_p[1] * 255.0 + 0.5),
-          (unsigned)(g_color_p[2] * 255.0 + 0.5),
-          (unsigned)(g_color_s[0] * 255.0 + 0.5),
-          (unsigned)(g_color_s[1] * 255.0 + 0.5),
-          (unsigned)(g_color_s[2] * 255.0 + 0.5));
+    char hp[7], hpa[7], hpt[7], hs[7], hsa[7], hst[7];
+    double rgb[3];
+    csnhypodbp_color_to_hex(g_colors_p.manual, hp);
+    csnhypodbp_color_resolve(&g_colors_p, CSNHYPODBP_PICK_AUTO, rgb);
+    csnhypodbp_color_to_hex(rgb, hpa);
+    csnhypodbp_color_resolve(&g_colors_p, CSNHYPODBP_PICK_THEO, rgb);
+    csnhypodbp_color_to_hex(rgb, hpt);
+    csnhypodbp_color_to_hex(g_colors_s.manual, hs);
+    csnhypodbp_color_resolve(&g_colors_s, CSNHYPODBP_PICK_AUTO, rgb);
+    csnhypodbp_color_to_hex(rgb, hsa);
+    csnhypodbp_color_resolve(&g_colors_s, CSNHYPODBP_PICK_THEO, rgb);
+    csnhypodbp_color_to_hex(rgb, hst);
+    logit("t", "csnhypodbp: pColor %s pColorAuto %s%s pColorTheo %s%s "
+               "sColor %s sColorAuto %s%s sColorTheo %s%s "
+               "(copiar a csnhypodbp.d)\n",
+          hp,
+          hpa, g_colors_p.has_auto ? "" : "(derived)",
+          hpt, g_colors_p.has_theo ? "" : "(derived)",
+          hs,
+          hsa, g_colors_s.has_auto ? "" : "(derived)",
+          hst, g_colors_s.has_theo ? "" : "(derived)");
 }
 
-/* --- Colores de fase (grupo "Colours" del menu ☰) ---------------------- */
+/* --- Colores de las picadas (grupo "Colours" del menu ☰) ---------------- */
+/* Una entrada por color: a que conjunto va y con que origen. El id del item
+ * del menu (parametro "i" de win.colour) es su indice + 1. */
+typedef struct {
+    CsnhypodbpColorSet  *set;
+    CsnhypodbpPickOrigin origin;
+    const char          *title;
+} ColourItem;
+static const ColourItem g_colour_items[] = {
+    { &g_colors_p, CSNHYPODBP_PICK_MANUAL, "P manual colour" },
+    { &g_colors_p, CSNHYPODBP_PICK_AUTO,   "P automatic colour" },
+    { &g_colors_p, CSNHYPODBP_PICK_THEO,   "P theoretical colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_MANUAL, "S manual colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_AUTO,   "S automatic colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_THEO,   "S theoretical colour" },
+};
+#define N_COLOUR_ITEMS ((int)(sizeof(g_colour_items) / sizeof(g_colour_items[0])))
+
 static void on_color_chosen(GObject *src, GAsyncResult *res, gpointer data) {
     int type = GPOINTER_TO_INT(data);
     GdkRGBA *c = gtk_color_dialog_choose_rgba_finish(GTK_COLOR_DIALOG(src), res, NULL);
     if (c) {
-        double *dst = (type == 2) ? g_color_s : g_color_p;
-        dst[0] = c->red; dst[1] = c->green; dst[2] = c->blue;
+        if (type >= 1 && type <= N_COLOUR_ITEMS) {
+            const ColourItem *it = &g_colour_items[type - 1];
+            double rgb[3] = { c->red, c->green, c->blue };
+            csnhypodbp_color_set_override(it->set, it->origin, rgb);
+        }
         csnhypodbp_log_colors();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         gdk_rgba_free(c);
@@ -2378,14 +2413,21 @@ static void on_color_chosen(GObject *src, GAsyncResult *res, gpointer data) {
     g_object_unref(src);
 }
 
-/* type: 1 = P, 2 = S (parametro "i" de la accion win.colour). */
+/* type: indice+1 en g_colour_items (parametro "i" de la accion win.colour). */
 void on_colour_select(GtkWidget *widget, gpointer data) {
     (void)widget;
     int type = GPOINTER_TO_INT(data);
-    const double *src = (type == 2) ? g_color_s : g_color_p;
-    GdkRGBA cur = { src[0], src[1], src[2], 1.0 };
-    GtkColorDialog *cd = gtk_color_dialog_new();
-    gtk_color_dialog_set_title(cd, (type == 2) ? "S phase colour" : "P phase colour");
+    const ColourItem *it;
+    double rgb[3];
+    GdkRGBA cur;
+    GtkColorDialog *cd;
+    if (type < 1 || type > N_COLOUR_ITEMS)
+        return;
+    it = &g_colour_items[type - 1];
+    csnhypodbp_color_resolve(it->set, it->origin, rgb);
+    cur.red = rgb[0]; cur.green = rgb[1]; cur.blue = rgb[2]; cur.alpha = 1.0;
+    cd = gtk_color_dialog_new();
+    gtk_color_dialog_set_title(cd, it->title);
     gtk_color_dialog_choose_rgba(cd, NULL, &cur, NULL, on_color_chosen, GINT_TO_POINTER(type));
 }
 
@@ -3748,8 +3790,6 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
        todas las trazas comparten ventana y un unico eje UTC vale para todas. */
     double span = g_view.t1 - g_view.t0;
     if (span <= 0.0) span = g_dScreenTime;
-    int sta_is_real = (have_row && sta_row.p.present &&
-                       (sta_row.p.origin == 'M' || sta_row.p.origin == 'A'));
     double sta_win_start = g_win_ref_pick - g_align_lead;
     g_win_start_cur = sta_win_start;
 
@@ -3770,7 +3810,6 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         g_SortedNodes[n].y_top = y_center - (row_h / 2);
         g_SortedNodes[n].y_bottom = y_center + (row_h / 2);
 
-        int is_real = sta_is_real;
         double winStart = sta_win_start;
 
         /* (sin LED verde/rojo: era ambiguo y ya no se usa) */
@@ -3830,7 +3869,7 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
 
             if (max_abs > 0.0) {
                 double trgb[3];
-                csnhypodbp_trace_rgb(is_real, trgb);
+                csnhypodbp_trace_rgb(trgb);
                 cairo_set_source_rgb(cr, trgb[0], trgb[1], trgb[2]);
                 cairo_set_line_width(cr, 0.8);
                 cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
@@ -3902,7 +3941,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             double xp = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
             char plabel[24];
 
-            cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
+            double prgb[3];
+            csnhypodbp_color_resolve(&g_colors_p,
+                                     csnhypodbp_pick_origin(sta_row.p.origin),
+                                     prgb);
+            cairo_set_source_rgb(cr, prgb[0], prgb[1], prgb[2]);
             cairo_set_line_width(cr, 2);
             cairo_move_to(cr, xp, y_center - (row_h / 2.5));
             cairo_line_to(cr, xp, y_center + (row_h / 2.5));
@@ -3927,7 +3970,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             double xs = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
             char slab[24];
 
-            cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
+            double srgb[3];
+            csnhypodbp_color_resolve(&g_colors_s,
+                                     csnhypodbp_pick_origin(sta_row.s.origin),
+                                     srgb);
+            cairo_set_source_rgb(cr, srgb[0], srgb[1], srgb[2]);
             cairo_set_line_width(cr, 1.5);
             cairo_move_to(cr, xs, y_center - (row_h / 2.5));
             cairo_line_to(cr, xs, y_center + (row_h / 2.5));
@@ -3967,7 +4014,8 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
     if (csnhypodbp_view_show_pick_cue(canvas != NULL,
                                       g_click_mode == CSNHYPODBP_CLICK_PICK,
                                       g_cursor_valid)) {
-        const double *cc = (g_pick_phase == 'S') ? g_color_s : g_color_p;
+        /* El indicador del cursor NO es una picada: usa el color manual/base. */
+        const double *cc = (g_pick_phase == 'S') ? g_colors_s.manual : g_colors_p.manual;
         double cx = g_cursor_x + 16.0, cy = g_cursor_y - 16.0;
         char cl[2] = { g_pick_phase, '\0' };
         cairo_text_extents_t ce;

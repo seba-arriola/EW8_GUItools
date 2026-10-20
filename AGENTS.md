@@ -56,7 +56,11 @@ hace **`csnloc`** localmente.
     no la estación) y queda **vacía y no sensible** si esa fase no existe; las casillas **solo** filtran
     el envío al localizador. Por estación
     se dibuja **una sola P y una sola S** (`M > A > Teo`; la manual desplaza a la automática y a la
-    teórica) y la traza va negra si la P es leída (real o manual), gris 0.55 si solo teórica. La barra
+    teórica). La traza del picking es **siempre negra**; el origen de la picada se distingue por el
+    **color de su marca**: manual = `pColor`/`sColor`, automática = `pColorAuto`/`sColorAuto` y teórica
+    = `pColorTheo`/`sColorTheo` (6 claves del `.d`, también en ☰ → `Colours`). Las `*Auto`/`*Theo` son
+    opcionales: sin declarar se derivan del manual **en cada dibujo** aclarándolo al 40 % / 70 %, así que
+    cambiar el manual las recolorea; elegirlas en el menú las vuelve explícitas. La barra
     inferior tiene `Cancel` a la izquierda y, a la derecha, los checkboxes **A/M/Teo** (M por defecto),
     la caja del localizador activo y `locators`/`locate`; `locate` manda **exactamente** las picadas de
     la tabla (con su canal, filtradas por esos checks; `MaxDistKm` 500 km), y el **residual por fase**

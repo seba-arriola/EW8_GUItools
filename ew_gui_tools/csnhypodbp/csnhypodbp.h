@@ -90,6 +90,7 @@ typedef struct {
 #include "csnhypodbp_station.h"
 #include "csnhypodbp_manual.h"
 #include "csnhypodbp_locate.h"
+#include "csnhypodbp_trace.h"
 #define MAX_LOCATORS 8
 extern char g_channels_order[128];     /* channelsOrder (orden externo de canales) */
 extern char g_components_order[64];    /* componentsOrder (orden interno) */
@@ -100,8 +101,8 @@ extern char g_manual_state_file[MAX_STR];  /* ManualStateFile (solucion manual p
 extern int  g_locator_timeout_sec;     /* LocatorTimeoutSec */
 extern int  g_prefetch_neighbors;      /* PrefetchNeighbors */
 extern int  g_hide_empty;              /* HideEmptyStations (ocultar sin datos) */
-extern double g_color_p[3];            /* pColor: P (marca + circulo del indicador) */
-extern double g_color_s[3];            /* sColor: S (marcas + circulo del indicador) */
+extern CsnhypodbpColorSet g_colors_p;  /* pColor + pColorAuto/pColorTheo */
+extern CsnhypodbpColorSet g_colors_s;  /* sColor + sColorAuto/sColorTheo */
 void csnhypodbp_log_colors(void);      /* loguea los colores en hex (copiar al .d) */
 extern char MyModName[MAX_STR];
 extern char InRingName[MAX_STR];

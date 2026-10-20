@@ -472,8 +472,23 @@ ck  "menu: grupo Help al final"             '"Help", help_items'           csnhy
 ck  "menu: item Commands -> win.help"       'win\.help'                    csnhypodbp_main.c
 ck  "menu: dialogo de comandos"             'csnhypodbp_help_dialog_run'   csnhypodbp_gui.c
 
-# --- Color de traza no leida ---
-ck  "traza no leida: gris mas oscuro 0.55"  '0\.55'                        csnhypodbp_trace.c
+# --- Color de traza y de las marcas por origen ---
+nck "traza: ya no hay gris 0.55"            '0\.55'                       csnhypodbp_trace.c
+ck  "traza: siempre negra"                  'rgb\[0\] = 0\.0; rgb\[1\] = 0\.0; rgb\[2\] = 0\.0' csnhypodbp_trace.c
+nck "traza: sin parametro de leida"         'trace_rgb\(int'              csnhypodbp_trace.h
+ck  "marcas: color de la P por origen"      'csnhypodbp_color_resolve\(&g_colors_p' csnhypodbp_gui.c
+ck  "marcas: color de la S por origen"      'csnhypodbp_color_resolve\(&g_colors_s' csnhypodbp_gui.c
+ck  "marcas: origen de la P desde la fila"  'csnhypodbp_pick_origin\(sta_row\.p\.origin\)' csnhypodbp_gui.c
+ck  "marcas: origen de la S desde la fila"  'csnhypodbp_pick_origin\(sta_row\.s\.origin\)' csnhypodbp_gui.c
+ck  "indicador: color manual/base"          'g_colors_p\.manual'          csnhypodbp_gui.c
+ck  "menu: 6 colores"                       '"P theoretical", "win\.colour", "i", 3' csnhypodbp_main.c
+ck  "menu: grupo Colours con 6 items"       '"Colours", colour_items, 6'  csnhypodbp_main.c
+ck  "config: .d lee las 6 claves"           'k_its\("sColorTheo"\)'       csnhypodbp_main.c
+ck  "config: color invalido avisa"          'invalido, uso el color heredado' csnhypodbp_main.c
+ck  "log: 6 claves de color"                'sColorTheo %s'               csnhypodbp_gui.c
+ck  "print-config: colores resueltos"       'print_pick_color\("pColorAuto"' csnhypodbp_main.c
+ck  "magnitudes: conserva su color fijo"    'cairo_set_source_rgb\(cr, 0\.05, 0\.05, 0\.05\)' csnhypodbp_gui.c
+nck "ya no queda g_color_p/g_color_s"       'g_color_[ps]\b'              csnhypodbp_gui.c
 
 # --- Mapa de planta: se dibuja aunque el .d no declare MapImageFile ---
 n=$(grep -cE 'if \(g_map_pixbuf\)' csnhypodbp_gui.c)

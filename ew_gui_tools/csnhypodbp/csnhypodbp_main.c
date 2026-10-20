@@ -98,9 +98,14 @@ int  g_prefetch_neighbors = 2;
 int  g_hide_empty = 0;   /* HideEmptyStations: ocultar estaciones sin datos */
 char g_store_root[512] = "";
 int  g_fetch_threads = 4;
-/* Colores de las fases (pColor/sColor del .d): marca + circulo del indicador. */
-double g_color_p[3] = { 1.0, 0.0, 0.0 };   /* P: rojo */
-double g_color_s[3] = { 0.0, 0.6, 0.0 };   /* S: verde (marca S actual) */
+/* Colores de las picadas (pColor/sColor + pColorAuto/pColorTheo/sColorAuto/
+   sColorTheo del .d): la traza siempre es negra; auto y teorica, si no se
+   declaran, se derivan del manual en el momento de dibujar (aclarado 40 % /
+   70 %, csnhypodbp_color_resolve). */
+CsnhypodbpColorSet g_colors_p = { { 1.0, 0.0, 0.0 }, 0, { 0.0, 0.0, 0.0 },
+                                  0, { 0.0, 0.0, 0.0 } };   /* P: rojo */
+CsnhypodbpColorSet g_colors_s = { { 0.0, 0.6, 0.0 }, 0, { 0.0, 0.0, 0.0 },
+                                  0, { 0.0, 0.0, 0.0 } };   /* S: verde */
 GtkWidget *window_global = NULL; 
 
 double g_max_dist_km = 500.0; 
@@ -287,6 +292,22 @@ static void k_rest_join(char *out, size_t n)
     (void)k_err();
 }
 
+/* Lee un color RRGGBB del .d y lo aplica a `set`. Un valor invalido no toca
+ * el destino (la entrada sigue heredando del manual) y deja aviso en el log. */
+static void read_pick_color(const char *key, const char *str,
+                            CsnhypodbpColorSet *set, CsnhypodbpPickOrigin origin)
+{
+    double rgb[3];
+    if (!str)
+        return;
+    if (csnhypodbp_view_parse_color(str, rgb) != 0) {
+        logit("et", "csnhypodbp: %s <%s> invalido, uso el color heredado\n",
+              key, str);
+        return;
+    }
+    csnhypodbp_color_set_override(set, origin, rgb);
+}
+
 /* --------------------------------------------------------------------
  * LECTURA DE CONFIG Y CONEXION EW
  * -------------------------------------------------------------------- */
@@ -354,13 +375,27 @@ int ReadConfig(char *configfile) {
         else if (k_its("SdsFallbackHours")) { g_sds_fallback_hours = k_int(); if (g_sds_fallback_hours < 0) g_sds_fallback_hours = 0; }
         else if (k_its("pColor")) {
             str = k_str();
-            if (str && csnhypodbp_view_parse_color(str, g_color_p) != 0)
-                logit("et", "csnhypodbp: pColor <%s> invalido, uso default\n", str);
+            read_pick_color("pColor", str, &g_colors_p, CSNHYPODBP_PICK_MANUAL);
         }
         else if (k_its("sColor")) {
             str = k_str();
-            if (str && csnhypodbp_view_parse_color(str, g_color_s) != 0)
-                logit("et", "csnhypodbp: sColor <%s> invalido, uso default\n", str);
+            read_pick_color("sColor", str, &g_colors_s, CSNHYPODBP_PICK_MANUAL);
+        }
+        else if (k_its("pColorAuto")) {
+            str = k_str();
+            read_pick_color("pColorAuto", str, &g_colors_p, CSNHYPODBP_PICK_AUTO);
+        }
+        else if (k_its("pColorTheo")) {
+            str = k_str();
+            read_pick_color("pColorTheo", str, &g_colors_p, CSNHYPODBP_PICK_THEO);
+        }
+        else if (k_its("sColorAuto")) {
+            str = k_str();
+            read_pick_color("sColorAuto", str, &g_colors_s, CSNHYPODBP_PICK_AUTO);
+        }
+        else if (k_its("sColorTheo")) {
+            str = k_str();
+            read_pick_color("sColorTheo", str, &g_colors_s, CSNHYPODBP_PICK_THEO);
         }
         /* --- Mapas: panel de planta (mismo contrato que csnrv) --- */
         else if (k_its("MapImageFile")) { str = k_str(); if (str) snprintf(MapImageFile, sizeof(MapImageFile), "%s", str); }
@@ -466,6 +501,23 @@ int ReadConfig(char *configfile) {
 
 /* --- Modos headless (patron de csnrv): no arrancan GTK ni se conectan a EW --- */
 
+/* Una linea de color ya resuelta; marca las entradas que aun heredan del
+ * manual (auto 40 % / teorica 70 %). */
+static void print_pick_color(const char *key, const CsnhypodbpColorSet *set,
+                             CsnhypodbpPickOrigin origin)
+{
+    double rgb[3];
+    char hex[7];
+    const char *sfx = "";
+    csnhypodbp_color_resolve(set, origin, rgb);
+    csnhypodbp_color_to_hex(rgb, hex);
+    if (origin == CSNHYPODBP_PICK_AUTO && !set->has_auto)
+        sfx = " (derived 40%)";
+    else if (origin == CSNHYPODBP_PICK_THEO && !set->has_theo)
+        sfx = " (derived 70%)";
+    printf("%s %s%s\n", key, hex, sfx);
+}
+
 static int maps_print_config(void) {
     int i;
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
@@ -489,6 +541,14 @@ static int maps_print_config(void) {
     printf("OverlayHides %d\n", g_overlay_nhides);
     for (i = 0; i < g_overlay_nhides; i++)
         printf("OverlayHide %s\n", g_overlay_hide_layer[i]);
+    /* Colores de las picadas (la traza es siempre negra): auto y teorica
+       heredan del manual aclarado si el .d no les da valor propio. */
+    print_pick_color("pColor", &g_colors_p, CSNHYPODBP_PICK_MANUAL);
+    print_pick_color("pColorAuto", &g_colors_p, CSNHYPODBP_PICK_AUTO);
+    print_pick_color("pColorTheo", &g_colors_p, CSNHYPODBP_PICK_THEO);
+    print_pick_color("sColor", &g_colors_s, CSNHYPODBP_PICK_MANUAL);
+    print_pick_color("sColorAuto", &g_colors_s, CSNHYPODBP_PICK_AUTO);
+    print_pick_color("sColorTheo", &g_colors_s, CSNHYPODBP_PICK_THEO);
     printf("ProfileDataDir %s\n", ProfileDataDir[0] ? ProfileDataDir : "(none)");
     /* Parametros de magnitud: los lee la sub-pestaña `magnitudes` para dibujar la
        traza de vista y las franjas de ventana. */
@@ -1158,15 +1218,19 @@ static const EwMenuItem wave_items[] = {
     { "Hide stations without data", "win.hide-empty", NULL, 0 },
 };
 static const EwMenuItem colour_items[] = {
-    { "P phase", "win.colour", "i", 1 },
-    { "S phase", "win.colour", "i", 2 },
+    { "P manual", "win.colour", "i", 1 },
+    { "P automatic", "win.colour", "i", 2 },
+    { "P theoretical", "win.colour", "i", 3 },
+    { "S manual", "win.colour", "i", 4 },
+    { "S automatic", "win.colour", "i", 5 },
+    { "S theoretical", "win.colour", "i", 6 },
 };
 static const EwMenuItem help_items[] = {
     { "Commands...", "win.help", NULL, 0 },
 };
 static const EwMenuGroup wave_groups[] = {
     { "Waveforms", wave_items, 4 },
-    { "Colours", colour_items, 2 },
+    { "Colours", colour_items, 6 },
     { "View", view_items, 2 },
     { "Help", help_items, 1 },
 };

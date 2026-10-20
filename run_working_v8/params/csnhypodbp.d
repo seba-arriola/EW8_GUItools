@@ -33,12 +33,22 @@ ManualStateFile ../csnhypodbp/csnhypodbp_manual.events
 LocatorTimeoutSec 600                      # timeout (s) por localizador offline (NLLoc es lento)
 PrefetchNeighbors 2                        # estaciones vecinas a precargar
 
-# Colores de las fases (formato RRGGBB, con o sin '#'). Aplican a las marcas de
-# fase sobre la traza y al circulo del indicador de picado. Tambien se pueden
-# cambiar en caliente desde el menu ☰ > Colours (el hex queda en el log para
-# copiarlo aqui).
-#pColor         FF0000   # P: marca + circulo del indicador
-#sColor         009900   # S: marcas + circulo del indicador
+# Colores de las picadas (formato RRGGBB, con o sin '#'). La TRAZA se dibuja
+# siempre negra: lo que cambia segun el origen es el color de la marca del pick.
+#   pColor/sColor           -> marca MANUAL (y circulo del indicador de picado)
+#   pColorAuto/sColorAuto   -> marca AUTOMATICA; por defecto el manual aclarado 40%
+#   pColorTheo/sColorTheo   -> marca TEORICA;    por defecto el manual aclarado 70%
+# Las claves Auto/Theo son opcionales: si no se declaran se calculan del manual
+# EN CADA DIBUJO, asi que cambiar el manual (aqui o en el menu ☰ > Colours)
+# recolorea tambien a automaticas y teoricas. Elegir una auto/teo en el menu la
+# vuelve explicita (deja de heredar); para volver a heredar, comenta su clave.
+# El hex actual queda en el log para copiarlo aqui.
+#pColor         FF0000   # P manual (marca + circulo del indicador)
+#pColorAuto     FF6666   # P automatica (default: pColor aclarado 40%)
+#pColorTheo     FFB3B3   # P teorica    (default: pColor aclarado 70%)
+#sColor         009900   # S manual
+#sColorAuto     66C266   # S automatica (default: sColor aclarado 40%)
+#sColorTheo     B3E0B3   # S teorica    (default: sColor aclarado 70%)
 
 # Etiquetas de modulo origen para la columna "Mod" (id -> nombre).
 ModuleLabel     162  csnloc

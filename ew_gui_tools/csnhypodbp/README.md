@@ -124,10 +124,12 @@ Por estación se dibuja **una sola P y una sola S** (la de mayor rango `M > A > 
 cercana a la teórica). Si hay una picada manual, **desplaza** a la automática y a la teórica (no se
 dibujan ambas). La traza se **alinea con la P** de la estación (manual/automática, o la **P teórica**
 IASP91 si no hay); la ventana es **común a la estación** (`winStart` compartido) para que todas las
-trazas y el eje UTC coincidan. Traza **negra** si la P es **leída** (real del `PICK_RING` o manual);
-**gris más oscuro (0.55)** si solo teórica. Los picks usan los colores de fase configurables
-(`pColor`/`sColor`). Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`; sin
-picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
+trazas y el eje UTC coincidan. La traza es **siempre negra**; el origen de la picada se distingue
+por el **color de su marca**: manual (`pColor`/`sColor`), automática (`pColorAuto`/`sColorAuto`) y
+teórica (`pColorTheo`/`sColorTheo`). Si las claves `*Auto`/`*Theo` no se declaran, su color se
+**deriva del manual** aclarándolo al 40 % / 70 % en cada dibujo (cambiar el manual las recolorea);
+elegirlas en el menú las vuelve explícitas. Regla del origen idéntica a `csntvp`: token 12 `M` ⇒
+manual; ausente ⇒ `A`; sin picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
 
 ### Interacción: zoom, eje de tiempo y picado
 
@@ -191,8 +193,9 @@ menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* lo
 (`Search events…`, `Clear search`) y `View`; en *Ondas* añade el grupo
 `Waveforms` con `Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia),
 `Time window…` (ventana de registro) y `Hide stations without data`, el grupo `Colours` con
-`P phase` / `S phase` (diálogo de color GTK4; el hex resultante queda en el log para copiarlo al
-`.d`) y, **al final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
+`P manual` / `P automatic` / `P theoretical` / `S manual` / `S automatic` / `S theoretical`
+(diálogo de color GTK4; el hex de las seis claves queda en el log para copiarlo al `.d`) y, **al
+final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
 comandos de teclado/ratón.
 
 `Hide stations without data` (clave `HideEmptyStations`) es un **modo dinámico no destructivo**:
@@ -403,8 +406,12 @@ resto del módulo (y EarthWorm) lo espera así.
 | `GroupMinMatchPicks` | `3` | mínimo de picadas para fusionar por firma |
 | `channelsOrder` | `HH BH HN LH` | orden externo de canales de la pestaña Ondas |
 | `componentsOrder` | `Z N E` | orden interno de componentes (Z/N/E) |
-| `pColor` | `FF0000` | color de la fase P (marca + círculo del indicador) |
-| `sColor` | `009900` | color de la fase S (marcas + círculo del indicador) |
+| `pColor` | `FF0000` | color de la marca P **manual** (y círculo del indicador de picado) |
+| `pColorAuto` | heredado (`FF6666`) | marca P automática; ausente = `pColor` aclarado 40 % |
+| `pColorTheo` | heredado (`FFB3B3`) | marca P teórica; ausente = `pColor` aclarado 70 % |
+| `sColor` | `009900` | color de la marca S **manual** |
+| `sColorAuto` | heredado (`66C266`) | marca S automática; ausente = `sColor` aclarado 40 % |
+| `sColorTheo` | heredado (`B3E0B3`) | marca S teórica; ausente = `sColor` aclarado 70 % |
 | `locator` | — | localizador offline: `locator <nombre> <bin> <cfg>` |
 | `ManualStateFile` | `csnhypodbp_manual.events` | soluciones manuales propias (locate+confirm) |
 | `LocatorTimeoutSec` | `600` | timeout (s) por localizador offline (NLLoc es lento) |

@@ -217,13 +217,11 @@ int main(void)
         CHECK(csnhypodbp_resid_source(NULL, 1, NULL) == NULL, "sin ninguna -> NULL");
     }
 
-    /* --- C3: color de traza --- */
+    /* --- C3: color de traza (siempre negra; el origen va en la marca) --- */
     {
-        double rgb[3];
-        csnhypodbp_trace_rgb(1, rgb);
-        CHECK(rgb[0] == 0.0 && rgb[1] == 0.0 && rgb[2] == 0.0, "leida -> negra");
-        csnhypodbp_trace_rgb(0, rgb);
-        CHECK(fabs(rgb[0] - 0.55) < 1e-9, "no leida -> gris 0.55");
+        double rgb[3] = { 9.0, 9.0, 9.0 };
+        csnhypodbp_trace_rgb(rgb);
+        CHECK(rgb[0] == 0.0 && rgb[1] == 0.0 && rgb[2] == 0.0, "traza siempre negra");
     }
 
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }

@@ -165,12 +165,118 @@ int csnhypodbp_ref_pick(const CsnhypodbpTracePick *p, int n,
     return 0;
 }
 
-void csnhypodbp_trace_rgb(int has_p_pick, double rgb[3])
+CsnhypodbpPickOrigin csnhypodbp_pick_origin(char origin)
+{
+    if (origin == 'M')
+        return CSNHYPODBP_PICK_MANUAL;
+    if (origin == 'T')
+        return CSNHYPODBP_PICK_THEO;
+    return CSNHYPODBP_PICK_AUTO;
+}
+
+double csnhypodbp_color_tint_channel(double c, double frac)
+{
+    if (c < 0.0) c = 0.0;
+    if (c > 1.0) c = 1.0;
+    if (frac < 0.0) frac = 0.0;
+    if (frac > 1.0) frac = 1.0;
+    return c + (1.0 - c) * frac;
+}
+
+void csnhypodbp_color_tint(const double base[3], double frac, double out[3])
+{
+    int k;
+    if (!base || !out)
+        return;
+    for (k = 0; k < 3; k++)
+        out[k] = csnhypodbp_color_tint_channel(base[k], frac);
+}
+
+void csnhypodbp_color_set_init(CsnhypodbpColorSet *set, const double base[3])
+{
+    if (!set)
+        return;
+    memset(set, 0, sizeof(*set));
+    if (base)
+        memcpy(set->manual, base, sizeof(set->manual));
+}
+
+void csnhypodbp_color_set_override(CsnhypodbpColorSet *set,
+                                   CsnhypodbpPickOrigin o, const double rgb[3])
+{
+    if (!set || !rgb)
+        return;
+    if (o == CSNHYPODBP_PICK_MANUAL) {
+        memcpy(set->manual, rgb, sizeof(set->manual));
+    } else if (o == CSNHYPODBP_PICK_AUTO) {
+        memcpy(set->auto_rgb, rgb, sizeof(set->auto_rgb));
+        set->has_auto = 1;
+    } else {
+        memcpy(set->theo_rgb, rgb, sizeof(set->theo_rgb));
+        set->has_theo = 1;
+    }
+}
+
+void csnhypodbp_color_resolve(const CsnhypodbpColorSet *set,
+                              CsnhypodbpPickOrigin o, double rgb[3])
 {
     if (!rgb)
         return;
-    if (has_p_pick) { rgb[0] = 0.0; rgb[1] = 0.0; rgb[2] = 0.0; }
-    else            { rgb[0] = 0.55; rgb[1] = 0.55; rgb[2] = 0.55; }
+    if (!set) {
+        rgb[0] = rgb[1] = rgb[2] = 0.0;
+        return;
+    }
+    if (o == CSNHYPODBP_PICK_MANUAL) {
+        memcpy(rgb, set->manual, sizeof(set->manual));
+        return;
+    }
+    if (o == CSNHYPODBP_PICK_AUTO && set->has_auto) {
+        memcpy(rgb, set->auto_rgb, sizeof(set->auto_rgb));
+        return;
+    }
+    if (o == CSNHYPODBP_PICK_THEO && set->has_theo) {
+        memcpy(rgb, set->theo_rgb, sizeof(set->theo_rgb));
+        return;
+    }
+    csnhypodbp_color_tint(set->manual,
+                          (o == CSNHYPODBP_PICK_AUTO) ? CSNHYPODBP_LIGHTEN_AUTO
+                                                      : CSNHYPODBP_LIGHTEN_THEO,
+                          rgb);
+}
+
+void csnhypodbp_color_to_hex(const double rgb[3], char out[7])
+{
+    static const char hex[] = "0123456789ABCDEF";
+    int k;
+    if (!out)
+        return;
+    if (!rgb) {
+        memcpy(out, "000000", 7);
+        return;
+    }
+    for (k = 0; k < 3; k++) {
+        double c = rgb[k];
+        int v;
+        if (c < 0.0) c = 0.0;
+        if (c > 1.0) c = 1.0;
+        /* El epsilon evita que 0.7*255 (0.69999999999999996) trunque a 178:
+           el redondeo debe ser half-up sobre el valor decimal esperado. */
+        v = (int)(c * 255.0 + 0.5 + 1e-9);
+        if (v < 0) v = 0;
+        if (v > 255) v = 255;
+        out[2 * k]     = hex[v >> 4];
+        out[2 * k + 1] = hex[v & 0x0F];
+    }
+    out[6] = '\0';
+}
+
+void csnhypodbp_trace_rgb(double rgb[3])
+{
+    if (!rgb)
+        return;
+    /* Politica: la traza del picking SIEMPRE es negra; el origen de la picada
+       se distingue por el color de su marca (csnhypodbp_color_resolve). */
+    rgb[0] = 0.0; rgb[1] = 0.0; rgb[2] = 0.0;
 }
 
 char csnhypodbp_phase_from_char(char c)

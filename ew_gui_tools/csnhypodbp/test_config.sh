@@ -174,6 +174,44 @@ rc=$?
 ck  "print-config: avisa si falta MagConfigFile" 'no se pudo leer MagConfigFile' "$TMP/nm.txt"
 ck  "print-config: sin .d quedan los defaults" '^MagWindow ML 10\.000 45\.000$' "$TMP/nm.txt"
 
+# Colores de las picadas: sin claves en el .d, auto y teorica se derivan del
+# manual aclarado (40 % / 70 %).
+ck  "colores: P manual por defecto"  '^pColor FF0000$'                     "$TMP/pc.txt"
+ck  "colores: S manual por defecto"  '^sColor 009900$'                     "$TMP/pc.txt"
+ck  "colores: P auto hereda 40%"     '^pColorAuto FF6666 \(derived 40%\)$'  "$TMP/pc.txt"
+ck  "colores: P teo hereda 70%"      '^pColorTheo FFB3B3 \(derived 70%\)$'  "$TMP/pc.txt"
+ck  "colores: S auto hereda 40%"     '^sColorAuto 66C266 \(derived 40%\)$'  "$TMP/pc.txt"
+ck  "colores: S teo hereda 70%"      '^sColorTheo B3E0B3 \(derived 70%\)$'  "$TMP/pc.txt"
+
+# Con las seis claves declaradas manda el .d (sin marca de herencia), aunque el
+# orden sea inverso: la herencia se resuelve al dibujar, no al parsear.
+{ cat "$TMP/ok.d"; cat <<'EOF'
+sColorTheo     0000FF
+pColorAuto     00FF00
+pColor         123456
+sColorAuto     654321
+pColorTheo     0A0B0C
+sColor         00FF00
+EOF
+} > "$TMP/colores.d"
+"$BIN" --print-config "$TMP/colores.d" > "$TMP/col.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : colores explicitos rc 0" || { echo "FAIL: colores explicitos rc=$rc"; fails=$((fails+1)); }
+ck  "colores: P manual del .d"       '^pColor 123456$'                     "$TMP/col.txt"
+ck  "colores: S manual del .d"       '^sColor 00FF00$'                     "$TMP/col.txt"
+ck  "colores: P auto explicita"      '^pColorAuto 00FF00$'                 "$TMP/col.txt"
+ck  "colores: P teo explicita"       '^pColorTheo 0A0B0C$'                 "$TMP/col.txt"
+ck  "colores: S auto explicita"      '^sColorAuto 654321$'                 "$TMP/col.txt"
+ck  "colores: S teo explicita"       '^sColorTheo 0000FF$'                 "$TMP/col.txt"
+nck "colores: sin marca de herencia" '\(derived'                           "$TMP/col.txt"
+
+# Hex invalido: no toca el destino y esa entrada sigue heredando del manual.
+{ cat "$TMP/ok.d"; echo "pColorAuto ZZ0000"; } > "$TMP/badcolor.d"
+"$BIN" --print-config "$TMP/badcolor.d" > "$TMP/bcol.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : color invalido no rompe" || { echo "FAIL: color invalido rc=$rc"; fails=$((fails+1)); }
+ck  "colores: invalido sigue heredando" '^pColorAuto FF6666 \(derived 40%\)$' "$TMP/bcol.txt"
+
 rm -rf "$TMP"
 if [ "$fails" -gt 0 ]; then echo "FALLOS: $fails"; exit 1; fi
 echo "OK test_config"
