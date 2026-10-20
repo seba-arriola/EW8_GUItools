@@ -34,6 +34,10 @@ GridFile        grids/chile_regional.grid
 
 MinPhases       4
 MaxRMS          2.0
+# Profundidad fija (km); <0 = libre. NLLoc la emula con una ventana z de
+# +/- FixDepthSpacingKm/2 (la GUI la pasa por corrida).
+# FixedDepthKm    -1.0
+# FixDepthSpacingKm 0.1
 
 # --- Bandas 3D ---
 # ModelBand <nombre> <latmin> <latmax> <lonmin> <lonmax> <TtimeRoot> <ControlFile>

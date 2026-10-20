@@ -25,13 +25,25 @@ install: $(TARGET)
 $(NLLLIB):
 	$(MAKE) -C nlloc
 
-$(TARGET): nlloc_ring.o $(NLLLIB)
-	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o $(NLLLIB) $(EWLIBS) $(LIBS)
+$(TARGET): nlloc_ring.o nlloc_depth.o $(NLLLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(NLLLIB) $(EWLIBS) $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
+
+# Profundidad fija (emulada): reescritura pura de LOCGRID / LOCSEARCH.
+test/test_fixdepth: test/test_fixdepth.c nlloc_depth.c nlloc_depth.h
+	$(CC) $(CFLAGS) -o $@ test/test_fixdepth.c nlloc_depth.c -lm
+
+.PHONY: check check-offline
+check: test/test_fixdepth
+	./test/test_fixdepth
+
+# Prueba real offline (necesita EW_PARAMS, csnloc y los recursos de NLLoc).
+check-offline: $(TARGET)
+	bash ./test/test_fixdepth_offline.sh
 
 clean:
 	-$(MAKE) -C nlloc clean
-	-rm -f *.o $(TARGET)
+	-rm -f *.o $(TARGET) test/test_fixdepth
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

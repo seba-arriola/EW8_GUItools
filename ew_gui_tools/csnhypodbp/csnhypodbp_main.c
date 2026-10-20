@@ -93,7 +93,7 @@ CsnhypodbpLocator g_locators[MAX_LOCATORS];
 int  g_nlocators = 0;
 char g_active_locator[32] = "";
 char g_manual_state_file[MAX_STR] = "csnhypodbp_manual.events";
-int  g_locator_timeout_sec = 180;
+int  g_locator_timeout_sec = 600;
 int  g_prefetch_neighbors = 2;
 int  g_hide_empty = 0;   /* HideEmptyStations: ocultar estaciones sin datos */
 char g_store_root[512] = "";
@@ -179,6 +179,9 @@ int                 g_cursor_valid = 0;                  /* 1 = sobre el canvas 
 /* Preview de locate (solucion candidata). */
 GtkWidget *g_preview_box = NULL;
 GtkWidget *g_preview_title = NULL;
+GtkWidget *g_preview_otime = NULL;
+GtkWidget *g_preview_spinner = NULL;
+GtkWidget *g_preview_status = NULL;
 GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS];
 GtkWidget *g_preview_btn_confirm = NULL, *g_preview_btn_discard = NULL;
 GtkWidget *g_preview_radio[CSNHYPODBP_PREVIEW_MAGS];   /* magnitud preferida */
@@ -192,6 +195,10 @@ int g_filter_manual = 1;
 int g_filter_theo = 0;
 GtkWidget *g_chk_a = NULL, *g_chk_m = NULL, *g_chk_teo = NULL;
 GtkWidget *g_locator_label = NULL;
+GtkWidget *g_fix_depth_label = NULL, *g_fix_depth_entry = NULL, *g_fix_depth_chk = NULL;
+GtkWidget *g_btn_locate = NULL;
+gboolean   g_fix_depth_on = FALSE;
+double     g_fix_depth_km = -1.0;
 
 /* --- Mapas: panel de planta (contrato de csnrv) y panel de perfil --- */
 char  MapImageFile[MAX_STR] = "";            /* mapa base equirectangular (2:1) */
@@ -1423,6 +1430,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             ".preview-box { background-image: none; background-color: #fff8e1; border: 1px solid alpha(@theme_fg_color, 0.35); border-radius: 4px; padding: 2px 8px; }\n"
             ".preview-box.candidate { background-color: #fde7e7; border-color: #e8a0a0; }\n"
             ".preview-title { font-weight: bold; font-size: 0.9em; }\n"
+            /* Radios de magnitud del preview: sin el relleno/minimo del tema,
+               que imponia una fila alta y dejaba una franja vacia a su lado. */
+            ".preview-radio { min-height: 0; min-width: 0; padding: 0; margin: 0; }\n"
+            ".preview-busy { font-size: 0.85em; color: alpha(@theme_fg_color, 0.75); }\n"
+            ".preview-busy.preview-error { color: #b00020; }\n"
             ".preview-hdr { font-size: 0.75em; color: alpha(@theme_fg_color, 0.7); }\n"
             ".preview-val { font-weight: bold; }\n"
             /* Caption de los paneles de mapa (columna derecha). */
@@ -1770,10 +1782,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
        va por encima del sub-notebook. */
     GtkWidget *page_procesar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-    /* Preview de la solucion: tablita de 2 filas (cabecera de parametros +
-       valores) con Confirm/Discard a la derecha. Muestra la solucion elegida en
-       el detalle y, tras `locate`, la candidata (fondo rojo leve). SIEMPRE
-       visible: sin seleccion muestra guiones, asi no salta el layout. */
+    /* Preview de la solucion: una grilla de 4 filas dividida en dos mitades
+       (parametros a la izquierda, magnitudes a la derecha) para no dejar una
+       franja vacia encima de Lat..RMS. Confirm/Discard a la derecha. Muestra la
+       elegida en el detalle y, tras `locate`, la candidata (fondo rojo leve).
+       SIEMPRE visible: sin seleccion muestra guiones, asi no salta el layout. */
     g_preview_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(g_preview_box, "preview-box");
     gtk_widget_set_margin_start(g_preview_box, 8);
@@ -1781,48 +1794,105 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_margin_top(g_preview_box, 4);
     gtk_widget_set_margin_bottom(g_preview_box, 2);
     {
-        GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         GtkWidget *grid = gtk_grid_new();
         GtkWidget *pc = gtk_button_new_with_label("Confirm");
         GtkWidget *pd = gtk_button_new_with_label("Discard");
-        int i;
-        gtk_widget_set_hexpand(inner, TRUE);
+        GtkWidget *mags_title;
+        GtkWidget *sep;
+        GtkWidget *otime_row;
+        int i, k;
+
+        gtk_widget_set_hexpand(grid, TRUE);
+        gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
+        gtk_grid_set_row_spacing(GTK_GRID(grid), 2);
+        /* Dos mitades en UNA grilla para que las filas queden alineadas:
+             fila 0: titulo      | sep | "Magnitude"
+             fila 1: otime       | sep | radios
+             fila 2: cabeceras   | sep | cabeceras
+             fila 3: valores     | sep | valores
+           El separador ocupa su propia columna entre ambos bloques. */
         g_preview_title = gtk_label_new("");
         gtk_label_set_xalign(GTK_LABEL(g_preview_title), 0.0);
         gtk_widget_add_css_class(g_preview_title, "preview-title");
-        gtk_box_append(GTK_BOX(inner), g_preview_title);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 0);
-        /* Fila 0 = radios de magnitud preferida (solo en las columnas de
-           magnitud), fila 1 = cabeceras, fila 2 = valores (mismo indice). */
-        for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++) {
+        gtk_grid_attach(GTK_GRID(grid), g_preview_title, 0, 0,
+                        CSNHYPODBP_PREVIEW_NPARAMS, 1);
+        /* Fila 1 izquierda: Origin time + indicador de calculo (spinner + texto).
+           El indicador usa el mismo patron que el panel Mww: timer de 1 s y
+           segundos transcurridos; vale para TODOS los localizadores. */
+        g_preview_otime = gtk_label_new("Origin time: --");
+        gtk_label_set_xalign(GTK_LABEL(g_preview_otime), 0.0);
+        gtk_widget_add_css_class(g_preview_otime, "preview-otime");
+        g_preview_spinner = gtk_spinner_new();
+        gtk_widget_set_valign(g_preview_spinner, GTK_ALIGN_CENTER);
+        gtk_widget_set_visible(g_preview_spinner, FALSE);
+        g_preview_status = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(g_preview_status), 0.0);
+        gtk_label_set_ellipsize(GTK_LABEL(g_preview_status), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(g_preview_status), 34);
+        gtk_widget_add_css_class(g_preview_status, "preview-busy");
+        gtk_widget_set_visible(g_preview_status, FALSE);
+        otime_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_widget_set_hexpand(otime_row, TRUE);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_otime);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_spinner);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_status);
+        gtk_grid_attach(GTK_GRID(grid), otime_row, 0, 1,
+                        CSNHYPODBP_PREVIEW_NPARAMS, 1);
+        mags_title = gtk_label_new("Magnitude");
+        gtk_label_set_xalign(GTK_LABEL(mags_title), 0.0);
+        gtk_widget_add_css_class(mags_title, "preview-title");
+        gtk_grid_attach(GTK_GRID(grid), mags_title,
+                        CSNHYPODBP_PREVIEW_NPARAMS + 1, 0,
+                        CSNHYPODBP_PREVIEW_MAGS, 1);
+        sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+        gtk_widget_set_margin_start(sep, 4);
+        gtk_widget_set_margin_end(sep, 4);
+        gtk_grid_attach(GTK_GRID(grid), sep, CSNHYPODBP_PREVIEW_NPARAMS, 0, 1, 4);
+
+        for (i = 0; i < CSNHYPODBP_PREVIEW_NPARAMS; i++) {
             GtkWidget *h = gtk_label_new(csnhypodbp_preview_headers[i]);
+
             gtk_label_set_xalign(GTK_LABEL(h), 0.0);
+            gtk_widget_set_hexpand(h, TRUE);
             gtk_widget_add_css_class(h, "preview-hdr");
             g_preview_val[i] = gtk_label_new("-");
             gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
             gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
+            gtk_widget_set_hexpand(g_preview_val[i], TRUE);
             gtk_widget_add_css_class(g_preview_val[i], "preview-val");
-            if (i >= CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS) {
-                int k = i - (CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS);
-
-                g_preview_radio[k] = gtk_check_button_new();
-                if (k > 0)   /* en grupo: se comportan como radios */
-                    gtk_check_button_set_group(GTK_CHECK_BUTTON(g_preview_radio[k]),
-                                               GTK_CHECK_BUTTON(g_preview_radio[0]));
-                gtk_widget_set_halign(g_preview_radio[k], GTK_ALIGN_CENTER);
-                gtk_widget_set_tooltip_text(g_preview_radio[k],
-                    "Marca esta magnitud como la preferida al confirmar");
-                gtk_widget_set_sensitive(g_preview_radio[k], FALSE);
-                g_signal_connect(g_preview_radio[k], "toggled",
-                                 G_CALLBACK(on_preview_pref_toggled), GINT_TO_POINTER(k));
-                gtk_grid_attach(GTK_GRID(grid), g_preview_radio[k], i, 0, 1, 1);
-            }
-            gtk_grid_attach(GTK_GRID(grid), h, i, 1, 1, 1);
-            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), h, i, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 3, 1, 1);
         }
-        gtk_box_append(GTK_BOX(inner), grid);
-        gtk_box_append(GTK_BOX(g_preview_box), inner);
+        for (k = 0; k < CSNHYPODBP_PREVIEW_MAGS; k++) {
+            GtkWidget *h;
+            int col = CSNHYPODBP_PREVIEW_NPARAMS + 1 + k;
+
+            i = CSNHYPODBP_PREVIEW_NPARAMS + k;
+            g_preview_radio[k] = gtk_check_button_new();
+            if (k > 0)   /* en grupo: se comportan como radios */
+                gtk_check_button_set_group(GTK_CHECK_BUTTON(g_preview_radio[k]),
+                                           GTK_CHECK_BUTTON(g_preview_radio[0]));
+            gtk_widget_set_halign(g_preview_radio[k], GTK_ALIGN_CENTER);
+            gtk_widget_add_css_class(g_preview_radio[k], "preview-radio");
+            gtk_widget_set_tooltip_text(g_preview_radio[k],
+                "Marca esta magnitud como la preferida al confirmar");
+            gtk_widget_set_sensitive(g_preview_radio[k], FALSE);
+            g_signal_connect(g_preview_radio[k], "toggled",
+                             G_CALLBACK(on_preview_pref_toggled), GINT_TO_POINTER(k));
+            gtk_grid_attach(GTK_GRID(grid), g_preview_radio[k], col, 1, 1, 1);
+            h = gtk_label_new(csnhypodbp_preview_headers[i]);
+            gtk_label_set_xalign(GTK_LABEL(h), 0.0);
+            gtk_widget_set_hexpand(h, TRUE);
+            gtk_widget_add_css_class(h, "preview-hdr");
+            g_preview_val[i] = gtk_label_new("-");
+            gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
+            gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
+            gtk_widget_set_hexpand(g_preview_val[i], TRUE);
+            gtk_widget_add_css_class(g_preview_val[i], "preview-val");
+            gtk_grid_attach(GTK_GRID(grid), h, col, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], col, 3, 1, 1);
+        }
+        gtk_box_append(GTK_BOX(g_preview_box), grid);
         gtk_widget_add_css_class(pc, "suggested-action");
         gtk_widget_set_valign(pc, GTK_ALIGN_CENTER);
         gtk_widget_set_valign(pd, GTK_ALIGN_CENTER);
@@ -1905,12 +1975,40 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_box_append(GTK_BOX(hbox_bottom), g_chk_m);
         gtk_box_append(GTK_BOX(hbox_bottom), g_chk_teo);
 
+        /* Profundidad fija: la caja solo pesa con `Fix` marcado. El valor se
+           aplica al confirmar (Enter o salir del campo), como las cajas de
+           magnitudes; un texto invalido no se aplica y bloquea `locate`. */
+        g_fix_depth_label = gtk_label_new("depth");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_label);
+        g_fix_depth_entry = gtk_entry_new();
+        gtk_editable_set_max_width_chars(GTK_EDITABLE(g_fix_depth_entry), 7);
+        gtk_entry_set_placeholder_text(GTK_ENTRY(g_fix_depth_entry), "km");
+        gtk_entry_set_input_purpose(GTK_ENTRY(g_fix_depth_entry), GTK_INPUT_PURPOSE_NUMBER);
+        gtk_editable_set_alignment(GTK_EDITABLE(g_fix_depth_entry), 1.0);
+        gtk_widget_set_sensitive(g_fix_depth_entry, FALSE);
+        g_signal_connect(g_fix_depth_entry, "activate",
+                         G_CALLBACK(on_fix_depth_activate), NULL);
+        {
+            GtkEventController *fc = gtk_event_controller_focus_new();
+            g_signal_connect(fc, "leave",
+                             G_CALLBACK(on_fix_depth_focus_leave), NULL);
+            gtk_widget_add_controller(g_fix_depth_entry, fc);
+        }
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_entry);
+        g_fix_depth_chk = gtk_check_button_new_with_label("Fix");
+        g_signal_connect(g_fix_depth_chk, "toggled",
+                         G_CALLBACK(on_fix_depth_toggled), NULL);
+        gtk_widget_set_tooltip_text(g_fix_depth_chk,
+            "Fija la profundidad de la solucion: el localizador no la resuelve");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_chk);
+
         g_locator_label = gtk_label_new("");
         gtk_box_append(GTK_BOX(hbox_bottom), g_locator_label);
         csnhypodbp_update_locator_label();
 
         gtk_box_append(GTK_BOX(hbox_bottom), btn_locators);
         gtk_box_append(GTK_BOX(hbox_bottom), btn_locate);
+        g_btn_locate = btn_locate;
     }
     gtk_box_append(GTK_BOX(page_waves), hbox_bottom);
 

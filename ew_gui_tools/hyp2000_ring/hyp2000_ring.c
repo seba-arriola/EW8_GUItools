@@ -62,6 +62,7 @@ static int   LogFile      = 1;
 static int   Debug        = 0;
 static int   MinPhases    = 0;      /* 0 = sin filtro */
 static double MaxRMS      = 0.0;    /* 0 = sin filtro */
+static double FixedDepthKm = -1.0;  /* <0 = profundidad libre */
 
 static SHM_INFO      InRegion, OutRegion;
 static long          InKey = 0, OutKey = 0;
@@ -115,6 +116,7 @@ static int read_config(const char *file)
         else if (k_its("VelocityModel")){ str = k_str(); if (str) strncpy(VelocityModel, str, sizeof(VelocityModel)-1); }
         else if (k_its("MinPhases"))    MinPhases = k_int();
         else if (k_its("MaxRMS"))       MaxRMS = k_val();
+        else if (k_its("FixedDepthKm")) FixedDepthKm = k_val();
         else continue;
 
         if (k_err()) { fprintf(stderr, "hyp2000_ring: error de config en '%s'\n", com); k_close(); return -1; }
@@ -332,6 +334,12 @@ static int hypo_startup(void)
     }
     snprintf(msg, sizeof(msg), "@%s", CommandFile);
     if (callHypo(msg))               return -1;   /* startup (.hyp)      */
+    /* Profundidad fija: se emite DESPUES del .hyp, asi pisa su `ZTR <z> F`.
+       El 2.o token `T` fija DEPFIXA (todas las profundidades de esta corrida). */
+    if (FixedDepthKm >= 0.0) {
+        snprintf(msg, sizeof(msg), "ZTR %.3f T", FixedDepthKm);
+        if (callHypo(msg))           return -1;
+    }
     if (callHypo("200 T 1900 0"))    return -1;   /* formatos Y2K        */
     if (callHypo("COP 5"))           return -1;   /* ARC entrada+shadow  */
     if (callHypo("PHS 'arcIn'"))     return -1;   /* fichero de fases    */
@@ -523,6 +531,10 @@ int main(int argc, char **argv)
         if (hypo_startup() != 0) { fprintf(stderr, "hyp2000_ring: arranque de hypoinverse fallo\n"); return 1; }
         if (hypo_locate(in, n, out, &on) == 0 && on > 0) {
             on = arc_rewrite_id(out, on, in, n);
+            if (on <= 0) {
+                fprintf(stderr, "hyp2000_ring: ARC no reescrito\n");
+                return 2;
+            }
             log_result("hyp2000_ring", in, n, out, on, 0);
             fwrite(out, 1, (size_t)on, stdout);
             return 0;

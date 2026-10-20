@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_fixdepth.h"
 #include "csnhypodbp_mww.h"
 #include "csnhypodbp_statable.h"
 #include <adwaita.h>
@@ -1685,6 +1686,90 @@ void csnhypodbp_update_locator_label(void) {
     if (!g_locator_label) return;
     snprintf(b, sizeof(b), "Locator: %s", g_active_locator[0] ? g_active_locator : "(none)");
     gtk_label_set_text(GTK_LABEL(g_locator_label), b);
+    if (g_fix_depth_chk) {
+        if (strcmp(g_active_locator, "nlloc_ring") == 0)
+            gtk_widget_set_tooltip_text(g_fix_depth_chk,
+                "NLLoc no fija la profundidad: la busca en una ventana de "
+                "+/-FixDepthSpacingKm/2 (0.05 km por defecto)");
+        else
+            gtk_widget_set_tooltip_text(g_fix_depth_chk,
+                "Fija la profundidad de la solucion: el localizador no la resuelve");
+    }
+}
+
+/* --- Profundidad fija (depth [caja] [Fix] de la barra de picking) --- */
+
+/* Profundidad de la solucion elegida o, si no hay, de la candidata. <0 si no
+   hay ninguna: en ese caso la caja se queda como este. */
+static double fix_depth_current_solution(void) {
+    gpointer item = g_selection_detail
+                    ? gtk_single_selection_get_selected_item(g_selection_detail)
+                    : NULL;
+    if (item) {
+        double d = -1.0;
+        g_object_get(CSNHYPODBP_ROW(item), "depth", &d, NULL);
+        if (d >= 0.0) return d;
+    }
+    if (g_preview_valid && g_preview_sol.depth >= 0.0) return g_preview_sol.depth;
+    return -1.0;
+}
+
+/* Aplica el texto de la caja. Un texto invalido NO se aplica (se conserva el
+   ultimo valido solo si sigue en la caja) y deja `locate` insensible. */
+static void fix_depth_apply(void) {
+    const char *txt;
+    double km = -1.0;
+    int ok;
+
+    if (!g_fix_depth_entry) return;
+    txt = gtk_editable_get_text(GTK_EDITABLE(g_fix_depth_entry));
+    ok = csnhypodbp_fixdepth_parse(txt, &km);
+    if (ok) {
+        g_fix_depth_km = km;
+        gtk_widget_remove_css_class(g_fix_depth_entry, "error");
+        gtk_widget_set_tooltip_text(g_fix_depth_entry,
+            "Profundidad fija de esta corrida (km)");
+    } else {
+        g_fix_depth_km = -1.0;
+        gtk_widget_add_css_class(g_fix_depth_entry, "error");
+        gtk_widget_set_tooltip_text(g_fix_depth_entry,
+            "Profundidad invalida: escribe un numero entre 0 y 1000 km");
+    }
+    if (g_btn_locate)
+        gtk_widget_set_sensitive(g_btn_locate,
+                                 !(g_fix_depth_on && g_fix_depth_km < 0.0));
+}
+
+void on_fix_depth_toggled(GtkCheckButton *b, gpointer data) {
+    (void)data;
+    g_fix_depth_on = gtk_check_button_get_active(b) ? TRUE : FALSE;
+    if (!g_fix_depth_entry) return;
+    gtk_widget_set_sensitive(g_fix_depth_entry, g_fix_depth_on);
+    if (g_fix_depth_on) {
+        double km = -1.0;
+        const char *txt = gtk_editable_get_text(GTK_EDITABLE(g_fix_depth_entry));
+
+        if (!csnhypodbp_fixdepth_parse(txt, &km)) {
+            double cur = fix_depth_current_solution();
+            if (cur >= 0.0) {
+                char buf[32] = "";
+                csnhypodbp_fixdepth_format(cur, buf, sizeof(buf));
+                gtk_editable_set_text(GTK_EDITABLE(g_fix_depth_entry), buf);
+            }
+        }
+        gtk_widget_grab_focus(g_fix_depth_entry);
+    }
+    fix_depth_apply();
+}
+
+void on_fix_depth_activate(GtkEntry *e, gpointer data) {
+    (void)e; (void)data;
+    fix_depth_apply();
+}
+
+void on_fix_depth_focus_leave(GtkEventControllerFocus *c, gpointer data) {
+    (void)c; (void)data;
+    if (g_fix_depth_on) fix_depth_apply();
 }
 
 /* --- locate: worker + preview --- */
@@ -1695,6 +1780,7 @@ typedef struct {
     CsnhypodbpTankTrace tank[MAX_ESTA];
     int ntank;
     char locator[32];
+    double fix_depth_km;          /* < 0 = profundidad libre */
     CsnhypodbpSolution out;
     CsnhypodbpMagOut mag;
     char err[256];
@@ -1704,9 +1790,58 @@ typedef struct {
     unsigned kind_mask;
     CsnhypodbpMagOvrRow ovr[CSNHYPODBP_MAGMARKS_MAX];
     int novr;
+    unsigned gen;                 /* generacion del job (descarta resultados viejos) */
 } LocateJob;
 
 static gboolean locate_finish(gpointer data);
+
+/* Estado del `locate` en curso: indicador general (todos los localizadores). */
+static int    g_locate_busy = 0;
+static unsigned g_locate_gen = 0;
+static gint64 g_locate_t0 = 0;
+static long   g_locate_elapsed = 0;
+static guint  g_locate_tick_id = 0;
+static char   g_locate_name[32] = "";
+static char   g_locate_err[128] = "";
+static int    g_locate_confirmed = 0;   /* confirmo el candidato de csnloc */
+
+typedef struct {
+    CsnhypodbpSolution sol;
+    unsigned gen;
+} LocateStageMsg;
+
+static gboolean locate_partial(gpointer data) {
+    LocateStageMsg *m = data;
+
+    if (g_locate_busy && m->gen == g_locate_gen) {
+        g_preview_sol = m->sol;
+        memset(&g_preview_mag, 0, sizeof(g_preview_mag));
+        g_preview_valid = TRUE;
+        g_preview_pref_kind = -1;
+        csnhypodbp_preview_update();
+        rebuild_station_list();
+    }
+    g_free(m);
+    return G_SOURCE_REMOVE;
+}
+
+/* Corre en el hilo worker: copia la solucion y vuelve al hilo GTK. */
+static void locate_stage(const CsnhypodbpSolution *base, void *ud) {
+    LocateJob *job = ud;
+    LocateStageMsg *m = g_new0(LocateStageMsg, 1);
+
+    m->sol = *base;
+    m->gen = job->gen;
+    g_idle_add(locate_partial, m);
+}
+
+static gboolean locate_tick(gpointer data) {
+    (void)data;
+    if (!g_locate_busy) return G_SOURCE_REMOVE;
+    g_locate_elapsed = (long)((g_get_monotonic_time() - g_locate_t0) / G_USEC_PER_SEC);
+    csnhypodbp_preview_update();
+    return G_SOURCE_CONTINUE;
+}
 
 static gpointer locate_thread(gpointer data) {
     LocateJob *job = data;
@@ -1725,6 +1860,8 @@ static gpointer locate_thread(gpointer data) {
                                         NULL, &job->base, job->mp, job->nmp,
                                         job->tank, job->ntank,
                                         job->ovr, job->novr, job->kind_mask,
+                                        job->fix_depth_km, g_locator_timeout_sec,
+                                        locate_stage, job, NULL,
                                         &job->out, &job->mag,
                                         job->err, sizeof(job->err));
     }
@@ -1734,20 +1871,48 @@ static gpointer locate_thread(gpointer data) {
 
 static gboolean locate_finish(gpointer data) {
     LocateJob *job = data;
+
+    if (job->gen != g_locate_gen) {   /* resultado de una corrida vieja */
+        g_free(job);
+        return G_SOURCE_REMOVE;
+    }
+    if (g_locate_tick_id) {
+        g_source_remove(g_locate_tick_id);
+        g_locate_tick_id = 0;
+    }
+    g_locate_busy = 0;
+    g_locate_elapsed = 0;
+    if (g_btn_locate)
+        gtk_widget_set_sensitive(g_btn_locate,
+                                 !(g_fix_depth_on && g_fix_depth_km < 0.0));
     if (job->rc == 0) {
-        g_preview_sol = job->out;
-        g_preview_mag = job->mag;
-        g_preview_valid = TRUE;
-        csnhypodbp_preview_update();
-        rebuild_station_list();   /* residual de la candidata en la tabla */
+        /* Red de seguridad: si el binario del localizador es viejo e ignora
+           FixedDepthKm, la solucion vuelve con otra profundidad. */
+        if (job->fix_depth_km >= 0.0 &&
+            fabs(job->out.depth - job->fix_depth_km) > 0.5)
+            logit("et", "csnhypodbp: %s no respeto la profundidad fija "
+                        "(pedida %.1f, obtenida %.1f km)\n",
+                  job->locator, job->fix_depth_km, job->out.depth);
+        g_locate_err[0] = '\0';
+        /* Si el usuario ya confirmo el candidato de csnloc, el refinador no
+           pisa esa confirmacion: solo queda en el log. */
+        if (!g_locate_confirmed) {
+            g_preview_sol = job->out;
+            g_preview_mag = job->mag;
+            g_preview_valid = TRUE;
+        }
         logit("t", "csnhypodbp: %s OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
               job->mags_only ? "calculate" : "locate",
               job->locator, job->out.nph, job->out.rms,
               job->mag.ml[0] ? job->mag.ml : "-", job->mag.mwp[0] ? job->mag.mwp : "-");
+        if (!g_locate_confirmed) rebuild_station_list();   /* residual de la candidata */
     } else {
+        snprintf(g_locate_err, sizeof(g_locate_err), "%s", job->err[0] ? job->err : "error");
         logit("e", "csnhypodbp: %s fallo [%s]: %s\n",
               job->mags_only ? "calculate" : "locate", job->locator, job->err);
     }
+    csnhypodbp_preview_update();
+    g_locate_confirmed = 0;
     g_free(job);
     return G_SOURCE_REMOVE;
 }
@@ -1787,12 +1952,12 @@ void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
 void csnhypodbp_preview_update(void) {
     CsnhypodbpPreviewVals v;
     int i;
-    if (!g_preview_box || !g_preview_title) return;
+    if (!g_preview_box || !g_preview_title || !g_preview_otime) return;
     if (g_preview_valid) {
         char mww_s[16];
 
         preview_mww_text(g_preview_sol.qid, g_preview_sol.mod, mww_s, sizeof mww_s);
-        csnhypodbp_preview_from_candidate(&v, g_active_locator,
+        csnhypodbp_preview_from_candidate(&v, g_preview_sol.otime, g_active_locator,
                                           g_preview_sol.lat, g_preview_sol.lon,
                                           g_preview_sol.depth, g_preview_sol.nph,
                                           g_preview_sol.rms,
@@ -1804,14 +1969,14 @@ void csnhypodbp_preview_update(void) {
                         : NULL;
         if (item) {
             CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
-            double lat = 0, lon = 0, depth = 0;
+            double lat = 0, lon = 0, depth = 0, otime = 0;
             double nm[CSNHYPODBP_MAG_NKIND] = { -1.0, -1.0, -1.0, -1.0 };
             char mtxt[CSNHYPODBP_MAG_NKIND][16];
             char mww_s[16];
             int k, qid = 0, mod = 0;
 
             g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth,
-                         "qid", &qid, "mod", &mod,
+                         "otime", &otime, "qid", &qid, "mod", &mod,
                          "nmag0", &nm[0], "nmag1", &nm[1],
                          "nmag2", &nm[2], "nmag3", &nm[3], NULL);
             for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++)
@@ -1819,7 +1984,7 @@ void csnhypodbp_preview_update(void) {
             preview_mww_text(qid, mod, mww_s, sizeof mww_s);
             /* rms/nph: las celdas ya formateadas de la fila (c5/c7). Las cuatro
                magnitudes salen de nmag0..3, asi el formato es el mismo en las 4. */
-            csnhypodbp_preview_from_selected(&v, lat, lon, depth,
+            csnhypodbp_preview_from_selected(&v, otime, lat, lon, depth,
                                              csnhypodbp_row_col(row, 5),
                                              csnhypodbp_row_col(row, 7),
                                              mtxt[0], mtxt[1], mtxt[2], mtxt[3],
@@ -1828,7 +1993,31 @@ void csnhypodbp_preview_update(void) {
             csnhypodbp_preview_clear(&v);
         }
     }
+    if (g_locate_busy)
+        csnhypodbp_preview_set_busy(&v, g_locate_name, g_locate_elapsed);
+    else if (g_locate_err[0])
+        csnhypodbp_preview_set_error(&v, g_locate_err);
     gtk_label_set_text(GTK_LABEL(g_preview_title), v.title);
+    gtk_label_set_text(GTK_LABEL(g_preview_otime), v.otime);
+    if (g_preview_status) {
+        const char *txt = v.busy[0] ? v.busy : v.err;
+
+        gtk_label_set_text(GTK_LABEL(g_preview_status), txt);
+        gtk_widget_set_visible(g_preview_status, txt[0] != '\0');
+        if (v.state == CSNHYPODBP_PREVIEW_ERROR)
+            gtk_widget_add_css_class(g_preview_status, "preview-error");
+        else
+            gtk_widget_remove_css_class(g_preview_status, "preview-error");
+    }
+    if (g_preview_spinner) {
+        if (v.state == CSNHYPODBP_PREVIEW_RUNNING) {
+            gtk_spinner_start(GTK_SPINNER(g_preview_spinner));
+            gtk_widget_set_visible(g_preview_spinner, TRUE);
+        } else {
+            gtk_spinner_stop(GTK_SPINNER(g_preview_spinner));
+            gtk_widget_set_visible(g_preview_spinner, FALSE);
+        }
+    }
     for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
         gtk_label_set_text(GTK_LABEL(g_preview_val[i]), v.val[i]);
     if (v.candidate) gtk_widget_add_css_class(g_preview_box, "candidate");
@@ -1884,6 +2073,7 @@ void on_preview_confirm(GtkWidget *w, gpointer d) {
     int pref = g_preview_pref_kind;
     (void)w; (void)d;
     if (!g_preview_valid) return;
+    if (g_locate_busy) g_locate_confirmed = 1;   /* el refinador no la pisa */
     csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, pref);
     /* El mecanismo focal (con su Mww) se guarda AL CONFIRMAR la solución, no con
      * un botón aparte del panel. Solo si el usuario marcó el radio `Mww`: es el
@@ -1951,6 +2141,11 @@ static void locate_start(int mags_only) {
     LocateJob *job;
     GThread *th;
     int i;
+    if (g_locate_busy) {
+        logit("t", "csnhypodbp: %s ya en curso; se ignora el nuevo clic\n",
+              mags_only ? "calculate" : "locate");
+        return;
+    }
     if (selected_qid == 0) {
         logit("t", "csnhypodbp: %s sin evento seleccionado\n",
               mags_only ? "calculate" : "locate");
@@ -2025,6 +2220,10 @@ static void locate_start(int mags_only) {
     }
     snprintf(job->locator, sizeof(job->locator), "%s", g_active_locator);
     job->mags_only = mags_only;
+    /* Profundidad fija: solo en la ruta `locate` (las magnitudes se calculan
+       sobre una solucion que ya existe). <0 = libre. */
+    job->fix_depth_km = (!mags_only && g_fix_depth_on && g_fix_depth_km >= 0.0)
+                        ? g_fix_depth_km : -1.0;
     /* Las ventanas ajustadas van al motor en LAS DOS rutas: `calculate` con la
        mascara del boton y `locate` con todas las que haya a mano. */
     job->kind_mask = mags_only ? g_mag_calc_mask : 0u;
@@ -2032,6 +2231,24 @@ static void locate_start(int mags_only) {
     logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d tank=%d winovr=%d\n",
           mags_only ? "calculate" : "locate", job->locator, job->base.qid,
           job->base.npicks, job->nmp, job->ntank, job->novr);
+    /* Indicador general: arranca ANTES del hilo, asi hasta un localizador
+       instantaneo alcanza a mostrarse como "calculando". */
+    g_locate_busy = 1;
+    g_locate_gen++;
+    job->gen = g_locate_gen;
+    g_locate_confirmed = 0;
+    g_locate_err[0] = '\0';
+    g_locate_elapsed = 0;
+    snprintf(g_locate_name, sizeof(g_locate_name), "%s",
+             mags_only ? "magnitudes"
+                       : (g_active_locator[0] ? g_active_locator : "csnloc"));
+    g_locate_t0 = g_get_monotonic_time();
+    if (g_locate_tick_id) g_source_remove(g_locate_tick_id);
+    g_locate_tick_id = g_timeout_add(1000, locate_tick, NULL);
+    g_preview_valid = FALSE;      /* la candidata vieja no se confirma */
+    g_preview_pref_kind = -1;
+    if (g_btn_locate) gtk_widget_set_sensitive(g_btn_locate, FALSE);
+    csnhypodbp_preview_update();
     th = g_thread_new("locate", locate_thread, job);
     g_thread_unref(th);
 }
@@ -2041,6 +2258,15 @@ static void locate_start(int mags_only) {
    cuatro (en los dos casos, una sola corrida de csnmags). */
 void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
+    /* Defensa: el boton esta insensible con Fix invalido, pero si se llega por
+       teclado/accion no se lanza una corrida sin profundidad. */
+    if (g_fix_depth_on) {
+        fix_depth_apply();
+        if (g_fix_depth_km < 0.0) {
+            logit("et", "csnhypodbp: locate con Fix y profundidad invalida\n");
+            return;
+        }
+    }
     locate_start(0);
 }
 

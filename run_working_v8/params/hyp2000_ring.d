@@ -28,3 +28,5 @@ VelocityModel   CHILE_POTIN
 # Filtros de calidad (0 = sin filtro).
 MinPhases       4
 MaxRMS          2.0
+# Profundidad fija (km); <0 = libre. La GUI la pasa por corrida.
+# FixedDepthKm  -1.0

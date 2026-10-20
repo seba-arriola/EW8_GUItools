@@ -137,7 +137,7 @@ int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
 
     best_lat = h->lat;
     best_lon = h->lon;
-    best_dep = h->depth_km;
+    best_dep = cfg->FixedDepthOn ? cfg->FixedDepthKm : h->depth_km;
     best_score = score_at(st, picks, h->nphases, tt, cfg,
                           best_lat, best_lon, best_dep, &best_t0);
 
@@ -158,6 +158,8 @@ int RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
                     double la = best_lat + a * step_lat;
                     double lo = best_lon + b * step_lon;
                     double de = best_dep + c * step_dep;
+                    /* Profundidad fija: no se busca en z (solo lat/lon). */
+                    if (cfg->FixedDepthOn && c != 0) continue;
                     double t0, s;
                     if (de < 0.0) continue;
                     if (la < -89.0 || la > 89.0) continue;

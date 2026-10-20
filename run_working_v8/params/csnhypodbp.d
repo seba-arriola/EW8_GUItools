@@ -30,7 +30,7 @@ locator         nlloc_ring   nlloc_ring   nlloc_ring.d
 # $EW_PARAMS y dentro de SU carpeta — runtime, no versionado
 # (run_working_v8/csnhypodbp/); el modulo la crea si falta.
 ManualStateFile ../csnhypodbp/csnhypodbp_manual.events
-LocatorTimeoutSec 180                      # timeout (s) por localizador offline
+LocatorTimeoutSec 600                      # timeout (s) por localizador offline (NLLoc es lento)
 PrefetchNeighbors 2                        # estaciones vecinas a precargar
 
 # Colores de las fases (formato RRGGBB, con o sin '#'). Aplican a las marcas de
@@ -70,7 +70,7 @@ StateFile       csnloc.events             # Estado de eventos de csnloc (solo re
 # Mapa base: imagen equirectangular de mundo completo (lon -180..180,
 # lat -90..90, ancho = 2*alto, sin canal alpha). Valida con:
 #   python3 ew_gui_tools/common/tools/check_map_image.py <imagen>
-MapImageFile    world_map_con_chile.jpg
+#MapImageFile    world_map_con_chile.jpg
 # Ancho minimo (grados) del auto-encuadre del mapa de planta: con un grupo de
 # soluciones apretado, la vista no se acerca mas que esto (rueda para acercar).
 MapMinSpanDeg   5.0

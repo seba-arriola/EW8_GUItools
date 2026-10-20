@@ -92,8 +92,36 @@ void csnhypodbp_locate_keep_tmp(int on);
    que parece cabecera de ARC (>=190 chars y 14 digitos iniciales) o NULL. */
 char *csnhypodbp_arc_skip_preamble(char *buf);
 
+/* Override de una clave de un .d (cfg temporal del locate). */
+typedef struct {
+    const char *key;
+    const char *value;
+} CsnhypodbpCfgOverride;
+
+/* Copia `src` a `dst` linea a linea reemplazando por "<key> <value>" la primera
+ * linea cuyo primer token sea `key`; si no existe, la anade al final. Las
+ * repeticiones de la misma clave se descartan. 0 = OK, -1 = error de I/O. */
+int csnhypodbp_cfg_copy(const char *src, const char *dst,
+                        const CsnhypodbpCfgOverride *ovr, int novr);
+
+/* Atajo para la profundidad fija: km < 0 copia literal; km >= 0 anade/reemplaza
+ * `FixedDepthKm %.3f`. 0 = OK, -1 = error de I/O. */
+int csnhypodbp_cfg_with_fixdepth(const char *src, const char *dst, double fix_depth_km);
+
+/* Copia el `.d` del refinador con `WorkDir <workdir>` (si no es NULL/vacio) y
+ * `FixedDepthKm %.3f` (si km >= 0). El `WorkDir` aislado evita que la corrida
+ * offline comparta `obs.nll`/`nll_ring.in`/`arcIn` con el demonio. */
+int csnhypodbp_cfg_with_refiner_opts(const char *src, const char *dst,
+                                     const char *workdir, double fix_depth_km);
+
+/* Etapa intermedia: se invoca tras `csnloc` y antes del refinador, con la
+ * solucion base ya parseada. Corre en el hilo worker; el callback NO toca GTK. */
+typedef void (*CsnhypodbpLocateStageFn)(const CsnhypodbpSolution *base, void *ud);
+
 /* Orquesta la cadena. Devuelve 0 si localiza; `out` = solucion, `mag` =
-   magnitudes. `err` recibe el motivo si falla. */
+   magnitudes. `err` recibe el motivo si falla. `fix_depth_km` < 0 = profundidad
+   libre; >= 0 = `FixedDepthKm` en la cfg temporal de csnloc y del refinador.
+   `timeout_sec` <= 0 = sin limite. `cancel` (opcional) aborta al ponerse a 1. */
 int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *selected,
                           const char *ew_params, const char *ew_home, const char *ew_version,
                           const char *tmp_root,
@@ -101,6 +129,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           const CsnhypodbpManualPick *mp, int nmp,
                           const CsnhypodbpTankTrace *tank, int ntank,
                           const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
+                          double fix_depth_km, int timeout_sec,
+                          CsnhypodbpLocateStageFn on_stage, void *stage_ud,
+                          volatile int *cancel,
                           CsnhypodbpSolution *out, CsnhypodbpMagOut *mag,
                           char *err, size_t errlen);
 

@@ -65,6 +65,7 @@ NumThreads        8              # hilos de la retroproyeccion. Medido sobre 25
 RefineIterations  3
 RefineNodeKm      5.0
 RefineDepthKm     10.0             # semiancho de la caja de refinamiento en z (km); 0 = auto (2*RefineNodeKm)
+# FixedDepthKm    -1.0             # profundidad fija (km); <0 = busqueda libre. La GUI la pasa por corrida
 # DepthPriorKm     0.0             # profundidad a priori (km); 0 = sin prior
 # DepthPriorSigmaKm 0.0            # sigma del prior gaussiano (km)
 

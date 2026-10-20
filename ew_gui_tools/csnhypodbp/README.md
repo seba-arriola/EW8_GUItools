@@ -172,8 +172,14 @@ picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
   evento.
 
 Barra inferior: a la **izquierda** `Cancel`; a la **derecha** los checkboxes de origen
-**`A` / `M` / `Teo`** (M marcada por defecto; deciden qué picadas se mandan al localizador), la caja
-con el **localizador activo** y los botones `locators` y `locate`. El resto de controles viven en el
+**`A` / `M` / `Teo`** (M marcada por defecto; deciden qué picadas se mandan al localizador), el
+grupo **`depth [caja] [☑ Fix]`** (profundidad fija de la corrida; la caja solo es sensible con
+`Fix` marcado, se aplica al confirmar —Enter o salir del campo— y un valor inválido deja `locate`
+insensible), la caja con el **localizador activo** y los botones `locators` y `locate`. `Fix` no se
+persiste en el `.d`: viaja por corrida en una copia temporal de la configuración del localizador.
+Con `csnloc`/`hyp2000_ring` la solución sale **exactamente** en esa profundidad; con `nlloc_ring`
+NLLoc no la soporta de forma nativa y se emula en una ventana de ±`FixDepthSpacingKm`/2 (0.05 km
+por defecto), como avisa el tooltip. El resto de controles viven en el
 menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* los grupos `Search`
 (`Search events…`, `Clear search`) y `View`; en *Ondas* añade el grupo
 `Waveforms` con `Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia),
@@ -233,12 +239,25 @@ Detalles de la cadena que importan si vuelve a fallar:
 - Clave **`LocateKeepTmp 1`**: no borra el directorio temporal al fallar y **anexa su ruta al error**
   (`[tmp=…]`), donde quedan `picks.txt`, `event.arc`, `csnloc.err` y `ref.err`. Arnés manual sin GTK:
   `make -C ew_gui_tools/csnhypodbp chain` y
-  `./locate_chain <arc_entrada> [refinador] [tmp_root]` corre la cadena completa con los mismos
-  parámetros que la GUI y no borra nada.
-El resultado se muestra en una **tablita de 2 filas** al tope de la pestaña (cabecera de parámetros
-`Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`/`ML`/`Mwp` y su fila de valores), que **siempre está visible**:
-muestra primero la solución elegida en el detalle y, tras `locate`, la candidata con un **fondo rojo
-muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección muestra guiones.
+  `./locate_chain <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>] [--timeout <s>]` corre la cadena
+  completa con los mismos parámetros que la GUI y no borra nada.
+El resultado se muestra en un **cuadro de dos mitades** al tope de *Procesar* (compartido por
+`picking` y `magnitudes`): a la izquierda el título, `Origin time` y los parámetros
+`Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la derecha el bloque `Magnitude`
+(`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con un radio compacto por magnitud para elegir la preferida al
+confirmar. Una grilla única de 4 filas y un separador vertical mantienen las filas alineadas y
+evitan la franja vacía que dejaba la fila de radios sobre los parámetros. El cuadro **siempre está
+visible**: muestra primero la solución elegida en el detalle y, tras `locate`, la candidata con un
+**fondo rojo muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección
+muestra guiones.
+Mientras corre el `locate`, a la derecha del `Origin time` aparece un spinner y
+`calculando <localizador>… N s` (timer de 1 s), **para todos los localizadores**; al terminar
+`csnloc` se muestra su candidato y el refinador sigue actualizando el contador. `LocatorTimeoutSec`
+(600 s en `csnhypodbp.d`) corta el refinador, y el mismo renglón muestra el error real
+(`timeout`, `ref.err` o ARC inválido). El refinador recibe un `.d` temporal con un `WorkDir` propio
+(`../nlloc_ring_run_<...>`) y, si `Fix` está marcado, `FixedDepthKm`; el ARC se siembra con la
+solución elegida (lat/lon/profundidad/qid) para que NLLoc busque en la banda correcta y el candidato
+siga perteneciendo al evento.
 `Confirm` la convierte en la **solución manual preferida** (se reinyecta por el camino normal de ARC,
 se emiten **una vez** las picadas a `PICK_RING` con origen `M` y se persiste en `ManualStateFile`, que
 se relee al arrancar); `Discard` la descarta para seguir picando (vuelve a mostrar la elegida).
@@ -372,7 +391,7 @@ resto del módulo (y EarthWorm) lo espera así.
 | `sColor` | `009900` | color de la fase S (marcas + círculo del indicador) |
 | `locator` | — | localizador offline: `locator <nombre> <bin> <cfg>` |
 | `ManualStateFile` | `csnhypodbp_manual.events` | soluciones manuales propias (locate+confirm) |
-| `LocatorTimeoutSec` | `180` | timeout (s) por localizador offline |
+| `LocatorTimeoutSec` | `600` | timeout (s) por localizador offline (NLLoc es lento) |
 | `PrefetchNeighbors` | `2` | estaciones vecinas a precargar |
 | `HideEmptyStations` | `0` | ocultar de la tabla las estaciones sin datos en la ventana |
 | `MaxDistKm` | `500` | distancia (km) máxima de las estaciones de la tabla (y por tanto del `locate`) |

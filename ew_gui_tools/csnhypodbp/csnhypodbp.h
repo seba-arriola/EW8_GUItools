@@ -227,6 +227,9 @@ void on_axis_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data);
 /* --- Preview de la solucion: tablita de 2 filas (cabecera + valores) --- */
 extern GtkWidget *g_preview_box;
 extern GtkWidget *g_preview_title;                       /* titulo segun estado */
+extern GtkWidget *g_preview_otime;                       /* tiempo de origen (UTC) */
+extern GtkWidget *g_preview_spinner;                     /* calculando… */
+extern GtkWidget *g_preview_status;                      /* "calculando <loc>… N s" | error */
 extern GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS]; /* fila de valores */
 extern GtkWidget *g_preview_btn_confirm, *g_preview_btn_discard;
 /* Radios de magnitud preferida del cuadro de la candidata. */
@@ -284,6 +287,15 @@ extern GtkWidget *g_chk_a, *g_chk_m, *g_chk_teo;
 extern GtkWidget *g_locator_label;
 void csnhypodbp_update_locator_label(void);
 void on_filter_toggled(GtkCheckButton *b, gpointer data);
+
+/* --- Profundidad fija (barra de picking: depth [caja] [Fix]) --- */
+extern GtkWidget *g_fix_depth_label, *g_fix_depth_entry, *g_fix_depth_chk;
+extern GtkWidget *g_btn_locate;          /* para gatear `locate` con Fix invalido */
+extern gboolean   g_fix_depth_on;
+extern double     g_fix_depth_km;        /* < 0 = sin valor valido */
+void on_fix_depth_toggled(GtkCheckButton *b, gpointer data);
+void on_fix_depth_activate(GtkEntry *e, gpointer data);
+void on_fix_depth_focus_leave(GtkEventControllerFocus *c, gpointer data);
 
 /* --- FILTRO CONFIGURABLE --- */
 extern int      g_filter_type;     /* 0=Raw, 1=High-Pass, 2=Low-Pass, 3=Band-Pass */

@@ -245,6 +245,85 @@ int main(void)
         assert(fabs(js.picks[1].residual - (-0.45)) < 1e-6);
     }
 
+    /* --- cfg temporal: overrides por clave y FixedDepthKm --- */
+    {
+        const char *src = "/tmp/opencode/test_locate_cfg_src.d";
+        const char *dst = "/tmp/opencode/test_locate_cfg_dst.d";
+        const char *orig =
+            "# config de prueba\n"
+            "InRing PICK_RING\n"
+            "DumpHypo 0\n"
+            "DumpHypoFiles 7\n"
+            "FixedDepthKm 1.0\n"
+            "FixedDepthKm 2.0\n"
+            "OutRing HYPO_RING\n";
+        CsnhypodbpCfgOverride ovr[2];
+        char *p;
+        int hits;
+
+        fp = fopen(src, "w");
+        assert(fp != NULL);
+        fputs(orig, fp);
+        fclose(fp);
+
+        /* km >= 0: reemplaza la 1.a y descarta la repetida. */
+        assert(csnhypodbp_cfg_with_fixdepth(src, dst, 33.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "FixedDepthKm 33.000\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 1.0") == NULL);
+        assert(strstr(buf, "FixedDepthKm 2.0") == NULL);
+        assert(strstr(buf, "InRing PICK_RING") != NULL);
+        assert(strstr(buf, "OutRing HYPO_RING") != NULL);
+        assert(strstr(buf, "DumpHypo 0") != NULL);   /* sin override de DumpHypo */
+        for (p = buf, hits = 0; (p = strstr(p, "FixedDepthKm ")) != NULL; p++, hits++)
+            ;
+        assert(hits == 1);
+
+        /* Refinador offline: WorkDir propio + FixedDepthKm en la misma copia. */
+        assert(csnhypodbp_cfg_with_refiner_opts(src, dst,
+                                                "../nlloc_ring_run_123", 33.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "WorkDir ../nlloc_ring_run_123\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 33.000\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 1.0") == NULL);
+        assert(strstr(buf, "InRing PICK_RING") != NULL);
+
+        /* km < 0: copia literal (las dos lineas tal cual). */
+        assert(csnhypodbp_cfg_with_fixdepth(src, dst, -1.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strcmp(buf, orig) == 0);
+
+        /* Dos overrides a la vez y frontera de token (DumpHypoFiles no casa). */
+        ovr[0].key = "DumpHypo";   ovr[0].value = "1";
+        ovr[1].key = "OutRing";    ovr[1].value = "HYPO_RING_REF";
+        assert(csnhypodbp_cfg_copy(src, dst, ovr, 2) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "DumpHypo 1\n") != NULL);
+        assert(strstr(buf, "DumpHypoFiles 7") != NULL);
+        assert(strstr(buf, "DumpHypo 0") == NULL);
+        assert(strstr(buf, "OutRing HYPO_RING_REF") != NULL);
+        assert(strstr(buf, "OutRing HYPO_RING\n") == NULL);
+
+        remove(src);
+        remove(dst);
+    }
+
     printf("test_locate OK\n");
     return 0;
 }

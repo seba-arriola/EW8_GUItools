@@ -71,6 +71,8 @@ static void set_defaults(CSLocParams *c)
     c->RefineIterations = 3;
     c->RefineNodeKm = 5.0;
     c->RefineDepthKm = 2.0 * c->RefineNodeKm;   /* auto: escapa del nodo */
+    c->FixedDepthOn = 0;                        /* apagado por defecto   */
+    c->FixedDepthKm = -1.0;
     c->DepthPriorKm = 0.0;                      /* 0 = sin prior         */
     c->DepthPriorSigmaKm = 0.0;
 
@@ -153,6 +155,11 @@ static int read_config(const char *file, CSLocParams *c)
         else if (k_its("RefineIterations")) c->RefineIterations = k_int();
         else if (k_its("RefineNodeKm")) c->RefineNodeKm = k_val();
         else if (k_its("RefineDepthKm")) c->RefineDepthKm = k_val();
+        else if (k_its("FixedDepthKm")) {
+            /* <0 = busqueda libre; >=0 (incluido 0) = profundidad fija. */
+            c->FixedDepthKm = k_val();
+            c->FixedDepthOn = (c->FixedDepthKm >= 0.0) ? 1 : 0;
+        }
         else if (k_its("DepthPriorKm")) c->DepthPriorKm = k_val();
         else if (k_its("DepthPriorSigmaKm")) c->DepthPriorSigmaKm = k_val();
         else if (k_its("AgencyID"))     { str = k_str(); if (str) strncpy(c->AgencyID, str, sizeof(c->AgencyID)-1); }

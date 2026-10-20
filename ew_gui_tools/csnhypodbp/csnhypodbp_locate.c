@@ -7,7 +7,12 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include <trace_buf.h>
 #include <ewgui/arc_layout.h>
@@ -77,21 +82,92 @@ static int read_logs(const char *dir, char *out, size_t outn)
     return (int)n;
 }
 
-static int run_capture(const char *cmd, char *out, size_t outn)
+/* Ejecuta `cmd` capturando stdout, con timeout y cancelacion.
+ * Devuelve 0 = OK, -1 = error local, -2 = cancelado, -3 = timeout; en otro caso
+ * el exit status normalizado del hijo. `err` recibe el motivo de -1/-2/-3.
+ * El hijo corre en su propio grupo para poder matar tambien a sus descendientes
+ * (nlloc_ring/hyp2000_ring lanzan el motor en un fork). */
+static int run_capture(const char *cmd, char *out, size_t outn,
+                       int timeout_sec, volatile int *cancel,
+                       char *err, size_t errlen)
 {
-    FILE *fp = popen(cmd, "r");
+    int fds[2];
+    pid_t pid;
+    int status = 0, timedout = 0, cancelled = 0;
     size_t n = 0;
-    int rc;
-    if (!fp) return -1;
-    if (out && outn) {
-        n = fread(out, 1, outn - 1, fp);
-        out[n] = '\0';
-    } else {
-        char tmp[4096];
-        while (fread(tmp, 1, sizeof(tmp), fp) > 0) { }
+    time_t t0;
+
+    if (err && errlen) err[0] = '\0';
+    if (out && outn) out[0] = '\0';
+    if (pipe(fds) != 0) {
+        if (err) snprintf(err, errlen, "pipe: %s", strerror(errno));
+        return -1;
     }
-    rc = pclose(fp);
-    return rc;
+    pid = fork();
+    if (pid < 0) {
+        close(fds[0]); close(fds[1]);
+        if (err) snprintf(err, errlen, "fork: %s", strerror(errno));
+        return -1;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        close(fds[0]);
+        if (dup2(fds[1], STDOUT_FILENO) < 0) _exit(127);
+        close(fds[1]);
+        execl("/bin/sh", "sh", "-c", cmd, (char *)NULL);
+        _exit(127);
+    }
+    close(fds[1]);
+    fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
+    t0 = time(NULL);
+    for (;;) {
+        struct pollfd pfd;
+        char chunk[4096];
+        ssize_t r;
+
+        pfd.fd = fds[0];
+        pfd.events = POLLIN | POLLHUP;
+        pfd.revents = 0;
+        poll(&pfd, 1, 200);
+        r = read(fds[0], chunk, sizeof(chunk));
+        if (r > 0) {
+            if (out && outn && n < outn - 1) {
+                size_t cp = (size_t)r;
+                if (cp > outn - 1 - n) cp = outn - 1 - n;
+                memcpy(out + n, chunk, cp);
+                n += cp;
+                out[n] = '\0';
+            }
+        } else if (r == 0) {
+            break;                       /* EOF: el hijo cerro stdout */
+        }
+        if (cancel && *cancel) { cancelled = 1; break; }
+        if (timeout_sec > 0 && (time(NULL) - t0) >= timeout_sec) {
+            timedout = 1;
+            break;
+        }
+    }
+    if (cancelled || timedout) {
+        kill(-pid, SIGKILL);
+        kill(pid, SIGKILL);
+    }
+    waitpid(pid, &status, 0);
+    close(fds[0]);
+    if (out && outn) out[n] = '\0';
+    if (cancelled) {
+        if (err) snprintf(err, errlen, "cancelado");
+        return -2;
+    }
+    if (timedout) {
+        if (err) snprintf(err, errlen, "timeout tras %d s", timeout_sec);
+        return -3;
+    }
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) {
+        if (err) snprintf(err, errlen, "senal %d", WTERMSIG(status));
+        return 128 + WTERMSIG(status);
+    }
+    return -1;
 }
 
 static const CsnhypodbpLocator *find_locator(const CsnhypodbpLocator *list, int n, const char *name)
@@ -103,25 +179,101 @@ static const CsnhypodbpLocator *find_locator(const CsnhypodbpLocator *list, int 
     return NULL;
 }
 
-/* Copia el .d de csnloc forzando DumpHypo 1 (el ARC se extrae del log). */
-static int write_csnloc_cfg(const char *src, const char *dst)
+/* Escribe una copia de un .d reemplazando/anadiendo overrides por clave.
+ * El primer token de la linea manda: `DumpHypoX` no casa con `DumpHypo`. */
+int csnhypodbp_cfg_copy(const char *src, const char *dst,
+                        const CsnhypodbpCfgOverride *ovr, int novr)
 {
-    FILE *in = fopen(src, "r");
-    FILE *out;
+    FILE *in, *out;
     char line[1024];
-    int dumped = 0;
+    int *done;
+    int i, rc = 0;
+
+    if (!src || !dst || novr < 0 || (novr > 0 && !ovr)) return -1;
+    in = fopen(src, "r");
     if (!in) return -1;
     out = fopen(dst, "w");
     if (!out) { fclose(in); return -1; }
+    done = calloc((size_t)(novr > 0 ? novr : 1), sizeof(*done));
+    if (!done) { fclose(in); fclose(out); return -1; }
+
     while (fgets(line, sizeof(line), in)) {
         const char *p = line;
+        int matched = -1;
+
         while (*p == ' ' || *p == '\t') p++;
-        if (strncmp(p, "DumpHypo", 8) == 0) { fputs("DumpHypo 1\n", out); dumped = 1; }
-        else fputs(line, out);
+        for (i = 0; i < novr; i++) {
+            size_t klen = strlen(ovr[i].key);
+
+            if (strncmp(p, ovr[i].key, klen) == 0 &&
+                (p[klen] == '\0' || p[klen] == ' ' || p[klen] == '\t' ||
+                 p[klen] == '\n' || p[klen] == '\r')) {
+                matched = i;
+                break;
+            }
+        }
+        if (matched >= 0) {
+            if (!done[matched]) {
+                fprintf(out, "%s %s\n", ovr[matched].key, ovr[matched].value);
+                done[matched] = 1;
+            }
+        } else {
+            fputs(line, out);
+        }
     }
-    if (!dumped) fputs("DumpHypo 1\n", out);
-    fclose(in); fclose(out);
-    return 0;
+    for (i = 0; i < novr; i++)
+        if (!done[i]) fprintf(out, "%s %s\n", ovr[i].key, ovr[i].value);
+    if (ferror(in) || ferror(out)) rc = -1;
+    free(done);
+    fclose(in);
+    if (fclose(out) != 0) rc = -1;
+    return rc;
+}
+
+int csnhypodbp_cfg_with_fixdepth(const char *src, const char *dst, double fix_depth_km)
+{
+    return csnhypodbp_cfg_with_refiner_opts(src, dst, NULL, fix_depth_km);
+}
+
+int csnhypodbp_cfg_with_refiner_opts(const char *src, const char *dst,
+                                     const char *workdir, double fix_depth_km)
+{
+    CsnhypodbpCfgOverride ovr[2];
+    char value[32];
+    int n = 0;
+
+    if (workdir && workdir[0]) {
+        ovr[n].key = "WorkDir";
+        ovr[n].value = workdir;
+        n++;
+    }
+    if (fix_depth_km >= 0.0) {
+        snprintf(value, sizeof(value), "%.3f", fix_depth_km);
+        ovr[n].key = "FixedDepthKm";
+        ovr[n].value = value;
+        n++;
+    }
+    return csnhypodbp_cfg_copy(src, dst, n > 0 ? ovr : NULL, n);
+}
+
+/* Copia el .d de csnloc forzando DumpHypo 1 (el ARC se extrae del log) y, si
+ * se pide, la profundidad fija de esta corrida. */
+static int write_csnloc_cfg(const char *src, const char *dst, double fix_depth_km)
+{
+    CsnhypodbpCfgOverride ovr[2];
+    char value[32];
+    int n = 0;
+
+    ovr[n].key = "DumpHypo";
+    ovr[n].value = "1";
+    n++;
+    if (fix_depth_km >= 0.0) {
+        snprintf(value, sizeof(value), "%.3f", fix_depth_km);
+        ovr[n].key = "FixedDepthKm";
+        ovr[n].value = value;
+        n++;
+    }
+    return csnhypodbp_cfg_copy(src, dst, ovr, n);
 }
 
 /* 1 = conservar el directorio temporal (picks.txt, event.arc, csnloc.err,
@@ -649,7 +801,7 @@ int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *e
     snprintf(cmd, sizeof(cmd),
              "cd '%s' && '%s' '%s' '%s' '%s' --out '%s' 2>'%s/mags.err'",
              ew_params, mags_bin, magsd, hypos, tankf, magf, tmp);
-    run_capture(cmd, NULL, 0);
+    run_capture(cmd, NULL, 0, 0, NULL, NULL, 0);
     snprintf(erp, sizeof(erp), "%s/mags.err", tmp);
     if (read_file(magf, buf, sizeof(buf)) == 0) {
         csnhypodbp_mag_parse(buf, mag);
@@ -844,6 +996,50 @@ int csnhypodbp_manual_state_load(const char *path, CsnhypodbpSolution *out,
     return n;
 }
 
+/* Siembra la cabecera del ARC que recibe el refinador con la solucion BASE
+ * (la elegida por el usuario): sin esto, el reajuste interno de csnloc puede
+ * mover el epicentro (p.ej. a -56) y NLLoc busca en una banda/grilla que no
+ * contiene el evento. Tambien conserva qid/version/manual del evento elegido,
+ * para que el candidato refinado siga perteneciendo a esa solucion. */
+static void arc_seed_base(char *arc, const CsnhypodbpSolution *base)
+{
+    int latd, latm, lond, lonm, dep;
+
+    if (!arc || !base) return;
+    if (!(isfinite(base->lat) && isfinite(base->lon) && isfinite(base->depth))) return;
+    if (fabs(base->lat) > 90.0 || fabs(base->lon) > 180.0) return;
+
+    latd = (int)fabs(base->lat);
+    latm = (int)((fabs(base->lat) - latd) * 6000.0 + 0.5);
+    lond = (int)fabs(base->lon);
+    lonm = (int)((fabs(base->lon) - lond) * 6000.0 + 0.5);
+    dep  = (int)(base->depth * 100.0 + 0.5);
+    if (dep > 99999) dep = 99999;
+
+    /* La linea 1 del ARC es de ancho fijo y NO lleva NUL: snprintf escribe el
+       terminador dentro de la linea y el refinador la ve truncada ("header del
+       ARC ilegible"). Se formatea aparte y se copia el ancho exacto. */
+    {
+        char b[32];
+
+        snprintf(b, sizeof(b), "%02d", latd);  memcpy(arc + 16, b, 2);
+        arc[18] = base->lat < 0.0 ? 'S' : 'N';
+        snprintf(b, sizeof(b), "%04d", latm);  memcpy(arc + 19, b, 4);
+        snprintf(b, sizeof(b), "%03d", lond);  memcpy(arc + 23, b, 3);
+        arc[26] = base->lon < 0.0 ? 'W' : 'E';
+        snprintf(b, sizeof(b), "%04d", lonm);  memcpy(arc + 27, b, 4);
+        snprintf(b, sizeof(b), "%05d", dep);   memcpy(arc + 31, b, 5);
+        if (base->qid > 0) {
+            snprintf(b, sizeof(b), "%010d", base->qid);
+            memcpy(arc + EWGUI_ARC_QID_OFF, b, EWGUI_ARC_QID_LEN);
+            snprintf(b, sizeof(b), "%04u", base->version);
+            memcpy(arc + EWGUI_ARC_QVER_OFF, b, EWGUI_ARC_QVER_LEN);
+        }
+    }
+    arc[EWGUI_ARC_MANUAL_OFF] = base->manual ? EWGUI_ARC_MANUAL_CHAR
+                                             : EWGUI_ARC_AUTO_CHAR;
+}
+
 /* ------------------------------------------------------------------ */
 /* Orquestador                                                         */
 /* ------------------------------------------------------------------ */
@@ -854,16 +1050,20 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           const CsnhypodbpManualPick *mp, int nmp,
                           const CsnhypodbpTankTrace *tank, int ntank,
                           const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
+                          double fix_depth_km, int timeout_sec,
+                          CsnhypodbpLocateStageFn on_stage, void *stage_ud,
+                          volatile int *cancel,
                           CsnhypodbpSolution *out, CsnhypodbpMagOut *mag,
                           char *err, size_t errlen)
 {
     char tmp[512], picks[600], csnlocd[600], arcf[600], hypos[600], tankf[600], magf[600];
-    char ovrf[600], magsd[600], src[600];
+    char ovrf[600], magsd[600], src[600], ref_cfg[600];
+    char workdir[600], workdir_abs[600];
     char cmd[8192], buf[262144], logbuf[524288], errbuf[4096], errpath[600];
-    char jsonl[65536];
+    char jsonl[65536], runerr[256];
     const CsnhypodbpLocator *csn, *sel;
     char csn_bin[512], csn_cfg[512], sel_bin[512], sel_cfg[512], mags_bin[512];
-    int rc;
+    int rc, have_workdir = 0;
     char *arcp;
 
     if (err && errlen) err[0] = '\0';
@@ -893,6 +1093,37 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     snprintf(mags_bin, sizeof(mags_bin), "%s/%s/bin/csnmags",
              ew_home ? ew_home : "", ew_version ? ew_version : "");
 
+    /* WorkDir propio del refinador. Va como HERMANO de `params` para que las
+       rutas relativas del .hyp (`../params/...`) sigan resolviendo, pero sin
+       compartir `obs.nll`/`nll_ring.in`/`arcIn` con el demonio del mismo nombre
+       (el modo offline y el daemon usan nombres fijos dentro de WorkDir). */
+    if (strcmp(sel->name, "csnloc") != 0) {
+        const char *wb;
+
+        snprintf(workdir_abs, sizeof(workdir_abs), "%s/../%s_run_XXXXXX",
+                 ew_params ? ew_params : ".", sel->name);
+        if (!mkdtemp(workdir_abs)) {
+            if (err) snprintf(err, errlen, "no creo el WorkDir de %s", sel->name);
+            goto fail;
+        }
+        have_workdir = 1;
+        wb = strrchr(workdir_abs, '/');
+        wb = wb ? wb + 1 : workdir_abs;
+        snprintf(workdir, sizeof(workdir), "../%s", wb);
+        /* `nlloc_ring.d` usa `OutRoot loc/ev`: el `loc/` debe existir en el
+           WorkDir o NLLoc no escribe el `.sum.grid0.loc.arc` y el refinador
+           devuelve "ARC de salida vacio". El WorkDir del demonio ya lo tiene. */
+        if (strcmp(sel->name, "nlloc_ring") == 0) {
+            char locdir[700];
+
+            snprintf(locdir, sizeof(locdir), "%s/loc", workdir_abs);
+            if (mkdir_p(locdir) != 0) {
+                if (err) snprintf(err, errlen, "no creo el OutRoot de %s", sel->name);
+                goto fail;
+            }
+        }
+    }
+
     /* 1) picks (con SCNL completo: sin canal NI red HYPOINVERSE rechaza TODAS
        las fases por STA+NET+COMP3+LOC y el OBS de NLLoc queda con 13 campos) */
     {
@@ -910,15 +1141,20 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     }
     csnhypodbp_picks_write(picks, 8, 0, 0, base, mp, nmp);
 
-    /* 2) temp csnloc.d con DumpHypo 1 + 3) csnloc offline */
-    if (write_csnloc_cfg(csn_cfg, csnlocd) != 0) {
+    /* 2) temp csnloc.d con DumpHypo 1 (+ FixedDepthKm) + 3) csnloc offline */
+    if (write_csnloc_cfg(csn_cfg, csnlocd, fix_depth_km) != 0) {
         if (err) snprintf(err, errlen, "no leo config de csnloc <%s>", csn_cfg);
         return -1;
     }
     snprintf(cmd, sizeof(cmd),
              "cd '%s' && EW_LOG='%s' '%s' '%s' '%s' 2>'%s/csnloc.err'",
              ew_params, tmp, csn_bin, csnlocd, picks, tmp);
-    rc = run_capture(cmd, buf, sizeof(buf));
+    rc = run_capture(cmd, buf, sizeof(buf), timeout_sec, cancel,
+                     runerr, sizeof(runerr));
+    if (rc == -2 || rc == -3) {
+        if (err) snprintf(err, errlen, "csnloc offline: %s", runerr);
+        goto fail;
+    }
     if (rc != 0) {
         snprintf(errpath, sizeof(errpath), "%s/csnloc.err", tmp);
         read_file(errpath, errbuf, sizeof(errbuf));
@@ -941,16 +1177,45 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     }
     /* Residuales de csnloc: solo su JSONL los trae (el ARC va en blanco). */
     csnhypodbp_sol_apply_jsonl(out, jsonl);
+    /* El candidato sigue perteneciendo al evento elegido, no al qid local que
+       inventa csnloc offline al reasociar las picadas. */
+    if (base->qid > 0) {
+        out->qid = base->qid;
+        out->version = base->version;
+    }
+
+    /* Candidato provisional para la UI: csnloc ya termino; el refinador sigue. */
+    if (on_stage) on_stage(out, stage_ud);
 
     /* 4) refinador (si el elegido no es csnloc) */
     if (strcmp(sel->name, "csnloc") != 0) {
-        FILE *af = fopen(arcf, "w");
+        FILE *af;
+
+        /* cfg SIEMPRE temporal: WorkDir propio (siempre) + FixedDepthKm (si se
+           pidio). El WorkDir del .d original queda para el demonio. */
+        snprintf(ref_cfg, sizeof(ref_cfg), "%s/%s.d", tmp, sel->name);
+        if (csnhypodbp_cfg_with_refiner_opts(sel_cfg, ref_cfg,
+                                            have_workdir ? workdir : NULL,
+                                            fix_depth_km) != 0) {
+            if (err) snprintf(err, errlen, "no leo config de %s <%s>", sel->name, sel_cfg);
+            goto fail;
+        }
+
+        /* El refinador arranca desde la solucion elegida (epicentro/profundidad
+           y qid); las fases siguen siendo las de csnloc. */
+        arc_seed_base(buf, base);
+        af = fopen(arcf, "w");
         if (!af) { if (err) snprintf(err, errlen, "no escribo el ARC"); goto fail; }
         fputs(buf, af); fclose(af);
         snprintf(cmd, sizeof(cmd),
                  "cd '%s' && EW_LOG='%s' '%s' '%s' '%s' 2>'%s/ref.err'",
-                 ew_params, tmp, sel_bin, sel_cfg, arcf, tmp);
-        rc = run_capture(cmd, buf, sizeof(buf));
+                 ew_params, tmp, sel_bin, ref_cfg, arcf, tmp);
+        rc = run_capture(cmd, buf, sizeof(buf), timeout_sec, cancel,
+                         runerr, sizeof(runerr));
+        if (rc == -2 || rc == -3) {
+            if (err) snprintf(err, errlen, "%s: %s", sel->name, runerr);
+            goto fail;
+        }
         if (rc != 0) {
             snprintf(errpath, sizeof(errpath), "%s/ref.err", tmp);
             read_file(errpath, errbuf, sizeof(errbuf));
@@ -960,7 +1225,18 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         /* Algunos refinadores escriben su chachara antes del ARC en stdout. */
         arcp = csnhypodbp_arc_skip_preamble(buf);
         if (!arcp || csnhypodbp_parse_solution(arcp, strlen(arcp), 0, out) != 0) {
-            if (err) snprintf(err, errlen, "no parseo el ARC de %s", sel->name);
+            snprintf(errpath, sizeof(errpath), "%s/ref.err", tmp);
+            read_file(errpath, errbuf, sizeof(errbuf));
+            if (err) {
+                size_t l = 0;
+
+                snprintf(err, errlen, "%s: ARC invalido (stdout %.120s%s)",
+                         sel->name, buf,
+                         strlen(buf) > 120 ? "..." : "");
+                l = strlen(err);
+                if (errbuf[0] && l + 3 < errlen)
+                    snprintf(err + l, errlen - l, "; stderr: %.180s", errbuf);
+            }
             goto fail;
         }
     }
@@ -989,7 +1265,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                      "cd '%s' && '%s' '%s/csnmags.d' '%s' '%s' --out '%s' 2>'%s/mags.err'",
                      ew_params, mags_bin, ew_params, hypos, tankf, magf, tmp);
         }
-        run_capture(cmd, NULL, 0);
+        run_capture(cmd, NULL, 0, timeout_sec, cancel, runerr, sizeof(runerr));
         if (read_file(magf, buf, sizeof(buf)) == 0)
             csnhypodbp_mag_parse(buf, mag);
     }
@@ -997,19 +1273,30 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     if (!g_keep_tmp) {
         snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
         system(cmd);
+        if (have_workdir) {
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", workdir_abs);
+            system(cmd);
+        }
     }
     return 0;
 
 fail:
     if (g_keep_tmp) {
-        /* La ruta viaja en el mensaje: la GUI la loguea con logit. */
+        /* Las rutas viajan en el mensaje: la GUI las loguea con logit. */
         if (err && errlen > 0) {
             size_t l = strlen(err);
             if (l < errlen - 1) snprintf(err + l, errlen - l, " [tmp=%s]", tmp);
+            l = strlen(err);
+            if (have_workdir && l < errlen - 1)
+                snprintf(err + l, errlen - l, " [workdir=%s]", workdir_abs);
         }
     } else {
         snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmp);
         system(cmd);
+        if (have_workdir) {
+            snprintf(cmd, sizeof(cmd), "rm -rf '%s'", workdir_abs);
+            system(cmd);
+        }
     }
     return -1;
 }

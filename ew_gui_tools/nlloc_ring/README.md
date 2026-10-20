@@ -46,6 +46,8 @@ se compila como `libnlloc.a` a partir de los mismos objetos que usa
 | `WorkDir` | carpeta PROPIA del módulo (`../nlloc_ring`): ahí van `obs.nll`, `nll_ring.in` y `<OutRoot>.*` (crea `loc/` si falta). Las grillas de tiempos y las plantillas de control se referencian por ruta ABSOLUTA en `ModelBand`/`TtimeRoot`/`ControlFile` (sólo lectura) |
 | `GridFile` | `.grid` de `csnloc` (opcional): solo refina eventos en su bbox |
 | `MinPhases`, `MaxRMS` | filtros de calidad |
+| `FixedDepthKm` | profundidad **fija** (km); `<0` (default) = libre. NLLoc no la soporta nativa: se emula con `LOCGRID` de 2 nodos en z centrados en el valor y `LOCSEARCH OCT … init_num_cells_z=1` (receta oficial). La solución queda dentro de ±`FixDepthSpacingKm`/2, **no** en un valor exacto |
+| `FixDepthSpacingKm` | separación entre los 2 nodos z de la emulación (km, default 0.1 ⇒ ±0.05 km). `<=0` se sustituye por 0.1 con aviso |
 | `NllIntervalSec` | rate-limit: recalcula como mucho cada N s **por evento** (`0` = cada versión) |
 | `NllTTLSec` | olvida un evento sin versiones nuevas tras N s |
 | `NllMaxPending` | máximo de eventos pendientes en la tabla |

@@ -77,15 +77,35 @@ ck  "calendario: boton junto a su caja"       'gtk_grid_attach\(GTK_GRID\(grid\)
 ck  "calendario: campos de hora anchos"       'time-entry'                                   csnhypodbp_gui.c
 nck "ondas: sin LED verde/rojo"              '0\.2, 0\.8, 0\.2'                            csnhypodbp_gui.c
 
-# --- Preview de la solucion (pestana Ondas): tablita de 2 filas ---
+# --- Preview de la solucion: dos mitades en una grilla de 4 filas ---
 ck  "preview: caja con clase propia"        'gtk_widget_add_css_class\(g_preview_box, "preview-box"\)' csnhypodbp_main.c
 ck  "preview: siempre visible"              'gtk_widget_set_visible\(g_preview_box, TRUE\)' csnhypodbp_main.c
-ck  "preview: radios + cabecera + valores"    'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 2' csnhypodbp_main.c
-ck  "preview: radios en la fila 0"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], i, 0' csnhypodbp_main.c
+ck  "preview: titulo en la grilla (fila 0)"  'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_title, 0, 0' csnhypodbp_main.c
+ck  "preview: otime en la fila 1 (caja)"     'gtk_grid_attach\(GTK_GRID\(grid\), otime_row, 0, 1' csnhypodbp_main.c
+ck  "preview: otime dentro de la caja"       'gtk_box_append\(GTK_BOX\(otime_row\), g_preview_otime\)' csnhypodbp_main.c
+ck  "preview: spinner de calculo"            'g_preview_spinner = gtk_spinner_new\(\)'      csnhypodbp_main.c
+ck  "preview: texto de calculo"              'g_preview_status = gtk_label_new'             csnhypodbp_main.c
+ck  "preview: timer de 1 s"                  'g_timeout_add\(1000, locate_tick'             csnhypodbp_gui.c
+ck  "preview: timer se detiene al terminar"  'g_source_remove\(g_locate_tick_id\)'          csnhypodbp_gui.c
+ck  "preview: estado de calculo visible"     'calculando %s… %ld s'                         csnhypodbp_preview.c
+ck  "preview: titulo de magnitudes"          'gtk_label_new\("Magnitude"\)'                csnhypodbp_main.c
+ck  "preview: separador vertical"            'gtk_separator_new\(GTK_ORIENTATION_VERTICAL\)' csnhypodbp_main.c
+ck  "preview: separador entre bloques (4 filas)" 'gtk_grid_attach\(GTK_GRID\(grid\), sep, CSNHYPODBP_PREVIEW_NPARAMS, 0, 1, 4\)' csnhypodbp_main.c
+ck  "preview: parametros a la izquierda"     'for \(i = 0; i < CSNHYPODBP_PREVIEW_NPARAMS; i\+\+\)' csnhypodbp_main.c
+ck  "preview: magnitudes a la derecha"       'int col = CSNHYPODBP_PREVIEW_NPARAMS \+ 1 \+ k' csnhypodbp_main.c
+ck  "preview: radios en la fila 1"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], col, 1' csnhypodbp_main.c
+ck  "preview: radios compactos (clase)"      'gtk_widget_add_css_class\(g_preview_radio\[k\], "preview-radio"\)' csnhypodbp_main.c
+ck  "preview: radios sin relleno del tema"   '\.preview-radio \{ min-height: 0; min-width: 0; padding: 0; margin: 0; \}' csnhypodbp_main.c
+ck  "preview: cabeceras en la fila 2"        'gtk_grid_attach\(GTK_GRID\(grid\), h, i, 2'   csnhypodbp_main.c
+ck  "preview: valores en la fila 3"          'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 3' csnhypodbp_main.c
+ck  "preview: cabeceras de magnitud (fila 2)" 'gtk_grid_attach\(GTK_GRID\(grid\), h, col, 2' csnhypodbp_main.c
+ck  "preview: valores de magnitud (fila 3)"  'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], col, 3' csnhypodbp_main.c
+ck  "preview: celdas absorben el ancho"      'gtk_widget_set_hexpand\(g_preview_val\[i\], TRUE\)' csnhypodbp_main.c
 ck  "preview: 10 valores en la fila"        'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
 ck  "preview: cabeceras del nucleo puro"    'csnhypodbp_preview_headers'                  csnhypodbp_main.c
 ck  "preview: botones a la derecha"         'gtk_box_append\(GTK_BOX\(g_preview_box\), pc\)' csnhypodbp_main.c
 nck "preview: sin etiqueta de texto unica"  'g_preview_label'                             csnhypodbp_main.c
+nck "preview: sin caja inner"               'gtk_box_append\(GTK_BOX\(inner\), g_preview_' csnhypodbp_main.c
 ck  "preview: fondo rojo leve de la candidata" '\.preview-box\.candidate'                  csnhypodbp_main.c
 ck  "preview: estilos del titulo y del valor" '\.preview-title|\.preview-val'              csnhypodbp_main.c
 ck  "preview: un solo render"               'csnhypodbp_preview_update'                   csnhypodbp_gui.c
@@ -93,9 +113,24 @@ nck "preview: ya no se oculta al descartar" 'gtk_widget_set_visible\(g_preview_b
 nck "preview: sin la etiqueta vieja"        'g_preview_label'                             csnhypodbp_gui.c
 ck  "preview: refresco al elegir solucion"  'la tablita sigue a la solucion elegida'      csnhypodbp_gui.c
 ck  "preview: botones sensibles solo con candidata" 'set_sensitive\(g_preview_btn_confirm, v\.candidate\)' csnhypodbp_gui.c
+ck  "preview: un solo locate a la vez"       'if \(g_locate_busy\)'                         csnhypodbp_gui.c
+ck  "preview: generacion del job"            'job->gen = g_locate_gen'                      csnhypodbp_gui.c
+ck  "preview: timeout al localizador"        'g_locator_timeout_sec'                        csnhypodbp_gui.c
+ck  "preview: candidato parcial de csnloc"   'locate_stage'                                 csnhypodbp_gui.c
+ck  "preview: confirmar durante el refinador" 'g_locate_confirmed = 1'                      csnhypodbp_gui.c
+ck  "locate: workdir aislado del refinador"  'csnhypodbp_cfg_with_refiner_opts'             csnhypodbp_locate.c
+ck  "locate: timeout de la cadena"           'timeout_sec, cancel'                          csnhypodbp_locate.c
+ck  "locate: error con stdout y stderr"      'ARC invalido'                                 csnhypodbp_locate.c
+ck  "locate: siembra el ARC con la base"     'arc_seed_base\(buf, base\)'                   csnhypodbp_locate.c
+ck  "locate: conserva el qid de la base"     'out->qid = base->qid'                         csnhypodbp_locate.c
+ck  "nlloc: crea el OutRoot loc"             'snprintf\(locdir, sizeof\(locdir\), "%s/loc"' csnhypodbp_locate.c
+ck  "nlloc offline: rewrite comprobado"      'ARC no reescrito'                             ../nlloc_ring/nlloc_ring.c
+ck  "hyp2000 offline: rewrite comprobado"    'ARC no reescrito'                             ../hyp2000_ring/hyp2000_ring.c
 ck  "preview: refresco al llegar magnitudes" 'csnhypodbp_preview_update'                  csnhypodbp_ws.c
 ck  "preview: titulos por estado"           'New solution|Selected solution'              csnhypodbp_preview.c
 ck  "preview: sin seleccion -> guiones"     'No solution selected'                        csnhypodbp_preview.c
+ck  "preview: tiempo de origen en el nucleo puro" 'Origin time:'                          csnhypodbp_preview.c
+ck  "preview: el render vuelca el tiempo de origen" 'gtk_label_set_text\(GTK_LABEL\(g_preview_otime\), v\.otime\)' csnhypodbp_gui.c
 
 # --- Pestañas: raiz Eventos/Procesar con sub-pestañas picking/magnitudes ---
 ck  "pestañas: raiz Procesar"               'gtk_label_new\("Procesar"\)'                 csnhypodbp_main.c
@@ -407,6 +442,23 @@ ck  "barra: etiqueta del localizador"       'csnhypodbp_update_locator_label' cs
 ck  "barra: botones locators y locate"      'btn_locators'                 csnhypodbp_main.c
 ck  "localizador: picadas desde la tabla"   'csnhypodbp_locate_picks'      csnhypodbp_gui.c
 ck  "tabla: clave MaxDistKm del .d"          'k_its\("MaxDistKm"\)'         csnhypodbp_main.c
+
+# --- Profundidad fija: depth [caja] [Fix] en la barra de picking ---
+ck  "fix: rotulo depth"                     'gtk_label_new\("depth"\)'                    csnhypodbp_main.c
+ck  "fix: caja de profundidad"              'g_fix_depth_entry = gtk_entry_new\(\)'       csnhypodbp_main.c
+ck  "fix: casilla Fix"                      'gtk_check_button_new_with_label\("Fix"\)'    csnhypodbp_main.c
+ck  "fix: caja insensible sin Fix"          'gtk_widget_set_sensitive\(g_fix_depth_entry, FALSE\)' csnhypodbp_main.c
+ck  "fix: senal toggled"                    'g_signal_connect\(g_fix_depth_chk, "toggled"' csnhypodbp_main.c
+ck  "fix: aplica al confirmar (Enter)"      'on_fix_depth_activate'                       csnhypodbp_main.c
+ck  "fix: aplica al salir del campo"        'on_fix_depth_focus_leave'                    csnhypodbp_main.c
+ck  "fix: parseo del nucleo puro"           'csnhypodbp_fixdepth_parse'                   csnhypodbp_gui.c
+ck  "fix: precarga desde la solucion"       'fix_depth_current_solution'                  csnhypodbp_gui.c
+ck  "fix: locate insensible si invalido"    'g_fix_depth_on && g_fix_depth_km < 0\.0'     csnhypodbp_gui.c
+ck  "fix: tooltip propio de NLLoc"          'NLLoc no fija la profundidad'                csnhypodbp_gui.c
+ck  "fix: el job lleva la profundidad"      'job->fix_depth_km'                           csnhypodbp_gui.c
+ck  "fix: locate_run la recibe"             'job->fix_depth_km, g_locator_timeout_sec'    csnhypodbp_gui.c
+ck  "fix: aviso si el motor no la respeta"  'no respeto la profundidad fija'              csnhypodbp_gui.c
+ck  "fix: sin persistencia en el .d"        'g_fix_depth_on = FALSE'                      csnhypodbp_main.c
 
 # --- Help en el menu ☰, sin texto de instrucciones ---
 nck "sin etiqueta de instrucciones"         'g_help_label'                 csnhypodbp_main.c

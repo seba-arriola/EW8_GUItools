@@ -37,6 +37,11 @@ int GridSet_Load(GridSet *gs, const CSLocParams *cfg, const StationList *st)
         Grid *g = &gs->g[gs->n];
         int   rc = Grid_LoadFile(cfg->GridFiles[i], cfg->GridFileLevel[i], g);
         if (rc != 0) return rc;
+        /* Profundidad fija: un solo nodo en z, ANTES del precomputo CSR. */
+        if (cfg->FixedDepthOn) {
+            rc = Grid_ForceDepth(g, cfg->FixedDepthKm);
+            if (rc != 0) return rc;
+        }
         rc = Grid_PrecomputeStations(g, st);
         if (rc != 0) return rc;
         gs->n++;

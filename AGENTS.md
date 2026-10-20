@@ -93,13 +93,19 @@ hace **`csnloc`** localmente.
     conservando la hora, o `00:00:00` si el campo no la traía. Los **residuales** de la solución
     elegida se ven en la tabla de *Ondas* sin pulsar `locate` (`EventSol.picks` +
     `csnhypodbp_resid_source`), y se persisten en `pick.uncertainty`.
-    El resultado del `locate` y la solución elegida se ven en una **tablita de 2 filas** al tope de la
-    pestaña *Ondas* (cabecera `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`/`ML`/`Mwp` + valores; lógica pura
-    en `csnhypodbp_preview.{h,c}` y **un solo** render, `csnhypodbp_preview_update()`, para que estado,
-    valores, color y botones no se desincronicen): **fondo rojo muy leve** (`.preview-box.candidate`)
+    El resultado del `locate` y la solución elegida se ven en un **cuadro de dos mitades** al tope de
+    *Procesar* (compartido por `picking` y `magnitudes`; lógica pura en `csnhypodbp_preview.{h,c}` y
+    **un solo** render, `csnhypodbp_preview_update()`, para que estado, valores, color y botones no se
+    desincronicen): a la izquierda título, `Origin time` y `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la
+    derecha `Magnitude` (`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con sus radios compactos (`.preview-radio`) en una
+    grilla única de 4 filas separada por una línea vertical: **fondo rojo muy leve** (`.preview-box.candidate`)
     cuando es la candidata del `locate`, ámbar suave cuando es la elegida y guiones si no hay
     selección; `Confirm`/`Discard` a la derecha, sensibles **solo** con candidata (`Discard` vuelve a
-    mostrar la elegida, ya no oculta la tablita).
+    mostrar la elegida, ya no oculta la tablita). Mientras corre, a la derecha del `Origin time` va
+    un spinner con `calculando <localizador>… N s` (timer de 1 s) para **todos** los localizadores;
+    `LocatorTimeoutSec` (600 s) acota el refinador y el error real (`timeout`/`ref.err`/ARC inválido)
+    se ve en ese mismo renglón. El `.d` temporal del refinador usa un `WorkDir` propio y, con `Fix`,
+    `FixedDepthKm`; el ARC se siembra con la solución elegida (lat/lon/prof/qid).
     La **columna derecha** (a nivel de ventana, compartida por las dos pestañas) tiene dos paneles:
     **planta** (imagen equirectangular + capas `.lines` con el mismo contrato que `csnrv`:
     `MapImageFile`/`OverlayFile`/`OverlayColor`/`OverlayWidth`, zoom con rueda y paneo con arrastre) y
@@ -207,6 +213,11 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   y `instances` lista lo que hay (marca las huérfanas de un worktree ya borrado). `destroy` e
   `instances` funcionan aunque el `db.env` local declare otro `DB_PORT` (solo avisan); `up`,
   `psql` y `reset` sí lo exigen. Ver `docs/HYPODB.md`.
+- `ew8_compile.sh`: punto de entrada único de compilación (`all|libs|headless|gui|<módulo>`)
+  y de tests/validación (`--check`, `--test`, `--validate`, `--all-checks`, `--slow`,
+  `--live`, `--db`; ver `--help`). Fuerza `GUI_TOOLKIT=gtk4` en todas las invocaciones de
+  `make`, compila en orden canónico y usa `make all`, que instala de forma atómica en
+  `ew_8.0/bin` (seguro con EarthWorm corriendo).
 - `ew8_unix.sh`: script de inicialización del entorno (variables de EarthWorm).
 - `ew_monitor.sh`: script de control de EarthWorm (`status|list|start|stop|restart`; `start/stop/restart`
   aceptan `<módulo> ...` para operar sobre uno solo, y `status`/`list` muestran el estado de cada
@@ -303,18 +314,31 @@ tras tocar `common/` hay que reconstruirla a mano con el toolkit correcto
 
 ```bash
 source ./ew8_unix.sh
-# Si se tocó common/: reconstruir la librería de los módulos (ver nota de arriba)
+# Script canónico: compila e instala en orden, con GUI_TOOLKIT=gtk4 en todo make
+./ew8_compile.sh all --clean          # todo desde cero
+./ew8_compile.sh common --clean       # solo la librería compartida
+./ew8_compile.sh all --check          # compila + tests headless
+./ew8_compile.sh --no-build --check   # tests sin recompilar
+./ew8_compile.sh all --no-build --validate
+```
+
+`ew8_compile.sh` agrupa por fase (build → check → test → validate) y traduce
+cada verbo al target real del Makefile, porque no son homogéneos: `--check` usa
+`check`, si no `test`, si no los `test-*` (sin `test-live`); `--test` usa
+`check-offline` y marca `SKIP` donde no existe; `--validate` ejecuta
+`check_install.sh -v` y los flags de configuración del binario instalado, con
+`cwd=run_working_v8/params`. `--slow` añade `check-engine`/`check-corpus`
+(`csnwphase`) y `--live` añade `test-live`; `--list` muestra la matriz de
+módulos y `--help` trae los ejemplos de uso.
+
+La receta manual sirve para depurar un módulo suelto:
+
+```bash
+source ./ew8_unix.sh
 make -C ew_gui_tools/common clean GUI_TOOLKIT=gtk4
 make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
 make -C ew_gui_tools/common check      # tests headless + check_no_gtk
-for dir in ew_gui_tools/csnmags ew_gui_tools/csnhypodbp ew_gui_tools/csnrv ew_gui_tools/csntvp ew_gui_tools/csnstaevdisp ew_gui_tools/ew_controller ew_gui_tools/csnloc ew_gui_tools/pickS ew_gui_tools/csnwphase; do
-  if [ -d "$dir" ]; then
-    echo "Compilando $dir..."
-    cd "$dir"
-    make clean && make
-    cd - > /dev/null
-  fi
-done
+make -C ew_gui_tools/csnloc check
 ```
 
 ---

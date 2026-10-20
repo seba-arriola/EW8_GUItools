@@ -58,17 +58,18 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_event_ttl test/test_state_recover test/test_event_id \
         test/test_renucleate test/test_refine_depth test/test_pick_s \
         test/test_repick_phase test/test_pick_origin test/test_event_manual \
-        test/test_state_manual
+        test/test_state_manual test/test_grid_force_depth
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
 
 # Solo los tests de grillas anidadas (diagnostico rapido).
-check-grids: test/test_grid_parse test/test_gridset_load \
+check-grids: test/test_grid_parse test/test_gridset_load test/test_grid_force_depth \
              test/test_precompute_equiv test/test_grid_activation \
              test/test_nested_dedup iasp91.tbl iasp91.hed
 	@echo "=== test_grid_parse ===";       ./test/test_grid_parse
 	@echo "=== test_gridset_load ===";     ./test/test_gridset_load
+	@echo "=== test_grid_force_depth ==="; ./test/test_grid_force_depth
 	@echo "=== test_precompute_equiv ==="; ./test/test_precompute_equiv
 	@echo "=== test_grid_activation ===";  ./test/test_grid_activation
 	@echo "=== test_nested_dedup ===";     ./test/test_nested_dedup
@@ -87,6 +88,7 @@ check: $(TESTS) ttpred iasp91.tbl iasp91.hed
 	@echo "=== test_two_events ===";       ./test/test_two_events
 	@echo "=== test_grid_parse ===";       ./test/test_grid_parse
 	@echo "=== test_gridset_load ===";     ./test/test_gridset_load
+	@echo "=== test_grid_force_depth ==="; ./test/test_grid_force_depth
 	@echo "=== test_precompute_equiv ==="; ./test/test_precompute_equiv
 	@echo "=== test_grid_activation ===";  ./test/test_grid_activation
 	@echo "=== test_nested_dedup ===";     ./test/test_nested_dedup
@@ -159,6 +161,9 @@ test/test_gridset_load: test/test_gridset_load.c gridset.o grid.o ttmodel.o \
                         stations.o $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $@ test/test_gridset_load.c gridset.o grid.o \
 	      ttmodel.o stations.o $(TAUOBJS) $(LIBS)
+
+test/test_grid_force_depth: test/test_grid_force_depth.c grid.o stations.o
+	$(CC) $(CFLAGS) -o $@ test/test_grid_force_depth.c grid.o stations.o $(LIBS)
 
 test/test_precompute_equiv: test/test_precompute_equiv.c backprojection.o \
                             dbscan.o refine.o gridset.o grid.o ttmodel.o \

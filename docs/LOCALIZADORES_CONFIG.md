@@ -229,6 +229,40 @@ NLL cubre un país largo con **varios control files / perfiles**, cada uno con s
 
 ---
 
+### 3.5 Profundidad fija (`FixedDepthKm`) en los tres localizadores
+
+La GUI (`csnhypodbp`, barra de *picking*: `depth [caja] [☑ Fix]`) pasa la profundidad fija por
+corrida, en una **copia temporal** del `.d` (nunca en `params/`). La clave es `FixedDepthKm`; su
+ausencia o un valor `<0` deja la profundidad libre. `0` es una profundidad válida.
+
+| localizador | soporte nativo | implementación | resultado |
+|---|---|---|---|
+| `csnloc` | no (busca en `nz` capas + refine) | `Grid_ForceDepth` deja **un nodo z** antes del precomputo CSR; `RefineHypo` no mueve z | **exacta** (ARC en centésimas) |
+| `hyp2000_ring` | sí (`ZTR <z> T` ⇒ `DEPFIXA`) | el módulo emite `ZTR %.3f T` **después** del `@CommandFile` | **exacta** |
+| `nlloc_ring` | **no** (NLLoc siempre busca 3D) | `LOCGRID` con `nz=2`, `z0=FixedDepthKm−FixDepthSpacingKm/2`, `dz=esp` y `LOCSEARCH OCT … init_num_cells_z=1` | ventana de **±esp/2** (default ±0.05 km), no exacta |
+
+Notas:
+
+- En `nlloc_ring`, `FixDepthSpacingKm` (default `0.1` km) es el tamaño de la ventana; `<=0` se
+  sustituye por `0.1` con aviso. La receta es la oficial de NonLinLoc (su FAQ dice que no se puede
+  fijar a un solo valor porque el motor siempre hace búsqueda 3D); SeisComP lo emula igual con
+  `fixedDepthGridSpacing = 0.1`.
+- El motor de NLLoc ya acepta `numz==2` como “depth fixed” (`NLLocLib.c:812`, `LocSum.c:359`): un
+  resultado en el borde de la ventana no se descarta.
+- Si el refinador elegido es `hyp2000_ring` o `nlloc_ring`, la clave viaja **también** en la pasada
+  previa de `csnloc` (arranque exacto para el refinador).
+- Un binario viejo que ignore la clave devuelve otra profundidad; `csnhypodbp` avisa en el log si
+  la diferencia supera 0.5 km.
+- **Validación real** (ARC de `HYPO_RING`, 5 fases): `nlloc_ring` offline sin `FixedDepthKm` dejó
+  `LOCGRID … 221` y devolvió z≈93.88 km; con `FixedDepthKm 33.0` dejó
+  `LOCGRID … 2 … 32.9500 … 0.1000` + `LOCSEARCH OCT … 1` y devolvió z≈32.96 km. El ARC de vuelta
+  lo parseó `csnhypodbp` (`depth=33.0`) y la cadena `locate_chain … --fix-depth 33.0` terminó con
+  `rc=0`, conservando el `qid` de la solución base. El fixture sintético de
+  `nlloc_ring/test/test_fixdepth_offline.sh` no localiza con el motor, por eso ese test automático
+  valida el control; la corrida con el ARC real valida motor + mensaje de vuelta.
+
+---
+
 ## 4. Ejemplo de prueba (Chile regional)
 
 Base: `chile_regional.grid` (`-56..-16`, `-76..-66`, 25 km, `0..300/25`).

@@ -3,6 +3,7 @@
  *   - dos grillas con niveles distintos -> gs.n==2 con niveles correctos.
  *   - sin grillas configuradas -> error.
  */
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 #include "../csnloc.h"
@@ -58,6 +59,20 @@ int main(void)
     CHECK(gs.g[1].nnz > 0, "CA2: precómputo con estaciones asociadas");
     CHECK(gs.g[1].sta_mask != NULL && gs.g[1].n_sta == st.n,
           "CA2: mascara de estaciones");
+    GridSet_Free(&gs);
+
+    /* Profundidad fija: TODAS las grillas quedan con un solo nodo z, y el
+       precomputo de estaciones se hace sobre ese eje. */
+    cfg.FixedDepthOn = 1;
+    cfg.FixedDepthKm = 33.0;
+    rc = GridSet_Load(&gs, &cfg, &st);
+    CHECK(rc == 0, "CA2: GridSet_Load con profundidad fija");
+    CHECK(gs.n == 2, "CA2: dos grillas con profundidad fija");
+    CHECK(gs.g[0].nz == 1 && gs.g[1].nz == 1, "CA2: nz==1 en ambas");
+    CHECK(fabs(gs.g[0].depth[0] - 33.0) < 1e-9 &&
+          fabs(gs.g[1].depth[0] - 33.0) < 1e-9, "CA2: z == 33 en ambas");
+    CHECK(gs.g[0].n_nodes == gs.g[0].nx * gs.g[0].ny &&
+          gs.g[0].node_sta_off != NULL, "CA2: CSR sobre el eje fijo");
     GridSet_Free(&gs);
 
     memset(&cfg, 0, sizeof(cfg));
