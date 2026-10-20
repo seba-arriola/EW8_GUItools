@@ -203,3 +203,38 @@ int csnhypodbp_mag_ovr_write(const char *path, const CsnhypodbpMagOvrRow *rows, 
     fclose(fp);
     return written;
 }
+
+int csnhypodbp_mag_ovr_build_anchors(const CsnhypodbpMagMarks *m,
+                                     const CsnhypodbpMagAnchor *anchors, int n,
+                                     const double def_t0[CSNHYPODBP_MAGMARKS_KIND],
+                                     const double def_t1[CSNHYPODBP_MAGMARKS_KIND],
+                                     unsigned kind_mask,
+                                     CsnhypodbpMagOvrRow *rows, int max)
+{
+    int i, k, nout = 0;
+
+    if (!anchors || !rows || max <= 0 || !def_t0 || !def_t1) return 0;
+    if (kind_mask == 0u) kind_mask = (1u << CSNHYPODBP_MAGMARKS_KIND) - 1u;
+
+    for (i = 0; i < n && nout < max; i++) {
+        double anchor = anchors[i].anchor_t;
+
+        if (!anchors[i].sta[0] || !isfinite(anchor) || anchor <= 0.0) continue;
+        for (k = 0; k < CSNHYPODBP_MAGMARKS_KIND && nout < max; k++) {
+            double off0, off1, t0, t1;
+
+            if (!(kind_mask & (1u << k))) continue;
+            csnhypodbp_magmarks_window(m, anchors[i].sta, k,
+                                       def_t0[k], def_t1[k], &off0, &off1);
+            t0 = anchor + off0;
+            t1 = anchor + off1;
+            if (!isfinite(t0) || !isfinite(t1) || !(t1 > t0)) continue;
+            snprintf(rows[nout].sta, sizeof(rows[nout].sta), "%s", anchors[i].sta);
+            rows[nout].kind = k;
+            rows[nout].t0 = t0;
+            rows[nout].t1 = t1;
+            nout++;
+        }
+    }
+    return nout;
+}

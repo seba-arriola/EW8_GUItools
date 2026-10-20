@@ -79,7 +79,11 @@ hace **`csnloc`** localmente.
     (`Ml/Mwp/Mb/Ms_MinDelta/MaxDelta`, `Ml_MaxDist`, `Ml_DistType`) y **no lista** las
     estaciones que el motor descarta; con red regional Ms/Mb quedan vacías por la
     puerta estándar (20–160° / 5–105°) y se bajan a mano con el override.
-    `MagFetchSeconds` (700 s) alarga la petición para que Ms tenga su ventana. Ver
+    `MagFetchSeconds` (700 s) alarga la petición para que Ms tenga su ventana. En el `locate`,
+    `csnmags` recibe las **cuatro** magnitudes y las **mismas P efectivas** (`M>A>Teo`) que el
+    localizador (casillas por fila + filtros A/M/Teo del picking); las S no generan magnitud. La
+    ventana de cada magnitud se ancla en el `t_pick` de esa P y usa la franja ajustada del panel si
+    existe (si no, la del `.d`), con override para las 4; no se recalcula Mww. Ver
     `docs/MAGNITUDES.md`. La pestaña *magnitudes* tiene además un panel **`Mww`**
     (inversión de fase W on-demand, ver `csnwphase/` y `docs/WPHASE.md`): el área central
     es una pila `Estaciones` | `Mww` y sus claves son `MwwConfigFile` (default

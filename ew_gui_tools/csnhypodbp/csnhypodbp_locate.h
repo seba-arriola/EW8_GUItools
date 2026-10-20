@@ -43,6 +43,14 @@ int csnhypodbp_picks_write(const char *path, int type, int mod, int inst,
 int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
                            const CsnhypodbpTankTrace *tank, int ntank);
 
+/* hypos.jsonl de magnitudes: origen refinado (`refined`) + SOLO las P de la
+ * solucion elegida (`picked`, ya filtrada por g_pick_on/g_filter_*). Una entrada
+ * por estacion: csnmags ancla sus 4 ventanas en la fase y no distingue P/S. */
+int csnhypodbp_hypos_write_mag(const char *path,
+                               const CsnhypodbpSolution *refined,
+                               const CsnhypodbpSolution *picked,
+                               const CsnhypodbpTankTrace *tank, int ntank);
+
 /* Tank EarthWorm (TRACE2_HEADER + int32) desde las trazas en memoria. */
 int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n);
 

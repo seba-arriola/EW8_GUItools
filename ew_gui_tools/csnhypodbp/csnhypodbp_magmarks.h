@@ -64,6 +64,23 @@ typedef struct {
     int                n, cap;
 } CsnhypodbpMagMarks;
 
+/* Ancla de magnitud de una estacion: su P efectiva (M>A>Teo) ya elegida. */
+typedef struct {
+    char   sta[CSNHYPODBP_MAGMARKS_STA_LEN];
+    double anchor_t;                 /* epoch de la P elegida */
+} CsnhypodbpMagAnchor;
+
+/* Filas de WindowOverridesFile para `locate`: una por (ancla, magnitud).
+ * Usa la ventana ajustada a mano de (sta, kind) si existe; si no
+ * (def_t0[k], def_t1[k]). `kind_mask` 0 = las cuatro. t0/t1 salen ABSOLUTOS
+ * (ancla + offset) y se saltan las filas sin ancla o con t1 <= t0. */
+int csnhypodbp_mag_ovr_build_anchors(const CsnhypodbpMagMarks *m,
+                                     const CsnhypodbpMagAnchor *anchors, int n,
+                                     const double def_t0[CSNHYPODBP_MAGMARKS_KIND],
+                                     const double def_t1[CSNHYPODBP_MAGMARKS_KIND],
+                                     unsigned kind_mask,
+                                     CsnhypodbpMagOvrRow *rows, int max);
+
 void csnhypodbp_magmarks_init(CsnhypodbpMagMarks *m);
 void csnhypodbp_magmarks_free(CsnhypodbpMagMarks *m);
 void csnhypodbp_magmarks_clear(CsnhypodbpMagMarks *m);

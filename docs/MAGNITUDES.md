@@ -82,6 +82,11 @@ una estación concreta.
   - **Teo** = ancla teórica (la estación no tiene P observada).
   Por defecto **A y M encendidos, Teo apagado**. La misma idea que los
   checkboxes A/M/Teo de `picking` (allí filtran qué picadas van al localizador).
+  Ojo: el `locate` **no** usa estos checks del panel. Usa las casillas por fila y
+  los A/M/Teo de `picking` (una P efectiva `M>A>Teo` por estación), calcula las
+  cuatro magnitudes (ML/Mwp/Mb/Ms; Mww no se recalcula) y ancla cada ventana en el
+  `t_pick` de esa P, usando la franja ajustada de este panel si existe. Las S no
+  generan magnitud: solo van al localizador.
 - **`distancia min/max/km`** — override manual de la puerta de la magnitud activa.
   Al activarlo se siembra con la puerta vigente, así activar no cambia nada hasta
   que se edite un campo. Las cajas son **`GtkEntry`**, no `GtkSpinButton`: los

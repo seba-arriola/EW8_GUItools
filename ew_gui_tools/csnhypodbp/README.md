@@ -35,6 +35,13 @@ incremental queda en un mismo evento.
 corre una **segunda instancia** `csnmags csnmags_raw.d` que lee `HYPO_RING` y publica ahí
 (`MOD_MAGNITUDES_RAW`). `csnhypodbp` las recibe por ambos anillos (`InRing` + `InRingRaw`).
 
+En el `locate`, `csnhypodbp` pide a `csnmags` **las cuatro magnitudes** (ML/Mwp/Mb/Ms; Mww es
+`csnwphase`, no se recalcula). La entrada son las **mismas P efectivas** de la tabla de picking
+(`M>A>Teo`, con las casillas por fila y los filtros A/M/Teo); las S solo van al localizador. Cada
+ventana se ancla en el `t_pick` de esa P y usa la franja ajustada del panel de magnitudes si existe;
+si no, `Ml/Mwp/Mb/Ms_Window` del `.d`. Se emiten overrides para las 4 magnitudes de cada estación,
+así la ventana sigue a una picada manual/teórica y no al tiempo del ARC refinado.
+
 Las magnitudes son **por solución** (`qid` + módulo origen), no por evento: `csnloc` crudo (162),
 `hyp2000` (163) y `nlloc` (164) publican ARCs con el **mismo `qid`**, así que el `qid` solo no
 distingue una solución de otra. `csnmags` indexa sus eventos por `(qid, mod)` (`mag_key.c`) y

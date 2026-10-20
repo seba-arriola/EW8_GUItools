@@ -192,6 +192,50 @@ static void test_ovr_write(void)
     CHECK(csnhypodbp_mag_ovr_write(NULL, r, 4) == -1, "ovr: path NULL -> -1");
 }
 
+static void test_anchor_ovr(void)
+{
+    CsnhypodbpMagMarks m;
+    CsnhypodbpMagAnchor a[2];
+    CsnhypodbpMagOvrRow r[16];
+    const double def0[CSNHYPODBP_MAGMARKS_KIND] = { 10.0, 0.0, 0.0, 0.0 };
+    const double def1[CSNHYPODBP_MAGMARKS_KIND] = { 45.0, 95.0, 30.0, 400.0 };
+    int n, i, ml = -1, ms = -1, ml2 = -1, ms2 = -1;
+
+    csnhypodbp_magmarks_init(&m);
+    csnhypodbp_magmarks_set(&m, "GO01", CSNHYPODBP_MAG_ML, 12.0, 47.0);
+    memset(a, 0, sizeof(a));
+    snprintf(a[0].sta, sizeof(a[0].sta), "GO01"); a[0].anchor_t = 1000.0;
+    snprintf(a[1].sta, sizeof(a[1].sta), "GO02"); a[1].anchor_t = 2000.0;
+
+    n = csnhypodbp_mag_ovr_build_anchors(&m, a, 2, def0, def1, 0u, r, 16);
+    CHECK(n == 8, "anchor_ovr: 2 estaciones x 4 magnitudes");
+    for (i = 0; i < n; i++) {
+        if (strcmp(r[i].sta, "GO01") == 0 && r[i].kind == CSNHYPODBP_MAG_ML) ml = i;
+        if (strcmp(r[i].sta, "GO01") == 0 && r[i].kind == CSNHYPODBP_MAG_MS) ms = i;
+        if (strcmp(r[i].sta, "GO02") == 0 && r[i].kind == CSNHYPODBP_MAG_ML) ml2 = i;
+        if (strcmp(r[i].sta, "GO02") == 0 && r[i].kind == CSNHYPODBP_MAG_MS) ms2 = i;
+    }
+    CHECK(ml >= 0 && fabs(r[ml].t0 - 1012.0) < 1e-9 && fabs(r[ml].t1 - 1047.0) < 1e-9,
+          "anchor_ovr: usa la ventana ajustada de GO01/ML");
+    CHECK(ms >= 0 && fabs(r[ms].t0 - 1000.0) < 1e-9 && fabs(r[ms].t1 - 1400.0) < 1e-9,
+          "anchor_ovr: GO01/Ms usa el default del .d");
+    CHECK(ml2 >= 0 && fabs(r[ml2].t0 - 2010.0) < 1e-9 && fabs(r[ml2].t1 - 2045.0) < 1e-9,
+          "anchor_ovr: GO02/ML ancla en su P");
+    CHECK(ms2 >= 0 && fabs(r[ms2].t0 - 2000.0) < 1e-9 && fabs(r[ms2].t1 - 2400.0) < 1e-9,
+          "anchor_ovr: GO02/Ms ancla en su P");
+
+    n = csnhypodbp_mag_ovr_build_anchors(&m, a, 2, def0, def1,
+                                         1u << CSNHYPODBP_MAG_MS, r, 16);
+    CHECK(n == 2 && r[0].kind == CSNHYPODBP_MAG_MS && r[1].kind == CSNHYPODBP_MAG_MS,
+          "anchor_ovr: la mascara filtra por magnitud");
+
+    a[0].anchor_t = 0.0;
+    n = csnhypodbp_mag_ovr_build_anchors(&m, a, 2, def0, def1, 0u, r, 16);
+    CHECK(n == 4, "anchor_ovr: sin ancla no hay filas");
+
+    csnhypodbp_magmarks_free(&m);
+}
+
 static void test_winsrc(void)
 {
     CsnhypodbpMagMarks m;
@@ -241,6 +285,7 @@ int main(void)
     test_grab();
     test_handle();
     test_ovr_write();
+    test_anchor_ovr();
     test_winsrc();
     if (fails) { printf("%d FALLOS\n", fails); return 1; }
     printf("OK test_magmarks\n");

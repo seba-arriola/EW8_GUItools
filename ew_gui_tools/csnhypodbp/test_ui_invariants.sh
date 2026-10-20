@@ -121,6 +121,11 @@ ck  "preview: confirmar durante el refinador" 'g_locate_confirmed = 1'          
 ck  "locate: workdir aislado del refinador"  'csnhypodbp_cfg_with_refiner_opts'             csnhypodbp_locate.c
 ck  "locate: timeout de la cadena"           'timeout_sec, cancel'                          csnhypodbp_locate.c
 ck  "locate: error con stdout y stderr"      'ARC invalido'                                 csnhypodbp_locate.c
+ck  "locate: magnitudes desde la base"      'csnhypodbp_hypos_write_mag\(hypos, out, base' csnhypodbp_locate.c
+ck  "locate: solo P para magnitudes"         'phase != .P.'                                 csnhypodbp_locate.c
+ck  "locate: mags sin timeout del refinador" 'run_capture\(cmd, NULL, 0, 0'                 csnhypodbp_locate.c
+ck  "locate: ventanas desde la base"         'mag_ovr_rows_build_locate\(&job->base'        csnhypodbp_gui.c
+ck  "magmarks: overrides por ancla"          'csnhypodbp_mag_ovr_build_anchors'             csnhypodbp_magmarks.c
 ck  "locate: siembra el ARC con la base"     'arc_seed_base\(buf, base\)'                   csnhypodbp_locate.c
 ck  "locate: conserva el qid de la base"     'out->qid = base->qid'                         csnhypodbp_locate.c
 ck  "nlloc: crea el OutRoot loc"             'snprintf\(locdir, sizeof\(locdir\), "%s/loc"' csnhypodbp_locate.c

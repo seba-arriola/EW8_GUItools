@@ -382,6 +382,26 @@ int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
     return 0;
 }
 
+int csnhypodbp_hypos_write_mag(const char *path,
+                               const CsnhypodbpSolution *refined,
+                               const CsnhypodbpSolution *picked,
+                               const CsnhypodbpTankTrace *tank, int ntank)
+{
+    CsnhypodbpSolution magsol;
+    int i, n = 0;
+
+    if (!refined || !picked) return -1;
+    magsol = *refined;
+    magsol.npicks = 0;
+    for (i = 0; i < picked->npicks && n < CSNHYPODBP_MAX_PICKS; i++) {
+        if (picked->picks[i].phase != 'P') continue;
+        magsol.picks[n++] = picked->picks[i];
+    }
+    magsol.npicks = n;
+    magsol.nph = n;
+    return csnhypodbp_hypos_write(path, &magsol, tank, ntank);
+}
+
 int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n)
 {
     FILE *fp = fopen(path, "wb");
@@ -1247,7 +1267,10 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         CsnhypodbpMagOvrRow rows[CSNHYPODBP_MAGMARKS_MAX];
         int nrows = 0;
 
-        csnhypodbp_hypos_write(hypos, out, tank, ntank);
+        /* Magnitudes: origen refinado + P efectivas elegidas en la tabla
+           (incluye manuales y teoricas). No se usan las S ni out->picks: la
+           ventana de csnmags se ancla en la fase y solo la P define el ancla. */
+        csnhypodbp_hypos_write_mag(hypos, out, base, tank, ntank);
         csnhypodbp_tank_write(tankf, tank, ntank);
         snprintf(ovrf,  sizeof(ovrf),  "%s/winovr.txt", tmp);
         snprintf(magsd, sizeof(magsd), "%s/csnmags.d", tmp);
@@ -1265,7 +1288,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                      "cd '%s' && '%s' '%s/csnmags.d' '%s' '%s' --out '%s' 2>'%s/mags.err'",
                      ew_params, mags_bin, ew_params, hypos, tankf, magf, tmp);
         }
-        run_capture(cmd, NULL, 0, timeout_sec, cancel, runerr, sizeof(runerr));
+        /* Sin el timeout del refinador: Ms puede necesitar su ventana completa
+           (MagFetchSeconds) y no debe morir por LocatorTimeoutSec. */
+        run_capture(cmd, NULL, 0, 0, NULL, runerr, sizeof(runerr));
         if (read_file(magf, buf, sizeof(buf)) == 0)
             csnhypodbp_mag_parse(buf, mag);
     }

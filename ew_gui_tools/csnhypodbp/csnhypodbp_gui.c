@@ -2135,6 +2135,34 @@ static int mag_ovr_rows_build(unsigned kind_mask, CsnhypodbpMagOvrRow *rows, int
     return n;
 }
 
+/* Ventanas del `locate`: misma P efectiva (M>A>Teo) que se manda al localizador
+   (job->base ya filtro por g_pick_on + g_filter_*), una por estacion, y las
+   cuatro magnitudes. Si el usuario ajusto la franja de (sta,kind) se usa esa;
+   si no, el default de `MagConfigFile`. Asi la ventana sigue a la picada
+   manual/teorica y no al tiempo que quede en el ARC del refinador. */
+static int mag_ovr_rows_build_locate(const CsnhypodbpSolution *base,
+                                     CsnhypodbpMagOvrRow *rows, int max)
+{
+    CsnhypodbpMagAnchor anchors[CSNHYPODBP_MAX_PICKS];
+    double def_t0[CSNHYPODBP_MAGMARKS_KIND], def_t1[CSNHYPODBP_MAGMARKS_KIND];
+    int i, k, n = 0;
+
+    if (!base || !rows || max <= 0) return 0;
+    for (i = 0; i < base->npicks && n < CSNHYPODBP_MAX_PICKS; i++) {
+        const CsnhypodbpPick *pk = &base->picks[i];
+
+        if (pk->phase != 'P') continue;
+        if (!(pk->t_pick > 0.0)) continue;
+        snprintf(anchors[n].sta, sizeof(anchors[n].sta), "%s", pk->sta);
+        anchors[n].anchor_t = pk->t_pick;
+        n++;
+    }
+    for (k = 0; k < CSNHYPODBP_MAGMARKS_KIND; k++)
+        csnhypodbp_magcfg_window(&g_magcfg, k, &def_t0[k], &def_t1[k]);
+    return csnhypodbp_mag_ovr_build_anchors(&g_mag_marks, anchors, n,
+                                            def_t0, def_t1, 0u, rows, max);
+}
+
 /* Arranca un job. `mags_only` = recalcular SOLO magnitudes con las ventanas
    ajustadas (sin relocalizar): lo usan `calculate`/`calculate all`. */
 static void locate_start(int mags_only) {
@@ -2227,7 +2255,9 @@ static void locate_start(int mags_only) {
     /* Las ventanas ajustadas van al motor en LAS DOS rutas: `calculate` con la
        mascara del boton y `locate` con todas las que haya a mano. */
     job->kind_mask = mags_only ? g_mag_calc_mask : 0u;
-    job->novr = mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
+    job->novr = mags_only
+        ? mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX)
+        : mag_ovr_rows_build_locate(&job->base, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
     logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d tank=%d winovr=%d\n",
           mags_only ? "calculate" : "locate", job->locator, job->base.qid,
           job->base.npicks, job->nmp, job->ntank, job->novr);

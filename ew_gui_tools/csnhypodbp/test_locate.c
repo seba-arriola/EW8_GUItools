@@ -324,6 +324,43 @@ int main(void)
         remove(dst);
     }
 
+    /* --- hypos de magnitudes: origen refinado + SOLO las P elegidas --- */
+    {
+        const char *path = "/tmp/opencode/test_hypos_mag.jsonl";
+        CsnhypodbpSolution ref, picked;
+
+        memset(&ref, 0, sizeof(ref));
+        ref.qid = 42; ref.version = 3; ref.otime = 1000.0;
+        ref.lat = -33.1; ref.lon = -70.2; ref.depth = 25.0;
+        ref.nph = 3; ref.rms = 0.4;
+        memset(&picked, 0, sizeof(picked));
+        picked.npicks = 3;
+        snprintf(picked.picks[0].sta, sizeof(picked.picks[0].sta), "GO01");
+        snprintf(picked.picks[0].chan, sizeof(picked.picks[0].chan), "HHZ");
+        picked.picks[0].phase = 'P'; picked.picks[0].t_pick = 1010.0;
+        snprintf(picked.picks[1].sta, sizeof(picked.picks[1].sta), "GO01");
+        snprintf(picked.picks[1].chan, sizeof(picked.picks[1].chan), "HHE");
+        picked.picks[1].phase = 'S'; picked.picks[1].t_pick = 1020.0;
+        snprintf(picked.picks[2].sta, sizeof(picked.picks[2].sta), "GO02");
+        snprintf(picked.picks[2].chan, sizeof(picked.picks[2].chan), "HHZ");
+        picked.picks[2].phase = 'P'; picked.picks[2].t_pick = 1030.0;
+
+        assert(csnhypodbp_hypos_write_mag(path, &ref, &picked, NULL, 0) == 0);
+        fp = fopen(path, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "\"nphases\":2") != NULL);
+        assert(strstr(buf, "\"t0\":1000.000") != NULL);
+        assert(strstr(buf, "\"lat\":-33.1000") != NULL);
+        assert(strstr(buf, "\"t_epoch\":1010.000") != NULL);
+        assert(strstr(buf, "\"t_epoch\":1030.000") != NULL);
+        assert(strstr(buf, "\"phase\":\"P\"") != NULL);
+        assert(strstr(buf, "\"phase\":\"S\"") == NULL);
+        remove(path);
+    }
+
     printf("test_locate OK\n");
     return 0;
 }
