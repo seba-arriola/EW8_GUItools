@@ -279,10 +279,19 @@ La ventana tiene una **columna derecha** compartida por las dos pestañas (`GtkP
 
 - **Planta** (`on_draw_map_plan`): mapa equirectangular con el **mismo contrato que `csnrv`** —
   `MapImageFile` (imagen 2:1 de mundo completo, validable con `common/tools/check_map_image.py`),
-  capas `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`), grilla, zoom con
-  la rueda y paneo arrastrando con el botón 1. Encima dibuja las **rectas de los perfiles** (la activa
-  en azul) y las soluciones del evento. El auto-encuadre tiene un ancho mínimo de `MapMinSpanDeg`
-  grados (default 5), para que un grupo de soluciones apretado no deje la vista pegada.
+  capas `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`), grilla con
+  **etiquetas numéricas de latitud y longitud**, zoom con la rueda y paneo arrastrando con el botón 1.
+  Encima dibuja las **rectas de los perfiles** (la activa en azul) y las soluciones del evento. El
+  auto-encuadre tiene un ancho mínimo de `MapMinSpanDeg` grados (default 5), para que un grupo de
+  soluciones apretado no deje la vista pegada.
+  **`MapImageFile` es opcional**: si la clave está comentada (o la imagen no se puede cargar) el panel
+  **no se apaga**; se proyecta sobre un **lienzo virtual** equirectangular 2:1 de 10800×5400
+  (`CSNHYPODBP_MAP_VIRTUAL_W/H`, la escala del mapa de mundo entregado) y se siguen dibujando la
+  grilla con etiquetas, las rectas de perfil, las capas `.lines` y los marcadores. Sin soluciones el
+  encuadre inicial es el **mundo completo**. El paso de la grilla sale del **span visible**
+  (`csnhypodbp_map_grid_step()`, ~8 divisiones) y no del zoom crudo: así a 5° de vista hay meridianos
+  y paralelos en vez de ninguno. `--print-config` informa `MapCanvas image` o
+  `MapCanvas virtual 10800x5400`.
 - **Perfil** (`on_draw_map_profile`): corte con **x = longitud** e **y = profundidad** (hacia abajo)
   del perfil **más cercano a la solución preferida**, con la **subducción** (línea del slab, en km) y
   la **topografía** (elevación/1000) del archivo de ese perfil. Arranca encuadrado **solo a los datos

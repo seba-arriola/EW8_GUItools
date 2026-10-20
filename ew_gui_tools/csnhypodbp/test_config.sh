@@ -93,6 +93,7 @@ cfg "$TMP/ok.d" -22.000000 -20.333333
 rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : print-config rc 0" || { echo "FAIL: print-config rc=$rc"; fails=$((fails+1)); }
 ck  "print-config: MapImageFile"    '^MapImageFile mapa\.jpg$'            "$TMP/pc.txt"
+ck  "print-config: lienzo = imagen" '^MapCanvas image$'                   "$TMP/pc.txt"
 ck  "print-config: 1 overlay"       '^OverlayFiles 1$'                    "$TMP/pc.txt"
 ck  "print-config: OverlayColor"    '^OverlayColor capa FF0000$'          "$TMP/pc.txt"
 ck  "print-config: OverlayWidth"    '^OverlayWidth 1\.200$'               "$TMP/pc.txt"
@@ -148,6 +149,15 @@ rc=$?
 sed 's/^ProfileCols     3 7/ProfileCols     0 -1/' "$TMP/ok.d" > "$TMP/badcols.d"
 "$BIN" --print-config "$TMP/badcols.d" > "$TMP/bc.txt" 2>&1
 ck  "print-config: ProfileCols invalido se ignora" '^ProfileCols 3 7$'    "$TMP/bc.txt"
+
+# Sin MapImageFile (clave comentada) NO es error: el mapa de planta pasa a
+# dibujarse sobre el lienzo virtual, con grilla, capas .lines y puntos.
+grep -v '^MapImageFile' "$TMP/ok.d" > "$TMP/nomap.d"
+"$BIN" --print-config "$TMP/nomap.d" > "$TMP/nomap.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : sin MapImageFile no es error" || { echo "FAIL: sin MapImageFile rc=$rc"; fails=$((fails+1)); }
+ck  "print-config: MapImageFile (none)"     '^MapImageFile \(none\)$'      "$TMP/nomap.txt"
+ck  "print-config: lienzo virtual 2:1"      '^MapCanvas virtual 10800x5400$' "$TMP/nomap.txt"
 
 # La clave Profile mal formada es error de config.
 grep -v '^Profile B' "$TMP/ok.d" > "$TMP/badprof.d"

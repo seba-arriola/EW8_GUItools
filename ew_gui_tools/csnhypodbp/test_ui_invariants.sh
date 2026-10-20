@@ -475,5 +475,31 @@ ck  "menu: dialogo de comandos"             'csnhypodbp_help_dialog_run'   csnhy
 # --- Color de traza no leida ---
 ck  "traza no leida: gris mas oscuro 0.55"  '0\.55'                        csnhypodbp_trace.c
 
+# --- Mapa de planta: se dibuja aunque el .d no declare MapImageFile ---
+n=$(grep -cE 'if \(g_map_pixbuf\)' csnhypodbp_gui.c)
+if [ "$n" -eq 1 ]; then echo "ok  : planta: el unico if (g_map_pixbuf) es el fondo"
+else echo "FAIL: planta: 'if (g_map_pixbuf)' aparece $n veces (solo debe quedar el fondo)"; fails=$((fails+1)); fi
+ck  "planta: el if (g_map_pixbuf) pinta la imagen" 'gdk_cairo_set_source_pixbuf' csnhypodbp_gui.c
+ck  "planta: geometria unica (lienzo virtual)"     'plan_canvas_get\(&iw, &ih\)'  csnhypodbp_gui.c
+nck "planta: sin iw/ih=1.0 en el dibujo"           'iw = 1\.0|ih = 1\.0'          csnhypodbp_gui.c
+ck  "planta: el fit no exige pixbuf"               'g_map_need_fit && width > 40 && height > 40' csnhypodbp_gui.c
+nck "planta: el fit ya no mira el pixbuf"          'g_map_need_fit && g_map_pixbuf' csnhypodbp_gui.c
+ck  "planta: encuadre por fit_bounds"              'csnhypodbp_map_fit_bounds'    csnhypodbp_gui.c
+ck  "planta: encuadre inicial en el mundo"         'g_map_fit_lon0 = -180\.0'     csnhypodbp_gui.c
+ck  "planta: grilla por span visible"              'csnhypodbp_map_grid_step\(span\)' csnhypodbp_gui.c
+ck  "planta: etiquetas de ejes"                    'draw_plan_axes\(cr, iw, ih'   csnhypodbp_gui.c
+ck  "planta: etiquetas con CTM identidad"          'cairo_identity_matrix\(cr\)'  csnhypodbp_gui.c
+ck  "planta: formato de eje del nucleo puro"       'csnhypodbp_map_axis_fmt'      csnhypodbp_gui.c
+ck  "planta: anticolision de etiquetas"            'csnhypodbp_map_label_pick'    csnhypodbp_gui.c
+lg=$(grep -nE 'draw_plan_grid\(cr, iw, ih, width' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+la=$(grep -nE 'draw_plan_axes\(cr, iw, ih, width' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+lo=$(grep -nE 'ewgui_overlay_draw\(cr, g_map_overlay' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+if [ -n "$lg" ] && [ -n "$la" ] && [ -n "$lo" ] && [ "$lg" -lt "$la" ] && [ "$la" -lt "$lo" ]; then
+    echo "ok  : planta: orden grilla -> ejes -> capas .lines"
+else
+    echo "FAIL: planta: orden grilla($lg) -> ejes($la) -> capas($lo)"; fails=$((fails+1))
+fi
+ck  "planta: lienzo virtual documentado en el .h" 'CSNHYPODBP_MAP_VIRTUAL_W 10800\.0' csnhypodbp_mapview.h
+
 if [ "$fails" -gt 0 ]; then echo; echo "$fails FALLOS"; exit 1; fi
 echo; echo "OK test_ui_invariants"

@@ -2506,7 +2506,10 @@ static double g_map_pan_x = 0.0, g_map_pan_y = 0.0;
 static double g_map_cx = 0.0, g_map_cy = 0.0;
 static int    g_map_fit_key = -1;              /* identidad del ultimo auto-encuadre */
 static int    g_map_need_fit = 1;
-static double g_map_fit_lon0 = 0, g_map_fit_lon1 = 0, g_map_fit_lat0 = 0, g_map_fit_lat1 = 0;
+/* Encuadre inicial: el mundo. Sin el, el primer dibujo (antes de que llegue
+   cualquier solucion) encuadraria el bbox (0,0) de los valores por defecto. */
+static double g_map_fit_lon0 = -180.0, g_map_fit_lon1 = 180.0;
+static double g_map_fit_lat0 = -90.0, g_map_fit_lat1 = 90.0;
 /* Referencia del encuadre: la solucion verde (elegida en Origins) o, si no hay,
    la preferida. El mapa se centra SIEMPRE en ella, con cualquier MapZoom. */
 static double g_map_fit_ref_lat = NAN, g_map_fit_ref_lon = NAN;
@@ -2744,28 +2747,29 @@ void csnhypodbp_maps_refresh(void)
     /* Auto-encuadre del mapa de planta al cambiar de evento o de candidata. */
     if (key != g_map_fit_key) {
         double lon0, lon1, lat0, lat1;
-        g_map_fit_key = key;
-        if (csnhypodbp_map_bbox(g_map_pts, g_map_npts, &lon0, &lon1, &lat0, &lat1) == 0) {
-            /* Referencia del centro: la verde si hay, si no la preferida (kind 1). */
-            int ri = (g_map_sel >= 0 && g_map_sel < g_map_npts) ? g_map_sel : -1;
+        /* Referencia del centro: la verde si hay, si no la preferida (kind 1). */
+        int ri = (g_map_sel >= 0 && g_map_sel < g_map_npts) ? g_map_sel : -1;
 
-            if (ri < 0) {
-                int k;
-                for (k = 0; k < g_map_npts; k++) {
-                    if (g_map_pts[k].kind == 1) { ri = k; break; }
-                }
+        g_map_fit_key = key;
+        if (ri < 0) {
+            int k;
+            for (k = 0; k < g_map_npts; k++) {
+                if (g_map_pts[k].kind == 1) { ri = k; break; }
             }
-            if (ri >= 0) {
-                g_map_fit_ref_lat = g_map_pts[ri].lat;
-                g_map_fit_ref_lon = g_map_pts[ri].lon;
-            } else {
-                g_map_fit_ref_lat = g_map_fit_ref_lon = NAN;
-            }
-            csnhypodbp_map_span_min(&lon0, &lon1, &lat0, &lat1, g_map_min_span_deg);
-            g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
-            g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
-            g_map_need_fit = 1;
         }
+        if (ri >= 0) {
+            g_map_fit_ref_lat = g_map_pts[ri].lat;
+            g_map_fit_ref_lon = g_map_pts[ri].lon;
+        } else {
+            g_map_fit_ref_lat = g_map_fit_ref_lon = NAN;
+        }
+        /* Con soluciones manda su bbox (con el suelo MapMinSpanDeg); sin ninguna,
+           el mapa se abre igual, al mundo completo. */
+        csnhypodbp_map_fit_bounds(g_map_pts, g_map_npts, g_map_min_span_deg,
+                                  &lon0, &lon1, &lat0, &lat1);
+        g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
+        g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
+        g_map_need_fit = 1;
     }
 
     /* El perfil tambien se re-encuadra (a sus propios datos) al cambiar de
@@ -2789,14 +2793,24 @@ void csnhypodbp_maps_refresh(void)
 
 /* --- mapa de planta --- */
 
+/* Geometria de proyeccion vigente del mapa de planta: la imagen si esta
+   cargada y, si no, el lienzo virtual (csnhypodbp_map_canvas). Es el UNICO
+   origen de iw/ih: dibujo, capas .lines y hit test del clic comparten escala. */
+static void plan_canvas_get(double *iw, double *ih)
+{
+    int has = (g_map_pixbuf != NULL);
+
+    csnhypodbp_map_canvas(has,
+                          has ? gdk_pixbuf_get_width(g_map_pixbuf) : 0,
+                          has ? gdk_pixbuf_get_height(g_map_pixbuf) : 0,
+                          iw, ih);
+}
+
 static void plan_overlay_map(double lat, double lon, void *ud, double *sx, double *sy)
 {
-    double iw = 1.0, ih = 1.0;
+    double iw, ih;
     (void)ud;
-    if (g_map_pixbuf) {
-        iw = gdk_pixbuf_get_width(g_map_pixbuf);
-        ih = gdk_pixbuf_get_height(g_map_pixbuf);
-    }
+    plan_canvas_get(&iw, &ih);
     ewgui_geo_project(lat, lon, iw, ih, sx, sy);
 }
 
@@ -2848,42 +2862,151 @@ static void draw_marker(cairo_t *cr, double x, double y, double r, int kind, int
     }
 }
 
-/* Rejilla de meridianos/paralelos (paso segun el zoom, como csnrv). */
-static void draw_plan_grid(cairo_t *cr, double iw, double ih, double zoom)
+/* Rejilla de meridianos/paralelos. El paso sale del span VISIBLE: con el zoom
+   crudo, ewgui_geo_grid_step() daba 10° en una vista regional y a 5° de span no
+   se veia ni una linea (ni, por tanto, ninguna etiqueta). */
+static void draw_plan_grid(cairo_t *cr, double iw, double ih,
+                           int cw, int ch, double zoom, double cx, double cy,
+                           double pan_x, double pan_y)
 {
-    double step = ewgui_geo_grid_step(zoom);
-    double lon, lat, x1, y1, x2, y2;
+    double lon0, lon1, lat0, lat1, step, span;
+    double x1, y1, x2, y2;
+    int k, first;
+
+    if (csnhypodbp_map_view_bounds(iw, ih, cw, ch, zoom, cx, cy, pan_x, pan_y,
+                                   &lon0, &lon1, &lat0, &lat1) != 0)
+        return;
+    span = (lon1 - lon0 > lat1 - lat0) ? lon1 - lon0 : lat1 - lat0;
+    step = csnhypodbp_map_grid_step(span);
     if (!(step > 0.0)) return;
+
     cairo_set_line_width(cr, 0.5 / zoom);
     cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 0.22);
-    for (lon = -180.0; lon <= 180.0; lon += step) {
-        ewgui_geo_project(90.0, lon, iw, ih, &x1, &y1);
-        ewgui_geo_project(-90.0, lon, iw, ih, &x2, &y2);
+    first = (int)ceil(lon0 / step);
+    for (k = first; k * step <= lon1 + 1e-9; k++) {
+        ewgui_geo_project(90.0, k * step, iw, ih, &x1, &y1);
+        ewgui_geo_project(-90.0, k * step, iw, ih, &x2, &y2);
         cairo_move_to(cr, x1, y1);
         cairo_line_to(cr, x2, y2);
     }
-    for (lat = -90.0; lat <= 90.0; lat += step) {
-        ewgui_geo_project(lat, -180.0, iw, ih, &x1, &y1);
-        ewgui_geo_project(lat, 180.0, iw, ih, &x2, &y2);
+    first = (int)ceil(lat0 / step);
+    for (k = first; k * step <= lat1 + 1e-9; k++) {
+        ewgui_geo_project(k * step, -180.0, iw, ih, &x1, &y1);
+        ewgui_geo_project(k * step, 180.0, iw, ih, &x2, &y2);
         cairo_move_to(cr, x1, y1);
         cairo_line_to(cr, x2, y2);
     }
     cairo_stroke(cr);
 }
 
+/* Texto de eje con halo claro: se lee igual sobre el fondo gris que encima de
+   la imagen del mapa. */
+static void draw_axis_text(cairo_t *cr, double x, double y, const char *s)
+{
+    cairo_set_source_rgba(cr, 0.98, 0.98, 0.98, 0.85);
+    cairo_move_to(cr, x - 0.8, y - 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x + 0.8, y - 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x - 0.8, y + 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x + 0.8, y + 0.8); cairo_show_text(cr, s);
+    cairo_set_source_rgba(cr, 0.25, 0.25, 0.25, 1.0);
+    cairo_move_to(cr, x, y);
+    cairo_show_text(cr, s);
+}
+
+/* Etiquetas numericas de latitud y longitud en el borde del canvas. Van con la
+   CTM identidad (no escalan con el zoom) y se omiten si se pisarian. */
+static void draw_plan_axes(cairo_t *cr, double iw, double ih,
+                           int cw, int ch, double zoom, double cx, double cy,
+                           double pan_x, double pan_y)
+{
+    #define AXIS_MAX_LABELS 128
+    double lon0, lon1, lat0, lat1, step, span;
+    double pos[AXIS_MAX_LABELS], val[AXIS_MAX_LABELS];
+    int keep[AXIS_MAX_LABELS];
+    char buf[32];
+    int n, k, first, i;
+
+    if (cw <= 0 || ch <= 0) return;
+    if (csnhypodbp_map_view_bounds(iw, ih, cw, ch, zoom, cx, cy, pan_x, pan_y,
+                                   &lon0, &lon1, &lat0, &lat1) != 0)
+        return;
+    span = (lon1 - lon0 > lat1 - lat0) ? lon1 - lon0 : lat1 - lat0;
+    step = csnhypodbp_map_grid_step(span);
+    if (!(step > 0.0)) return;
+
+    cairo_save(cr);
+    cairo_identity_matrix(cr);
+    cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
+                           CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, 9.0);
+
+    /* Longitudes, en el borde inferior. */
+    first = (int)ceil(lon0 / step);
+    n = 0;
+    for (k = first; n < AXIS_MAX_LABELS && k * step <= lon1 + 1e-9; k++) {
+        double sx, sy;
+        if (csnhypodbp_map_screen(0.0, k * step, iw, ih, cw, ch, zoom, cx, cy,
+                                  pan_x, pan_y, &sx, &sy) != 0)
+            continue;
+        if (sx < 0.0 || sx > cw) continue;
+        pos[n] = sx;
+        val[n] = k * step;
+        n++;
+    }
+    if (csnhypodbp_map_label_pick(pos, n, 34.0, keep) == 0) {
+        for (i = 0; i < n; i++) {
+            cairo_text_extents_t ext;
+            double tx;
+            if (!keep[i]) continue;
+            csnhypodbp_map_axis_fmt(step, val[i], buf, sizeof(buf));
+            cairo_text_extents(cr, buf, &ext);
+            tx = pos[i] - ext.width / 2.0;
+            if (tx < 2.0) tx = 2.0;
+            if (tx + ext.width > cw - 2.0) tx = cw - 2.0 - ext.width;
+            draw_axis_text(cr, tx, ch - 4.0, buf);
+        }
+    }
+
+    /* Latitudes, en el borde izquierdo. */
+    first = (int)ceil(lat0 / step);
+    n = 0;
+    for (k = first; n < AXIS_MAX_LABELS && k * step <= lat1 + 1e-9; k++) {
+        double sx, sy;
+        if (csnhypodbp_map_screen(k * step, 0.0, iw, ih, cw, ch, zoom, cx, cy,
+                                  pan_x, pan_y, &sx, &sy) != 0)
+            continue;
+        if (sy < 0.0 || sy > ch) continue;
+        pos[n] = sy;
+        val[n] = k * step;
+        n++;
+    }
+    if (csnhypodbp_map_label_pick(pos, n, 16.0, keep) == 0) {
+        for (i = 0; i < n; i++) {
+            if (!keep[i]) continue;
+            if (pos[i] < 10.0 || pos[i] > ch - 10.0) continue;
+            csnhypodbp_map_axis_fmt(step, val[i], buf, sizeof(buf));
+            draw_axis_text(cr, 4.0, pos[i] + 3.0, buf);
+        }
+    }
+
+    cairo_restore(cr);
+}
+
 void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
 {
-    double iw = 1.0, ih = 1.0, zoom;
+    double iw, ih, zoom;
     int i;
 
     (void)canvas; (void)data;
     cairo_set_source_rgb(cr, 0.94, 0.95, 0.96);
     cairo_paint(cr);
-    if (g_map_pixbuf) {
-        iw = gdk_pixbuf_get_width(g_map_pixbuf);
-        ih = gdk_pixbuf_get_height(g_map_pixbuf);
-    }
-    if (g_map_need_fit && g_map_pixbuf && width > 40 && height > 40) {
+
+    /* Sin MapImageFile (o si no se pudo cargar) el mapa NO se apaga: se proyecta
+       sobre el lienzo virtual y se dibujan igual grilla, etiquetas, perfiles,
+       capas .lines y marcadores. */
+    plan_canvas_get(&iw, &ih);
+
+    if (g_map_need_fit && width > 40 && height > 40) {
         csnhypodbp_mapfit_at(g_map_fit_ref_lat, g_map_fit_ref_lon,
                              g_map_fit_lon0, g_map_fit_lon1,
                              g_map_fit_lat0, g_map_fit_lat1,
@@ -2903,7 +3026,10 @@ void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, v
         gdk_cairo_set_source_pixbuf(cr, g_map_pixbuf, 0, 0);
         cairo_paint(cr);
     }
-    draw_plan_grid(cr, iw, ih, zoom);
+    draw_plan_grid(cr, iw, ih, width, height, zoom,
+                   g_map_cx, g_map_cy, g_map_pan_x, g_map_pan_y);
+    draw_plan_axes(cr, iw, ih, width, height, zoom,
+                   g_map_cx, g_map_cy, g_map_pan_x, g_map_pan_y);
 
     /* Rectas de los perfiles; la activa resaltada y recortada a sus datos. */
     for (i = 0; i < g_profiles.n; i++) {

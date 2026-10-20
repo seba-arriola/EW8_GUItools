@@ -459,6 +459,244 @@ static void test_star(void)
           "estrella: inner_ratio invalido usa 0.45");
 }
 
+static void test_canvas(void)
+{
+    double iw = 0.0, ih = 0.0;
+
+    CHECK(csnhypodbp_map_canvas(0, 0, 0, &iw, &ih) == 1 &&
+          iw == CSNHYPODBP_MAP_VIRTUAL_W && ih == CSNHYPODBP_MAP_VIRTUAL_H,
+          "canvas: sin imagen -> lienzo virtual");
+    CHECK(fabs(iw / ih - 2.0) < 1e-12, "canvas: el lienzo virtual es 2:1");
+
+    CHECK(csnhypodbp_map_canvas(1, 10800, 5400, &iw, &ih) == 0 &&
+          iw == 10800.0 && ih == 5400.0,
+          "canvas: con imagen usa los pixeles del pixbuf");
+    CHECK(csnhypodbp_map_canvas(0, 800, 400, &iw, &ih) == 1 &&
+          iw == CSNHYPODBP_MAP_VIRTUAL_W,
+          "canvas: sin imagen ignora el tamano declarado");
+    CHECK(csnhypodbp_map_canvas(1, 0, 5400, &iw, &ih) == 1 &&
+          iw == CSNHYPODBP_MAP_VIRTUAL_W,
+          "canvas: imagen sin ancho cae al lienzo virtual");
+    CHECK(csnhypodbp_map_canvas(1, 100, -1, &iw, &ih) == 1,
+          "canvas: alto invalido cae al lienzo virtual");
+    CHECK(csnhypodbp_map_canvas(1, 100, 50, NULL, &ih) == -1 &&
+          csnhypodbp_map_canvas(1, 100, 50, &iw, NULL) == -1,
+          "canvas: punteros NULL -> -1");
+}
+
+static void test_screen(void)
+{
+    const int cw = 900, ch = 600;
+    double iw, ih, z, cx, cy, sx = 0.0, sy = 0.0;
+
+    csnhypodbp_map_canvas(0, 0, 0, &iw, &ih);
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, iw, ih,
+                         cw, ch, 12.0, 1.0, &z, &cx, &cy);
+
+    CHECK(csnhypodbp_map_screen(-33.0, -71.5, iw, ih, cw, ch, z, cx, cy,
+                                0.0, 0.0, &sx, &sy) == 0,
+          "screen: devuelve 0");
+    CHECK(fabs(sx - cw / 2.0) < 1e-6 && fabs(sy - ch / 2.0) < 1e-6,
+          "screen: la referencia del encuadre cae en el centro");
+
+    CHECK(csnhypodbp_map_screen(-33.0, -71.5, iw, ih, cw, ch, z, cx, cy,
+                                40.0, -10.0, &sx, &sy) == 0 &&
+          fabs(sx - (cw / 2.0 + 40.0)) < 1e-6 &&
+          fabs(sy - (ch / 2.0 - 10.0)) < 1e-6,
+          "screen: el paneo desplaza en pixeles");
+
+    CHECK(csnhypodbp_map_screen(NAN, -71.5, iw, ih, cw, ch, z, cx, cy,
+                                0.0, 0.0, &sx, &sy) == -1,
+          "screen: lat NaN -> -1");
+    CHECK(csnhypodbp_map_screen(-33.0, -71.5, iw, ih, cw, ch, 0.0, cx, cy,
+                                0.0, 0.0, &sx, &sy) == -1,
+          "screen: zoom 0 -> -1");
+    CHECK(csnhypodbp_map_screen(-33.0, -71.5, 0.0, ih, cw, ch, z, cx, cy,
+                                0.0, 0.0, &sx, &sy) == -1,
+          "screen: lienzo vacio -> -1");
+    CHECK(csnhypodbp_map_screen(-33.0, -71.5, iw, ih, cw, ch, z, cx, cy,
+                                0.0, 0.0, NULL, &sy) == -1,
+          "screen: punteros NULL -> -1");
+}
+
+static void test_view_bounds(void)
+{
+    const int cw = 900, ch = 600;
+    double iw, ih, z, cx, cy;
+    double lon0, lon1, lat0, lat1, span_lat, span_lon;
+
+    csnhypodbp_map_canvas(0, 0, 0, &iw, &ih);
+    csnhypodbp_mapfit_at(-33.0, -71.5, -76.0, -66.0, -40.0, -17.0, iw, ih,
+                         cw, ch, 12.0, 1.0, &z, &cx, &cy);
+
+    CHECK(csnhypodbp_map_view_bounds(iw, ih, cw, ch, z, cx, cy, 0.0, 0.0,
+                                     &lon0, &lon1, &lat0, &lat1) == 0,
+          "view_bounds: devuelve 0");
+    CHECK(lon0 < -71.5 && lon1 > -71.5 && lat0 < -33.0 && lat1 > -33.0,
+          "view_bounds: el rango visible contiene la referencia");
+
+    span_lat = lat1 - lat0;
+    span_lon = lon1 - lon0;
+    CHECK(fabs(span_lat - (double)ch * 180.0 / (z * ih)) < 1e-6,
+          "view_bounds: el span vertical sale del zoom");
+    CHECK(fabs(span_lon - (double)cw * 360.0 / (z * iw)) < 1e-6,
+          "view_bounds: el span horizontal sale del zoom");
+
+    /* Zoom x2: la mitad de span, sin mover el centro. */
+    {
+        double lo0, lo1, la0, la1;
+        csnhypodbp_map_view_bounds(iw, ih, cw, ch, 2.0 * z, cx, cy, 0.0, 0.0,
+                                   &lo0, &lo1, &la0, &la1);
+        CHECK(fabs((la1 - la0) - span_lat / 2.0) < 1e-6 &&
+              fabs((lo1 - lo0) - span_lon / 2.0) < 1e-6,
+              "view_bounds: zoom x2 -> mitad de span");
+    }
+
+    /* Paneo a la derecha: el contenido se corre y el rango se mueve al oeste. */
+    {
+        double lo0, lo1, la0, la1;
+        csnhypodbp_map_view_bounds(iw, ih, cw, ch, z, cx, cy, 100.0, 0.0,
+                                   &lo0, &lo1, &la0, &la1);
+        CHECK(lo0 < lon0 && lo1 < lon1,
+              "view_bounds: paneo a la derecha mueve el rango al oeste");
+        CHECK(fabs((lo1 - lo0) - span_lon) < 1e-6,
+              "view_bounds: el paneo no cambia el span");
+    }
+
+    /* Mundo entero: el rango se recorta a ±180 / ±90. */
+    {
+        double lo0, lo1, la0, la1;
+        double wz, wcx, wcy;
+        csnhypodbp_mapfit(-180.0, 180.0, -90.0, 90.0, iw, ih, cw, ch, 12.0,
+                          &wz, &wcx, &wcy);
+        csnhypodbp_map_view_bounds(iw, ih, cw, ch, wz, wcx, wcy, 0.0, 0.0,
+                                   &lo0, &lo1, &la0, &la1);
+        CHECK(lo0 >= -180.0 && lo1 <= 180.0 && la0 >= -90.0 && la1 <= 90.0,
+              "view_bounds: recortado al mundo");
+        CHECK(lo1 - lo0 > 359.0 && la1 - la0 > 179.0,
+              "view_bounds: con el mundo encuadrado se ve el mundo");
+    }
+
+    CHECK(csnhypodbp_map_view_bounds(iw, ih, cw, ch, 0.0, cx, cy, 0.0, 0.0,
+                                     &lon0, &lon1, &lat0, &lat1) == -1,
+          "view_bounds: zoom 0 -> -1");
+    CHECK(csnhypodbp_map_view_bounds(iw, ih, 0, ch, z, cx, cy, 0.0, 0.0,
+                                     &lon0, &lon1, &lat0, &lat1) == -1,
+          "view_bounds: canvas vacio -> -1");
+    CHECK(csnhypodbp_map_view_bounds(iw, ih, cw, ch, z, cx, cy, 0.0, 0.0,
+                                     NULL, &lon1, &lat0, &lat1) == -1,
+          "view_bounds: punteros NULL -> -1");
+}
+
+static void test_fit_bounds(void)
+{
+    CsnhypodbpMapPt pts[2];
+    double lon0 = 0, lon1 = 0, lat0 = 0, lat1 = 0;
+
+    memset(pts, 0, sizeof(pts));
+    CHECK(csnhypodbp_map_fit_bounds(pts, 0, 5.0, &lon0, &lon1, &lat0, &lat1) == 1,
+          "fit_bounds: sin puntos usa el mundo");
+    CHECK(lon0 == -180.0 && lon1 == 180.0 && lat0 == -90.0 && lat1 == 90.0,
+          "fit_bounds: el respaldo es el mundo completo");
+    CHECK(csnhypodbp_map_fit_bounds(NULL, 3, 5.0, &lon0, &lon1, &lat0, &lat1) == 1,
+          "fit_bounds: puntero NULL tambien cae al mundo");
+
+    pts[0].lat = -20.0; pts[0].lon = -70.0;
+    pts[1].lat = -22.0; pts[1].lon = -71.5;
+    CHECK(csnhypodbp_map_fit_bounds(pts, 2, 5.0, &lon0, &lon1, &lat0, &lat1) == 0,
+          "fit_bounds: con puntos usa su bbox");
+    CHECK(fabs(lon0 + 73.25) < 1e-9 && fabs(lon1 + 68.25) < 1e-9 &&
+          fabs(lat0 + 23.5) < 1e-9 && fabs(lat1 + 18.5) < 1e-9,
+          "fit_bounds: aplica MapMinSpanDeg");
+
+    /* Un bbox ya grande no se toca. */
+    pts[0].lat = -40.0; pts[0].lon = -76.0;
+    pts[1].lat = -17.0; pts[1].lon = -66.0;
+    CHECK(csnhypodbp_map_fit_bounds(pts, 2, 5.0, &lon0, &lon1, &lat0, &lat1) == 0 &&
+          lon0 == -76.0 && lon1 == -66.0 && lat0 == -40.0 && lat1 == -17.0,
+          "fit_bounds: bbox mayor que el suelo queda igual");
+
+    CHECK(csnhypodbp_map_fit_bounds(pts, 2, 5.0, NULL, &lon1, &lat0, &lat1) == -1,
+          "fit_bounds: punteros NULL -> -1");
+}
+
+static void test_grid_step(void)
+{
+    CHECK(fabs(csnhypodbp_map_grid_step(5.0) - 1.0) < 1e-12, "grid_step: 5 -> 1");
+    CHECK(fabs(csnhypodbp_map_grid_step(23.0) - 5.0) < 1e-12, "grid_step: 23 -> 5");
+    CHECK(fabs(csnhypodbp_map_grid_step(40.0) - 5.0) < 1e-12, "grid_step: 40 -> 5");
+    CHECK(fabs(csnhypodbp_map_grid_step(360.0) - 45.0) < 1e-12, "grid_step: 360 -> 45");
+    CHECK(fabs(csnhypodbp_map_grid_step(2.0) - 0.25) < 1e-12, "grid_step: 2 -> 0.25");
+    CHECK(fabs(csnhypodbp_map_grid_step(0.3) - 0.05) < 1e-12, "grid_step: 0.3 -> 0.05");
+    CHECK(fabs(csnhypodbp_map_grid_step(NAN) - 10.0) < 1e-12, "grid_step: NaN -> 10");
+    CHECK(fabs(csnhypodbp_map_grid_step(0.0) - 10.0) < 1e-12, "grid_step: 0 -> 10");
+    CHECK(fabs(csnhypodbp_map_grid_step(-5.0) - 10.0) < 1e-12, "grid_step: negativo -> 10");
+
+    /* El paso nunca deja menos de ~4 divisiones en el span. */
+    {
+        const double spans[6] = { 0.4, 1.0, 4.0, 9.0, 90.0, 360.0 };
+        int i, bad = 0;
+        for (i = 0; i < 6; i++) {
+            double st = csnhypodbp_map_grid_step(spans[i]);
+            if (!(st > 0.0) || spans[i] / st < 3.0) bad++;
+        }
+        CHECK(bad == 0, "grid_step: al menos ~4 divisiones en cada span");
+    }
+}
+
+static void test_axis_fmt(void)
+{
+    char buf[32];
+
+    csnhypodbp_map_axis_fmt(1.0, -70.0, buf, sizeof(buf));
+    CHECK(strcmp(buf, "-70") == 0, "axis_fmt: paso >= 1 sin decimales");
+    csnhypodbp_map_axis_fmt(0.5, -70.5, buf, sizeof(buf));
+    CHECK(strcmp(buf, "-70.5") == 0, "axis_fmt: paso 0.5 con un decimal");
+    csnhypodbp_map_axis_fmt(0.05, -70.05, buf, sizeof(buf));
+    CHECK(strcmp(buf, "-70.05") == 0, "axis_fmt: paso chico con dos decimales");
+    csnhypodbp_map_axis_fmt(1.0, 0.0, buf, sizeof(buf));
+    CHECK(strcmp(buf, "0") == 0, "axis_fmt: cero sin signo");
+    csnhypodbp_map_axis_fmt(1.0, 15.0, buf, sizeof(buf));
+    CHECK(strcmp(buf, "15") == 0, "axis_fmt: positivo");
+    csnhypodbp_map_axis_fmt(0.0, 12.0, buf, sizeof(buf));
+    CHECK(strcmp(buf, "12") == 0, "axis_fmt: paso invalido usa el decimal grueso");
+    csnhypodbp_map_axis_fmt(1.0, NAN, buf, sizeof(buf));
+    CHECK(strcmp(buf, "?") == 0, "axis_fmt: valor no finito -> ?");
+    csnhypodbp_map_axis_fmt(1.0, 5.0, NULL, 0);
+    CHECK(1, "axis_fmt: buffer NULL no revienta");
+}
+
+static void test_label_pick(void)
+{
+    const double pos[5] = { 0.0, 20.0, 100.0, 120.0, 200.0 };
+    int keep[5];
+    int i;
+
+    CHECK(csnhypodbp_map_label_pick(pos, 5, 34.0, keep) == 0,
+          "label_pick: devuelve 0");
+    CHECK(keep[0] == 1 && keep[1] == 0 && keep[2] == 1 && keep[3] == 0 && keep[4] == 1,
+          "label_pick: respeta la separacion minima");
+
+    for (i = 0; i < 5; i++) keep[i] = -1;
+    CHECK(csnhypodbp_map_label_pick(pos, 5, 0.0, keep) == 0 &&
+          keep[0] == 1 && keep[1] == 1 && keep[2] == 1 && keep[3] == 1 && keep[4] == 1,
+          "label_pick: sin separacion se etiqueta todo");
+
+    CHECK(csnhypodbp_map_label_pick(pos, 0, 34.0, keep) == 0,
+          "label_pick: n = 0 no es error");
+
+    {
+        const double malos[3] = { NAN, 10.0, 12.0 };
+        CHECK(csnhypodbp_map_label_pick(malos, 3, 34.0, keep) == 0 &&
+              keep[0] == 0 && keep[1] == 1 && keep[2] == 0,
+              "label_pick: una posicion no finita se omite sin arrastrar el hueco");
+    }
+
+    CHECK(csnhypodbp_map_label_pick(NULL, 5, 34.0, keep) == -1 &&
+          csnhypodbp_map_label_pick(pos, 5, 34.0, NULL) == -1,
+          "label_pick: punteros NULL -> -1");
+}
+
 int main(void)
 {
     test_bbox();
@@ -466,6 +704,13 @@ int main(void)
     test_split_parse();
     test_mapfit_at();
     test_span_min();
+    test_canvas();
+    test_screen();
+    test_view_bounds();
+    test_fit_bounds();
+    test_grid_step();
+    test_axis_fmt();
+    test_label_pick();
     test_profile_frame();
     test_frame_view();
     test_hit();

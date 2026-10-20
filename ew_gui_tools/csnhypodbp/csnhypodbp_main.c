@@ -469,6 +469,13 @@ int ReadConfig(char *configfile) {
 static int maps_print_config(void) {
     int i;
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
+    /* Espacio de proyeccion efectivo, sin abrir GTK: sin MapImageFile el mapa de
+       planta se dibuja igual sobre el lienzo virtual (grilla, capas y puntos). */
+    if (MapImageFile[0])
+        printf("MapCanvas image\n");
+    else
+        printf("MapCanvas virtual %.0fx%.0f\n",
+               CSNHYPODBP_MAP_VIRTUAL_W, CSNHYPODBP_MAP_VIRTUAL_H);
     printf("MapMinSpanDeg %.1f\n", g_map_min_span_deg);
     printf("MapZoom %.3f\n", g_map_zoom_factor);
     printf("MapSplit %.4f\n", g_map_split_frac);
@@ -587,6 +594,10 @@ void csnhypodbp_maps_load(void) {
     } else {
         logit("et", "csnhypodbp: sin MapImageFile; el mapa de planta va sin fondo\n");
     }
+    if (!g_map_pixbuf)
+        logit("t", "csnhypodbp: mapa de planta sobre lienzo virtual %.0fx%.0f "
+                   "(grilla, perfiles y capas .lines se dibujan igual)\n",
+              CSNHYPODBP_MAP_VIRTUAL_W, CSNHYPODBP_MAP_VIRTUAL_H);
     if (g_overlay_nfiles > 0) {
         g_map_overlay = ewgui_overlay_new();
         for (i = 0; g_map_overlay && i < g_overlay_nfiles; i++) {
