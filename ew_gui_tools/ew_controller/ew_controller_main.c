@@ -398,7 +398,7 @@ static void on_activate(GtkApplication *app, gpointer user_data)
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
-    static const EwMenuItem view_items[] = { { "Dark mode", "win.dark-mode", NULL, 0 } };
+    static const EwMenuItem view_items[] = { { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 } };
     static const EwMenuGroup view_groups[] = { { "View", view_items, 1 } };
 
     GtkWidget *menu_btn = ewgui_menu_button_new(view_groups, 1);

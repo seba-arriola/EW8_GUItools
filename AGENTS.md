@@ -75,7 +75,7 @@ hace **`csnloc`** localmente.
     la magnitud activa, en cajas de **texto** (`GtkEntry`, sin los `+/-` del spin y
     acotadas con `max-width-chars` = valor canónico + 2, porque GTK4 da 150 px de
     ancho natural a todo `GtkEntry`): el valor se aplica al confirmar el campo
-    —Enter o salir de él— y solo si los cinco valen; los rótulos y las cajas van al
+    —Enter o salir de él— y solo si los cuatro valen; los rótulos y las cajas van al
     72 % y `reset default`/`calculate`/`calculate all` al 90 %). La tablita de la solución
     (`Lat/Lon/Depth/Nph/RMS/ML/Mwp/Mb/Ms`) vive **por encima del sub-notebook**, así
     que se ve igual en las dos. La GUI lee del **mismo `.d` de csnmags**

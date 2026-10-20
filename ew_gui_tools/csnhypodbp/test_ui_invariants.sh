@@ -116,8 +116,13 @@ ck  "preview: botones sensibles solo con candidata" 'set_sensitive\(g_preview_bt
 ck  "preview: un solo locate a la vez"       'if \(g_locate_busy\)'                         csnhypodbp_gui.c
 ck  "preview: generacion del job"            'job->gen = g_locate_gen'                      csnhypodbp_gui.c
 ck  "preview: timeout al localizador"        'g_locator_timeout_sec'                        csnhypodbp_gui.c
-ck  "preview: candidato parcial de csnloc"   'locate_stage'                                 csnhypodbp_gui.c
-ck  "preview: confirmar durante el refinador" 'g_locate_confirmed = 1'                      csnhypodbp_gui.c
+nck "preview: sin candidato parcial de csnloc" 'locate_stage'                csnhypodbp_gui.c
+nck "preview: sin guardia de confirmacion en vuelo" 'g_locate_confirmed'      csnhypodbp_gui.c
+ck  "preview: el calculo limpia los valores"  'reset_pending'                csnhypodbp_preview.c
+ck  "preview: mensaje de sin solucion nueva"  'sin solución nueva con'        csnhypodbp_preview.c
+ck  "preview: el aviso se limpia al elegir origen" 'descarta el aviso de "sin solucion nueva"' csnhypodbp_gui.c
+ck  "preview: calculate conserva los valores" 'g_locate_err\[0\] && !g_locate_nosol' csnhypodbp_gui.c
+ck  "preview: tooltip del renglon de estado"  'set_tooltip_text\(g_preview_status' csnhypodbp_gui.c
 ck  "locate: workdir aislado del refinador"  'csnhypodbp_cfg_with_refiner_opts'             csnhypodbp_locate.c
 ck  "locate: timeout de la cadena"           'timeout_sec, cancel'                          csnhypodbp_locate.c
 ck  "locate: error con stdout y stderr"      'ARC invalido'                                 csnhypodbp_locate.c
@@ -195,6 +200,10 @@ ck  "barra: grupo a la derecha"             'gtk_widget_set_hexpand\(spacer, TRU
 ck  "barra: reset en vez de auto"           'g_mag_ov_reset'                             csnhypodbp_main.c
 ck  "barra: unidad solo en la cabecera"     'gtk_label_new\("distancia \[°\]"\)'          csnhypodbp_main.c
 ck  "barra: grupo profundidad con piso"     'gtk_label_new\("prof\. \[km\]"\)'            csnhypodbp_main.c
+nck "barra: sin el grupo de distancia hipocentral" 'dist\. hip\.'                      csnhypodbp_main.c
+nck "barra: sin el campo km en la GUI"      'MAX_DIST_KM|g_mag_ov_km'                    csnhypodbp_gui.c
+nck "barra: sin el campo km en el nucleo"   'MAX_DIST_KM'                                csnhypodbp_magcfg.h
+nck "barra: el override ya no toca el km"   'CSNHYPODBP_MAG_OV_MAX_DIST_KM|ov->max_dist_km' csnhypodbp_magcfg.c
 ck  "barra: confirmar activa el override"     'csnhypodbp_mag_ov_from_text\(ov, txt\)'     csnhypodbp_gui.c
 ck  "barra: el override se enciende en el nucleo" 'ov->on = 1;'                            csnhypodbp_magcfg.c
 ck  "barra: corte de profundidad"           'csnhypodbp_magcfg_depth_ok'                 csnhypodbp_gui.c
@@ -232,7 +241,7 @@ ck  "barra: reset/calculate llevan su clase"  'add_css_class\(g_mag_ov_reset, "m
 nck "barra: sin el subboton +/- del spin"     'mag-bar-cell > button'                       csnhypodbp_main.c
 ck  "barra: las cajas son texto, no spin"     'GTK_IS_EDITABLE\(cw2\)'                      csnhypodbp_main.c
 nck "barra: sin GTK_IS_SPIN_BUTTON"           'GTK_IS_SPIN_BUTTON\(cw2\)'                   csnhypodbp_main.c
-nck "barra: sin los spins de los overrides"   'gtk_spin_button_new_with_range\(0\.0, (180|2000|700)\.0' csnhypodbp_main.c
+nck "barra: sin los spins de los overrides"   'gtk_spin_button_new_with_range\(0\.0, (180|700|999)\.0' csnhypodbp_main.c
 nck "barra: sin get_value de los overrides"   'gtk_spin_button_get_value\(GTK_SPIN_BUTTON\(g_mag_ov' csnhypodbp_gui.c
 ck  "barra: caja de texto por campo"          'mag_ov_entry_new\(CSNHYPODBP_MAG_OV_MIN_DELTA' csnhypodbp_main.c
 ck  "barra: rango y decimales de una fuente"  'csnhypodbp_mag_ov_field_limits'              csnhypodbp_magcfg.c
@@ -464,6 +473,18 @@ ck  "fix: el job lleva la profundidad"      'job->fix_depth_km'                 
 ck  "fix: locate_run la recibe"             'job->fix_depth_km, g_locator_timeout_sec'    csnhypodbp_gui.c
 ck  "fix: aviso si el motor no la respeta"  'no respeto la profundidad fija'              csnhypodbp_gui.c
 ck  "fix: sin persistencia en el .d"        'g_fix_depth_on = FALSE'                      csnhypodbp_main.c
+
+# --- Estaciones sin datos: clave del .d + casilla del menu ---
+ck  "config: clave HideStationsWithoutData"  'k_its\("HideStationsWithoutData"\)' csnhypodbp_main.c
+nck "config: ya no se lee HideEmptyStations" 'HideEmptyStations'              csnhypodbp_main.c
+ck  "print-config: HideStationsWithoutData"  'HideStationsWithoutData %d'      csnhypodbp_main.c
+ck  "menu: item con casilla"                 '"Hide stations without data", "win\.hide-empty", NULL, 0, 1, 0' csnhypodbp_main.c
+ck  "menu: la casilla va en su propio grupo" '"Stations",[[:space:]]+hide_items, 1' csnhypodbp_main.c
+ck  "menu: Waveforms ya no lleva la casilla" '"Waveforms", wave_items, 3'     csnhypodbp_main.c
+ck  "menu: 5 grupos en Procesar"             'wave_groups, 5'                csnhypodbp_main.c
+ck  "menu: casilla sincronizada con la sesion" 'hide_items\[0\]\.checked'     csnhypodbp_main.c
+ck  "menu: sincronia al alternar"            'hide_item_sync\(\);.*casilla del menu sigue a la sesion' csnhypodbp_main.c
+ck  "menu: estado inicial antes del boton"   'hide_item_sync\(\);.*estado inicial' csnhypodbp_main.c
 
 # --- Help en el menu ☰, sin texto de instrucciones ---
 nck "sin etiqueta de instrucciones"         'g_help_label'                 csnhypodbp_main.c

@@ -58,6 +58,7 @@ HeartBeatInt    30
 LogFile         1
 StaFile         estaciones.txt
 StateFile       state.events
+HideStationsWithoutData 1
 MapImageFile    mapa.jpg
 OverlayFile     ov1.lines
 OverlayColor    capa FF0000
@@ -93,6 +94,7 @@ cfg "$TMP/ok.d" -22.000000 -20.333333
 rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : print-config rc 0" || { echo "FAIL: print-config rc=$rc"; fails=$((fails+1)); }
 ck  "print-config: MapImageFile"    '^MapImageFile mapa\.jpg$'            "$TMP/pc.txt"
+ck  "print-config: HideStationsWithoutData" '^HideStationsWithoutData 1$'    "$TMP/pc.txt"
 ck  "print-config: lienzo = imagen" '^MapCanvas image$'                   "$TMP/pc.txt"
 ck  "print-config: 1 overlay"       '^OverlayFiles 1$'                    "$TMP/pc.txt"
 ck  "print-config: OverlayColor"    '^OverlayColor capa FF0000$'          "$TMP/pc.txt"
@@ -158,6 +160,14 @@ rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : sin MapImageFile no es error" || { echo "FAIL: sin MapImageFile rc=$rc"; fails=$((fails+1)); }
 ck  "print-config: MapImageFile (none)"     '^MapImageFile \(none\)$'      "$TMP/nomap.txt"
 ck  "print-config: lienzo virtual 2:1"      '^MapCanvas virtual 10800x5400$' "$TMP/nomap.txt"
+
+# HideStationsWithoutData: ausente = 0 (se muestran); cualquier entero != 0 = 1.
+grep -v '^HideStationsWithoutData' "$TMP/ok.d" > "$TMP/hide_absent.d"
+"$BIN" --print-config "$TMP/hide_absent.d" > "$TMP/hide0.txt" 2>&1
+ck  "print-config: sin la clave -> 0"       '^HideStationsWithoutData 0$'  "$TMP/hide0.txt"
+sed 's/^HideStationsWithoutData.*/HideStationsWithoutData 7/' "$TMP/ok.d" > "$TMP/hide7.d"
+"$BIN" --print-config "$TMP/hide7.d" > "$TMP/hide7.txt" 2>&1
+ck  "print-config: valor 7 -> 1"            '^HideStationsWithoutData 1$'  "$TMP/hide7.txt"
 
 # La clave Profile mal formada es error de config.
 grep -v '^Profile B' "$TMP/ok.d" > "$TMP/badprof.d"

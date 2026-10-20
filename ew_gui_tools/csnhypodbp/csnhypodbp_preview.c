@@ -93,6 +93,18 @@ static void set_values(CsnhypodbpPreviewVals *v, double lat, double lon, double 
     snprintf(v->val[9], sizeof(v->val[9]), "%s", or_dash(mww));
 }
 
+/* Sin resultado todavia: titulo del cuadro, otime y 10 valores en guion. */
+static void reset_pending(CsnhypodbpPreviewVals *v, const char *locator)
+{
+    int i;
+
+    v->candidate = 0;
+    snprintf(v->title, sizeof(v->title), "New solution · %s", or_dash(locator));
+    snprintf(v->otime, sizeof(v->otime), "Origin time: --");
+    for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
+        snprintf(v->val[i], sizeof(v->val[i]), "-");
+}
+
 void csnhypodbp_preview_set_busy(CsnhypodbpPreviewVals *v, const char *locator, long secs)
 {
     const char *name;
@@ -101,15 +113,30 @@ void csnhypodbp_preview_set_busy(CsnhypodbpPreviewVals *v, const char *locator, 
     name = (locator && locator[0]) ? locator : "csnloc";
     v->state = CSNHYPODBP_PREVIEW_RUNNING;
     v->err[0] = '\0';
+    reset_pending(v, name);
     snprintf(v->busy, sizeof(v->busy), "calculando %s… %ld s", name,
              secs < 0 ? 0 : secs);
 }
 
-void csnhypodbp_preview_set_error(CsnhypodbpPreviewVals *v, const char *err)
+void csnhypodbp_preview_nosol_msg(char *out, size_t n, const char *locator,
+                                  const char *detail)
+{
+    const char *name = (locator && locator[0]) ? locator : "csnloc";
+
+    if (!out || n == 0) return;
+    if (detail && detail[0])
+        snprintf(out, n, "sin solución nueva con %s: %s", name, detail);
+    else
+        snprintf(out, n, "sin solución nueva con %s", name);
+}
+
+void csnhypodbp_preview_set_error(CsnhypodbpPreviewVals *v, const char *locator,
+                                  const char *err)
 {
     if (!v) return;
     v->state = CSNHYPODBP_PREVIEW_ERROR;
     v->busy[0] = '\0';
+    reset_pending(v, locator);
     snprintf(v->err, sizeof(v->err), "%s", (err && err[0]) ? err : "error");
 }
 

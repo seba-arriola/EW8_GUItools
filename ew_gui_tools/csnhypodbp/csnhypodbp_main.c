@@ -95,7 +95,7 @@ char g_active_locator[32] = "";
 char g_manual_state_file[MAX_STR] = "csnhypodbp_manual.events";
 int  g_locator_timeout_sec = 600;
 int  g_prefetch_neighbors = 2;
-int  g_hide_empty = 0;   /* HideEmptyStations: ocultar estaciones sin datos */
+int  g_hide_empty = 0;   /* HideStationsWithoutData: ocultar estaciones sin datos */
 char g_store_root[512] = "";
 int  g_fetch_threads = 4;
 /* Colores de las picadas (pColor/sColor + pColorAuto/pColorTheo/sColorAuto/
@@ -155,7 +155,7 @@ CsnhypodbpMagMarks g_mag_marks;   /* ventanas ajustadas por (estacion, magnitud)
 int g_magf_auto = 1, g_magf_manual = 1, g_magf_theo = 0;
 CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];   /* override de distancia */
 GtkWidget *g_magf_chk[3] = { NULL, NULL, NULL };
-GtkWidget *g_mag_ov_min = NULL, *g_mag_ov_max = NULL, *g_mag_ov_km = NULL;
+GtkWidget *g_mag_ov_min = NULL, *g_mag_ov_max = NULL;
 GtkWidget *g_mag_ov_dmin = NULL, *g_mag_ov_depth = NULL;
 GtkWidget *g_mag_ov_reset = NULL;
 GtkWidget *g_mag_btn_calc = NULL, *g_mag_btn_calc_all = NULL;
@@ -365,7 +365,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("ManualStateFile")) { str = k_str(); if (str) snprintf(g_manual_state_file, sizeof(g_manual_state_file), "%s", str); }
         else if (k_its("LocatorTimeoutSec")) { g_locator_timeout_sec = k_int(); }
         else if (k_its("PrefetchNeighbors")) { g_prefetch_neighbors = k_int(); }
-        else if (k_its("HideEmptyStations")) { g_hide_empty = k_int() ? 1 : 0; }
+        else if (k_its("HideStationsWithoutData")) { g_hide_empty = k_int() ? 1 : 0; }
         else if (k_its("SearchMaxEvents")) {
             g_search_max_events = k_int();
             if (g_search_max_events <= 0) g_search_max_events = CSNHYPODBP_SEARCH_DEFAULT_LIMIT;
@@ -520,6 +520,9 @@ static void print_pick_color(const char *key, const CsnhypodbpColorSet *set,
 
 static int maps_print_config(void) {
     int i;
+    /* Estado inicial de la tabla de estaciones en la sesion (el menu lo alterna
+       sin reescribir el .d). */
+    printf("HideStationsWithoutData %d\n", g_hide_empty ? 1 : 0);
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
     /* Espacio de proyeccion efectivo, sin abrir GTK: sin MapImageFile el mapa de
        planta se dibuja igual sobre el lienzo virtual (grilla, capas y puntos). */
@@ -1167,7 +1170,9 @@ static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user
 }
 
 /* Conmutador "Hide stations without data" (menu del headerbar). Modo dinamico:
-   filtra la lista, no borra filas (una estacion con datos reaparece). */
+   filtra la lista, no borra filas (una estacion con datos reaparece). El valor
+   del .d solo fija el estado inicial; la casilla del menu alterna la sesion. */
+static void hide_item_sync(void);
 static void on_toggle_hide_empty(GSimpleAction *action, GVariant *param, gpointer user_data) {
     GVariant *st;
     gboolean active;
@@ -1177,6 +1182,7 @@ static void on_toggle_hide_empty(GSimpleAction *action, GVariant *param, gpointe
     g_variant_unref(st);
     g_simple_action_set_state(action, g_variant_new_boolean(active));
     g_hide_empty = active ? 1 : 0;
+    hide_item_sync();            /* la casilla del menu sigue a la sesion */
     rebuild_station_list();
     actualizar_altura_canvas();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
@@ -1208,35 +1214,48 @@ static void paned_map_half(GtkWidget *paned, gpointer data)
 
 /* --- Menú del headerbar dependiente de la vista (Eventos vs Ondas) --- */
 static const EwMenuItem view_items[] = {
-    { "Export view...", "win.export", NULL, 0 },
-    { "Dark mode", "win.dark-mode", NULL, 0 },
+    { "Export view...", "win.export", NULL, 0, 0, 0 },
+    { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 },
 };
+/* La casilla es estado de sesion, no una accion del grupo de formas de onda: va
+   en su propio grupo, PRIMERO del menu de Procesar. El menu no lee el
+   GSimpleAction, asi que el estado viaja en el item: `hide_items` NO es const y
+   `hide_item_sync` lo mantiene igual a `g_hide_empty`. */
+static EwMenuItem hide_items[] = {
+    { "Hide stations without data", "win.hide-empty", NULL, 0, 1, 0 },
+};
+
+static void hide_item_sync(void) {
+    hide_items[0].checked = g_hide_empty ? 1 : 0;
+}
+
 static const EwMenuItem wave_items[] = {
-    { "Filters...", "win.filters", NULL, 0 },
-    { "Fetch waveforms", "win.fetch", NULL, 0 },
-    { "Time window...", "win.timewin", NULL, 0 },
-    { "Hide stations without data", "win.hide-empty", NULL, 0 },
+    { "Filters...", "win.filters", NULL, 0, 0, 0 },
+    { "Fetch waveforms", "win.fetch", NULL, 0, 0, 0 },
+    { "Time window...", "win.timewin", NULL, 0, 0, 0 },
 };
+
 static const EwMenuItem colour_items[] = {
-    { "P manual", "win.colour", "i", 1 },
-    { "P automatic", "win.colour", "i", 2 },
-    { "P theoretical", "win.colour", "i", 3 },
-    { "S manual", "win.colour", "i", 4 },
-    { "S automatic", "win.colour", "i", 5 },
-    { "S theoretical", "win.colour", "i", 6 },
+    { "P manual", "win.colour", "i", 1, 0, 0 },
+    { "P automatic", "win.colour", "i", 2, 0, 0 },
+    { "P theoretical", "win.colour", "i", 3, 0, 0 },
+    { "S manual", "win.colour", "i", 4, 0, 0 },
+    { "S automatic", "win.colour", "i", 5, 0, 0 },
+    { "S theoretical", "win.colour", "i", 6, 0, 0 },
 };
 static const EwMenuItem help_items[] = {
-    { "Commands...", "win.help", NULL, 0 },
+    { "Commands...", "win.help", NULL, 0, 0, 0 },
 };
 static const EwMenuGroup wave_groups[] = {
-    { "Waveforms", wave_items, 4 },
+    { "Stations",  hide_items, 1 },
+    { "Waveforms", wave_items, 3 },
     { "Colours", colour_items, 6 },
     { "View", view_items, 2 },
     { "Help", help_items, 1 },
 };
 static const EwMenuItem search_items[] = {
-    { "Search events...", "win.search", NULL, 0 },
-    { "Clear search", "win.clear-search", NULL, 0 },
+    { "Search events...", "win.search", NULL, 0, 0, 0 },
+    { "Clear search", "win.clear-search", NULL, 0, 0, 0 },
 };
 static const EwMenuGroup base_groups[] = {
     { "Search", search_items, 2 },
@@ -1268,7 +1287,7 @@ void csnhypodbp_update_search_ui(void)
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint num, gpointer ud) {
     (void)nb; (void)num; (void)ud;
     if (!g_menu_btn) return;
-    if (page == g_page_procesar) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 4);
+    if (page == g_page_procesar) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 5);
     else                         ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
 }
 
@@ -1577,6 +1596,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_insert_action_group(window_global, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
+    hide_item_sync();   /* estado inicial: HideStationsWithoutData del .d */
     g_menu_btn = ewgui_menu_button_new(base_groups, 2);
 
     GtkWidget *header = adw_header_bar_new();
@@ -1903,7 +1923,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         g_preview_status = gtk_label_new("");
         gtk_label_set_xalign(GTK_LABEL(g_preview_status), 0.0);
         gtk_label_set_ellipsize(GTK_LABEL(g_preview_status), PANGO_ELLIPSIZE_END);
-        gtk_label_set_max_width_chars(GTK_LABEL(g_preview_status), 34);
+        gtk_label_set_max_width_chars(GTK_LABEL(g_preview_status), 48);
         gtk_widget_add_css_class(g_preview_status, "preview-busy");
         gtk_widget_set_visible(g_preview_status, FALSE);
         otime_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -2297,15 +2317,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_box_append(GTK_BOX(bar), g_mag_ov_max);
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
-            /* Grupo distancia hipocentral: el corte en km de ML. */
-            gtk_box_append(GTK_BOX(bar), gtk_label_new("dist. hip. [km]"));
-            gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
-            g_mag_ov_km = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DIST_KM,
-                "Tope de distancia HIPOCENTRAL en km (el corte en km de ML; "
-                "0 = sin tope).");
-            gtk_box_append(GTK_BOX(bar), g_mag_ov_km);
-            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
-
             /* Grupo profundidad del EVENTO: `prof. [km]  min [ ]  max [ ]`. */
             gtk_box_append(GTK_BOX(bar), gtk_label_new("prof. [km]"));
             gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
@@ -2316,7 +2327,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
             g_mag_ov_depth = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DEPTH,
                 "Profundidad MAXIMA del evento para esta magnitud, en km (0 = sin "
-                "corte). El veto por defecto de Ms es 60 km.");
+                "corte, 999 = sin corte practico). El veto por defecto de Ms es "
+                "60 km.");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_depth);
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
@@ -2441,7 +2453,7 @@ int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
-    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideEmptyStations=%d\n",
+    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideStationsWithoutData=%d\n",
           g_channels_order, g_components_order, g_hide_empty);
     logit("t", "csnhypodbp: busqueda SearchMaxEvents=%d  SDS enabled=%d root=%s fallbackHours=%d\n",
           g_search_max_events, g_sds_enabled, g_sds_root, g_sds_fallback_hours);

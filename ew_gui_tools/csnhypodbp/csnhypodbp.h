@@ -100,7 +100,7 @@ extern char g_active_locator[32];      /* localizador elegido para `locate` */
 extern char g_manual_state_file[MAX_STR];  /* ManualStateFile (solucion manual propia) */
 extern int  g_locator_timeout_sec;     /* LocatorTimeoutSec */
 extern int  g_prefetch_neighbors;      /* PrefetchNeighbors */
-extern int  g_hide_empty;              /* HideEmptyStations (ocultar sin datos) */
+extern int  g_hide_empty;              /* HideStationsWithoutData (ocultar sin datos) */
 extern CsnhypodbpColorSet g_colors_p;  /* pColor + pColorAuto/pColorTheo */
 extern CsnhypodbpColorSet g_colors_s;  /* sColor + sColorAuto/sColorTheo */
 void csnhypodbp_log_colors(void);      /* loguea los colores en hex (copiar al .d) */
@@ -381,7 +381,7 @@ extern CsnhypodbpMagMarks g_mag_marks;        /* ventanas ajustadas por (estacio
 extern int g_magf_auto, g_magf_manual, g_magf_theo;  /* filtro A/M/Teo de `magnitudes` */
 extern CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];  /* override de distancia */
 extern GtkWidget *g_magf_chk[3];              /* checkboxes A/M/Teo de la barra */
-extern GtkWidget *g_mag_ov_min, *g_mag_ov_max, *g_mag_ov_km;  /* puerta activa */
+extern GtkWidget *g_mag_ov_min, *g_mag_ov_max;                 /* puerta activa */
 extern GtkWidget *g_mag_ov_dmin, *g_mag_ov_depth;             /* prof. min / max */
 extern GtkWidget *g_mag_ov_reset;                             /* reset default */
 extern GtkWidget *g_mag_btn_calc, *g_mag_btn_calc_all;        /* calculate / all */
@@ -396,7 +396,7 @@ void csnhypodbp_mag_ov_sync(void);
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data);
 /* Cajas de la barra de overrides (`GtkEntry`, sin los +/- del spin): `changed`
    solo valida y pinta en rojo; el valor se aplica al CONFIRMAR (`activate`, o al
-   salir del campo) y solo si los cinco campos valen. Ver csnhypodbp_magcfg.h. */
+   salir del campo) y solo si los cuatro campos valen. Ver csnhypodbp_magcfg.h. */
 void on_mag_ov_changed(GtkEditable *e, gpointer data);
 void on_mag_ov_commit(GtkWidget *w, gpointer data);
 void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data);

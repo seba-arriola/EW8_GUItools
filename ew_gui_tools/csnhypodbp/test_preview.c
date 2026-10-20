@@ -98,21 +98,70 @@ int main(void)
           "Mb/Ms de la candidata");
     CHECK(strcmp(v.val[9], "7.42") == 0, "Mww de la candidata (de la inversion)");
 
-    /* 2b) indicador general: texto y estado sin tocar los valores */
+    /* 2b) indicador general: sin resultado todavia, guiones + texto de calculo */
     csnhypodbp_preview_set_busy(&v, "nlloc_ring", 12);
     CHECK(v.state == CSNHYPODBP_PREVIEW_RUNNING, "busy: estado RUNNING");
     CHECK(strcmp(v.busy, "calculando nlloc_ring… 12 s") == 0,
           "busy: localizador y segundos");
-    CHECK(strcmp(v.title, "New solution · csnloc") == 0 &&
-          strcmp(v.val[0], "-33.123") == 0,
-          "busy: no pisa titulo ni valores");
+    CHECK(strcmp(v.title, "New solution · nlloc_ring") == 0,
+          "busy: titulo con el localizador");
+    CHECK(strcmp(v.otime, "Origin time: --") == 0, "busy: sin tiempo de origen");
+    CHECK(v.candidate == 0 && v.err[0] == '\0', "busy: sin candidata ni error");
+    {
+        int i, all = 1;
+        for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
+            if (strcmp(v.val[i], "-") != 0) all = 0;
+        CHECK(all, "busy: los 10 valores en guion");
+    }
     csnhypodbp_preview_set_busy(&v, "", 0);
     CHECK(strcmp(v.busy, "calculando csnloc… 0 s") == 0,
           "busy: localizador vacio -> csnloc");
-    csnhypodbp_preview_set_error(&v, "timeout tras 600 s");
+    csnhypodbp_preview_set_busy(&v, "x", -5);
+    CHECK(strcmp(v.busy, "calculando x… 0 s") == 0, "busy: segundos negativos -> 0");
+
+    /* 2c) fallo del locate: guiones + mensaje, sin candidata */
+    csnhypodbp_preview_set_error(&v, "nlloc_ring", "timeout tras 600 s");
     CHECK(v.state == CSNHYPODBP_PREVIEW_ERROR, "error: estado ERROR");
     CHECK(strcmp(v.err, "timeout tras 600 s") == 0 && v.busy[0] == '\0',
           "error: motivo visible y sin texto busy");
+    CHECK(strcmp(v.title, "New solution · nlloc_ring") == 0,
+          "error: titulo con el localizador");
+    CHECK(strcmp(v.otime, "Origin time: --") == 0, "error: sin tiempo de origen");
+    CHECK(v.candidate == 0, "error: no queda candidata");
+    {
+        int i, all = 1;
+        for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
+            if (strcmp(v.val[i], "-") != 0) all = 0;
+        CHECK(all, "error: los 10 valores en guion");
+    }
+    csnhypodbp_preview_set_error(&v, "x", "");
+    CHECK(strcmp(v.err, "error") == 0, "error: motivo vacio -> error");
+
+    /* 2d) mensaje de "sin solucion nueva" (acotado y NUL-terminado) */
+    {
+        char msg[96];
+        char out[64];
+        char big[600];
+
+        csnhypodbp_preview_nosol_msg(msg, sizeof(msg), "nlloc_ring",
+                                     "timeout tras 600 s");
+        CHECK(strcmp(msg, "sin solución nueva con nlloc_ring: timeout tras 600 s") == 0,
+              "nosol_msg: localizador y detalle");
+        csnhypodbp_preview_nosol_msg(msg, sizeof(msg), "hyp2000_ring", "");
+        CHECK(strcmp(msg, "sin solución nueva con hyp2000_ring") == 0,
+              "nosol_msg: sin detalle no deja ': '");
+        csnhypodbp_preview_nosol_msg(msg, sizeof(msg), "", NULL);
+        CHECK(strcmp(msg, "sin solución nueva con csnloc") == 0,
+              "nosol_msg: localizador vacio -> csnloc");
+        memset(big, 'x', sizeof(big) - 1);
+        big[sizeof(big) - 1] = '\0';
+        csnhypodbp_preview_nosol_msg(out, sizeof(out), "nlloc_ring", big);
+        CHECK(strlen(out) == sizeof(out) - 1,
+              "nosol_msg: trunca al buffer y termina en NUL");
+        csnhypodbp_preview_nosol_msg(NULL, 10, "x", "y");
+        csnhypodbp_preview_nosol_msg(msg, 0, "x", "y");
+        CHECK(1, "nosol_msg: NULL/0 no revienta");
+    }
 
     /* 3) candidata sin localizador activo */
     csnhypodbp_preview_from_candidate(&v, 0.0, "", 1.0, 2.0, 3.0, 1, 0.1, "", "", "",

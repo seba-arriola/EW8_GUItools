@@ -155,7 +155,7 @@ void rebuild_station_list(void) {
     for (int i = 0; i < NumEstaciones; i++) {
         double dkm = g_StaDist[i] * 111.19;
         if (dkm > 0.0 && dkm > g_max_dist_km) continue;
-        /* HideEmptyStations: omite estaciones sin datos en la ventana. Es un
+        /* HideStationsWithoutData: omite estaciones sin datos en la ventana. Es un
            filtro dinamico (no borra filas): si la estacion vuelve a tener
            datos (p. ej. por SeedLink), reaparece en la siguiente pasada. */
         if (g_hide_empty &&
@@ -399,14 +399,13 @@ static void mag_effective_cfg(CsnhypodbpMagCfg *out)
                                      &g_mag_gate_ov[g_mag_kind], out);
 }
 
-/* Los cinco widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
+/* Los cuatro widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
    globales viven en csnhypodbp_main.c): un solo sitio donde el campo <-> caja. */
 static GtkWidget *mag_ov_widget(int field)
 {
     switch (field) {
     case CSNHYPODBP_MAG_OV_MIN_DELTA:   return g_mag_ov_min;
     case CSNHYPODBP_MAG_OV_MAX_DELTA:   return g_mag_ov_max;
-    case CSNHYPODBP_MAG_OV_MAX_DIST_KM: return g_mag_ov_km;
     case CSNHYPODBP_MAG_OV_MIN_DEPTH:   return g_mag_ov_dmin;
     case CSNHYPODBP_MAG_OV_MAX_DEPTH:   return g_mag_ov_depth;
     default: break;
@@ -439,7 +438,7 @@ static void mag_ov_mark(int only_bad)
     }
 }
 
-/* 1 si alguno de los cinco textos no vale (el commit es todo-o-nada). */
+/* 1 si alguno de los cuatro textos no vale (el commit es todo-o-nada). */
 static int mag_ov_any_invalid(void)
 {
     CsnhypodbpMagGateOv scratch;
@@ -467,9 +466,10 @@ void csnhypodbp_mag_ov_sync(void)
     if (ov->on) {
         shown = *ov;
     } else {
+        double km = 0.0;   /* el corte en km de ML no tiene caja: solo se ignora */
+
         csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind,
-                                      &shown.min_delta, &shown.max_delta,
-                                      &shown.max_dist_km);
+                                      &shown.min_delta, &shown.max_delta, &km);
         shown.min_depth = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
         shown.max_depth = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
     }
@@ -522,7 +522,7 @@ void on_mag_ov_changed(GtkEditable *e, gpointer data)
     mag_ov_mark(1);      /* rojo en las cajas cuyo texto todavia no vale */
 }
 
-/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CINCO
+/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CUATRO
    campos validos (todo o nada): con uno invalido la puerta vigente no cambia y
    las cajas que no valen quedan en rojo. */
 void on_mag_ov_commit(GtkWidget *w, gpointer data)
@@ -1802,38 +1802,10 @@ static gint64 g_locate_t0 = 0;
 static long   g_locate_elapsed = 0;
 static guint  g_locate_tick_id = 0;
 static char   g_locate_name[32] = "";
-static char   g_locate_err[128] = "";
-static int    g_locate_confirmed = 0;   /* confirmo el candidato de csnloc */
-
-typedef struct {
-    CsnhypodbpSolution sol;
-    unsigned gen;
-} LocateStageMsg;
-
-static gboolean locate_partial(gpointer data) {
-    LocateStageMsg *m = data;
-
-    if (g_locate_busy && m->gen == g_locate_gen) {
-        g_preview_sol = m->sol;
-        memset(&g_preview_mag, 0, sizeof(g_preview_mag));
-        g_preview_valid = TRUE;
-        g_preview_pref_kind = -1;
-        csnhypodbp_preview_update();
-        rebuild_station_list();
-    }
-    g_free(m);
-    return G_SOURCE_REMOVE;
-}
-
-/* Corre en el hilo worker: copia la solucion y vuelve al hilo GTK. */
-static void locate_stage(const CsnhypodbpSolution *base, void *ud) {
-    LocateJob *job = ud;
-    LocateStageMsg *m = g_new0(LocateStageMsg, 1);
-
-    m->sol = *base;
-    m->gen = job->gen;
-    g_idle_add(locate_partial, m);
-}
+static char   g_locate_err[320] = "";
+/* 1 = el error es "sin solución nueva" del `locate` (guiones + mensaje);
+   0 = fallo de `calculate` (magnitudes): se conservan los valores elegidos. */
+static int    g_locate_nosol = 0;
 
 static gboolean locate_tick(gpointer data) {
     (void)data;
@@ -1861,7 +1833,7 @@ static gpointer locate_thread(gpointer data) {
                                         job->tank, job->ntank,
                                         job->ovr, job->novr, job->kind_mask,
                                         job->fix_depth_km, g_locator_timeout_sec,
-                                        locate_stage, job, NULL,
+                                        NULL, NULL, NULL,
                                         &job->out, &job->mag,
                                         job->err, sizeof(job->err));
     }
@@ -1894,33 +1866,35 @@ static gboolean locate_finish(gpointer data) {
                         "(pedida %.1f, obtenida %.1f km)\n",
                   job->locator, job->fix_depth_km, job->out.depth);
         g_locate_err[0] = '\0';
-        /* Si el usuario ya confirmo el candidato de csnloc, el refinador no
-           pisa esa confirmacion: solo queda en el log. */
-        if (!g_locate_confirmed) {
-            g_preview_sol = job->out;
-            g_preview_mag = job->mag;
-            g_preview_valid = TRUE;
-        }
+        g_preview_sol = job->out;
+        g_preview_mag = job->mag;
+        g_preview_valid = TRUE;
         logit("t", "csnhypodbp: %s OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
               job->mags_only ? "calculate" : "locate",
               job->locator, job->out.nph, job->out.rms,
               job->mag.ml[0] ? job->mag.ml : "-", job->mag.mwp[0] ? job->mag.mwp : "-");
-        if (!g_locate_confirmed) rebuild_station_list();   /* residual de la candidata */
+        rebuild_station_list();   /* residual de la candidata */
     } else {
-        snprintf(g_locate_err, sizeof(g_locate_err), "%s", job->err[0] ? job->err : "error");
+        /* Sin solucion nueva: se descarta cualquier candidata y el preview queda
+           en guiones con el mensaje. El prefijo "sin solucion nueva con <loc>"
+           solo aplica al locate; `calculate` reporta el fallo de magnitudes. */
+        g_preview_valid = FALSE;
+        g_locate_nosol = job->mags_only ? 0 : 1;
+        if (job->mags_only)
+            snprintf(g_locate_err, sizeof(g_locate_err), "%s",
+                     job->err[0] ? job->err : "error");
+        else
+            csnhypodbp_preview_nosol_msg(g_locate_err, sizeof(g_locate_err),
+                                         job->locator,
+                                         job->err[0] ? job->err : "error");
         logit("e", "csnhypodbp: %s fallo [%s]: %s\n",
               job->mags_only ? "calculate" : "locate", job->locator, job->err);
     }
     csnhypodbp_preview_update();
-    g_locate_confirmed = 0;
     g_free(job);
     return G_SOURCE_REMOVE;
 }
 
-/* Unico punto que escribe la tablita del preview, para que estado, valores,
-   color y sensibilidad de los botones no se puedan desincronizar: la candidata
-   del `locate` si esta vigente, si no la solucion elegida en el detalle
-   (pestana Eventos), si no guiones. */
 /* Celda de magnitud del preview: el valor numerico de la fila en "%.2f", o un
    guion si la solucion no tiene esa magnitud (`nmag*` < 0). */
 static void preview_mag_text(double v, char *out, size_t n)
@@ -1949,11 +1923,24 @@ void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
     g_preview_pref_kind = k;
 }
 
+/* Unico punto que escribe la tablita del preview, para que estado, valores,
+   color y sensibilidad de los botones no se puedan desincronizar. Precedencia:
+   calculo en curso (guiones + "calculando") > sin solucion nueva (guiones +
+   mensaje) > candidata del `locate` > solucion elegida en el detalle > guiones.
+   Un fallo de `calculate` (magnitudes) NO borra los valores: solo añade el
+   mensaje al estado. */
 void csnhypodbp_preview_update(void) {
     CsnhypodbpPreviewVals v;
     int i;
     if (!g_preview_box || !g_preview_title || !g_preview_otime) return;
-    if (g_preview_valid) {
+    if (g_locate_busy) {
+        /* Mientras corre no se muestran cifras: ni las de la solucion elegida
+           (serian las de antes del clic) ni un candidato intermedio. */
+        csnhypodbp_preview_set_busy(&v, g_locate_name, g_locate_elapsed);
+    } else if (g_locate_err[0] && g_locate_nosol) {
+        /* Fallo del `locate`: guiones + mensaje (no hay solucion que mostrar). */
+        csnhypodbp_preview_set_error(&v, g_locate_name, g_locate_err);
+    } else if (g_preview_valid) {
         char mww_s[16];
 
         preview_mww_text(g_preview_sol.qid, g_preview_sol.mod, mww_s, sizeof mww_s);
@@ -1993,10 +1980,12 @@ void csnhypodbp_preview_update(void) {
             csnhypodbp_preview_clear(&v);
         }
     }
-    if (g_locate_busy)
-        csnhypodbp_preview_set_busy(&v, g_locate_name, g_locate_elapsed);
-    else if (g_locate_err[0])
-        csnhypodbp_preview_set_error(&v, g_locate_err);
+    if (g_locate_err[0] && !g_locate_nosol) {
+        /* Fallo de `calculate`: el error de magnitudes no borra los valores de la
+           solucion que se esta viendo (solo el `locate` deja el cuadro en guion). */
+        v.state = CSNHYPODBP_PREVIEW_ERROR;
+        snprintf(v.err, sizeof(v.err), "%s", g_locate_err);
+    }
     gtk_label_set_text(GTK_LABEL(g_preview_title), v.title);
     gtk_label_set_text(GTK_LABEL(g_preview_otime), v.otime);
     if (g_preview_status) {
@@ -2004,6 +1993,8 @@ void csnhypodbp_preview_update(void) {
 
         gtk_label_set_text(GTK_LABEL(g_preview_status), txt);
         gtk_widget_set_visible(g_preview_status, txt[0] != '\0');
+        /* El renglon va con elipsis: el mensaje completo queda en el tooltip. */
+        gtk_widget_set_tooltip_text(g_preview_status, txt[0] ? txt : NULL);
         if (v.state == CSNHYPODBP_PREVIEW_ERROR)
             gtk_widget_add_css_class(g_preview_status, "preview-error");
         else
@@ -2073,7 +2064,6 @@ void on_preview_confirm(GtkWidget *w, gpointer d) {
     int pref = g_preview_pref_kind;
     (void)w; (void)d;
     if (!g_preview_valid) return;
-    if (g_locate_busy) g_locate_confirmed = 1;   /* el refinador no la pisa */
     csnhypodbp_confirm_manual(&g_preview_sol, &g_preview_mag, pref);
     /* El mecanismo focal (con su Mww) se guarda AL CONFIRMAR la solución, no con
      * un botón aparte del panel. Solo si el usuario marcó el radio `Mww`: es el
@@ -2266,8 +2256,8 @@ static void locate_start(int mags_only) {
     g_locate_busy = 1;
     g_locate_gen++;
     job->gen = g_locate_gen;
-    g_locate_confirmed = 0;
     g_locate_err[0] = '\0';
+    g_locate_nosol = 0;
     g_locate_elapsed = 0;
     snprintf(g_locate_name, sizeof(g_locate_name), "%s",
              mags_only ? "magnitudes"
@@ -3413,6 +3403,9 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
             }
         }
     }
+    /* Elegir un origen descarta el aviso de "sin solucion nueva" del ultimo
+       `locate`: el cuadro vuelve a mostrar la solucion elegida. */
+    g_locate_err[0] = '\0';
     csnhypodbp_preview_update();   /* la tablita sigue a la solucion elegida */
     csnhypodbp_maps_refresh();     /* y los mapas, al evento elegido */
     rebuild_mag_list();            /* y la tabla de magnitudes, al evento elegido */

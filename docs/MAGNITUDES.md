@@ -68,7 +68,7 @@ Claves en el `.d` de `csnmags`: `Ml_MinDelta`, `Ml_MaxDelta`, `Ml_MaxDist`,
 **Consecuencia importante**: con una red regional (≤500 km ≈ 4.5°) **Ms no tiene
 ni una estación elegible** y Mb tampoco (mínimo 5°). No es un fallo: es la puerta
 del estándar. Para verlas hay que **bajar la puerta a mano** con el override de la
-barra inferior (`distancia` → `min`/`max`/`km`), que se aplica solo a la magnitud
+barra inferior (`distancia` → `min`/`max`), que se aplica solo a la magnitud
 activa y viaja al forzado. La casilla de uso por estación permite además forzar
 una estación concreta.
 
@@ -87,7 +87,9 @@ una estación concreta.
   cuatro magnitudes (ML/Mwp/Mb/Ms; Mww no se recalcula) y ancla cada ventana en el
   `t_pick` de esa P, usando la franja ajustada de este panel si existe. Las S no
   generan magnitud: solo van al localizador.
-- **`distancia min/max/km`** — override manual de la puerta de la magnitud activa.
+- **`distancia min/max`** — override manual de la puerta de la magnitud activa,
+  en grados. El corte en km de ML (`Ml_MaxDist`/`Ml_DistType`) **no** se edita
+  aquí: no es la misma distancia y se toma siempre del `.d` de `csnmags`.
   Al activarlo se siembra con la puerta vigente, así activar no cambia nada hasta
   que se edite un campo. Las cajas son **`GtkEntry`**, no `GtkSpinButton`: los
   botones `+/-` no aportaban y su marco se llevaba el ancho de la barra. El
@@ -95,12 +97,13 @@ una estación concreta.
   **salir del campo**; mientras no sea un número válido la caja se marca en rojo
   y la puerta vigente no cambia (al salir con el texto inválido se restaura el
   valor que sí se está aplicando). El volcado es **todo o nada**: con un campo
-  inválido no se aplica ninguno. El rango (0–180°, 0–2000 km, 0–700 km), los
-  decimales (1/0/0) y el ancho de cada caja salen de
+  inválido no se aplica ninguno. El rango (0–180°; profundidad 0–700 km el
+  mínimo y 0–999 km el máximo, donde 999 = sin corte), los decimales (1/0) y el
+  ancho de cada caja salen de
   `csnhypodbp_mag_ov_field_limits`/`_width_chars`/`_fmt`/`_parse`
   (`csnhypodbp_magcfg.{h,c}`), la misma fuente que el parseo, y se acepta `.` o `,`
   como separador decimal. El ancho de la caja es el del valor canónico del campo
-  (5/5/4/3/3 caracteres) más `CSNHYPODBP_MAG_OV_WIDTH_MARGIN` (2), y se fija como
+  (5/5/3/3 caracteres) más `CSNHYPODBP_MAG_OV_WIDTH_MARGIN` (2), y se fija como
   `width-chars` **y** `max-width-chars` (≈45 px, en vez de los 150 px de ancho
   natural que GTK4 da a todo `GtkEntry` cuando no se acota). Los rótulos de los grupos
   y el texto de las cajas van al **72 %** del tamaño del tema (clases CSS

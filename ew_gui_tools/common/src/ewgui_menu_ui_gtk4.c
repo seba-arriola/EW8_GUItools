@@ -19,7 +19,7 @@ typedef struct {
     const EwMenuItem *it;
 } ItemCtx;
 
-static void on_item_clicked(GtkButton *btn, gpointer data)
+static void on_item_clicked(GtkWidget *btn, gpointer data)
 {
     ItemCtx *ctx = data;
     GtkWindow *parent = ctx->parent;
@@ -37,6 +37,35 @@ static void on_item_clicked(GtkButton *btn, gpointer data)
                                    it->target_fmt, it->target_int);
     else
         gtk_widget_activate_action(GTK_WIDGET(parent), it->action, NULL);
+}
+
+/* Fila-casilla de un ítem `checkable`: la MISMA base que los demás ítems (un
+ * `GtkButton` flat que ocupa la fila) para que herede su tipografía, con el
+ * contenido CENTRADO: indicador + etiqueta en negrita. El indicador es solo
+ * visual (no recibe clics ni foco), así que la fila entera dispara `clicked` y
+ * la acción alterna el estado (`EwMenuItem.checked`). */
+static GtkWidget *menu_check_row_new(const EwMenuItem *it)
+{
+    GtkWidget *btn = gtk_button_new();
+    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+    GtkWidget *chk = gtk_check_button_new();
+    GtkWidget *lbl = gtk_label_new(NULL);
+    char *markup = g_markup_printf_escaped("<b>%s</b>", it->label);
+
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(chk), it->checked ? TRUE : FALSE);
+    gtk_widget_set_can_target(chk, FALSE);   /* el clic lo toma la fila */
+    gtk_widget_set_can_focus(chk, FALSE);
+
+    gtk_label_set_markup(GTK_LABEL(lbl), markup);
+    g_free(markup);
+    gtk_box_append(GTK_BOX(box), chk);
+    gtk_box_append(GTK_BOX(box), lbl);
+    gtk_widget_set_halign(box, GTK_ALIGN_CENTER);
+    gtk_button_set_child(GTK_BUTTON(btn), box);
+    /* El texto no es hijo directo del botón: el nombre accesible se fija a mano. */
+    gtk_accessible_update_property(GTK_ACCESSIBLE(btn),
+                                   GTK_ACCESSIBLE_PROPERTY_LABEL, it->label, -1);
+    return btn;
 }
 
 static void on_menu_btn_clicked(GtkButton *btn, gpointer data)
@@ -140,7 +169,8 @@ void ewgui_menu_dialog_run(GtkWindow *parent, const EwMenuGroup *groups, size_t 
             if (!it->action)
                 continue;   /* defensivo: ítem no interactivo */
 
-            btn = gtk_button_new_with_label(it->label);
+            btn = it->checkable ? menu_check_row_new(it)
+                                : gtk_button_new_with_label(it->label);
             gtk_widget_set_halign(btn, GTK_ALIGN_FILL);
             gtk_widget_add_css_class(btn, "flat");
 

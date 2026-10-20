@@ -190,24 +190,31 @@ Con `csnloc`/`hyp2000_ring` la solución sale **exactamente** en esa profundidad
 NLLoc no la soporta de forma nativa y se emula en una ventana de ±`FixDepthSpacingKm`/2 (0.05 km
 por defecto), como avisa el tooltip. El resto de controles viven en el
 menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* los grupos `Search`
-(`Search events…`, `Clear search`) y `View`; en *Ondas* añade el grupo
-`Waveforms` con `Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia),
-`Time window…` (ventana de registro) y `Hide stations without data`, el grupo `Colours` con
+(`Search events…`, `Clear search`) y `View`; en *Ondas* añade, **primero**, el grupo
+`Stations` con la casilla `Hide stations without data`; después el grupo `Waveforms` con
+`Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia) y
+`Time window…` (ventana de registro); el grupo `Colours` con
 `P manual` / `P automatic` / `P theoretical` / `S manual` / `S automatic` / `S theoretical`
 (diálogo de color GTK4; el hex de las seis claves queda en el log para copiarlo al `.d`) y, **al
 final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
 comandos de teclado/ratón.
 
-`Hide stations without data` (clave `HideEmptyStations`) es un **modo dinámico no destructivo**:
-filtra la lista dejando solo las estaciones con datos en la ventana del evento; no borra filas, así
-que una estación que vuelve a tener datos (p. ej. por SeedLink) reaparece en la siguiente pasada.
+`Hide stations without data` es un **modo dinámico no destructivo** con una **casilla** en su
+propio grupo (`Stations`, el primero del menú): la fila se dibuja centrada y en negrita como el
+resto de las opciones, con el indicador como única marca de estado y **toda la fila clicable**.
+Filtra la lista dejando solo las estaciones con datos en la ventana del evento; no borra
+filas, así que una estación que vuelve a tener datos (p. ej. por SeedLink) reaparece en la
+siguiente pasada. La casilla refleja y alterna el estado de la **sesión**; el valor inicial lo fija
+la clave `HideStationsWithoutData` (`1` = ocultas al arrancar, `0` = visibles) y alternarla **nunca
+reescribe el `.d`**. Con `1` y antes del primer `fetch` la tabla queda vacía (`bHasData[]` nace en
+0) hasta que llegan las ondas; es el comportamiento esperado.
 
 `locators` abre la lista de localizadores declarados con `locator <nombre> <bin> <cfg>`; la caja de
 la barra inferior muestra el **activo**. `locate` ejecuta la **cadena offline** en un worker con las
 picadas de la **tabla** (una P y una S por estación, **con su canal**) filtradas por la selección de
 estaciones/picks y por los checkboxes `A`/`M`/`Teo` (las `Teo` son la P teórica IASP91 de las
 estaciones sin P A ni M). El set enviado es **exactamente lo que muestra la tabla**: una estación que
-no aparece (por `MaxDistKm` o `HideEmptyStations`) no se manda. La cadena escribe las picadas →
+no aparece (por `MaxDistKm` o `HideStationsWithoutData`) no se manda. La cadena escribe las picadas →
 `csnloc` offline (`DumpHypo 1`; el ARC se extrae del log) → refinador
 elegido (`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + `tank` temporal → `csnmags`
 offline). El **residual por fase** lo aporta el propio localizador: el JSONL que `csnloc` emite a
@@ -261,10 +268,13 @@ visible**: muestra primero la solución elegida en el detalle y, tras `locate`, 
 **fondo rojo muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección
 muestra guiones.
 Mientras corre el `locate`, a la derecha del `Origin time` aparece un spinner y
-`calculando <localizador>… N s` (timer de 1 s), **para todos los localizadores**; al terminar
-`csnloc` se muestra su candidato y el refinador sigue actualizando el contador. `LocatorTimeoutSec`
-(600 s en `csnhypodbp.d`) corta el refinador, y el mismo renglón muestra el error real
-(`timeout`, `ref.err` o ARC inválido). El refinador recibe un `.d` temporal con un `WorkDir` propio
+`calculando <localizador>… N s` (timer de 1 s), **para todos los localizadores**, y los diez valores
+del cuadro quedan en **guión** (no se muestran cifras de la solución elegida). Solo cuenta la
+solución del **localizador elegido**: `csnloc` es un paso interno de la cadena y no publica
+candidato intermedio. `LocatorTimeoutSec` (600 s en `csnhypodbp.d`) corta el refinador; si no hay
+solución nueva, el renglón muestra `sin solución nueva con <localizador>: <detalle real>`
+(`timeout`, `ref.err` o ARC inválido), los parámetros siguen en guión y el mensaje se borra al
+elegir otro origen en *Origins*. El refinador recibe un `.d` temporal con un `WorkDir` propio
 (`../nlloc_ring_run_<...>`) y, si `Fix` está marcado, `FixedDepthKm`; el ARC se siembra con la
 solución elegida (lat/lon/profundidad/qid) para que NLLoc busque en la banda correcta y el candidato
 siga perteneciendo al evento.
@@ -363,7 +373,7 @@ muestras a la ventana.
 Al arrancar, la config efectiva queda en el log:
 
 ```
-config channelsOrder=[HH BH HN LH] componentsOrder=[Z N E] HideEmptyStations=0
+config channelsOrder=[HH BH HN LH] componentsOrder=[Z N E] HideStationsWithoutData=0
 ```
 
 `kom` **no** tiene `k_rest()`: `k_str()` devuelve **un solo token**, así que `channelsOrder` y
@@ -416,7 +426,7 @@ resto del módulo (y EarthWorm) lo espera así.
 | `ManualStateFile` | `csnhypodbp_manual.events` | soluciones manuales propias (locate+confirm) |
 | `LocatorTimeoutSec` | `600` | timeout (s) por localizador offline (NLLoc es lento) |
 | `PrefetchNeighbors` | `2` | estaciones vecinas a precargar |
-| `HideEmptyStations` | `0` | ocultar de la tabla las estaciones sin datos en la ventana |
+| `HideStationsWithoutData` | `0` | estado **inicial** de la tabla: `1` = ocultar las estaciones sin datos (el menú lo alterna en la sesión sin reescribir el `.d`) |
 | `MaxDistKm` | `500` | distancia (km) máxima de las estaciones de la tabla (y por tanto del `locate`) |
 | `LocateKeepTmp` | `0` | `1` = no borrar el directorio temporal del `locate` y anexar su ruta al error |
 | `GroupMaxSolutions` | `100` | tope de versiones por evento |

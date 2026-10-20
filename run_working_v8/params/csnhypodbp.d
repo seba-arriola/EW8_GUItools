@@ -73,6 +73,10 @@ SdsFallbackHours  168
 # Archivo de estaciones a graficar (Podemos usar el mismo de csntvp)
 StaFile         estaciones_107.txt         # Archivo de estaciones con formato: Estacion Canal Red Loc Escala
 StateFile       csnloc.events             # Estado de eventos de csnloc (solo recuperacion al arrancar)
+# Estaciones sin forma de onda disponible: 1 = ocultas al arrancar, 0 = visibles.
+# Este valor solo fija el estado INICIAL de la sesion: el item "Hide stations
+# without data" del menu lo alterna (con su casilla) y nunca reescribe el .d.
+HideStationsWithoutData  1
 
 # ---------------------------------------------------------------------------
 # Columna derecha: mapa en planta (mismo contrato que csnrv) y panel de perfil

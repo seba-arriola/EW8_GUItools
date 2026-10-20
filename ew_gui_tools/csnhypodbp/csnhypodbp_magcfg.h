@@ -39,7 +39,8 @@ typedef struct {
     double ms_min_delta, ms_max_delta;                  /* Ms_MinDelta/Ms_MaxDelta */
     /* Corte de PROFUNDIDAD por magnitud (km; 0 = sin corte). El de Ms replica el
      * veto de csnmags: con `Ms_DeepCorr 0` (default) veta eventos mas profundos
-     * que 60 km. `ms_deep_corr != 0` desactiva el veto. */
+     * que 60 km. `ms_deep_corr != 0` desactiva el veto. Las otras tres usan 999
+     * como centinela de "sin corte" (`depth_ok` solo corta por encima de el). */
     double ml_max_depth, mwp_max_depth, mb_max_depth, ms_max_depth;
     /* Corte de profundidad MINIMA por magnitud (km; 0 = sin corte). Sirve para
      * acotar el rango: p. ej. Ms solo para eventos someros, o Mb solo para
@@ -91,15 +92,16 @@ double csnhypodbp_magcfg_min_depth(const CsnhypodbpMagCfg *c, int kind);
  * `kind`. Profundidad desconocida -> 1 (no se descarta por no saberla). */
 int csnhypodbp_magcfg_depth_ok(const CsnhypodbpMagCfg *c, int kind, double depth_km);
 
-/* Override manual de la puerta de distancia de UNA magnitud (barra inferior de
- * la sub-pestaña `magnitudes`). `on` = 0 -> se usa la del .d. */
+/* Override manual de la puerta de distancia/profundidad de UNA magnitud (barra
+ * inferior de la sub-pestaña `magnitudes`). `on` = 0 -> se usa la del .d.
+ * El corte en km de ML (`Ml_MaxDist`/`Ml_DistType`) NO tiene caja: se toma
+ * siempre del .d, porque no es la misma magnitud que la puerta en grados. */
 typedef struct {
     int    on;
-    double min_delta, max_delta, max_dist_km, min_depth, max_depth;
+    double min_delta, max_delta, min_depth, max_depth;
 } CsnhypodbpMagGateOv;
 
-/* Copia `c` en `out` con el override de `kind` aplicado (si `ov->on`). El corte
- * en km solo se toca si `ov->max_dist_km > 0`. */
+/* Copia `c` en `out` con el override de `kind` aplicado (si `ov->on`). */
 void csnhypodbp_magcfg_apply_override(const CsnhypodbpMagCfg *c, int kind,
                                       const CsnhypodbpMagGateOv *ov,
                                       CsnhypodbpMagCfg *out);
@@ -112,7 +114,6 @@ void csnhypodbp_magcfg_apply_override(const CsnhypodbpMagCfg *c, int kind,
 enum {
     CSNHYPODBP_MAG_OV_MIN_DELTA = 0,  /* distancia epicentral minima [deg] */
     CSNHYPODBP_MAG_OV_MAX_DELTA,      /* distancia epicentral maxima [deg] */
-    CSNHYPODBP_MAG_OV_MAX_DIST_KM,    /* corte de distancia hipocentral [km] */
     CSNHYPODBP_MAG_OV_MIN_DEPTH,      /* profundidad minima del evento [km] */
     CSNHYPODBP_MAG_OV_MAX_DEPTH,      /* profundidad maxima del evento [km] */
     CSNHYPODBP_MAG_OV_FIELD_N
@@ -146,14 +147,14 @@ int csnhypodbp_mag_ov_fmt(char *out, size_t n, int field, double v);
  * corta en el punto del decimal; ver AGENTS §7). */
 int csnhypodbp_mag_ov_parse(const char *txt, int field, double *out);
 
-/* Vuelca los cinco textos en `ov` (TODO O NADA): 0 y `ov->on = 1` si los cinco
+/* Vuelca los cuatro textos en `ov` (TODO O NADA): 0 y `ov->on = 1` si los cuatro
  * valen; si no, `field+1` (1..N) del PRIMER invalido y `ov` sin tocar. `txt`
  * lleva los textos en el orden de `CSNHYPODBP_MAG_OV_*`; NULL = vacio.
  * -1 si `ov` o `txt` son NULL. */
 int csnhypodbp_mag_ov_from_text(CsnhypodbpMagGateOv *ov,
                                 const char *txt[CSNHYPODBP_MAG_OV_FIELD_N]);
 
-/* Los cinco textos canonicos de `ov`: lo que la barra muestra al sincronizar.
+/* Los cuatro textos canonicos de `ov`: lo que la barra muestra al sincronizar.
  * `out` es `[CSNHYPODBP_MAG_OV_FIELD_N][24]`. */
 void csnhypodbp_mag_ov_texts(const CsnhypodbpMagGateOv *ov,
                              char out[CSNHYPODBP_MAG_OV_FIELD_N][24]);
