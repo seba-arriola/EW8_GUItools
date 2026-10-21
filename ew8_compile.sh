@@ -43,10 +43,10 @@
 #
 #     <target>  all | libs | headless | gui | <modulo> [<modulo>...]
 #               Sin target se asume `all`.
-#               Modulos: common wavestore csnloc pickS csnmags csnwphase hypodb
-#                        hyp2000_ring nlloc_ring csnhypodbp csnrv csntvp
-#                        csnstaevdisp ew_controller
-#               Alias: hypodb_ingest -> hypodb, wstore_ingest|wstore -> wavestore
+#               Los modulos NO estan escritos en este script: son los
+#               directorios de ew_gui_tools/ que tienen Makefile (se descubren
+#               solos; ver `--list`). Tambien se acepta el nombre de cualquiera
+#               de sus binarios (sale de su receta install_bin.sh).
 #
 #     <verbo>   --check      tests unitarios/estaticos headless
 #               --test       integracion offline (check-offline)
@@ -91,11 +91,10 @@
 #        ./ew8_compile.sh wavestore
 #        ./ew8_compile.sh wstore              # equivalente
 #
-#  5) Compilar por GRUPOS, sin listar modulo por modulo:
-#        libs      -> common (la libreria libewgui_gtk4.a)
-#        headless  -> wavestore csnloc pickS csnmags csnwphase hypodb
-#                     hyp2000_ring nlloc_ring
-#        gui       -> csnhypodbp csnrv csntvp csnstaevdisp ew_controller
+#  5) Compilar por GRUPOS, sin listar modulo por modulo (tambien derivados):
+#        libs      -> los modulos SIN receta install_bin.sh (la libreria)
+#        headless  -> los modulos con binario cuyo Makefile no menciona GTK
+#        gui       -> los modulos con binario cuyo Makefile usa gtk4/libadwaita
 #
 #        ./ew8_compile.sh libs
 #        ./ew8_compile.sh headless
@@ -170,17 +169,17 @@
 #        ./ew8_compile.sh csnloc pickS csnmags --no-build --test
 #
 # 15) Tests que necesitan servicios o pantalla, todos opt-in:
-#        --live  -> test-live de csnhypodbp y ew_controller.
+#        --live  -> target test-live de los modulos que lo declaren.
 #                   Requiere DISPLAY/WAYLAND_DISPLAY y EarthWorm en marcha.
 #                   Si no hay pantalla, el paso queda SKIP (exit 0).
-#        --db    -> hypodb: ejecuta `make check` con EWGUI_DB_TEST_ENV=1,
-#                   es decir test_ingest_db contra PostgreSQL. Sin --db,
-#                   hypodb reporta SKIP en --test (el test se autosalta).
-#                   La base se levanta antes con ./ew8_db.sh up.
+#        --db    -> prefija EWGUI_DB_TEST_ENV=1 a los pasos check/test: los
+#                   tests que hablan con PostgreSQL se activan en el `check` de
+#                   su modulo (sin --db se autosalta). La base se levanta con
+#                   ./ew8_db.sh up.
 #
 #        ./ew8_compile.sh csnhypodbp ew_controller --test --live
 #        ./ew8_compile.sh ew_controller --no-build --test --live
-#        ./ew8_compile.sh hypodb --no-build --test --db
+#        ./ew8_compile.sh hypodb --no-build --check --db
 #
 #  EJEMPLOS: VALIDACION DE CONFIGURACION (--validate)
 #  ---------------------------------------------------
@@ -301,85 +300,88 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PARAMS_DIR="$ROOT/run_working_v8/params"
 
 # -----------------------------------------------------------------------------
-# Registro de modulos. Una fila por modulo; el orden del array ES el orden
-# canonico de construccion (common y wavestore primero: los demas los enlazan).
+# Inventario DERIVADO. Aca no se escribe ningun nombre de modulo: el directorio
+# ES el modulo y su Makefile es la fuente de verdad.
+#   - modulo      = cada ew_gui_tools/<dir>/Makefile
+#   - binarios    = su receta install_bin.sh (la misma que usa `make install`;
+#                   common/tools/check_install.sh deriva el inventario igual)
+#   - capacidades = los targets que declara su Makefile (check, test, test-*,
+#                   check-offline, test-live, check-engine, check-corpus)
+#   - libreria    = el modulo SIN receta install_bin.sh (p.ej. common)
+#   - GUI         = su Makefile menciona gtk4 / gtk+-3.0 / libadwaita
+# Renombrar un directorio, agregar un modulo o cambiarle un binario no exige
+# tocar este script: se descubre solo.
 # -----------------------------------------------------------------------------
-MODULES=(
-    common wavestore csnloc pickS csnmags csnwphase hypodb
-    hyp2000_ring nlloc_ring csnhypodbp csnrv csntvp csnstaevdisp ew_controller
-)
-HEADLESS_MODULES=(wavestore csnloc pickS csnmags csnwphase hypodb hyp2000_ring nlloc_ring)
-GUI_MODULES=(csnhypodbp csnrv csntvp csnstaevdisp ew_controller)
+MODULES=()          # orden canonico: librerias primero, luego alfabetico
+LIBS=()
+BINS=()
+declare -A MOD_DIR=()
+declare -A MOD_BINS=()
+declare -A MOD_IS_LIB=()
+declare -A MOD_GUI=()
 
-declare -A MOD_DIR=(
-    [common]=ew_gui_tools/common
-    [wavestore]=ew_gui_tools/wavestore
-    [csnloc]=ew_gui_tools/csnloc
-    [pickS]=ew_gui_tools/pickS
-    [csnmags]=ew_gui_tools/csnmags
-    [csnwphase]=ew_gui_tools/csnwphase
-    [hypodb]=ew_gui_tools/hypodb
-    [hyp2000_ring]=ew_gui_tools/hyp2000_ring
-    [nlloc_ring]=ew_gui_tools/nlloc_ring
-    [csnhypodbp]=ew_gui_tools/csnhypodbp
-    [csnrv]=ew_gui_tools/csnrv
-    [csntvp]=ew_gui_tools/csntvp
-    [csnstaevdisp]=ew_gui_tools/csnstaevdisp
-    [ew_controller]=ew_gui_tools/ew_controller
-)
+# Binarios que instala un Makefile (su primera receta install_bin.sh), con
+# $(TARGET)/$(MODULE) resueltos. Misma derivacion que check_install.sh.
+mk_bins() {  # mk_bins <Makefile>
+    local mkf=$1 line bins tgt mvar b
+    line=$(grep -E '^[[:space:]]*sh[[:space:]].*install_bin\.sh' "$mkf" 2>/dev/null | head -n1)
+    [ -n "$line" ] || return 0
+    bins=$(printf '%s\n' "$line" | sed -n 's/.*install_bin\.sh[[:space:]]*[^[:space:]]*[[:space:]]*//p')
+    tgt=$(sed -n 's/^[[:space:]]*TARGET[[:space:]]*=[[:space:]]*//p' "$mkf" | head -n1)
+    mvar=$(sed -n 's/^[[:space:]]*MODULE[[:space:]]*=[[:space:]]*//p' "$mkf" | head -n1)
+    for b in $bins; do
+        case "$b" in
+            '$(TARGET)') b=$tgt ;;
+            '$(MODULE)') b=$mvar ;;
+        esac
+        [ -n "$b" ] && printf '%s\n' "$b"
+    done
+}
 
-declare -A MOD_BINS=(
-    [common]="(libewgui_gtk4.a)"
-    [wavestore]="wstore_ingest tank2store store2tank wstore_query wstore_prune"
-    [csnloc]="csnloc"
-    [pickS]="pickS"
-    [csnmags]="csnmags"
-    [csnwphase]="csnwphase"
-    [hypodb]="hypodb_ingest"
-    [hyp2000_ring]="hyp2000_ring"
-    [nlloc_ring]="nlloc_ring"
-    [csnhypodbp]="csnhypodbp"
-    [csnrv]="csnrv"
-    [csntvp]="csntvp"
-    [csnstaevdisp]="csnstaevdisp"
-    [ew_controller]="ew_controller"
-)
+has_target() {  # has_target <Makefile> <target>
+    grep -qE "^$2[[:space:]]*:" "$1" 2>/dev/null
+}
 
-# --check: primer target en orden check > test > test-* (sin test-live).
-declare -A MOD_CHECK=(
-    [common]=check
-    [wavestore]=check
-    [csnloc]=check
-    [pickS]=check
-    [csnmags]=check
-    [csnwphase]=check
-    [hypodb]=check
-    [hyp2000_ring]=check
-    [nlloc_ring]=check
-    [csnhypodbp]=test
-    [csnrv]=test
-    [csntvp]=test
-    [csnstaevdisp]="test-data test-config"
-    [ew_controller]=test
-)
+test_targets() {  # targets test-* declarados, sin test-live (ese es --live)
+    grep -oE '^test-[a-z-]+:' "$1" 2>/dev/null | sed 's/:$//' | grep -vx 'test-live'
+}
 
-# --test: solo donde existe check-offline (hypodb se trata aparte con --db).
-declare -A MOD_OFFLINE=(
-    [common]=""
-    [wavestore]=""
-    [csnloc]=check-offline
-    [pickS]=check-offline
-    [csnmags]=check-offline
-    [csnwphase]=""
-    [hypodb]=""
-    [hyp2000_ring]=check-offline
-    [nlloc_ring]=check-offline
-    [csnhypodbp]=""
-    [csnrv]=""
-    [csntvp]=""
-    [csnstaevdisp]=""
-    [ew_controller]=""
-)
+# --check: check > test > todos los test-* (menos test-live).
+check_targets() {  # check_targets <modulo>
+    local mkf=$ROOT/${MOD_DIR[$1]}/Makefile
+    if has_target "$mkf" check; then
+        printf '%s\n' check
+    elif has_target "$mkf" test; then
+        printf '%s\n' test
+    else
+        test_targets "$mkf"
+    fi
+}
+
+discover_modules() {
+    local mkf dir name bins
+    MODULES=()
+    LIBS=()
+    BINS=()
+    for mkf in "$ROOT"/ew_gui_tools/*/Makefile; do
+        [ -f "$mkf" ] || continue
+        dir=${mkf%/Makefile}
+        name=${dir##*/}
+        MOD_DIR[$name]=ew_gui_tools/$name
+        bins=$(mk_bins "$mkf" | tr '\n' ' ')
+        MOD_BINS[$name]=${bins% }
+        if [ -z "${MOD_BINS[$name]}" ]; then
+            MOD_IS_LIB[$name]=1
+            LIBS+=("$name")
+        else
+            BINS+=("$name")
+        fi
+        if grep -qE 'gtk4|gtk\+-3\.0|libadwaita' "$mkf"; then
+            MOD_GUI[$name]=1
+        fi
+    done
+    MODULES=("${LIBS[@]}" "${BINS[@]}")
+}
 
 # -----------------------------------------------------------------------------
 # Estado de la CLI
@@ -446,17 +448,22 @@ on_signal() {
 trap cleanup_logs EXIT
 trap on_signal INT TERM
 
-# Nombre canonico de un target/modulo, o vacio si no existe.
+# Nombre canonico de un target: un directorio de ew_gui_tools/ o el nombre de
+# cualquiera de sus binarios (los binarios salen de su receta install_bin.sh).
 canon_module() {
-    local t=$1
-    case "$t" in
-        hypodb_ingest) t=hypodb ;;
-        wstore|wstore_ingest) t=wavestore ;;
-    esac
+    local t=$1 m b
     if [ -n "${MOD_DIR[$t]+x}" ]; then
         printf '%s' "$t"
         return 0
     fi
+    for m in "${MODULES[@]}"; do
+        for b in ${MOD_BINS[$m]:-}; do
+            if [ "$b" = "$t" ]; then
+                printf '%s' "$m"
+                return 0
+            fi
+        done
+    done
     return 1
 }
 
@@ -477,13 +484,17 @@ resolve_targets() {
                 for m in "${MODULES[@]}"; do add_selected "$m"; done
                 ;;
             libs)
-                add_selected common
+                for m in "${LIBS[@]}"; do add_selected "$m"; done
                 ;;
             headless)
-                for m in "${HEADLESS_MODULES[@]}"; do add_selected "$m"; done
+                for m in "${BINS[@]}"; do
+                    [ -n "${MOD_GUI[$m]:-}" ] || add_selected "$m"
+                done
                 ;;
             gui)
-                for m in "${GUI_MODULES[@]}"; do add_selected "$m"; done
+                for m in "${BINS[@]}"; do
+                    [ -n "${MOD_GUI[$m]:-}" ] && add_selected "$m"
+                done
                 ;;
             *)
                 if ! m=$(canon_module "$t"); then
@@ -500,11 +511,9 @@ resolve_targets() {
 }
 
 is_gui_selected() {
-    local m g
+    local m
     for m in "${SELECTED[@]}"; do
-        for g in "${GUI_MODULES[@]}"; do
-            [ "$m" = "$g" ] && return 0
-        done
+        [ -n "${MOD_GUI[$m]:-}" ] && return 0
     done
     return 1
 }
@@ -715,6 +724,18 @@ fail_step() {
     if (( ! KEEP_GOING )); then STOP=1; fi
 }
 
+# Corre un target de make con el prefijo de --db cuando corresponde.
+emit_make() {  # emit_make <kind> <modulo> <dir-relativo> <target>
+    local kind=$1 mod=$2 dir=$3 target=$4
+    local -a cmd=(make -C "$ROOT/$dir" "$target" GUI_TOOLKIT=gtk4)
+    local desc="make -C $dir $target GUI_TOOLKIT=gtk4"
+    if (( WITH_DB )); then
+        cmd=(env EWGUI_DB_TEST_ENV=1 "${cmd[@]}")
+        desc="env EWGUI_DB_TEST_ENV=1 $desc"
+    fi
+    emit_step "$kind" "$mod" "$desc" "$ROOT" "${cmd[@]}"
+}
+
 # -----------------------------------------------------------------------------
 # Fases
 # -----------------------------------------------------------------------------
@@ -735,30 +756,31 @@ phase_build() {
 
 phase_check() {
     local mod dir target
+    local -a targets
     for mod in "${SELECTED[@]}"; do
         (( STOP )) && break
         dir=${MOD_DIR[$mod]}
-        if [ -z "${MOD_CHECK[$mod]}" ]; then
+        targets=($(check_targets "$mod"))
+        if (( ${#targets[@]} == 0 )); then
             skip_step check "$mod" "sin target check/test"
             continue
         fi
-        for target in ${MOD_CHECK[$mod]}; do
+        for target in "${targets[@]}"; do
             (( STOP )) && break
-            emit_step check "$mod" "make -C $dir $target GUI_TOOLKIT=gtk4" "$ROOT" \
-                make -C "$ROOT/$dir" "$target" GUI_TOOLKIT=gtk4
+            emit_make check "$mod" "$dir" "$target"
         done
-        if (( SLOW )) && [ "$mod" = csnwphase ]; then
+        if (( SLOW )); then
             for target in check-engine check-corpus; do
                 (( STOP )) && break
-                emit_step check "$mod" "make -C $dir $target GUI_TOOLKIT=gtk4" "$ROOT" \
-                    make -C "$ROOT/$dir" "$target" GUI_TOOLKIT=gtk4
+                has_target "$ROOT/$dir/Makefile" "$target" || continue
+                emit_make check "$mod" "$dir" "$target"
             done
         fi
     done
 }
 
 phase_test() {
-    local mod dir off
+    local mod dir mkf
     local live_ok=0
     if [ -n "${DISPLAY:-}" ] || [ -n "${WAYLAND_DISPLAY:-}" ]; then
         live_ok=1
@@ -767,41 +789,36 @@ phase_test() {
     for mod in "${SELECTED[@]}"; do
         (( STOP )) && break
         dir=${MOD_DIR[$mod]}
+        mkf=$ROOT/$dir/Makefile
 
-        if [ "$mod" = hypodb ]; then
-            if (( WITH_DB )); then
-                emit_step test "$mod" \
-                    "make -C $dir check GUI_TOOLKIT=gtk4 (EWGUI_DB_TEST_ENV=1)" "$ROOT" \
-                    env EWGUI_DB_TEST_ENV=1 make -C "$ROOT/$dir" check GUI_TOOLKIT=gtk4
-            else
-                skip_step test "$mod" "requiere --db (PostgreSQL, ./ew8_db.sh up)"
-            fi
-            continue
+        if has_target "$mkf" check-offline; then
+            emit_make test "$mod" "$dir" check-offline
         fi
 
-        off=${MOD_OFFLINE[$mod]}
-        if [ -n "$off" ]; then
-            emit_step test "$mod" "make -C $dir $off GUI_TOOLKIT=gtk4" "$ROOT" \
-                make -C "$ROOT/$dir" "$off" GUI_TOOLKIT=gtk4
-        fi
-
-        if (( LIVE )) && { [ "$mod" = csnhypodbp ] || [ "$mod" = ew_controller ]; }; then
+        if (( LIVE )) && has_target "$mkf" test-live; then
             if (( live_ok )); then
-                emit_step test "$mod" "make -C $dir test-live GUI_TOOLKIT=gtk4" "$ROOT" \
-                    make -C "$ROOT/$dir" test-live GUI_TOOLKIT=gtk4
+                emit_make test "$mod" "$dir" test-live
             else
                 skip_step test "$mod" "--live sin DISPLAY/WAYLAND_DISPLAY"
             fi
             continue
         fi
 
-        if [ -z "$off" ]; then
+        if ! has_target "$mkf" check-offline; then
             skip_step test "$mod" "sin target check-offline"
         fi
     done
 }
 
 # Comandos de validacion de un modulo: lineas "binario|argumentos".
+#
+# NOTA: esta es la UNICA tabla con nombres de modulo que queda, y es deliberada:
+# los flags de validacion son un contrato de CLI que hoy no esta declarado en
+# ningun lado. Derivarlos por heuristica (p.ej. raspar --help) seria peor: un
+# binario sin DISPLAY no imprime su ayuda y se perderia la validacion en
+# silencio. El paso correcto es que cada Makefile declare `VALIDATE_FLAGS` y
+# que esta funcion lo lea; eso exige tocar 3 Makefiles y queda fuera de este
+# cambio. Mientras tanto, un modulo sin entrada aca queda en SKIP (no FAIL).
 validate_cmds() {
     case "$1" in
         csnhypodbp)
@@ -930,30 +947,32 @@ summary() {
 # Listado de capacidades
 # -----------------------------------------------------------------------------
 list_modules() {
-    local mod check test validate
-    printf '%-15s %-28s %-46s %-24s %-22s %s\n' \
-        "MODULO" "DIRECTORIO" "BINARIOS" "--check" "--test" "--validate"
-    printf '%-15s %-28s %-46s %-24s %-22s %s\n' \
-        "------" "----------" "--------" "-------" "-----" "---------"
+    local mod check test live validate bins mkf
+    printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
+        "MODULO" "DIRECTORIO" "BINARIOS" "--check" "--test" "--live" "--validate"
+    printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
+        "------" "----------" "--------" "-------" "-----" "-----" "---------"
     for mod in "${MODULES[@]}"; do
-        check=${MOD_CHECK[$mod]:-}
+        mkf=$ROOT/${MOD_DIR[$mod]}/Makefile
+        check=$(check_targets "$mod" | tr '\n' ' ')
         [ -n "$check" ] || check="-"
-        if [ "$mod" = hypodb ]; then
-            test="--db -> check"
-        else
-            test=${MOD_OFFLINE[$mod]:-}
-            [ -n "$test" ] || test="-"
-        fi
+        test="-"
+        has_target "$mkf" check-offline && test=check-offline
+        live="-"
+        has_target "$mkf" test-live && live=test-live
+        bins=${MOD_BINS[$mod]}
+        [ -n "$bins" ] || bins="(libreria)"
         validate=$(validate_cmds "$mod" | sed 's/.*|//' | tr '\n' ',' | sed 's/,$//')
         [ -n "$validate" ] || validate="-"
-        printf '%-15s %-28s %-46s %-24s %-22s %s\n' \
-            "$mod" "${MOD_DIR[$mod]}" "${MOD_BINS[$mod]}" \
-            "$check" "$test" "$validate"
+        printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
+            "$mod" "${MOD_DIR[$mod]}" "$bins" \
+            "$check" "$test" "$live" "$validate"
     done
     echo ""
-    echo "grupos: all | libs | headless | gui"
+    echo "grupos: all | libs (sin receta install) | headless | gui"
     echo "verbos: --check (headless)  --test (offline)  --validate (configuracion)"
-    echo "extras: --slow (csnwphase)  --live (GUI)  --db (hypodb)"
+    echo "extras: --slow (check-engine/check-corpus)  --live (test-live)  --db (EWGUI_DB_TEST_ENV=1)"
+    echo "inventario derivado de ew_gui_tools/*/Makefile: no hay lista de modulos en este script."
 }
 
 # -----------------------------------------------------------------------------
@@ -961,6 +980,7 @@ list_modules() {
 # -----------------------------------------------------------------------------
 main() {
     parse_args "$@"
+    discover_modules
 
     if (( SHOW_LIST )); then
         list_modules
