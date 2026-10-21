@@ -148,6 +148,36 @@ int main(void)
               "C11: manual mas reciente es la preferida");
     }
 
+    /* --- C11b: confirmadas en la BD --- */
+    {
+        CsnhypodbpSolMeta s[5];
+        memset(s, 0, sizeof(s));
+
+        /* Una confirmada vence a un manual no confirmado aunque este tenga mas
+           fases, mejor RMS y version mayor. */
+        s[0].manual = 1; s[0].nph = 20; s[0].rms = 0.05; s[0].version = 9;
+        s[0].otime = 1000.0;
+        s[1].manual = 1; s[1].confirmed = 1; s[1].nph = 2; s[1].rms = 0.9;
+        s[1].version = 3; s[1].otime = 400.0; s[1].created = 50000.0;
+        CHECK(csnhypodbp_preferred_index(s, 2) == 1,
+              "C11b: la confirmada vence al manual no confirmado");
+
+        /* Entre confirmadas manda el instante de confirmacion (created), no la
+           version (contador de csnloc). */
+        s[2].manual = 1; s[2].confirmed = 1; s[2].version = 4;
+        s[2].otime = 410.0; s[2].created = 50010.0;
+        s[3].manual = 1; s[3].confirmed = 1; s[3].version = 8;
+        s[3].otime = 420.0; s[3].created = 50005.0;
+        CHECK(csnhypodbp_preferred_index(s, 4) == 2,
+              "C11b: la confirmada mas reciente (created) es la preferida");
+
+        /* Empate de created: desempata la version mayor. */
+        s[4].manual = 1; s[4].confirmed = 1; s[4].version = 9;
+        s[4].otime = 430.0; s[4].created = 50010.0;
+        CHECK(csnhypodbp_preferred_index(s, 5) == 4,
+              "C11b: empate de created -> mayor version");
+    }
+
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_group\n");
     return 0;

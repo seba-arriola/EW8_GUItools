@@ -43,4 +43,21 @@ assert len(r.get("phases", [])) >= 3, "sin fases en el JSON"
 print("ok  : localizacion dentro de la tolerancia y con fases")
 '
 
+# Profundidad fija: la solucion debe salir EXACTAMENTE en ese valor (el ARC la
+# escribe en centesimas). Se usa una copia del .d con la clave anadida.
+fixd="$(mktemp /tmp/csnloc_fixdepth_XXXXXX.d)"
+trap 'rm -f "$fixd"' EXIT
+cat test/csnloc_offline.d > "$fixd"
+echo "FixedDepthKm 33.0" >> "$fixd"
+out3="$("$BIN" "$fixd" test/test_offline.picks 2>/dev/null)"
+if [ -z "$out3" ]; then echo "FAIL: sin salida JSON con FixedDepthKm"; exit 1; fi
+printf '%s\n' "$out3" | python3 -c '
+import json, sys
+recs = [json.loads(l) for l in sys.stdin if l.strip()]
+assert recs, "sin eventos localizados con FixedDepthKm"
+z = recs[0]["depth_km"]
+print("ok  : profundidad fija z=%.2f (objetivo 33.00)" % z)
+assert abs(z - 33.0) <= 0.005, "profundidad no fija: %r" % z
+'
+
 echo "OK test_offline"

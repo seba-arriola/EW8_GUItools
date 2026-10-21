@@ -26,12 +26,17 @@ hace **`csnloc`** localmente.
     soluciones del mismo evento (un ID por evento, aunque sean de módulos distintos) por `qid`
     **o** por firma de picadas compatible (subconjunto dentro de `GroupPickTolSec` con al menos
     `GroupMinMatchPicks`); la picada de tiempo no incluye canal y el ARC viaja con las fases P y S.
-    UI **maestro-detalle**: arriba una fila por evento (la solución **preferida**: la manual más
-    reciente si hay alguna manual, si no la automática con más fases y menor RMS) y abajo las
-    soluciones del evento al seleccionarlo. Lee `HYPO_RING_REF` (refinados 163/164) **y**, con
-    `InRingRaw`, `HYPO_RING` (csnloc crudo 162) en vivo. La marca de solución manual viaja en el
-    ARC en el byte 174 (`'M'`/`'A'`, ver `common/include/ewgui/arc_layout.h`), propagada por
-    `csnloc` (12.º token `A/M` de `TYPE_PICK_SCNL`) y copiada por `hyp2000_ring`/`nlloc_ring`.
+    UI **maestro-detalle**: arriba una fila por evento (la solución **preferida**: la confirmada a
+    mano más reciente si hay alguna, si no la manual más reciente, si no la automática con más fases
+    y menor RMS) y abajo las soluciones del evento al seleccionarlo. Lee `HYPO_RING_REF` (refinados
+    163/164) **y**, con `InRingRaw`, `HYPO_RING` (csnloc crudo 162) en vivo. La marca de solución
+    manual viaja en el ARC en el byte 174 (`'M'`/`'A'`, ver
+    `common/include/ewgui/arc_layout.h`), propagada por `csnloc` (12.º token `A/M` de
+    `TYPE_PICK_SCNL`) y copiada por `hyp2000_ring`/`nlloc_ring`. Cada `Confirm` publica además el ARC
+    confirmado en `ConfRing` (`HYPO_RING_REF2`) y `hypodb_ingest` (`InRingConf`) lo guarda como
+    **fila `origin` propia e inmutable** con `origin_id = <event>:<mod>:<version>`
+    (`ewgui_origin_id_build/parse`); la confirmación más reciente pasa a `preferred_origin_id` y las
+    anteriores quedan como orígenes manuales históricos.
     Las **magnitudes** (`csnmags`, por `qid`) se guardan a nivel de evento y se proyectan a todas
     las soluciones, así la maestra las muestra siempre; para eventos solo-csnloc corre una 2.ª
     instancia `csnmags csnmags_raw.d` sobre `HYPO_RING` (`MOD_MAGNITUDES_RAW`).
@@ -56,13 +61,29 @@ hace **`csnloc`** localmente.
     no la estación) y queda **vacía y no sensible** si esa fase no existe; las casillas **solo** filtran
     el envío al localizador. Por estación
     se dibuja **una sola P y una sola S** (`M > A > Teo`; la manual desplaza a la automática y a la
-    teórica) y la traza va negra si la P es leída (real o manual), gris 0.55 si solo teórica. La barra
+    teórica). La traza del picking es **siempre negra**; el origen de la picada se distingue por el
+    **color de su marca**: manual = `pColor`/`sColor`, automática = `pColorAuto`/`sColorAuto` y teórica
+    = `pColorTheo`/`sColorTheo` (6 claves del `.d`, también en ☰ → `Colours`). Las `*Auto`/`*Theo` son
+    opcionales: sin declarar se derivan del manual **en cada dibujo** aclarándolo al 40 % / 70 %, así que
+    cambiar el manual las recolorea; elegirlas en el menú las vuelve explícitas. La barra
     inferior tiene `Cancel` a la izquierda y, a la derecha, los checkboxes **A/M/Teo** (M por defecto),
     la caja del localizador activo y `locators`/`locate`; `locate` manda **exactamente** las picadas de
     la tabla (con su canal, filtradas por esos checks; `MaxDistKm` 500 km), y el **residual por fase**
     lo aporta el propio localizador (JSONL de `csnloc` en stdout; cols. 35-38 P / 51-54 S del ARC de
     los refinadores). Los comandos de teclado están en ☰ → `Help` → `Commands…` (ya no hay texto de
-    ayuda en la barra). La pestaña raíz **`Procesar`** agrupa dos sub-pestañas:
+    ayuda en la barra). Los **filtros de la vista** son presets con atajo declarados en el `.d`
+    (`FilterPhase zero|causal`, `FilterMenu`, `FilterRaw`, `Filter [<nombre>] <HP|LP|BP> <tecla> <f1>
+    [<f2>] <orden>`, `StaLta <tecla> <sta> <lta> <on> <off> [<corr>]`; ver `docs/FILTERS.md`): por
+    defecto `1` P local, `2` P regional, `3` P telesísmico, `4` S local, `r`/`k`/`d` HP/LP/BP, `f`
+    abre `Filters…`, `0` vuelve a `Raw`, `t` alterna el STA/LTA; la tecla del filtro activo lo apaga.
+    El filtro es **solo de la vista** (`locate` manda la traza cruda) y con `FilterPhase zero`
+    (default) es forward+backward: **fase neta cero**, así el clic no se sesga por el retardo de grupo
+    (un causal de 1 Hz/orden 2 retrasa ~0.22 s ≈ 1.3 km a Vp 6 km/s). Ojo: fase cero es `|H|²` —
+    orden efectivo doble, `-6 dB` en `fc` y `-3 dB` en `0.80·fc` para orden 2— y `fc·n/fs < 0.5` es
+    no-op. Los atajos solo actúan en la sub-pestaña `picking` y **no** se consumen si el foco está en
+    una caja de texto. El STA/LTA es visual (curva CF + marca estimada en `t_disparo + corr`); no crea
+    picks.
+    La pestaña raíz **`Procesar`** agrupa dos sub-pestañas:
     **`picking`** (la vista de ondas de siempre) y **`magnitudes`** (una fila por
     estación con `dist[km]`, el ancla de la ventana (`M`/`A`/`Teo`), `t0`/`t1`, la
     magnitud y su residual, el canvas de la traza procesada por magnitud con la
@@ -71,7 +92,7 @@ hace **`csnloc`** localmente.
     la magnitud activa, en cajas de **texto** (`GtkEntry`, sin los `+/-` del spin y
     acotadas con `max-width-chars` = valor canónico + 2, porque GTK4 da 150 px de
     ancho natural a todo `GtkEntry`): el valor se aplica al confirmar el campo
-    —Enter o salir de él— y solo si los cinco valen; los rótulos y las cajas van al
+    —Enter o salir de él— y solo si los cuatro valen; los rótulos y las cajas van al
     72 % y `reset default`/`calculate`/`calculate all` al 90 %). La tablita de la solución
     (`Lat/Lon/Depth/Nph/RMS/ML/Mwp/Mb/Ms`) vive **por encima del sub-notebook**, así
     que se ve igual en las dos. La GUI lee del **mismo `.d` de csnmags**
@@ -79,7 +100,11 @@ hace **`csnloc`** localmente.
     (`Ml/Mwp/Mb/Ms_MinDelta/MaxDelta`, `Ml_MaxDist`, `Ml_DistType`) y **no lista** las
     estaciones que el motor descarta; con red regional Ms/Mb quedan vacías por la
     puerta estándar (20–160° / 5–105°) y se bajan a mano con el override.
-    `MagFetchSeconds` (700 s) alarga la petición para que Ms tenga su ventana. Ver
+    `MagFetchSeconds` (700 s) alarga la petición para que Ms tenga su ventana. En el `locate`,
+    `csnmags` recibe las **cuatro** magnitudes y las **mismas P efectivas** (`M>A>Teo`) que el
+    localizador (casillas por fila + filtros A/M/Teo del picking); las S no generan magnitud. La
+    ventana de cada magnitud se ancla en el `t_pick` de esa P y usa la franja ajustada del panel si
+    existe (si no, la del `.d`), con override para las 4; no se recalcula Mww. Ver
     `docs/MAGNITUDES.md`. La pestaña *magnitudes* tiene además un panel **`Mww`**
     (inversión de fase W on-demand, ver `csnwphase/` y `docs/WPHASE.md`): el área central
     es una pila `Estaciones` | `Mww` y sus claves son `MwwConfigFile` (default
@@ -93,13 +118,19 @@ hace **`csnloc`** localmente.
     conservando la hora, o `00:00:00` si el campo no la traía. Los **residuales** de la solución
     elegida se ven en la tabla de *Ondas* sin pulsar `locate` (`EventSol.picks` +
     `csnhypodbp_resid_source`), y se persisten en `pick.uncertainty`.
-    El resultado del `locate` y la solución elegida se ven en una **tablita de 2 filas** al tope de la
-    pestaña *Ondas* (cabecera `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`/`ML`/`Mwp` + valores; lógica pura
-    en `csnhypodbp_preview.{h,c}` y **un solo** render, `csnhypodbp_preview_update()`, para que estado,
-    valores, color y botones no se desincronicen): **fondo rojo muy leve** (`.preview-box.candidate`)
+    El resultado del `locate` y la solución elegida se ven en un **cuadro de dos mitades** al tope de
+    *Procesar* (compartido por `picking` y `magnitudes`; lógica pura en `csnhypodbp_preview.{h,c}` y
+    **un solo** render, `csnhypodbp_preview_update()`, para que estado, valores, color y botones no se
+    desincronicen): a la izquierda título, `Origin time` y `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la
+    derecha `Magnitude` (`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con sus radios compactos (`.preview-radio`) en una
+    grilla única de 4 filas separada por una línea vertical: **fondo rojo muy leve** (`.preview-box.candidate`)
     cuando es la candidata del `locate`, ámbar suave cuando es la elegida y guiones si no hay
     selección; `Confirm`/`Discard` a la derecha, sensibles **solo** con candidata (`Discard` vuelve a
-    mostrar la elegida, ya no oculta la tablita).
+    mostrar la elegida, ya no oculta la tablita). Mientras corre, a la derecha del `Origin time` va
+    un spinner con `calculando <localizador>… N s` (timer de 1 s) para **todos** los localizadores;
+    `LocatorTimeoutSec` (600 s) acota el refinador y el error real (`timeout`/`ref.err`/ARC inválido)
+    se ve en ese mismo renglón. El `.d` temporal del refinador usa un `WorkDir` propio y, con `Fix`,
+    `FixedDepthKm`; el ARC se siembra con la solución elegida (lat/lon/prof/qid).
     La **columna derecha** (a nivel de ventana, compartida por las dos pestañas) tiene dos paneles:
     **planta** (imagen equirectangular + capas `.lines` con el mismo contrato que `csnrv`:
     `MapImageFile`/`OverlayFile`/`OverlayColor`/`OverlayWidth`, zoom con rueda y paneo con arrastre) y
@@ -129,7 +160,9 @@ hace **`csnloc`** localmente.
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
     PostgreSQL (esquema QuakeML simplificado, `db/schema.sql`). Entradas: `HYPO_RING` (csnloc 162)
     y `HYPO_RING_REF` (hyp2000 163 / nlloc 164, distinguidos por el `mod` del logo) + `PICK_RING`
-    (para `pick_status` manual). Agrupa soluciones por **firma de picadas** (reutiliza
+    (para `pick_status` manual) + `HYPO_RING_REF2` (`InRingConf`: ARC de cada `Confirm` de la GUI,
+    que se guarda como fila `origin` propia `<event>:<mod>:<version>` sin pasar por la guarda de
+    versión). Agrupa soluciones por **firma de picadas** (reutiliza
     `csnhypodbp_group`) para asignar un `event_id` por sismo aunque cambie el qid: el id es
     **`E<qid>-<yyyymmddhhmmss>`** (hora origen UTC de la 1.ª solución del grupo), porque el rango de
     qid de `csnloc` se repite cada ~27,7 h; el atajo de agrupación por qid exige además
@@ -207,6 +240,11 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   y `instances` lista lo que hay (marca las huérfanas de un worktree ya borrado). `destroy` e
   `instances` funcionan aunque el `db.env` local declare otro `DB_PORT` (solo avisan); `up`,
   `psql` y `reset` sí lo exigen. Ver `docs/HYPODB.md`.
+- `ew8_compile.sh`: punto de entrada único de compilación (`all|libs|headless|gui|<módulo>`)
+  y de tests/validación (`--check`, `--test`, `--validate`, `--all-checks`, `--slow`,
+  `--live`, `--db`; ver `--help`). Fuerza `GUI_TOOLKIT=gtk4` en todas las invocaciones de
+  `make`, compila en orden canónico y usa `make all`, que instala de forma atómica en
+  `ew_8.0/bin` (seguro con EarthWorm corriendo).
 - `ew8_unix.sh`: script de inicialización del entorno (variables de EarthWorm).
 - `ew_monitor.sh`: script de control de EarthWorm (`status|list|start|stop|restart`; `start/stop/restart`
   aceptan `<módulo> ...` para operar sobre uno solo, y `status`/`list` muestran el estado de cada
@@ -303,18 +341,31 @@ tras tocar `common/` hay que reconstruirla a mano con el toolkit correcto
 
 ```bash
 source ./ew8_unix.sh
-# Si se tocó common/: reconstruir la librería de los módulos (ver nota de arriba)
+# Script canónico: compila e instala en orden, con GUI_TOOLKIT=gtk4 en todo make
+./ew8_compile.sh all --clean          # todo desde cero
+./ew8_compile.sh common --clean       # solo la librería compartida
+./ew8_compile.sh all --check          # compila + tests headless
+./ew8_compile.sh --no-build --check   # tests sin recompilar
+./ew8_compile.sh all --no-build --validate
+```
+
+`ew8_compile.sh` agrupa por fase (build → check → test → validate) y traduce
+cada verbo al target real del Makefile, porque no son homogéneos: `--check` usa
+`check`, si no `test`, si no los `test-*` (sin `test-live`); `--test` usa
+`check-offline` y marca `SKIP` donde no existe; `--validate` ejecuta
+`check_install.sh -v` y los flags de configuración del binario instalado, con
+`cwd=run_working_v8/params`. `--slow` añade `check-engine`/`check-corpus`
+(`csnwphase`) y `--live` añade `test-live`; `--list` muestra la matriz de
+módulos y `--help` trae los ejemplos de uso.
+
+La receta manual sirve para depurar un módulo suelto:
+
+```bash
+source ./ew8_unix.sh
 make -C ew_gui_tools/common clean GUI_TOOLKIT=gtk4
 make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
 make -C ew_gui_tools/common check      # tests headless + check_no_gtk
-for dir in ew_gui_tools/csnmags ew_gui_tools/csnhypodbp ew_gui_tools/csnrv ew_gui_tools/csntvp ew_gui_tools/csnstaevdisp ew_gui_tools/ew_controller ew_gui_tools/csnloc ew_gui_tools/pickS ew_gui_tools/csnwphase; do
-  if [ -d "$dir" ]; then
-    echo "Compilando $dir..."
-    cd "$dir"
-    make clean && make
-    cd - > /dev/null
-  fi
-done
+make -C ew_gui_tools/csnloc check
 ```
 
 ---

@@ -3,7 +3,7 @@
 
 /*
  * Configuración del ingester hypodb_ingest (archivo .d tipo EarthWorm).
- * Claves: MyModuleId, InRing, InRingRef, InRingRef2, InPickRing, DbEnvFile,
+ * Claves: MyModuleId, InRing, InRingRef, InRingConf, InPickRing, DbEnvFile,
  * GroupPickTolSec, GroupMinMatchPicks, EventMaxDtSec, EventLoadHours,
  * PickMatchTolSec, HeartBeatInt, LogFile, Debug.
  */
@@ -11,6 +11,7 @@ typedef struct {
     char   my_module_id[32];
     char   in_ring[32];        /* HYPO_RING      (csnloc, mod 162)          */
     char   in_ring_ref[32];    /* HYPO_RING_REF  (hyp2000 163 / nlloc 164)  */
+    char   in_ring_conf[32];   /* HYPO_RING_REF2 (confirmaciones de la GUI) */
     char   in_pick_ring[32];   /* PICK_RING */
     char   db_env_file[128];   /* db.env */
     double group_pick_tol_sec;

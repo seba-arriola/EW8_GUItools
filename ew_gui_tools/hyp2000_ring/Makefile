@@ -31,6 +31,16 @@ $(TARGET): hyp2000_ring.o $(HYPOLIB)
 	      -lgfortran $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
+# Invariantes de fuente (sin motor): la clave se lee y ZTR va tras el .hyp.
+.PHONY: check
+check:
+	sh ./test/test_fixdepth_invariants.sh
+
+# Prueba real offline (necesita EW_PARAMS + csnloc compilado).
+.PHONY: check-offline
+check-offline: $(TARGET)
+	bash ./test/test_fixdepth.sh
+
 clean:
 	-$(MAKE) -C hypoinverse clean
 	-rm -f *.o $(TARGET)

@@ -154,6 +154,9 @@ int main(void)
 
     /* --- preferred --- */
     assert(ewguidb_set_preferred(db, EID, O2, mg.magnitude_id) == 0);
+    /* Solo el origen: la magnitud preferida se conserva (hypodb la borraba al
+       reiniciar, antes de ver ningun TYPE_MAGNITUDE). */
+    assert(ewguidb_set_preferred_origin(db, EID, O1) == 0);
 
     /* --- lecturas --- */
     EwGuiEventRow *evs = NULL;
@@ -164,7 +167,7 @@ int main(void)
         if (strcmp(evs[i].event_id, EID) == 0)
             found = i;
     assert(found >= 0);
-    assert(strcmp(evs[found].preferred_origin_id, O2) == 0);
+    assert(strcmp(evs[found].preferred_origin_id, O1) == 0);
     assert(strcmp(evs[found].preferred_magnitude_id, mg.magnitude_id) == 0);
     ewguidb_rows_free(evs);
 

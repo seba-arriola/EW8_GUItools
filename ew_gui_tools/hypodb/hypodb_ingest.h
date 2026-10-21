@@ -26,6 +26,11 @@ int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
 /* Procesa un TYPE_HYP2000ARC (mod = 162/163/164) y lo escribe en la BD. */
 int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod);
 
+/* ARC de una CONFIRMACION manual (anillo de confirmaciones de la GUI). Crea una
+ * fila `origin` propia e inmutable (`<event>:<mod>:<version>`) y recalcula la
+ * preferida. */
+int hypodb_feed_confirmed(HypodbState *st, const char *msg, size_t len, int mod);
+
 /* Procesa un TYPE_MAGNITUDE (resumen + líneas por estación). */
 int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len);
 

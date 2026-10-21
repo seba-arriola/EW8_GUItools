@@ -7,7 +7,7 @@
  * csnloc.err y ref.err para diagnosticar por que falla.
  *
  *   make -C ew_gui_tools/csnhypodbp chain
- *   ./locate_chain <arc_entrada> [refinador] [tmp_root]
+ *   ./locate_chain <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>]
  *
  * Toma EW_PARAMS / EW_HOME / EW_VERSION del entorno (igual que la GUI). No forma
  * parte de `make test`: necesita resources/ y los binarios instalados.
@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sys/stat.h>
 
+#include "csnhypodbp_fixdepth.h"
 #include "csnhypodbp_locate.h"
 #include "csnhypodbp_locator.h"
 
@@ -51,15 +52,49 @@ int main(int argc, char **argv)
     char err[1024];
     char *arc;
     size_t n = 0;
-    int nloc = 0, rc;
+    int nloc = 0, rc, i, npos = 0;
+    const char *pos[3] = { NULL, NULL, NULL };
+    double fix_depth = -1.0;
+    int timeout_sec = 600;
 
     if (argc < 2) {
-        fprintf(stderr, "uso: %s <arc_entrada> [refinador] [tmp_root]\n", argv[0]);
+        fprintf(stderr, "uso: %s <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>]\n",
+                argv[0]);
         return 2;
     }
-    arc_path = argv[1];
-    refiner  = (argc > 2) ? argv[2] : "hyp2000_ring";
-    tmp_root = (argc > 3) ? argv[3] : "/tmp/opencode/locate_chain";
+    /* Opciones en cualquier posicion: los 3 primeros argumentos no-opcion son
+       arc/refinador/tmp_root (asi `--fix-depth` no se come al refinador). */
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--fix-depth") == 0) {
+            double km = -1.0;
+
+            if (i + 1 >= argc || !csnhypodbp_fixdepth_parse(argv[++i], &km)) {
+                fprintf(stderr, "%s: --fix-depth requiere un numero 0..1000 km\n", argv[0]);
+                return 2;
+            }
+            fix_depth = km;
+        } else if (strcmp(argv[i], "--timeout") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "%s: --timeout requiere segundos\n", argv[0]);
+                return 2;
+            }
+            timeout_sec = atoi(argv[++i]);
+            if (timeout_sec < 0) timeout_sec = 0;
+        } else if (npos < 3) {
+            pos[npos++] = argv[i];
+        } else {
+            fprintf(stderr, "%s: argumento de mas <%s>\n", argv[0], argv[i]);
+            return 2;
+        }
+    }
+    if (npos < 1) {
+        fprintf(stderr, "uso: %s <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>]\n",
+                argv[0]);
+        return 2;
+    }
+    arc_path = pos[0];
+    refiner  = (npos > 1) ? pos[1] : "hyp2000_ring";
+    tmp_root = (npos > 2) ? pos[2] : "/tmp/opencode/locate_chain";
     if (!ewp || !ewh || !ewv) {
         fprintf(stderr, "faltan EW_PARAMS / EW_HOME / EW_VERSION en el entorno\n");
         return 2;
@@ -90,6 +125,7 @@ int main(int argc, char **argv)
     memset(err, 0, sizeof(err));
     rc = csnhypodbp_locate_run(loc, nloc, refiner, ewp, ewh, ewv, tmp_root,
                                &base, NULL, 0, NULL, 0, NULL, 0, 0u,
+                               fix_depth, timeout_sec, NULL, NULL, NULL,
                                &out, &mag, err, sizeof(err));
     printf("== locate_run rc=%d\n   err: %s\n", rc, err);
     printf("== out: qid=%d ver=%u nph=%d npicks=%d lat=%.4f lon=%.4f depth=%.1f rms=%.3f\n",

@@ -218,6 +218,38 @@ int main(void)
         assert(fabs(out.picks[1].residual - (-0.10)) < 1e-6);
     }
 
+    /* --- confirmation_arc: snapshot que va al anillo de confirmaciones --- */
+    {
+        CsnhypodbpSolution in, out;
+        char arc[4096];
+
+        memset(&in, 0, sizeof(in));
+        in.qid = 987654; in.version = 7; in.otime = 1600000000.5;
+        in.lat = -33.10; in.lon = -70.20; in.depth = 25.0; in.rms = 0.42;
+        in.nph = 8; in.gap = 120;
+        in.npicks = 1;
+        snprintf(in.picks[0].sta, 8, "GO01"); snprintf(in.picks[0].chan, 8, "HHZ");
+        snprintf(in.picks[0].net, 4, "C1"); snprintf(in.picks[0].loc, 4, "10");
+        in.picks[0].phase = 'P'; in.picks[0].t_pick = 1600000010.0;
+
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == 0);
+        assert(csnhypodbp_parse_solution(arc, strlen(arc), 162, &out) == 0);
+        assert(out.version == 7);        /* sufijo de origin_id */
+        assert(out.qid == 987654);
+        assert(out.manual == 1);         /* byte 174 'M' */
+        assert(out.npicks == 1);
+
+        /* sin version (o fuera del campo de 4 caracteres) no es identificable */
+        in.version = 0;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        in.version = 10000;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        in.version = 7;
+        in.qid = 0;
+        assert(csnhypodbp_confirmation_arc(&in, arc, sizeof(arc)) == -1);
+        assert(csnhypodbp_confirmation_arc(NULL, arc, sizeof(arc)) == -1);
+    }
+
     /* --- sol_apply_jsonl: residual del JSONL de csnloc (el ARC va en blanco) --- */
     {
         CsnhypodbpSolution js;
@@ -243,6 +275,122 @@ int main(void)
         assert(csnhypodbp_sol_apply_jsonl(&js, jsonl) == 2);
         assert(fabs(js.picks[0].residual - 0.123) < 1e-6);
         assert(fabs(js.picks[1].residual - (-0.45)) < 1e-6);
+    }
+
+    /* --- cfg temporal: overrides por clave y FixedDepthKm --- */
+    {
+        const char *src = "/tmp/opencode/test_locate_cfg_src.d";
+        const char *dst = "/tmp/opencode/test_locate_cfg_dst.d";
+        const char *orig =
+            "# config de prueba\n"
+            "InRing PICK_RING\n"
+            "DumpHypo 0\n"
+            "DumpHypoFiles 7\n"
+            "FixedDepthKm 1.0\n"
+            "FixedDepthKm 2.0\n"
+            "OutRing HYPO_RING\n";
+        CsnhypodbpCfgOverride ovr[2];
+        char *p;
+        int hits;
+
+        fp = fopen(src, "w");
+        assert(fp != NULL);
+        fputs(orig, fp);
+        fclose(fp);
+
+        /* km >= 0: reemplaza la 1.a y descarta la repetida. */
+        assert(csnhypodbp_cfg_with_fixdepth(src, dst, 33.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "FixedDepthKm 33.000\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 1.0") == NULL);
+        assert(strstr(buf, "FixedDepthKm 2.0") == NULL);
+        assert(strstr(buf, "InRing PICK_RING") != NULL);
+        assert(strstr(buf, "OutRing HYPO_RING") != NULL);
+        assert(strstr(buf, "DumpHypo 0") != NULL);   /* sin override de DumpHypo */
+        for (p = buf, hits = 0; (p = strstr(p, "FixedDepthKm ")) != NULL; p++, hits++)
+            ;
+        assert(hits == 1);
+
+        /* Refinador offline: WorkDir propio + FixedDepthKm en la misma copia. */
+        assert(csnhypodbp_cfg_with_refiner_opts(src, dst,
+                                                "../nlloc_ring_run_123", 33.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "WorkDir ../nlloc_ring_run_123\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 33.000\n") != NULL);
+        assert(strstr(buf, "FixedDepthKm 1.0") == NULL);
+        assert(strstr(buf, "InRing PICK_RING") != NULL);
+
+        /* km < 0: copia literal (las dos lineas tal cual). */
+        assert(csnhypodbp_cfg_with_fixdepth(src, dst, -1.0) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strcmp(buf, orig) == 0);
+
+        /* Dos overrides a la vez y frontera de token (DumpHypoFiles no casa). */
+        ovr[0].key = "DumpHypo";   ovr[0].value = "1";
+        ovr[1].key = "OutRing";    ovr[1].value = "HYPO_RING_REF";
+        assert(csnhypodbp_cfg_copy(src, dst, ovr, 2) == 0);
+        fp = fopen(dst, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "DumpHypo 1\n") != NULL);
+        assert(strstr(buf, "DumpHypoFiles 7") != NULL);
+        assert(strstr(buf, "DumpHypo 0") == NULL);
+        assert(strstr(buf, "OutRing HYPO_RING_REF") != NULL);
+        assert(strstr(buf, "OutRing HYPO_RING\n") == NULL);
+
+        remove(src);
+        remove(dst);
+    }
+
+    /* --- hypos de magnitudes: origen refinado + SOLO las P elegidas --- */
+    {
+        const char *path = "/tmp/opencode/test_hypos_mag.jsonl";
+        CsnhypodbpSolution ref, picked;
+
+        memset(&ref, 0, sizeof(ref));
+        ref.qid = 42; ref.version = 3; ref.otime = 1000.0;
+        ref.lat = -33.1; ref.lon = -70.2; ref.depth = 25.0;
+        ref.nph = 3; ref.rms = 0.4;
+        memset(&picked, 0, sizeof(picked));
+        picked.npicks = 3;
+        snprintf(picked.picks[0].sta, sizeof(picked.picks[0].sta), "GO01");
+        snprintf(picked.picks[0].chan, sizeof(picked.picks[0].chan), "HHZ");
+        picked.picks[0].phase = 'P'; picked.picks[0].t_pick = 1010.0;
+        snprintf(picked.picks[1].sta, sizeof(picked.picks[1].sta), "GO01");
+        snprintf(picked.picks[1].chan, sizeof(picked.picks[1].chan), "HHE");
+        picked.picks[1].phase = 'S'; picked.picks[1].t_pick = 1020.0;
+        snprintf(picked.picks[2].sta, sizeof(picked.picks[2].sta), "GO02");
+        snprintf(picked.picks[2].chan, sizeof(picked.picks[2].chan), "HHZ");
+        picked.picks[2].phase = 'P'; picked.picks[2].t_pick = 1030.0;
+
+        assert(csnhypodbp_hypos_write_mag(path, &ref, &picked, NULL, 0) == 0);
+        fp = fopen(path, "r");
+        assert(fp != NULL);
+        n = (int)fread(buf, 1, sizeof(buf) - 1, fp);
+        buf[n] = '\0';
+        fclose(fp);
+        assert(strstr(buf, "\"nphases\":2") != NULL);
+        assert(strstr(buf, "\"t0\":1000.000") != NULL);
+        assert(strstr(buf, "\"lat\":-33.1000") != NULL);
+        assert(strstr(buf, "\"t_epoch\":1010.000") != NULL);
+        assert(strstr(buf, "\"t_epoch\":1030.000") != NULL);
+        assert(strstr(buf, "\"phase\":\"P\"") != NULL);
+        assert(strstr(buf, "\"phase\":\"S\"") == NULL);
+        remove(path);
     }
 
     printf("test_locate OK\n");

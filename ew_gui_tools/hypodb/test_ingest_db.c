@@ -114,6 +114,25 @@ static void check_utc(const char *s, const char *prefix)
     }
 }
 
+/* Preferida del evento en la BD (origen y, si se pide, magnitud). */
+static void check_preferred(EwGuiDb *db, const char *want_origin,
+                            const char *want_mag)
+{
+    EwGuiEventRow *evs = NULL;
+    int nev = 0, f = -1;
+
+    assert(ewguidb_query_recent_events(db, 24, &evs, &nev) >= 1);
+    for (int i = 0; i < nev; i++)
+        if (strcmp(evs[i].event_id, EID) == 0)
+            f = i;
+    assert(f >= 0);
+    if (want_origin)
+        assert(strcmp(evs[f].preferred_origin_id, want_origin) == 0);
+    if (want_mag)
+        assert(strcmp(evs[f].preferred_magnitude_id, want_mag) == 0);
+    ewguidb_rows_free(evs);
+}
+
 int main(void)
 {
     const char *envfile = getenv("EWGUI_DB_TEST_ENV");
@@ -278,20 +297,7 @@ int main(void)
     }
 
     /* preferred */
-    {
-        EwGuiEventRow *evs = NULL;
-        int nev = 0, f = -1;
-
-        assert(ewguidb_query_recent_events(db, 24, &evs, &nev) >= 1);
-        for (int i = 0; i < nev; i++)
-            if (strcmp(evs[i].event_id, EID) == 0)
-                f = i;
-        assert(f >= 0);
-        assert(strcmp(evs[f].preferred_origin_id, EID ":162") == 0);
-        assert(strcmp(evs[f].preferred_magnitude_id,
-                      EID ":162/mag/ML") == 0);
-        ewguidb_rows_free(evs);
-    }
+    check_preferred(db, EID ":162", EID ":162/mag/ML");
 
     /* D10 (orden): con dos soluciones del mismo evento, `query_origins` las da
        en el orden del contrato (creation_time DESC, origin_time DESC,
@@ -306,6 +312,84 @@ int main(void)
         assert(strcmp(ors[0].origin_id, EID ":163") == 0);
         assert(strcmp(ors[1].origin_id, EID ":162") == 0);
         ewguidb_rows_free(ors);
+    }
+
+    /* === Confirmaciones manuales: una fila `origin` propia e inmutable === */
+    {
+        EwGuiOriginRow *ors = NULL;
+        char arc2[8192], live3[8192];
+        char created7[40] = "";
+        int nor = 0;
+
+        /* AC4: confirmar la solucion v7 crea `<E>:162:7`, sin quitar la viva. */
+        assert(hypodb_feed_confirmed(st, arc, strlen(arc), 162) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 3);
+        {
+            int seen_conf = 0, seen_live = 0;
+
+            for (int i = 0; i < nor; i++) {
+                if (strcmp(ors[i].origin_id, EID ":162:7") == 0) {
+                    seen_conf = 1;
+                    assert(strcmp(ors[i].status, "REVIEWED") == 0);
+                    assert(strcmp(ors[i].location_algorithm, "csnloc") == 0);
+                    snprintf(created7, sizeof created7, "%s",
+                             ors[i].creation_time);
+                }
+                if (strcmp(ors[i].origin_id, EID ":162") == 0)
+                    seen_live = 1;
+            }
+            assert(seen_conf && seen_live);
+        }
+        ewguidb_rows_free(ors);
+
+        /* La confirmada es la preferida, y la magnitud preferida NO se borra. */
+        check_preferred(db, EID ":162:7", EID ":162/mag/ML");
+
+        /* AC5: reentrega del MISMO ARC -> idempotente (no duplica fila). */
+        assert(hypodb_feed_confirmed(st, arc, strlen(arc), 162) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 3);
+        ewguidb_rows_free(ors);
+        check_preferred(db, EID ":162:7", EID ":162/mag/ML");
+
+        /* AC4: una segunda confirmacion (v9) es otra fila y pasa a preferida. */
+        build_arc(arc2, 987654, 9, 1);
+        assert(hypodb_feed_confirmed(st, arc2, strlen(arc2), 162) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 4);
+        ewguidb_rows_free(ors);
+        check_preferred(db, EID ":162:9", EID ":162/mag/ML");
+
+        /* Inmutabilidad: un ARC vivo posterior actualiza la fila viva, pero la
+           confirmada conserva su creation_time y sigue estando. */
+        build_arc(live3, 987654, 10, 1);
+        assert(hypodb_feed_arc(st, live3, strlen(live3), 162) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 4);
+        {
+            int seen = 0;
+
+            for (int i = 0; i < nor; i++)
+                if (strcmp(ors[i].origin_id, EID ":162:7") == 0) {
+                    seen = 1;
+                    assert(strcmp(ors[i].creation_time, created7) == 0);
+                }
+            assert(seen);
+        }
+        ewguidb_rows_free(ors);
+        /* La confirmada mas reciente (v9) sigue mandando. */
+        check_preferred(db, EID ":162:9", EID ":162/mag/ML");
+
+        /* AC6: tras recargar desde la BD, un ARC vivo nuevo no la desplaza. */
+        {
+            HypodbState *st2 = hypodb_state_new(&cfg);
+            char arc4[8192];
+
+            assert(st2);
+            hypodb_state_set_db(st2, db);
+            assert(hypodb_load_from_db(st2) == 0);
+            build_arc(arc4, 987654, 11, 1);
+            assert(hypodb_feed_arc(st2, arc4, strlen(arc4), 162) == 0);
+            check_preferred(db, EID ":162:9", EID ":162/mag/ML");
+            hypodb_state_free(st2);
+        }
     }
 
     ewguidb_exec(db, "DELETE FROM event WHERE event_id='" EID "'");

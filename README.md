@@ -49,6 +49,7 @@ EW8_GUItools/
 │   ├── _legacy_atwc/       # Herramientas WC/ATWC archivadas (referencia histórica)
 │   └── libsrc/             # Legacy WC/ATWC (sin consumidores activos)
 ├── run_working_v8/         # Runtime de EarthWorm (params, log, wstore)
+├── ew8_compile.sh          # Compilación, tests y validación (punto de entrada)
 ├── ew8_unix.sh             # Inicialización del entorno
 ├── ew8_gtk_env.sh          # Entorno GTK4/WSLg (fuente única; la carga ew8_unix.sh)
 └── ew_monitor.sh           # Control del servicio EarthWorm
@@ -59,7 +60,8 @@ EW8_GUItools/
 ## Requisitos
 
 - Linux x86_64 (probado en WSL2/WSLg).
-- `gcc`, `make`, `pkg-config`, librerías de desarrollo GTK3.
+- `gcc`, `make`, `pkg-config`, librerías de desarrollo **GTK4 ≥ 4.14 + libadwaita ≥ 1.5**
+  (módulos GUI) y `libpq-dev` (`hypodb`).
 - Acceso al servidor SeedLink `10.54.217.9:18000` (sin él no fluyen formas de onda ni picks; el
   resto de la cadena sigue funcionando).
 
@@ -80,16 +82,35 @@ Consulta `AGENTS.md` para la tabla completa de variables.
 
 ## 🛠️ Compilación
 
-Recompila todos los módulos propios (cada uno instala su binario en `ew_8.0/bin/`):
+El punto de entrada es `ew8_compile.sh`: compila en el orden canónico, fuerza
+`GUI_TOOLKIT=gtk4` (el default de `common/` es gtk3) y usa `make all`, que ya
+instala cada binario en `ew_8.0/bin/` con copia atómica: es seguro con EarthWorm
+en marcha. No hace falta cargar el entorno antes; el script lo carga si falta.
 
 ```bash
-source ./ew8_unix.sh
-for dir in ew_gui_tools/csnmags ew_gui_tools/csnhypodbp ew_gui_tools/csnrv \
-           ew_gui_tools/csntvp ew_gui_tools/csnstaevdisp ew_gui_tools/ew_controller \
-           ew_gui_tools/csnloc; do
-  [ -d "$dir" ] && (cd "$dir" && make clean && make)
-done
+./ew8_compile.sh                   # compila e instala todo (incremental)
+./ew8_compile.sh all --clean       # recompila todo desde cero
+./ew8_compile.sh csnloc            # un solo módulo
+./ew8_compile.sh gui               # un grupo: libs | headless | gui
+./ew8_compile.sh all --check       # compila + tests headless
+./ew8_compile.sh --no-build --check         # solo tests
+./ew8_compile.sh all --no-build --validate  # valida .d, perfiles y overlays
+./ew8_compile.sh --list            # módulos y targets que soporta cada uno
+./ew8_compile.sh --help            # gramática y ejemplos completos
 ```
+
+Los verbos se traducen a los targets reales de cada Makefile: `--check`
+(unitarios/estáticos headless: `check`, si no `test`, si no los `test-*`),
+`--test` (integración offline `check-offline`, `SKIP` donde no existe) y
+`--validate` (`check_install.sh -v` + `--print-config`/`--check-profiles`/
+`--check-overlays` del binario instalado). `--all-checks` ejecuta los tres;
+`--slow` añade `check-engine`/`check-corpus` de `csnwphase` y `--live` añade
+`test-live` (requiere `DISPLAY` y EarthWorm). Los `SKIP` no alteran el código de
+salida; un `FAIL` devuelve 1.
+
+Si se tocó `common/`, su regla de librería no depende de las fuentes: fuerza su
+reconstrucción con `./ew8_compile.sh common --clean` (o `all --clean`) antes de
+los módulos, o reaparece el `undefined reference` por ABI rota.
 
 ---
 

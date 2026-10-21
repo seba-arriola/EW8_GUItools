@@ -162,6 +162,89 @@ int main(void)
         CHECK(filt[0] > 0 && filt[0] <= INT_MAX, "demean: satura sin wrap a negativo");
     }
 
+    /* 12. fase cero: un impulso no se mueve (el causal se mide con wavelet) */
+    {
+        int32_t *zp = malloc((size_t)N * sizeof(int32_t));
+        for (long i = 0; i < N; i++) zp[i] = 0;
+        zp[4000] = 10000;
+        ewgui_filter_iir_zp(zp, (size_t)N, fs, EW_FILTER_HP, 1.0, 2);
+        long ip = 0;
+        for (long i = 0; i < N; i++)
+            if (labs((long)zp[i]) > labs((long)zp[ip])) ip = i;
+        CHECK(labs(ip - 4000) <= 1, "zp: impulso no se desplaza (+-1 muestra)");
+        free(zp);
+    }
+
+    /* 13. fase cero: respuesta en amplitud |H|^2. En fc => 0.5 (-6 dB);
+     *      en 2fc, orden 2 => 1/(1+2^4) = -24.6 dB (orden 4 efectivo). */
+    {
+        int32_t *d = malloc((size_t)N * sizeof(int32_t));
+        for (long i = 0; i < N; i++)
+            d[i] = (int32_t)(1000.0 * sin(2.0*M_PI*1.0*(double)i/fs));
+        ewgui_filter_iir_zp(d, (size_t)N, fs, EW_FILTER_LP, 1.0, 2);
+        double amp = 0;
+        for (long i = N/4; i < 3*N/4; i++) amp = fmax(amp, fabs((double)d[i]));
+        CHECK(fabs(amp / 1000.0 - 0.5) < 0.02, "zp orden 2: |H|^2 = 0.5 en fc (-6 dB)");
+
+        for (long i = 0; i < N; i++)
+            d[i] = (int32_t)(1000.0 * sin(2.0*M_PI*2.0*(double)i/fs));
+        ewgui_filter_iir_zp(d, (size_t)N, fs, EW_FILTER_LP, 1.0, 2);
+        amp = 0;
+        for (long i = N/4; i < 3*N/4; i++) amp = fmax(amp, fabs((double)d[i]));
+        double db = 20.0 * log10(amp / 1000.0 + 1e-12);
+        CHECK(fabs(db - (-24.6)) < 2.0, "zp orden 2: ~-24 dB en 2fc (orden 4 efectivo)");
+        free(d);
+    }
+
+    /* 14. fase cero: gaps preservados y sin contaminacion entre tramos */
+    {
+        int32_t *d = malloc((size_t)N * sizeof(int32_t));
+        for (long i = 0; i < N; i++)
+            d[i] = (int32_t)(500.0 * sin(2.0*M_PI*2.0*(double)i/fs));
+        d[4000] = INT_MAX; d[4001] = INT_MAX; d[4002] = INT_MAX;
+        ewgui_filter_iir_zp(d, (size_t)N, fs, EW_FILTER_LP, 10.0, 2);
+        CHECK(d[4000] == INT_MAX && d[4001] == INT_MAX && d[4002] == INT_MAX,
+              "zp: gaps INT_MAX preservados");
+        CHECK(d[3999] != INT_MAX && d[4003] != INT_MAX && labs((long)d[3999]) < 1500,
+              "zp: vecinos del gap finitos y sin explotar");
+        free(d);
+    }
+
+    /* 15. fc irreal (0.001 Hz): HP no-op, el resultado equivale a solo LP */
+    {
+        int32_t *a = malloc((size_t)N * sizeof(int32_t));
+        int32_t *b = malloc((size_t)N * sizeof(int32_t));
+        for (long i = 0; i < N; i++) {
+            a[i] = (int32_t)(1000.0 * sin(2.0*M_PI*3.0*(double)i/fs) + 500.0);
+            b[i] = a[i];
+        }
+        ewgui_filter_bandpass_zp(a, (size_t)N, fs, 0.001, 12.0, 4);
+        ewgui_filter_iir_zp(b, (size_t)N, fs, EW_FILTER_LP, 12.0, 4);
+        long maxdiff = 0;
+        int finite = 1;
+        for (long i = 0; i < N; i++) {
+            if (a[i] == INT_MAX) continue;
+            long df = labs((long)a[i] - (long)b[i]);
+            if (df > maxdiff) maxdiff = df;
+            if (a[i] == INT32_MAX || a[i] == INT32_MIN) finite = 0;
+        }
+        CHECK(maxdiff <= 2, "zp: HP por debajo de 1/(2T) es no-op");
+        CHECK(finite, "zp: fc=0.001 no satura");
+        free(a); free(b);
+    }
+
+    /* 16. tramo demasiado corto: no se toca (solo demeaning en el llamador) */
+    {
+        int32_t d[15];
+        for (int i = 0; i < 15; i++) d[i] = i * 10;
+        int32_t ref[15];
+        for (int i = 0; i < 15; i++) ref[i] = d[i];
+        ewgui_filter_iir_zp(d, 15, fs, EW_FILTER_HP, 1.0, 2);
+        int same = 1;
+        for (int i = 0; i < 15; i++) if (d[i] != ref[i]) { same = 0; break; }
+        CHECK(same, "zp: tramo corto intacto");
+    }
+
     if (failures == 0) { printf("\nALL DSP TESTS PASSED\n"); return 0; }
     printf("\n%d DSP TEST(S) FAILED\n", failures);
     return 1;

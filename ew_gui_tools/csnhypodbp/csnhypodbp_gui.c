@@ -1,7 +1,10 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_fixdepth.h"
 #include "csnhypodbp_mww.h"
 #include "csnhypodbp_statable.h"
+#include "ewgui/stalta.h"
 #include <adwaita.h>
+#include <ctype.h>
 
 /* F3: buffers reutilizables para el binning por columna (evita una segunda
    pasada sobre las muestras solo para el auto-escalado). */
@@ -37,6 +40,46 @@ static int cmp_node_chan(const void *a, const void *b) {
     return (na->dist > nb->dist) - (na->dist < nb->dist);
 }
 
+/* --- Rejilla de trazas por pantalla (tracesPerScreen) --------------------
+ * El alto de banda sale del VIEWPORT del scrolled de trazas, nunca del alto
+ * pedido por el canvas: si se midiera contra el canvas, pedir mas alto agrandaria
+ * la banda y volveria a pedir mas alto (realimentacion). El canvas no tiene
+ * signal de resize en GTK4 (`size-allocate` ya no existe), asi que el reajuste
+ * se pide desde el dibujo, en idle y una sola vez por cambio de viewport.
+ * ------------------------------------------------------------------------ */
+static int g_canvas_fit_pending = 0;     /* idle de reajuste en vuelo */
+static int g_canvas_last_viewport = -1;  /* ultimo viewport con el que se ajusto */
+
+static int canvas_viewport_h(void)
+{
+    return g_sw_ondas ? gtk_widget_get_height(g_sw_ondas) : 0;
+}
+
+static CsnhypodbpTracesLayout traces_layout_now(int n_rows)
+{
+    return csnhypodbp_traces_layout(n_rows, g_traces_per_screen,
+                                    canvas_viewport_h(), CSNHYPODBP_BAND_MIN);
+}
+
+static gboolean canvas_refit_cb(gpointer data)
+{
+    (void)data;
+    g_canvas_fit_pending = 0;
+    actualizar_altura_canvas();   /* reasigna el alto; GTK reasigna y redibuja */
+    return G_SOURCE_REMOVE;
+}
+
+void csnhypodbp_canvas_refit_if_needed(void)
+{
+    int viewport;
+    if (!g_sw_ondas || !canvas_global || g_canvas_fit_pending) return;
+    viewport = canvas_viewport_h();
+    if (viewport <= 0 || viewport == g_canvas_last_viewport) return;
+    g_canvas_last_viewport = viewport;
+    g_canvas_fit_pending = 1;
+    g_idle_add(canvas_refit_cb, NULL);
+}
+
 void actualizar_altura_canvas() {
     if (!canvas_global) return;
     int count = 0;
@@ -46,16 +89,15 @@ void actualizar_altura_canvas() {
         if ((g_StaDist[i] * 111.19) > g_max_dist_km) continue;
         count++;
     }
-    /* MINIMO, no altura fija: el canvas llena el area que le da el scrolled
-       window y on_draw_signal reparte el alto REAL entre las bandas, asi que el
-       dibujo es proporcional al tamano de la ventana. Por debajo del minimo
-       (muchas componentes), aparece el scroll. */
-    if (count > 0)
-        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
-                                    (count * CSNHYPODBP_BAND_MIN) + 60);
-    else
-        gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1,
-                                    CSNHYPODBP_BAND_MIN + 60);
+    /* Rejilla de `tracesPerScreen` huecos (1, 2 o 3): el canvas pide justo el
+       alto que ocupan las bandas visibles, asi que si la estacion tiene mas
+       canales el resto queda por debajo y aparece el scroll vertical. El alto de
+       banda se mide contra el VIEWPORT del scrolled, no contra el canvas: pedir
+       mas alto no realimenta el calculo. on_draw_signal usa el mismo `band_h`,
+       de modo que anadir/quitar canales no encoge las bandas. */
+    CsnhypodbpTracesLayout lay = traces_layout_now(count);
+    gtk_widget_set_size_request(ewgui_canvas_widget(canvas_global), -1, lay.canvas_h);
+    g_canvas_last_viewport = canvas_viewport_h();
 }
 
 /* --- Tabla de estaciones (panel izquierdo) -------------------------------
@@ -154,7 +196,7 @@ void rebuild_station_list(void) {
     for (int i = 0; i < NumEstaciones; i++) {
         double dkm = g_StaDist[i] * 111.19;
         if (dkm > 0.0 && dkm > g_max_dist_km) continue;
-        /* HideEmptyStations: omite estaciones sin datos en la ventana. Es un
+        /* HideStationsWithoutData: omite estaciones sin datos en la ventana. Es un
            filtro dinamico (no borra filas): si la estacion vuelve a tener
            datos (p. ej. por SeedLink), reaparece en la siguiente pasada. */
         if (g_hide_empty &&
@@ -398,14 +440,13 @@ static void mag_effective_cfg(CsnhypodbpMagCfg *out)
                                      &g_mag_gate_ov[g_mag_kind], out);
 }
 
-/* Los cinco widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
+/* Los cuatro widgets de la barra, en el orden de `CSNHYPODBP_MAG_OV_*` (los
    globales viven en csnhypodbp_main.c): un solo sitio donde el campo <-> caja. */
 static GtkWidget *mag_ov_widget(int field)
 {
     switch (field) {
     case CSNHYPODBP_MAG_OV_MIN_DELTA:   return g_mag_ov_min;
     case CSNHYPODBP_MAG_OV_MAX_DELTA:   return g_mag_ov_max;
-    case CSNHYPODBP_MAG_OV_MAX_DIST_KM: return g_mag_ov_km;
     case CSNHYPODBP_MAG_OV_MIN_DEPTH:   return g_mag_ov_dmin;
     case CSNHYPODBP_MAG_OV_MAX_DEPTH:   return g_mag_ov_depth;
     default: break;
@@ -438,7 +479,7 @@ static void mag_ov_mark(int only_bad)
     }
 }
 
-/* 1 si alguno de los cinco textos no vale (el commit es todo-o-nada). */
+/* 1 si alguno de los cuatro textos no vale (el commit es todo-o-nada). */
 static int mag_ov_any_invalid(void)
 {
     CsnhypodbpMagGateOv scratch;
@@ -466,9 +507,10 @@ void csnhypodbp_mag_ov_sync(void)
     if (ov->on) {
         shown = *ov;
     } else {
+        double km = 0.0;   /* el corte en km de ML no tiene caja: solo se ignora */
+
         csnhypodbp_magcfg_gate_limits(&g_magcfg, g_mag_kind,
-                                      &shown.min_delta, &shown.max_delta,
-                                      &shown.max_dist_km);
+                                      &shown.min_delta, &shown.max_delta, &km);
         shown.min_depth = csnhypodbp_magcfg_min_depth(&g_magcfg, g_mag_kind);
         shown.max_depth = csnhypodbp_magcfg_max_depth(&g_magcfg, g_mag_kind);
     }
@@ -521,7 +563,7 @@ void on_mag_ov_changed(GtkEditable *e, gpointer data)
     mag_ov_mark(1);      /* rojo en las cajas cuyo texto todavia no vale */
 }
 
-/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CINCO
+/* Confirma la barra (Enter en una caja o salir del campo). Solo con los CUATRO
    campos validos (todo o nada): con uno invalido la puerta vigente no cambia y
    las cajas que no valen quedan en rojo. */
 void on_mag_ov_commit(GtkWidget *w, gpointer data)
@@ -1372,23 +1414,59 @@ static GtkWidget *labeled_entry(GtkWidget *grid, int row, const char *label, con
 
 void on_btn_filters_clicked(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
-    GtkWidget *grid = gtk_grid_new(), *r[4], *e1, *e2, *o[2], *win = NULL;
-    const char *names[] = {"Raw (No Filter)","High-Pass","Low-Pass","Band-Pass"};
-    char b1[16], b2[16];
-    int i;
+    const int np = g_filtercfg.nf;
+    const int manual_idx = 1 + np;
+    GtkWidget *grid = gtk_grid_new();
+    GtkWidget *r[2 + CSNHYPODBP_MAX_FILTERS];
+    GtkWidget *mt[3], *e1, *e2, *o[2];
+    GtkWindow *win = NULL;
+    char b1[16], b2[16], label[192];
+    int i, row = 0, sel = -1, manual = 0;
+
     gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
     gtk_grid_set_column_spacing(GTK_GRID(grid), 8);
-    for (i = 0; i < 4; i++) {
-        r[i] = gtk_check_button_new_with_label(names[i]);
-        if (i > 0) gtk_check_button_set_group(GTK_CHECK_BUTTON(r[i]), GTK_CHECK_BUTTON(r[0]));
-        gtk_grid_attach(GTK_GRID(grid), r[i], 0, i, 2, 1);
+
+    /* Raw + un radio por preset del .d (con su tecla) + Manual. */
+    snprintf(label, sizeof(label), "Raw (No Filter) [%c]", g_filtercfg.raw_key);
+    r[0] = gtk_check_button_new_with_label(label);
+    gtk_grid_attach(GTK_GRID(grid), r[0], 0, row++, 2, 1);
+
+    for (i = 0; i < np; i++) {
+        char desc[160];
+        csnhypodbp_filtercfg_format_preset(&g_filtercfg.f[i], desc, sizeof(desc));
+        r[1 + i] = gtk_check_button_new_with_label(desc);
+        gtk_check_button_set_group(GTK_CHECK_BUTTON(r[1 + i]), GTK_CHECK_BUTTON(r[0]));
+        gtk_grid_attach(GTK_GRID(grid), r[1 + i], 0, row++, 2, 1);
     }
-    if (g_filter_type >= 0 && g_filter_type < 4)
-        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[g_filter_type]), TRUE);
-    snprintf(b1, sizeof(b1), "%.2f", g_filter_f1);
-    snprintf(b2, sizeof(b2), "%.2f", g_filter_f2);
-    e1 = labeled_entry(grid, 4, "F1 (Hz)", b1);
-    e2 = labeled_entry(grid, 5, "F2 (Hz)", b2);
+
+    r[manual_idx] = gtk_check_button_new_with_label("Manual…");
+    gtk_check_button_set_group(GTK_CHECK_BUTTON(r[manual_idx]), GTK_CHECK_BUTTON(r[0]));
+    gtk_grid_attach(GTK_GRID(grid), r[manual_idx], 0, row++, 2, 1);
+
+    snprintf(b1, sizeof(b1), "%.3f", g_filter_f1);
+    snprintf(b2, sizeof(b2), "%.3f", g_filter_f2);
+    e1 = labeled_entry(grid, row++, "F1 (Hz)", b1);
+    e2 = labeled_entry(grid, row++, "F2 (Hz)", b2);
+
+    {
+        GtkWidget *l = gtk_label_new("Type");
+        GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        static const char *tn[3] = {"HP", "LP", "BP"};
+        gtk_label_set_xalign(GTK_LABEL(l), 0.0);
+        for (i = 0; i < 3; i++) {
+            mt[i] = gtk_check_button_new_with_label(tn[i]);
+            if (i)
+                gtk_check_button_set_group(GTK_CHECK_BUTTON(mt[i]),
+                                           GTK_CHECK_BUTTON(mt[0]));
+            gtk_box_append(GTK_BOX(box), mt[i]);
+        }
+        int ti = (g_filter_type >= 1 && g_filter_type <= 3) ? g_filter_type - 1 : 0;
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(mt[ti]), TRUE);
+        gtk_grid_attach(GTK_GRID(grid), l, 0, row, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), box, 1, row, 1, 1);
+        row++;
+    }
+
     {
         GtkWidget *l = gtk_label_new("Order");
         GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -1398,17 +1476,43 @@ void on_btn_filters_clicked(GtkWidget *w, gpointer d) {
         gtk_check_button_set_group(GTK_CHECK_BUTTON(o[1]), GTK_CHECK_BUTTON(o[0]));
         gtk_check_button_set_active(GTK_CHECK_BUTTON(g_filter_order == 2 ? o[0] : o[1]), TRUE);
         gtk_box_append(GTK_BOX(box), o[0]); gtk_box_append(GTK_BOX(box), o[1]);
-        gtk_grid_attach(GTK_GRID(grid), l, 0, 6, 1, 1);
-        gtk_grid_attach(GTK_GRID(grid), box, 1, 6, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), l, 0, row, 1, 1);
+        gtk_grid_attach(GTK_GRID(grid), box, 1, row, 1, 1);
     }
-    if (ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL, "Filter Settings", grid, "Apply", &win)) {
-        for (i = 0; i < 4; i++)
-            if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r[i]))) { g_filter_type = i; break; }
-        g_filter_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(e1)));
-        g_filter_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(e2)));
-        g_filter_order = gtk_check_button_get_active(GTK_CHECK_BUTTON(o[0])) ? 2 : 4;
-        ApplySelectedFilter();
-        if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+
+    if (g_active_filter >= 0 && g_active_filter < np)
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[1 + g_active_filter]), TRUE);
+    else if (g_filter_type == 0)
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[0]), TRUE);
+    else
+        gtk_check_button_set_active(GTK_CHECK_BUTTON(r[manual_idx]), TRUE);
+
+    if (ewdialog_run(window_global ? GTK_WINDOW(window_global) : NULL,
+                     "Filter Settings", grid, "Apply", &win)) {
+        if (!gtk_check_button_get_active(GTK_CHECK_BUTTON(r[0]))) {
+            for (i = 0; i < np; i++)
+                if (gtk_check_button_get_active(GTK_CHECK_BUTTON(r[1 + i]))) {
+                    sel = i;
+                    break;
+                }
+            if (sel < 0)
+                manual = 1;
+        }
+
+        if (manual) {
+            /* Manual no tiene tecla: deselecciona el preset activo. */
+            g_active_filter = -2;
+            g_filter_type = gtk_check_button_get_active(GTK_CHECK_BUTTON(mt[0])) ? 1 :
+                            gtk_check_button_get_active(GTK_CHECK_BUTTON(mt[1])) ? 2 : 3;
+            g_filter_f1 = atof(gtk_editable_get_text(GTK_EDITABLE(e1)));
+            g_filter_f2 = atof(gtk_editable_get_text(GTK_EDITABLE(e2)));
+            g_filter_order = gtk_check_button_get_active(GTK_CHECK_BUTTON(o[0])) ? 2 : 4;
+            ApplySelectedFilter();
+            csnhypodbp_filter_hud_update();
+            if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+        } else {
+            csnhypodbp_filter_apply_preset(sel);
+        }
     }
     if (win) gtk_window_destroy(win);
 }
@@ -1685,6 +1789,90 @@ void csnhypodbp_update_locator_label(void) {
     if (!g_locator_label) return;
     snprintf(b, sizeof(b), "Locator: %s", g_active_locator[0] ? g_active_locator : "(none)");
     gtk_label_set_text(GTK_LABEL(g_locator_label), b);
+    if (g_fix_depth_chk) {
+        if (strcmp(g_active_locator, "nlloc_ring") == 0)
+            gtk_widget_set_tooltip_text(g_fix_depth_chk,
+                "NLLoc no fija la profundidad: la busca en una ventana de "
+                "+/-FixDepthSpacingKm/2 (0.05 km por defecto)");
+        else
+            gtk_widget_set_tooltip_text(g_fix_depth_chk,
+                "Fija la profundidad de la solucion: el localizador no la resuelve");
+    }
+}
+
+/* --- Profundidad fija (depth [caja] [Fix] de la barra de picking) --- */
+
+/* Profundidad de la solucion elegida o, si no hay, de la candidata. <0 si no
+   hay ninguna: en ese caso la caja se queda como este. */
+static double fix_depth_current_solution(void) {
+    gpointer item = g_selection_detail
+                    ? gtk_single_selection_get_selected_item(g_selection_detail)
+                    : NULL;
+    if (item) {
+        double d = -1.0;
+        g_object_get(CSNHYPODBP_ROW(item), "depth", &d, NULL);
+        if (d >= 0.0) return d;
+    }
+    if (g_preview_valid && g_preview_sol.depth >= 0.0) return g_preview_sol.depth;
+    return -1.0;
+}
+
+/* Aplica el texto de la caja. Un texto invalido NO se aplica (se conserva el
+   ultimo valido solo si sigue en la caja) y deja `locate` insensible. */
+static void fix_depth_apply(void) {
+    const char *txt;
+    double km = -1.0;
+    int ok;
+
+    if (!g_fix_depth_entry) return;
+    txt = gtk_editable_get_text(GTK_EDITABLE(g_fix_depth_entry));
+    ok = csnhypodbp_fixdepth_parse(txt, &km);
+    if (ok) {
+        g_fix_depth_km = km;
+        gtk_widget_remove_css_class(g_fix_depth_entry, "error");
+        gtk_widget_set_tooltip_text(g_fix_depth_entry,
+            "Profundidad fija de esta corrida (km)");
+    } else {
+        g_fix_depth_km = -1.0;
+        gtk_widget_add_css_class(g_fix_depth_entry, "error");
+        gtk_widget_set_tooltip_text(g_fix_depth_entry,
+            "Profundidad invalida: escribe un numero entre 0 y 1000 km");
+    }
+    if (g_btn_locate)
+        gtk_widget_set_sensitive(g_btn_locate,
+                                 !(g_fix_depth_on && g_fix_depth_km < 0.0));
+}
+
+void on_fix_depth_toggled(GtkCheckButton *b, gpointer data) {
+    (void)data;
+    g_fix_depth_on = gtk_check_button_get_active(b) ? TRUE : FALSE;
+    if (!g_fix_depth_entry) return;
+    gtk_widget_set_sensitive(g_fix_depth_entry, g_fix_depth_on);
+    if (g_fix_depth_on) {
+        double km = -1.0;
+        const char *txt = gtk_editable_get_text(GTK_EDITABLE(g_fix_depth_entry));
+
+        if (!csnhypodbp_fixdepth_parse(txt, &km)) {
+            double cur = fix_depth_current_solution();
+            if (cur >= 0.0) {
+                char buf[32] = "";
+                csnhypodbp_fixdepth_format(cur, buf, sizeof(buf));
+                gtk_editable_set_text(GTK_EDITABLE(g_fix_depth_entry), buf);
+            }
+        }
+        gtk_widget_grab_focus(g_fix_depth_entry);
+    }
+    fix_depth_apply();
+}
+
+void on_fix_depth_activate(GtkEntry *e, gpointer data) {
+    (void)e; (void)data;
+    fix_depth_apply();
+}
+
+void on_fix_depth_focus_leave(GtkEventControllerFocus *c, gpointer data) {
+    (void)c; (void)data;
+    if (g_fix_depth_on) fix_depth_apply();
 }
 
 /* --- locate: worker + preview --- */
@@ -1695,6 +1883,7 @@ typedef struct {
     CsnhypodbpTankTrace tank[MAX_ESTA];
     int ntank;
     char locator[32];
+    double fix_depth_km;          /* < 0 = profundidad libre */
     CsnhypodbpSolution out;
     CsnhypodbpMagOut mag;
     char err[256];
@@ -1704,9 +1893,30 @@ typedef struct {
     unsigned kind_mask;
     CsnhypodbpMagOvrRow ovr[CSNHYPODBP_MAGMARKS_MAX];
     int novr;
+    unsigned gen;                 /* generacion del job (descarta resultados viejos) */
 } LocateJob;
 
 static gboolean locate_finish(gpointer data);
+
+/* Estado del `locate` en curso: indicador general (todos los localizadores). */
+static int    g_locate_busy = 0;
+static unsigned g_locate_gen = 0;
+static gint64 g_locate_t0 = 0;
+static long   g_locate_elapsed = 0;
+static guint  g_locate_tick_id = 0;
+static char   g_locate_name[32] = "";
+static char   g_locate_err[320] = "";
+/* 1 = el error es "sin solución nueva" del `locate` (guiones + mensaje);
+   0 = fallo de `calculate` (magnitudes): se conservan los valores elegidos. */
+static int    g_locate_nosol = 0;
+
+static gboolean locate_tick(gpointer data) {
+    (void)data;
+    if (!g_locate_busy) return G_SOURCE_REMOVE;
+    g_locate_elapsed = (long)((g_get_monotonic_time() - g_locate_t0) / G_USEC_PER_SEC);
+    csnhypodbp_preview_update();
+    return G_SOURCE_CONTINUE;
+}
 
 static gpointer locate_thread(gpointer data) {
     LocateJob *job = data;
@@ -1725,6 +1935,8 @@ static gpointer locate_thread(gpointer data) {
                                         NULL, &job->base, job->mp, job->nmp,
                                         job->tank, job->ntank,
                                         job->ovr, job->novr, job->kind_mask,
+                                        job->fix_depth_km, g_locator_timeout_sec,
+                                        NULL, NULL, NULL,
                                         &job->out, &job->mag,
                                         job->err, sizeof(job->err));
     }
@@ -1734,28 +1946,58 @@ static gpointer locate_thread(gpointer data) {
 
 static gboolean locate_finish(gpointer data) {
     LocateJob *job = data;
+
+    if (job->gen != g_locate_gen) {   /* resultado de una corrida vieja */
+        g_free(job);
+        return G_SOURCE_REMOVE;
+    }
+    if (g_locate_tick_id) {
+        g_source_remove(g_locate_tick_id);
+        g_locate_tick_id = 0;
+    }
+    g_locate_busy = 0;
+    g_locate_elapsed = 0;
+    if (g_btn_locate)
+        gtk_widget_set_sensitive(g_btn_locate,
+                                 !(g_fix_depth_on && g_fix_depth_km < 0.0));
     if (job->rc == 0) {
+        /* Red de seguridad: si el binario del localizador es viejo e ignora
+           FixedDepthKm, la solucion vuelve con otra profundidad. */
+        if (job->fix_depth_km >= 0.0 &&
+            fabs(job->out.depth - job->fix_depth_km) > 0.5)
+            logit("et", "csnhypodbp: %s no respeto la profundidad fija "
+                        "(pedida %.1f, obtenida %.1f km)\n",
+                  job->locator, job->fix_depth_km, job->out.depth);
+        g_locate_err[0] = '\0';
         g_preview_sol = job->out;
         g_preview_mag = job->mag;
         g_preview_valid = TRUE;
-        csnhypodbp_preview_update();
-        rebuild_station_list();   /* residual de la candidata en la tabla */
         logit("t", "csnhypodbp: %s OK [%s] nph=%d rms=%.2f ML=%s Mwp=%s\n",
               job->mags_only ? "calculate" : "locate",
               job->locator, job->out.nph, job->out.rms,
               job->mag.ml[0] ? job->mag.ml : "-", job->mag.mwp[0] ? job->mag.mwp : "-");
+        rebuild_station_list();   /* residual de la candidata */
     } else {
+        /* Sin solucion nueva: se descarta cualquier candidata y el preview queda
+           en guiones con el mensaje. El prefijo "sin solucion nueva con <loc>"
+           solo aplica al locate; `calculate` reporta el fallo de magnitudes. */
+        g_preview_valid = FALSE;
+        g_locate_nosol = job->mags_only ? 0 : 1;
+        if (job->mags_only)
+            snprintf(g_locate_err, sizeof(g_locate_err), "%s",
+                     job->err[0] ? job->err : "error");
+        else
+            csnhypodbp_preview_nosol_msg(g_locate_err, sizeof(g_locate_err),
+                                         job->locator,
+                                         job->err[0] ? job->err : "error");
         logit("e", "csnhypodbp: %s fallo [%s]: %s\n",
               job->mags_only ? "calculate" : "locate", job->locator, job->err);
     }
+    csnhypodbp_preview_update();
     g_free(job);
     return G_SOURCE_REMOVE;
 }
 
-/* Unico punto que escribe la tablita del preview, para que estado, valores,
-   color y sensibilidad de los botones no se puedan desincronizar: la candidata
-   del `locate` si esta vigente, si no la solucion elegida en el detalle
-   (pestana Eventos), si no guiones. */
 /* Celda de magnitud del preview: el valor numerico de la fila en "%.2f", o un
    guion si la solucion no tiene esa magnitud (`nmag*` < 0). */
 static void preview_mag_text(double v, char *out, size_t n)
@@ -1784,15 +2026,28 @@ void on_preview_pref_toggled(GtkCheckButton *b, gpointer data) {
     g_preview_pref_kind = k;
 }
 
+/* Unico punto que escribe la tablita del preview, para que estado, valores,
+   color y sensibilidad de los botones no se puedan desincronizar. Precedencia:
+   calculo en curso (guiones + "calculando") > sin solucion nueva (guiones +
+   mensaje) > candidata del `locate` > solucion elegida en el detalle > guiones.
+   Un fallo de `calculate` (magnitudes) NO borra los valores: solo añade el
+   mensaje al estado. */
 void csnhypodbp_preview_update(void) {
     CsnhypodbpPreviewVals v;
     int i;
-    if (!g_preview_box || !g_preview_title) return;
-    if (g_preview_valid) {
+    if (!g_preview_box || !g_preview_title || !g_preview_otime) return;
+    if (g_locate_busy) {
+        /* Mientras corre no se muestran cifras: ni las de la solucion elegida
+           (serian las de antes del clic) ni un candidato intermedio. */
+        csnhypodbp_preview_set_busy(&v, g_locate_name, g_locate_elapsed);
+    } else if (g_locate_err[0] && g_locate_nosol) {
+        /* Fallo del `locate`: guiones + mensaje (no hay solucion que mostrar). */
+        csnhypodbp_preview_set_error(&v, g_locate_name, g_locate_err);
+    } else if (g_preview_valid) {
         char mww_s[16];
 
         preview_mww_text(g_preview_sol.qid, g_preview_sol.mod, mww_s, sizeof mww_s);
-        csnhypodbp_preview_from_candidate(&v, g_active_locator,
+        csnhypodbp_preview_from_candidate(&v, g_preview_sol.otime, g_active_locator,
                                           g_preview_sol.lat, g_preview_sol.lon,
                                           g_preview_sol.depth, g_preview_sol.nph,
                                           g_preview_sol.rms,
@@ -1804,14 +2059,14 @@ void csnhypodbp_preview_update(void) {
                         : NULL;
         if (item) {
             CsnhypodbpRow *row = CSNHYPODBP_ROW(item);
-            double lat = 0, lon = 0, depth = 0;
+            double lat = 0, lon = 0, depth = 0, otime = 0;
             double nm[CSNHYPODBP_MAG_NKIND] = { -1.0, -1.0, -1.0, -1.0 };
             char mtxt[CSNHYPODBP_MAG_NKIND][16];
             char mww_s[16];
             int k, qid = 0, mod = 0;
 
             g_object_get(row, "lat", &lat, "lon", &lon, "depth", &depth,
-                         "qid", &qid, "mod", &mod,
+                         "otime", &otime, "qid", &qid, "mod", &mod,
                          "nmag0", &nm[0], "nmag1", &nm[1],
                          "nmag2", &nm[2], "nmag3", &nm[3], NULL);
             for (k = 0; k < CSNHYPODBP_MAG_NKIND; k++)
@@ -1819,7 +2074,7 @@ void csnhypodbp_preview_update(void) {
             preview_mww_text(qid, mod, mww_s, sizeof mww_s);
             /* rms/nph: las celdas ya formateadas de la fila (c5/c7). Las cuatro
                magnitudes salen de nmag0..3, asi el formato es el mismo en las 4. */
-            csnhypodbp_preview_from_selected(&v, lat, lon, depth,
+            csnhypodbp_preview_from_selected(&v, otime, lat, lon, depth,
                                              csnhypodbp_row_col(row, 5),
                                              csnhypodbp_row_col(row, 7),
                                              mtxt[0], mtxt[1], mtxt[2], mtxt[3],
@@ -1828,7 +2083,35 @@ void csnhypodbp_preview_update(void) {
             csnhypodbp_preview_clear(&v);
         }
     }
+    if (g_locate_err[0] && !g_locate_nosol) {
+        /* Fallo de `calculate`: el error de magnitudes no borra los valores de la
+           solucion que se esta viendo (solo el `locate` deja el cuadro en guion). */
+        v.state = CSNHYPODBP_PREVIEW_ERROR;
+        snprintf(v.err, sizeof(v.err), "%s", g_locate_err);
+    }
     gtk_label_set_text(GTK_LABEL(g_preview_title), v.title);
+    gtk_label_set_text(GTK_LABEL(g_preview_otime), v.otime);
+    if (g_preview_status) {
+        const char *txt = v.busy[0] ? v.busy : v.err;
+
+        gtk_label_set_text(GTK_LABEL(g_preview_status), txt);
+        gtk_widget_set_visible(g_preview_status, txt[0] != '\0');
+        /* El renglon va con elipsis: el mensaje completo queda en el tooltip. */
+        gtk_widget_set_tooltip_text(g_preview_status, txt[0] ? txt : NULL);
+        if (v.state == CSNHYPODBP_PREVIEW_ERROR)
+            gtk_widget_add_css_class(g_preview_status, "preview-error");
+        else
+            gtk_widget_remove_css_class(g_preview_status, "preview-error");
+    }
+    if (g_preview_spinner) {
+        if (v.state == CSNHYPODBP_PREVIEW_RUNNING) {
+            gtk_spinner_start(GTK_SPINNER(g_preview_spinner));
+            gtk_widget_set_visible(g_preview_spinner, TRUE);
+        } else {
+            gtk_spinner_stop(GTK_SPINNER(g_preview_spinner));
+            gtk_widget_set_visible(g_preview_spinner, FALSE);
+        }
+    }
     for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++)
         gtk_label_set_text(GTK_LABEL(g_preview_val[i]), v.val[i]);
     if (v.candidate) gtk_widget_add_css_class(g_preview_box, "candidate");
@@ -1945,12 +2228,45 @@ static int mag_ovr_rows_build(unsigned kind_mask, CsnhypodbpMagOvrRow *rows, int
     return n;
 }
 
+/* Ventanas del `locate`: misma P efectiva (M>A>Teo) que se manda al localizador
+   (job->base ya filtro por g_pick_on + g_filter_*), una por estacion, y las
+   cuatro magnitudes. Si el usuario ajusto la franja de (sta,kind) se usa esa;
+   si no, el default de `MagConfigFile`. Asi la ventana sigue a la picada
+   manual/teorica y no al tiempo que quede en el ARC del refinador. */
+static int mag_ovr_rows_build_locate(const CsnhypodbpSolution *base,
+                                     CsnhypodbpMagOvrRow *rows, int max)
+{
+    CsnhypodbpMagAnchor anchors[CSNHYPODBP_MAX_PICKS];
+    double def_t0[CSNHYPODBP_MAGMARKS_KIND], def_t1[CSNHYPODBP_MAGMARKS_KIND];
+    int i, k, n = 0;
+
+    if (!base || !rows || max <= 0) return 0;
+    for (i = 0; i < base->npicks && n < CSNHYPODBP_MAX_PICKS; i++) {
+        const CsnhypodbpPick *pk = &base->picks[i];
+
+        if (pk->phase != 'P') continue;
+        if (!(pk->t_pick > 0.0)) continue;
+        snprintf(anchors[n].sta, sizeof(anchors[n].sta), "%s", pk->sta);
+        anchors[n].anchor_t = pk->t_pick;
+        n++;
+    }
+    for (k = 0; k < CSNHYPODBP_MAGMARKS_KIND; k++)
+        csnhypodbp_magcfg_window(&g_magcfg, k, &def_t0[k], &def_t1[k]);
+    return csnhypodbp_mag_ovr_build_anchors(&g_mag_marks, anchors, n,
+                                            def_t0, def_t1, 0u, rows, max);
+}
+
 /* Arranca un job. `mags_only` = recalcular SOLO magnitudes con las ventanas
    ajustadas (sin relocalizar): lo usan `calculate`/`calculate all`. */
 static void locate_start(int mags_only) {
     LocateJob *job;
     GThread *th;
     int i;
+    if (g_locate_busy) {
+        logit("t", "csnhypodbp: %s ya en curso; se ignora el nuevo clic\n",
+              mags_only ? "calculate" : "locate");
+        return;
+    }
     if (selected_qid == 0) {
         logit("t", "csnhypodbp: %s sin evento seleccionado\n",
               mags_only ? "calculate" : "locate");
@@ -2025,13 +2341,37 @@ static void locate_start(int mags_only) {
     }
     snprintf(job->locator, sizeof(job->locator), "%s", g_active_locator);
     job->mags_only = mags_only;
+    /* Profundidad fija: solo en la ruta `locate` (las magnitudes se calculan
+       sobre una solucion que ya existe). <0 = libre. */
+    job->fix_depth_km = (!mags_only && g_fix_depth_on && g_fix_depth_km >= 0.0)
+                        ? g_fix_depth_km : -1.0;
     /* Las ventanas ajustadas van al motor en LAS DOS rutas: `calculate` con la
        mascara del boton y `locate` con todas las que haya a mano. */
     job->kind_mask = mags_only ? g_mag_calc_mask : 0u;
-    job->novr = mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
+    job->novr = mags_only
+        ? mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX)
+        : mag_ovr_rows_build_locate(&job->base, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
     logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d tank=%d winovr=%d\n",
           mags_only ? "calculate" : "locate", job->locator, job->base.qid,
           job->base.npicks, job->nmp, job->ntank, job->novr);
+    /* Indicador general: arranca ANTES del hilo, asi hasta un localizador
+       instantaneo alcanza a mostrarse como "calculando". */
+    g_locate_busy = 1;
+    g_locate_gen++;
+    job->gen = g_locate_gen;
+    g_locate_err[0] = '\0';
+    g_locate_nosol = 0;
+    g_locate_elapsed = 0;
+    snprintf(g_locate_name, sizeof(g_locate_name), "%s",
+             mags_only ? "magnitudes"
+                       : (g_active_locator[0] ? g_active_locator : "csnloc"));
+    g_locate_t0 = g_get_monotonic_time();
+    if (g_locate_tick_id) g_source_remove(g_locate_tick_id);
+    g_locate_tick_id = g_timeout_add(1000, locate_tick, NULL);
+    g_preview_valid = FALSE;      /* la candidata vieja no se confirma */
+    g_preview_pref_kind = -1;
+    if (g_btn_locate) gtk_widget_set_sensitive(g_btn_locate, FALSE);
+    csnhypodbp_preview_update();
     th = g_thread_new("locate", locate_thread, job);
     g_thread_unref(th);
 }
@@ -2041,6 +2381,15 @@ static void locate_start(int mags_only) {
    cuatro (en los dos casos, una sola corrida de csnmags). */
 void on_btn_locate_clicked(GtkWidget *w, gpointer d) {
     (void)w; (void)d;
+    /* Defensa: el boton esta insensible con Fix invalido, pero si se llega por
+       teclado/accion no se lanza una corrida sin profundidad. */
+    if (g_fix_depth_on) {
+        fix_depth_apply();
+        if (g_fix_depth_km < 0.0) {
+            logit("et", "csnhypodbp: locate con Fix y profundidad invalida\n");
+            return;
+        }
+    }
     locate_start(0);
 }
 
@@ -2097,24 +2446,59 @@ void csnhypodbp_show_procesar(void) {
     if (n >= 0) gtk_notebook_set_current_page(GTK_NOTEBOOK(g_notebook), n);
 }
 
-/* Loguea los colores de fase en hex, listos para copiar al .d. */
+/* Loguea los seis colores en hex, listos para copiar al .d. Marca los que aun
+ * heredan del manual (los que no tienen clave propia). */
 void csnhypodbp_log_colors(void) {
-    logit("t", "csnhypodbp: pColor %02X%02X%02X  sColor %02X%02X%02X (copiar a csnhypodbp.d)\n",
-          (unsigned)(g_color_p[0] * 255.0 + 0.5),
-          (unsigned)(g_color_p[1] * 255.0 + 0.5),
-          (unsigned)(g_color_p[2] * 255.0 + 0.5),
-          (unsigned)(g_color_s[0] * 255.0 + 0.5),
-          (unsigned)(g_color_s[1] * 255.0 + 0.5),
-          (unsigned)(g_color_s[2] * 255.0 + 0.5));
+    char hp[7], hpa[7], hpt[7], hs[7], hsa[7], hst[7];
+    double rgb[3];
+    csnhypodbp_color_to_hex(g_colors_p.manual, hp);
+    csnhypodbp_color_resolve(&g_colors_p, CSNHYPODBP_PICK_AUTO, rgb);
+    csnhypodbp_color_to_hex(rgb, hpa);
+    csnhypodbp_color_resolve(&g_colors_p, CSNHYPODBP_PICK_THEO, rgb);
+    csnhypodbp_color_to_hex(rgb, hpt);
+    csnhypodbp_color_to_hex(g_colors_s.manual, hs);
+    csnhypodbp_color_resolve(&g_colors_s, CSNHYPODBP_PICK_AUTO, rgb);
+    csnhypodbp_color_to_hex(rgb, hsa);
+    csnhypodbp_color_resolve(&g_colors_s, CSNHYPODBP_PICK_THEO, rgb);
+    csnhypodbp_color_to_hex(rgb, hst);
+    logit("t", "csnhypodbp: pColor %s pColorAuto %s%s pColorTheo %s%s "
+               "sColor %s sColorAuto %s%s sColorTheo %s%s "
+               "(copiar a csnhypodbp.d)\n",
+          hp,
+          hpa, g_colors_p.has_auto ? "" : "(derived)",
+          hpt, g_colors_p.has_theo ? "" : "(derived)",
+          hs,
+          hsa, g_colors_s.has_auto ? "" : "(derived)",
+          hst, g_colors_s.has_theo ? "" : "(derived)");
 }
 
-/* --- Colores de fase (grupo "Colours" del menu ☰) ---------------------- */
+/* --- Colores de las picadas (grupo "Colours" del menu ☰) ---------------- */
+/* Una entrada por color: a que conjunto va y con que origen. El id del item
+ * del menu (parametro "i" de win.colour) es su indice + 1. */
+typedef struct {
+    CsnhypodbpColorSet  *set;
+    CsnhypodbpPickOrigin origin;
+    const char          *title;
+} ColourItem;
+static const ColourItem g_colour_items[] = {
+    { &g_colors_p, CSNHYPODBP_PICK_MANUAL, "P manual colour" },
+    { &g_colors_p, CSNHYPODBP_PICK_AUTO,   "P automatic colour" },
+    { &g_colors_p, CSNHYPODBP_PICK_THEO,   "P theoretical colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_MANUAL, "S manual colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_AUTO,   "S automatic colour" },
+    { &g_colors_s, CSNHYPODBP_PICK_THEO,   "S theoretical colour" },
+};
+#define N_COLOUR_ITEMS ((int)(sizeof(g_colour_items) / sizeof(g_colour_items[0])))
+
 static void on_color_chosen(GObject *src, GAsyncResult *res, gpointer data) {
     int type = GPOINTER_TO_INT(data);
     GdkRGBA *c = gtk_color_dialog_choose_rgba_finish(GTK_COLOR_DIALOG(src), res, NULL);
     if (c) {
-        double *dst = (type == 2) ? g_color_s : g_color_p;
-        dst[0] = c->red; dst[1] = c->green; dst[2] = c->blue;
+        if (type >= 1 && type <= N_COLOUR_ITEMS) {
+            const ColourItem *it = &g_colour_items[type - 1];
+            double rgb[3] = { c->red, c->green, c->blue };
+            csnhypodbp_color_set_override(it->set, it->origin, rgb);
+        }
         csnhypodbp_log_colors();
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         gdk_rgba_free(c);
@@ -2122,14 +2506,21 @@ static void on_color_chosen(GObject *src, GAsyncResult *res, gpointer data) {
     g_object_unref(src);
 }
 
-/* type: 1 = P, 2 = S (parametro "i" de la accion win.colour). */
+/* type: indice+1 en g_colour_items (parametro "i" de la accion win.colour). */
 void on_colour_select(GtkWidget *widget, gpointer data) {
     (void)widget;
     int type = GPOINTER_TO_INT(data);
-    const double *src = (type == 2) ? g_color_s : g_color_p;
-    GdkRGBA cur = { src[0], src[1], src[2], 1.0 };
-    GtkColorDialog *cd = gtk_color_dialog_new();
-    gtk_color_dialog_set_title(cd, (type == 2) ? "S phase colour" : "P phase colour");
+    const ColourItem *it;
+    double rgb[3];
+    GdkRGBA cur;
+    GtkColorDialog *cd;
+    if (type < 1 || type > N_COLOUR_ITEMS)
+        return;
+    it = &g_colour_items[type - 1];
+    csnhypodbp_color_resolve(it->set, it->origin, rgb);
+    cur.red = rgb[0]; cur.green = rgb[1]; cur.blue = rgb[2]; cur.alpha = 1.0;
+    cd = gtk_color_dialog_new();
+    gtk_color_dialog_set_title(cd, it->title);
     gtk_color_dialog_choose_rgba(cd, NULL, &cur, NULL, on_color_chosen, GINT_TO_POINTER(type));
 }
 
@@ -2147,7 +2538,7 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
     GtkWidget *lbl = gtk_label_new(NULL);
     GtkWidget *btn = gtk_button_new_with_label("Close");
 
-    static const char *help =
+    static const char *help_base =
         "<b>ZOOM (modo por defecto)</b>\n"
         "  P / S            elegir fase a picar (entra en modo PICAR)\n"
         "  clic izq         1.º clic: ancla; 2.º clic der: zoom / izq: reset\n"
@@ -2159,6 +2550,14 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
         "<b>PICAR (tras pulsar P o S)</b>\n"
         "  clic izq         coloca la fase en la traza y vuelve a ZOOM\n"
         "  Esc              cancelar";
+
+    /* Los atajos de filtro salen de la config vigente (.d), no hardcodeados. */
+    char fhelp[2048];
+    char *fesc, *help;
+    csnhypodbp_filtercfg_help_text(&g_filtercfg, fhelp, sizeof(fhelp));
+    fesc = g_markup_escape_text(fhelp, -1);
+    help = g_strdup_printf("%s\n\n<b>FILTROS</b>\n%s", help_base, fesc ? fesc : "");
+    g_free(fesc);
 
     gtk_window_set_title(GTK_WINDOW(win), "Commands");
     if (parent) gtk_window_set_transient_for(GTK_WINDOW(win), parent);
@@ -2173,6 +2572,7 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
     gtk_label_set_justify(GTK_LABEL(lbl), GTK_JUSTIFY_LEFT);
     gtk_label_set_selectable(GTK_LABEL(lbl), TRUE);
     gtk_label_set_markup(GTK_LABEL(lbl), help);
+    g_free(help);
     gtk_widget_set_hexpand(lbl, TRUE);
     gtk_box_append(GTK_BOX(box), lbl);
 
@@ -2187,6 +2587,14 @@ void csnhypodbp_help_dialog_run(GtkWindow *parent) {
 gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, GdkModifierType state, gpointer data) {
     (void)ctrl; (void)keycode; (void)data;
     gboolean shift;
+    /* Guarda de foco: si se esta escribiendo en una caja (depth, buscador,
+       puertas de magnitud), las teclas son para la caja. Sin esto, p.ej. "p"
+       en `depth` entraba en modo PICAR y se perdia el caracter. */
+    if (window_global && GTK_IS_WINDOW(window_global)) {
+        GtkWidget *focus = gtk_window_get_focus(GTK_WINDOW(window_global));
+        if (focus && GTK_IS_EDITABLE(focus))
+            return FALSE;
+    }
     if (!waves_page_active()) return FALSE;   /* no interceptar en Eventos/Config */
     shift = (state & GDK_SHIFT_MASK) != 0;
     /* Shift+flechas: exageracion vertical. Las ↑/↓ solas NO se consumen aqui,
@@ -2236,6 +2644,33 @@ gboolean on_key_press(GtkEventControllerKey *ctrl, guint keyval, guint keycode, 
         if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
         return TRUE;
     }
+
+    /* Atajos de FILTRO: solo en la sub-pestaña `picking` (indice 0), que es
+       donde vive el HUD y donde el filtro cambia lo que se ve. En magnitudes
+       el filtro no aplica: no se consume la tecla. */
+    if (g_subnotebook && GTK_IS_NOTEBOOK(g_subnotebook) &&
+        gtk_notebook_get_current_page(GTK_NOTEBOOK(g_subnotebook)) == 0) {
+        guint u = gdk_keyval_to_unicode(keyval);
+        if (u >= 33 && u <= 126) {
+            char lk = (char)tolower((unsigned char)u);
+            int act = csnhypodbp_filtercfg_key_action(&g_filtercfg,
+                                                      g_active_filter, lk);
+            if (act == CSNHYPODBP_FILTER_KEY_MENU) {
+                on_btn_filters_clicked(NULL, NULL);
+                return TRUE;
+            }
+            if (act >= CSNHYPODBP_FILTER_KEY_RAW) {
+                csnhypodbp_filter_apply_preset(act);
+                return TRUE;
+            }
+            if (g_filtercfg.stalta_declared && lk == g_filtercfg.stalta_key) {
+                g_filtercfg.stalta_on = !g_filtercfg.stalta_on;
+                csnhypodbp_filter_hud_update();
+                if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+                return TRUE;
+            }
+        }
+    }
     return FALSE;
 }
 
@@ -2250,7 +2685,10 @@ static double g_map_pan_x = 0.0, g_map_pan_y = 0.0;
 static double g_map_cx = 0.0, g_map_cy = 0.0;
 static int    g_map_fit_key = -1;              /* identidad del ultimo auto-encuadre */
 static int    g_map_need_fit = 1;
-static double g_map_fit_lon0 = 0, g_map_fit_lon1 = 0, g_map_fit_lat0 = 0, g_map_fit_lat1 = 0;
+/* Encuadre inicial: el mundo. Sin el, el primer dibujo (antes de que llegue
+   cualquier solucion) encuadraria el bbox (0,0) de los valores por defecto. */
+static double g_map_fit_lon0 = -180.0, g_map_fit_lon1 = 180.0;
+static double g_map_fit_lat0 = -90.0, g_map_fit_lat1 = 90.0;
 /* Referencia del encuadre: la solucion verde (elegida en Origins) o, si no hay,
    la preferida. El mapa se centra SIEMPRE en ella, con cualquier MapZoom. */
 static double g_map_fit_ref_lat = NAN, g_map_fit_ref_lon = NAN;
@@ -2488,28 +2926,29 @@ void csnhypodbp_maps_refresh(void)
     /* Auto-encuadre del mapa de planta al cambiar de evento o de candidata. */
     if (key != g_map_fit_key) {
         double lon0, lon1, lat0, lat1;
-        g_map_fit_key = key;
-        if (csnhypodbp_map_bbox(g_map_pts, g_map_npts, &lon0, &lon1, &lat0, &lat1) == 0) {
-            /* Referencia del centro: la verde si hay, si no la preferida (kind 1). */
-            int ri = (g_map_sel >= 0 && g_map_sel < g_map_npts) ? g_map_sel : -1;
+        /* Referencia del centro: la verde si hay, si no la preferida (kind 1). */
+        int ri = (g_map_sel >= 0 && g_map_sel < g_map_npts) ? g_map_sel : -1;
 
-            if (ri < 0) {
-                int k;
-                for (k = 0; k < g_map_npts; k++) {
-                    if (g_map_pts[k].kind == 1) { ri = k; break; }
-                }
+        g_map_fit_key = key;
+        if (ri < 0) {
+            int k;
+            for (k = 0; k < g_map_npts; k++) {
+                if (g_map_pts[k].kind == 1) { ri = k; break; }
             }
-            if (ri >= 0) {
-                g_map_fit_ref_lat = g_map_pts[ri].lat;
-                g_map_fit_ref_lon = g_map_pts[ri].lon;
-            } else {
-                g_map_fit_ref_lat = g_map_fit_ref_lon = NAN;
-            }
-            csnhypodbp_map_span_min(&lon0, &lon1, &lat0, &lat1, g_map_min_span_deg);
-            g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
-            g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
-            g_map_need_fit = 1;
         }
+        if (ri >= 0) {
+            g_map_fit_ref_lat = g_map_pts[ri].lat;
+            g_map_fit_ref_lon = g_map_pts[ri].lon;
+        } else {
+            g_map_fit_ref_lat = g_map_fit_ref_lon = NAN;
+        }
+        /* Con soluciones manda su bbox (con el suelo MapMinSpanDeg); sin ninguna,
+           el mapa se abre igual, al mundo completo. */
+        csnhypodbp_map_fit_bounds(g_map_pts, g_map_npts, g_map_min_span_deg,
+                                  &lon0, &lon1, &lat0, &lat1);
+        g_map_fit_lon0 = lon0; g_map_fit_lon1 = lon1;
+        g_map_fit_lat0 = lat0; g_map_fit_lat1 = lat1;
+        g_map_need_fit = 1;
     }
 
     /* El perfil tambien se re-encuadra (a sus propios datos) al cambiar de
@@ -2533,14 +2972,24 @@ void csnhypodbp_maps_refresh(void)
 
 /* --- mapa de planta --- */
 
+/* Geometria de proyeccion vigente del mapa de planta: la imagen si esta
+   cargada y, si no, el lienzo virtual (csnhypodbp_map_canvas). Es el UNICO
+   origen de iw/ih: dibujo, capas .lines y hit test del clic comparten escala. */
+static void plan_canvas_get(double *iw, double *ih)
+{
+    int has = (g_map_pixbuf != NULL);
+
+    csnhypodbp_map_canvas(has,
+                          has ? gdk_pixbuf_get_width(g_map_pixbuf) : 0,
+                          has ? gdk_pixbuf_get_height(g_map_pixbuf) : 0,
+                          iw, ih);
+}
+
 static void plan_overlay_map(double lat, double lon, void *ud, double *sx, double *sy)
 {
-    double iw = 1.0, ih = 1.0;
+    double iw, ih;
     (void)ud;
-    if (g_map_pixbuf) {
-        iw = gdk_pixbuf_get_width(g_map_pixbuf);
-        ih = gdk_pixbuf_get_height(g_map_pixbuf);
-    }
+    plan_canvas_get(&iw, &ih);
     ewgui_geo_project(lat, lon, iw, ih, sx, sy);
 }
 
@@ -2592,42 +3041,151 @@ static void draw_marker(cairo_t *cr, double x, double y, double r, int kind, int
     }
 }
 
-/* Rejilla de meridianos/paralelos (paso segun el zoom, como csnrv). */
-static void draw_plan_grid(cairo_t *cr, double iw, double ih, double zoom)
+/* Rejilla de meridianos/paralelos. El paso sale del span VISIBLE: con el zoom
+   crudo, ewgui_geo_grid_step() daba 10° en una vista regional y a 5° de span no
+   se veia ni una linea (ni, por tanto, ninguna etiqueta). */
+static void draw_plan_grid(cairo_t *cr, double iw, double ih,
+                           int cw, int ch, double zoom, double cx, double cy,
+                           double pan_x, double pan_y)
 {
-    double step = ewgui_geo_grid_step(zoom);
-    double lon, lat, x1, y1, x2, y2;
+    double lon0, lon1, lat0, lat1, step, span;
+    double x1, y1, x2, y2;
+    int k, first;
+
+    if (csnhypodbp_map_view_bounds(iw, ih, cw, ch, zoom, cx, cy, pan_x, pan_y,
+                                   &lon0, &lon1, &lat0, &lat1) != 0)
+        return;
+    span = (lon1 - lon0 > lat1 - lat0) ? lon1 - lon0 : lat1 - lat0;
+    step = csnhypodbp_map_grid_step(span);
     if (!(step > 0.0)) return;
+
     cairo_set_line_width(cr, 0.5 / zoom);
     cairo_set_source_rgba(cr, 0.3, 0.3, 0.3, 0.22);
-    for (lon = -180.0; lon <= 180.0; lon += step) {
-        ewgui_geo_project(90.0, lon, iw, ih, &x1, &y1);
-        ewgui_geo_project(-90.0, lon, iw, ih, &x2, &y2);
+    first = (int)ceil(lon0 / step);
+    for (k = first; k * step <= lon1 + 1e-9; k++) {
+        ewgui_geo_project(90.0, k * step, iw, ih, &x1, &y1);
+        ewgui_geo_project(-90.0, k * step, iw, ih, &x2, &y2);
         cairo_move_to(cr, x1, y1);
         cairo_line_to(cr, x2, y2);
     }
-    for (lat = -90.0; lat <= 90.0; lat += step) {
-        ewgui_geo_project(lat, -180.0, iw, ih, &x1, &y1);
-        ewgui_geo_project(lat, 180.0, iw, ih, &x2, &y2);
+    first = (int)ceil(lat0 / step);
+    for (k = first; k * step <= lat1 + 1e-9; k++) {
+        ewgui_geo_project(k * step, -180.0, iw, ih, &x1, &y1);
+        ewgui_geo_project(k * step, 180.0, iw, ih, &x2, &y2);
         cairo_move_to(cr, x1, y1);
         cairo_line_to(cr, x2, y2);
     }
     cairo_stroke(cr);
 }
 
+/* Texto de eje con halo claro: se lee igual sobre el fondo gris que encima de
+   la imagen del mapa. */
+static void draw_axis_text(cairo_t *cr, double x, double y, const char *s)
+{
+    cairo_set_source_rgba(cr, 0.98, 0.98, 0.98, 0.85);
+    cairo_move_to(cr, x - 0.8, y - 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x + 0.8, y - 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x - 0.8, y + 0.8); cairo_show_text(cr, s);
+    cairo_move_to(cr, x + 0.8, y + 0.8); cairo_show_text(cr, s);
+    cairo_set_source_rgba(cr, 0.25, 0.25, 0.25, 1.0);
+    cairo_move_to(cr, x, y);
+    cairo_show_text(cr, s);
+}
+
+/* Etiquetas numericas de latitud y longitud en el borde del canvas. Van con la
+   CTM identidad (no escalan con el zoom) y se omiten si se pisarian. */
+static void draw_plan_axes(cairo_t *cr, double iw, double ih,
+                           int cw, int ch, double zoom, double cx, double cy,
+                           double pan_x, double pan_y)
+{
+    #define AXIS_MAX_LABELS 128
+    double lon0, lon1, lat0, lat1, step, span;
+    double pos[AXIS_MAX_LABELS], val[AXIS_MAX_LABELS];
+    int keep[AXIS_MAX_LABELS];
+    char buf[32];
+    int n, k, first, i;
+
+    if (cw <= 0 || ch <= 0) return;
+    if (csnhypodbp_map_view_bounds(iw, ih, cw, ch, zoom, cx, cy, pan_x, pan_y,
+                                   &lon0, &lon1, &lat0, &lat1) != 0)
+        return;
+    span = (lon1 - lon0 > lat1 - lat0) ? lon1 - lon0 : lat1 - lat0;
+    step = csnhypodbp_map_grid_step(span);
+    if (!(step > 0.0)) return;
+
+    cairo_save(cr);
+    cairo_identity_matrix(cr);
+    cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
+                           CAIRO_FONT_WEIGHT_NORMAL);
+    cairo_set_font_size(cr, 9.0);
+
+    /* Longitudes, en el borde inferior. */
+    first = (int)ceil(lon0 / step);
+    n = 0;
+    for (k = first; n < AXIS_MAX_LABELS && k * step <= lon1 + 1e-9; k++) {
+        double sx, sy;
+        if (csnhypodbp_map_screen(0.0, k * step, iw, ih, cw, ch, zoom, cx, cy,
+                                  pan_x, pan_y, &sx, &sy) != 0)
+            continue;
+        if (sx < 0.0 || sx > cw) continue;
+        pos[n] = sx;
+        val[n] = k * step;
+        n++;
+    }
+    if (csnhypodbp_map_label_pick(pos, n, 34.0, keep) == 0) {
+        for (i = 0; i < n; i++) {
+            cairo_text_extents_t ext;
+            double tx;
+            if (!keep[i]) continue;
+            csnhypodbp_map_axis_fmt(step, val[i], buf, sizeof(buf));
+            cairo_text_extents(cr, buf, &ext);
+            tx = pos[i] - ext.width / 2.0;
+            if (tx < 2.0) tx = 2.0;
+            if (tx + ext.width > cw - 2.0) tx = cw - 2.0 - ext.width;
+            draw_axis_text(cr, tx, ch - 4.0, buf);
+        }
+    }
+
+    /* Latitudes, en el borde izquierdo. */
+    first = (int)ceil(lat0 / step);
+    n = 0;
+    for (k = first; n < AXIS_MAX_LABELS && k * step <= lat1 + 1e-9; k++) {
+        double sx, sy;
+        if (csnhypodbp_map_screen(k * step, 0.0, iw, ih, cw, ch, zoom, cx, cy,
+                                  pan_x, pan_y, &sx, &sy) != 0)
+            continue;
+        if (sy < 0.0 || sy > ch) continue;
+        pos[n] = sy;
+        val[n] = k * step;
+        n++;
+    }
+    if (csnhypodbp_map_label_pick(pos, n, 16.0, keep) == 0) {
+        for (i = 0; i < n; i++) {
+            if (!keep[i]) continue;
+            if (pos[i] < 10.0 || pos[i] > ch - 10.0) continue;
+            csnhypodbp_map_axis_fmt(step, val[i], buf, sizeof(buf));
+            draw_axis_text(cr, 4.0, pos[i] + 3.0, buf);
+        }
+    }
+
+    cairo_restore(cr);
+}
+
 void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data)
 {
-    double iw = 1.0, ih = 1.0, zoom;
+    double iw, ih, zoom;
     int i;
 
     (void)canvas; (void)data;
     cairo_set_source_rgb(cr, 0.94, 0.95, 0.96);
     cairo_paint(cr);
-    if (g_map_pixbuf) {
-        iw = gdk_pixbuf_get_width(g_map_pixbuf);
-        ih = gdk_pixbuf_get_height(g_map_pixbuf);
-    }
-    if (g_map_need_fit && g_map_pixbuf && width > 40 && height > 40) {
+
+    /* Sin MapImageFile (o si no se pudo cargar) el mapa NO se apaga: se proyecta
+       sobre el lienzo virtual y se dibujan igual grilla, etiquetas, perfiles,
+       capas .lines y marcadores. */
+    plan_canvas_get(&iw, &ih);
+
+    if (g_map_need_fit && width > 40 && height > 40) {
         csnhypodbp_mapfit_at(g_map_fit_ref_lat, g_map_fit_ref_lon,
                              g_map_fit_lon0, g_map_fit_lon1,
                              g_map_fit_lat0, g_map_fit_lat1,
@@ -2647,7 +3205,10 @@ void on_draw_map_plan(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, v
         gdk_cairo_set_source_pixbuf(cr, g_map_pixbuf, 0, 0);
         cairo_paint(cr);
     }
-    draw_plan_grid(cr, iw, ih, zoom);
+    draw_plan_grid(cr, iw, ih, width, height, zoom,
+                   g_map_cx, g_map_cy, g_map_pan_x, g_map_pan_y);
+    draw_plan_axes(cr, iw, ih, width, height, zoom,
+                   g_map_cx, g_map_cy, g_map_pan_x, g_map_pan_y);
 
     /* Rectas de los perfiles; la activa resaltada y recortada a sus datos. */
     for (i = 0; i < g_profiles.n; i++) {
@@ -2989,6 +3550,9 @@ void on_row_selected(GtkSingleSelection *sel, GParamSpec *pspec, gpointer data) 
             }
         }
     }
+    /* Elegir un origen descarta el aviso de "sin solucion nueva" del ultimo
+       `locate`: el cuadro vuelve a mostrar la solucion elegida. */
+    g_locate_err[0] = '\0';
     csnhypodbp_preview_update();   /* la tablita sigue a la solucion elegida */
     csnhypodbp_maps_refresh();     /* y los mapas, al evento elegido */
     rebuild_mag_list();            /* y la tabla de magnitudes, al evento elegido */
@@ -3217,6 +3781,8 @@ void on_canvas_leave(GtkEventControllerMotion *ctrl, gpointer data) {
 /* --------------------------------------------------------------------
  * ApplySelectedFilter: aplica el filtro IIR configurado (Filters) a todas
  * las estaciones con datos, validando Nyquist y quitando el DC antes.
+ * En modo fase cero (default) NO desplaza el onset: el instante del clic
+ * coincide con el de la muestra cruda (el que se manda al localizador).
  * -------------------------------------------------------------------- */
 void ApplySelectedFilter(void) {
     EwFilterParams fp;
@@ -3224,11 +3790,48 @@ void ApplySelectedFilter(void) {
     fp.f1 = g_filter_f1;
     fp.f2 = g_filter_f2;
     fp.order = g_filter_order;
+    fp.zerophase = g_filtercfg.phase_zero ? 1 : 0;
 
     for (int i = 0; i < NumEstaciones; i++) {
         if (ewgui_trace_length(StaArray[i].trace) <= 0) continue;
         ewgui_trace_filter(StaArray[i].trace, &fp);
     }
+}
+
+/* --------------------------------------------------------------------
+ * Presets con atajo: cambian el filtro activo y redibujan. `idx` < 0 = Raw.
+ * El filtro sigue siendo SOLO de la vista: `locate` manda la traza cruda.
+ * -------------------------------------------------------------------- */
+void csnhypodbp_filter_apply_preset(int idx) {
+    g_active_filter = idx;
+
+    if (idx >= 0 && idx < g_filtercfg.nf) {
+        const CsnhypodbpFilterPreset *p = &g_filtercfg.f[idx];
+        g_filter_type = p->type;
+        g_filter_f1 = p->f1;
+        g_filter_f2 = p->f2;
+        g_filter_order = p->order;
+    } else {
+        g_filter_type = 0;
+    }
+
+    ApplySelectedFilter();
+    csnhypodbp_filter_hud_update();
+    if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
+
+    logit("t", "csnhypodbp: filtro activo %d (type=%d f1=%.4g f2=%.4g order=%d zero=%d)\n",
+          idx, g_filter_type, g_filter_f1, g_filter_f2, g_filter_order,
+          g_filtercfg.phase_zero);
+}
+
+/* Etiqueta de la barra inferior: "Raw (0)" / "P_regional BP ... (2)". */
+void csnhypodbp_filter_hud_update(void) {
+    char buf[192];
+    if (!g_filter_label) return;
+    csnhypodbp_filtercfg_format_active(&g_filtercfg, g_active_filter,
+                                       g_filter_type, g_filter_f1, g_filter_f2,
+                                       g_filter_order, buf, sizeof(buf));
+    gtk_label_set_text(GTK_LABEL(g_filter_label), buf);
 }
 
 /* --- Ancla de la ventana del picking -------------------------------------- */
@@ -3307,9 +3910,143 @@ void csnhypodbp_pick_anchor_refresh(void)
     g_win_ref_has_p = have;
 }
 
+/* --- STA/LTA de la vista (solo visual) ------------------------------------
+ * CF de energia sobre la traza DIBUJADA (filtrada, fase cero): queda alineada
+ * 1:1 con el eje x. Se cachea por estacion y se invalida al cambiar el filtro,
+ * los parametros o la traza. NO crea picks: la marca es una ESTIMACION.
+ */
+typedef struct {
+    const EwGuiTrace *tr;
+    long   len;
+    double oldest, rate;
+    int    type, order, zero;
+    double f1, f2, sta, lta;
+    int32_t sig0, sig1;   /* firma barata del contenido (extremos) */
+    double *cf;
+    long    cap;
+    int     valid;
+} StaLtaDraw;
+
+static StaLtaDraw g_stalta_draw[MAX_ESTA];
+
+static int stalta_cf_for(int i, EwGuiTrace *tr)
+{
+    StaLtaDraw *c = &g_stalta_draw[i];
+    long n = ewgui_trace_length(tr);
+    double rate = ewgui_trace_rate(tr);
+    double oldest = ewgui_trace_oldest(tr);
+    int32_t *filt = ewgui_trace_filtered(tr);
+
+    if (n <= 0 || rate <= 0.0)
+        return 0;
+
+    int32_t sig0 = filt[0], sig1 = filt[n - 1];
+
+    if (c->valid && c->tr == tr && c->len == n && c->oldest == oldest &&
+        c->rate == rate && c->sig0 == sig0 && c->sig1 == sig1 &&
+        c->type == g_filter_type &&
+        c->order == g_filter_order && c->zero == (g_filtercfg.phase_zero != 0) &&
+        c->f1 == g_filter_f1 && c->f2 == g_filter_f2 &&
+        c->sta == g_filtercfg.stalta_sta && c->lta == g_filtercfg.stalta_lta)
+        return 1;
+
+    if (c->cap < n) {
+        double *nb = realloc(c->cf, (size_t)n * sizeof(double));
+        if (!nb)
+            return 0;
+        c->cf = nb;
+        c->cap = n;
+    }
+    ewgui_stalta_run(filt, (size_t)n, rate,
+                     g_filtercfg.stalta_sta, g_filtercfg.stalta_lta, c->cf);
+
+    c->tr = tr; c->len = n; c->oldest = oldest; c->rate = rate;
+    c->sig0 = sig0; c->sig1 = sig1;
+    c->type = g_filter_type; c->order = g_filter_order;
+    c->zero = (g_filtercfg.phase_zero != 0);
+    c->f1 = g_filter_f1; c->f2 = g_filter_f2;
+    c->sta = g_filtercfg.stalta_sta; c->lta = g_filtercfg.stalta_lta;
+    c->valid = 1;
+    return 1;
+}
+
+static void draw_stalta_overlay(cairo_t *cr, int i, EwGuiTrace *tr,
+                                double winStart, double span, int draw_width,
+                                int y_center, int row_h)
+{
+    if (!g_filtercfg.stalta_on || !g_filtercfg.stalta_declared)
+        return;
+    if (!stalta_cf_for(i, tr))
+        return;
+
+    StaLtaDraw *c = &g_stalta_draw[i];
+    int32_t *filt = ewgui_trace_filtered(tr);
+    double cmax = g_filtercfg.stalta_on_thr * 1.5;
+    if (cmax < 2.0) cmax = 2.0;
+    if (cmax > 10.0) cmax = 10.0;
+
+    double half = row_h * 0.42;
+    int ncol = draw_width < MAX_DRAW_W ? draw_width : MAX_DRAW_W;
+
+    cairo_save(cr);
+    cairo_rectangle(cr, g_margin_left, y_center - half, draw_width, 2 * half);
+    cairo_clip(cr);
+
+    cairo_set_source_rgba(cr, 0.15, 0.45, 0.85, 0.55);
+    cairo_set_line_width(cr, 1.0);
+    int pen = 0;
+    for (int px = 0; px < ncol; px++) {
+        double t = winStart + g_view.t0 + ((double)px + 0.5) / ncol * span;
+        long k = (long)((t - c->oldest) * c->rate);
+        if (k < 0 || k >= c->len || filt[k] == INT_MAX) {
+            pen = 0;
+            continue;
+        }
+        double cf = c->cf[k];
+        if (!(cf > 0.0)) cf = 0.0;
+        if (cf > cmax) cf = cmax;
+        double x = g_margin_left + px;
+        double y = y_center + half - (cf / cmax) * (2.0 * half);
+        if (pen) cairo_line_to(cr, x, y);
+        else     cairo_move_to(cr, x, y);
+        pen = 1;
+    }
+    cairo_stroke(cr);
+
+    /* Marcas de disparo (corregidas por stalta_corr). */
+    size_t idx[16];
+    int nt = ewgui_stalta_triggers(c->cf, (size_t)c->len,
+                                   g_filtercfg.stalta_on_thr,
+                                   g_filtercfg.stalta_off_thr, idx, 16);
+    if (nt > 0) {
+        const double dash_t[] = { 3.0, 2.0 };
+        cairo_set_dash(cr, dash_t, 2, 0.0);
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_source_rgba(cr, 0.75, 0.25, 0.15, 0.85);
+        for (int k = 0; k < nt; k++) {
+            double tt = c->oldest + (double)idx[k] / c->rate + g_filtercfg.stalta_corr;
+            double rel = tt - winStart;
+            if (rel < g_view.t0 || rel > g_view.t1)
+                continue;
+            double x = g_margin_left + csnhypodbp_view_sample_x(
+                           tt, winStart + g_view.t0, span, ncol);
+            cairo_move_to(cr, x, y_center - half);
+            cairo_line_to(cr, x, y_center + half);
+            cairo_stroke(cr);
+        }
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    }
+
+    cairo_restore(cr);
+}
+
 void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, void *data) {
     (void)data;
     cairo_set_source_rgb(cr, 1, 1, 1); cairo_paint(cr);
+
+    /* Ventana o divisor redimensionado: reajusta el alto del canvas a la nueva
+       rejilla (una vez por cambio; ver csnhypodbp_canvas_refit_if_needed). */
+    csnhypodbp_canvas_refit_if_needed();
 
     int margin_right = 10;
     int draw_width = width - g_margin_left - margin_right;
@@ -3334,9 +4071,12 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
         qsort(g_SortedNodes, (size_t)g_NumSortedNodes, sizeof(StaNode), cmp_node_chan);
     }
 
-    /* Alto de banda: reparte la altura del canvas entre las trazas visibles
-       (~una componente por pantalla por defecto). */
-    int row_h = (g_NumSortedNodes > 0 && height > 160) ? (height - 60) / g_NumSortedNodes : g_spacing;
+    /* Alto de banda: rejilla de `tracesPerScreen` huecos (1, 2 o 3). Sale del
+       viewport del scrolled, no de `height`, para no realimentarse: si la
+       estacion tiene mas canales que huecos, el sobrante queda debajo y se
+       alcanza con la rueda; si tiene menos, la traza NO se estira (los huecos
+       libres quedan vacios). */
+    int row_h = traces_layout_now(g_NumSortedNodes).band_h;
     if (row_h < 80) row_h = g_spacing;
 
     /* Una P y una S por estacion (M > A > T), con el overlay manual incluido.
@@ -3366,8 +4106,6 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
        todas las trazas comparten ventana y un unico eje UTC vale para todas. */
     double span = g_view.t1 - g_view.t0;
     if (span <= 0.0) span = g_dScreenTime;
-    int sta_is_real = (have_row && sta_row.p.present &&
-                       (sta_row.p.origin == 'M' || sta_row.p.origin == 'A'));
     double sta_win_start = g_win_ref_pick - g_align_lead;
     g_win_start_cur = sta_win_start;
 
@@ -3384,11 +4122,10 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
 
     for (int n = 0; n < g_NumSortedNodes; n++) {
         int i = g_SortedNodes[n].idx;
-        int y_center = (n * row_h) + (row_h / 2) + 30;
+        int y_center = (n * row_h) + (row_h / 2) + CSNHYPODBP_TRACES_TOP;
         g_SortedNodes[n].y_top = y_center - (row_h / 2);
         g_SortedNodes[n].y_bottom = y_center + (row_h / 2);
 
-        int is_real = sta_is_real;
         double winStart = sta_win_start;
 
         /* (sin LED verde/rojo: era ambiguo y ya no se usa) */
@@ -3448,7 +4185,7 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
 
             if (max_abs > 0.0) {
                 double trgb[3];
-                csnhypodbp_trace_rgb(is_real, trgb);
+                csnhypodbp_trace_rgb(trgb);
                 cairo_set_source_rgb(cr, trgb[0], trgb[1], trgb[2]);
                 cairo_set_line_width(cr, 0.8);
                 cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
@@ -3511,6 +4248,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             }
         }
 
+        /* Curva CF del STA/LTA (si esta activa): debajo de las marcas P/S. */
+        if (tr_rate > 0 && tr_len > 0)
+            draw_stalta_overlay(cr, i, tr, winStart, span, draw_width,
+                                y_center, row_h);
+
         /* Marca P (una sola por estacion: M > A > T). Si el zoom la deja fuera de
            la ventana se dibuja pegada al borde con una flecha: nunca desaparece
            en silencio (era el motivo de "no aparece lo que pique"). */
@@ -3520,7 +4262,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             double xp = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
             char plabel[24];
 
-            cairo_set_source_rgb(cr, g_color_p[0], g_color_p[1], g_color_p[2]);
+            double prgb[3];
+            csnhypodbp_color_resolve(&g_colors_p,
+                                     csnhypodbp_pick_origin(sta_row.p.origin),
+                                     prgb);
+            cairo_set_source_rgb(cr, prgb[0], prgb[1], prgb[2]);
             cairo_set_line_width(cr, 2);
             cairo_move_to(cr, xp, y_center - (row_h / 2.5));
             cairo_line_to(cr, xp, y_center + (row_h / 2.5));
@@ -3545,7 +4291,11 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
             double xs = csnhypodbp_view_mark_x(&g_view, rel, g_margin_left, draw_width, &edge);
             char slab[24];
 
-            cairo_set_source_rgb(cr, g_color_s[0], g_color_s[1], g_color_s[2]);
+            double srgb[3];
+            csnhypodbp_color_resolve(&g_colors_s,
+                                     csnhypodbp_pick_origin(sta_row.s.origin),
+                                     srgb);
+            cairo_set_source_rgb(cr, srgb[0], srgb[1], srgb[2]);
             cairo_set_line_width(cr, 1.5);
             cairo_move_to(cr, xs, y_center - (row_h / 2.5));
             cairo_line_to(cr, xs, y_center + (row_h / 2.5));
@@ -3585,7 +4335,8 @@ void on_draw_signal(EwGuiCanvas *canvas, cairo_t *cr, int width, int height, voi
     if (csnhypodbp_view_show_pick_cue(canvas != NULL,
                                       g_click_mode == CSNHYPODBP_CLICK_PICK,
                                       g_cursor_valid)) {
-        const double *cc = (g_pick_phase == 'S') ? g_color_s : g_color_p;
+        /* El indicador del cursor NO es una picada: usa el color manual/base. */
+        const double *cc = (g_pick_phase == 'S') ? g_colors_s.manual : g_colors_p.manual;
         double cx = g_cursor_x + 16.0, cy = g_cursor_y - 16.0;
         char cl[2] = { g_pick_phase, '\0' };
         cairo_text_extents_t ce;

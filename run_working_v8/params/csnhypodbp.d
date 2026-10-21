@@ -7,6 +7,7 @@ InRing          HYPO_RING_REF    # Anillo de hipocentros refinados (hyp2000_ring
 InRingRaw       HYPO_RING        # 2.º anillo: soluciones crudas de csnloc (opcional)
 OutRing         PICK_RING        # Anillo donde inyectaremos los repicks manuales (TYPE_PICK_SCNL)
 InRingPick      PICK_RING        # Anillo de picks a LEER (fase P/S + origen A/M); default OutRing
+ConfRing        HYPO_RING_REF2   # Anillo de CONFIRMACIONES: el ARC confirmado que hypodb guarda como origen propio
 HeartBeatInt    30               
 LogFile         1                
 TauModel        iasp91           # Modelo de tiempos de viaje (P teorica); tablas iasp91.* en params/
@@ -21,6 +22,9 @@ GroupMaxSolutions   100          # tope de versiones por evento
 # El orden es canal externo x componente interno: HHZ, HHN, HHE, BHZ, ...
 channelsOrder   HH BH HN LH
 componentsOrder Z N E
+# Trazas por pantalla en la pestaña picking: 1, 2 o 3 (solo esos valores; el
+# resto de canales de la estación queda debajo y se alcanza con la rueda).
+tracesPerScreen 1
 # locator <nombre> <binario> <config.d> (sin '/' se resuelven contra
 # $EW_HOME/$EW_VERSION/bin y $EW_PARAMS).
 locator         csnloc       csnloc       csnloc.d
@@ -30,15 +34,65 @@ locator         nlloc_ring   nlloc_ring   nlloc_ring.d
 # $EW_PARAMS y dentro de SU carpeta — runtime, no versionado
 # (run_working_v8/csnhypodbp/); el modulo la crea si falta.
 ManualStateFile ../csnhypodbp/csnhypodbp_manual.events
-LocatorTimeoutSec 180                      # timeout (s) por localizador offline
+LocatorTimeoutSec 600                      # timeout (s) por localizador offline (NLLoc es lento)
 PrefetchNeighbors 2                        # estaciones vecinas a precargar
 
-# Colores de las fases (formato RRGGBB, con o sin '#'). Aplican a las marcas de
-# fase sobre la traza y al circulo del indicador de picado. Tambien se pueden
-# cambiar en caliente desde el menu ☰ > Colours (el hex queda en el log para
-# copiarlo aqui).
-#pColor         FF0000   # P: marca + circulo del indicador
-#sColor         009900   # S: marcas + circulo del indicador
+# ---------------------------------------------------------------------------
+# Filtros de la pestaña `picking` y sus atajos de teclado
+# ---------------------------------------------------------------------------
+# El filtro es SOLO de la vista: `locate` manda las muestras crudas y el pick
+# guardado es el instante del clic, asi que el filtro no desplaza el tiempo.
+# FilterPhase zero  = forward+backward, fase neta CERO (default; el orden de la
+#                     respuesta en amplitud se duplica: orden 2 ≡ Butterworth 4).
+# FilterPhase causal = una pasada (como csntvp): retardo de grupo de decenas a
+#                     cientos de ms cerca del corte. Solo para comparar.
+FilterPhase     zero
+
+# Teclas especiales.
+FilterMenu      f            # abre la ventana Filters…
+FilterRaw       0            # vuelve a la traza cruda (Raw)
+
+# Filter [<nombre>] <HP|LP|BP> <tecla> <f1> [<f2>] <orden>
+#   - tecla: un caracter; 'p' y 's' estan reservadas por el picado de fases.
+#   - orden: 2 o 4. Con fase cero, 2 ya da la selectividad de un 4 causal.
+#   - el nombre es opcional y solo se usa para el HUD y la ventana Filters.
+Filter HP  r 1.0   2         # high-pass desde 1.0 Hz
+Filter LP  k 0.1   2         # low-pass  hasta 0.1 Hz
+Filter BP  d 0.001 12 4      # band-pass 0.001-12 Hz
+
+# Filtros RECOMENDADOS por distancia (cada uno con SU tecla: el analista elige;
+# no hay seleccion automatica). Evidencia y bandas: docs/FILTERS.md.
+#   P local (<200 km):        HP 1 Hz (NMSOP IS 11.4) + contenido 1-20 Hz
+#   P regional (200-1000 km): default operativo SeisComP BW(4,0.7,2)
+#   P telesismo (>1000 km):   detector 0.5-2 Hz (Murdock & Hutt 1983)
+#   S local (<200 km):        S en la coda de P, mas baja en frecuencia
+Filter P_local       BP 1 1.0 20.0 2
+Filter P_regional    BP 2 0.7 10.0 2
+Filter P_teleseismic BP 3 0.5  2.0 2
+Filter S_local       BP 4 0.5  8.0 2
+
+# STA/LTA (solo visual: curva CF + marca de disparo; NO crea picks).
+# StaLta <tecla> <sta_s> <lta_s> <on> <off> [<corr_s>]
+# La marca se dibuja en t_disparo + corr (default -sta/2): es una ESTIMACION;
+# el retardo real depende del SNR, por eso no se usa como pick.
+StaLta          t 0.5 10.0 3.0 1.5
+
+# Colores de las picadas (formato RRGGBB, con o sin '#'). La TRAZA se dibuja
+# siempre negra: lo que cambia segun el origen es el color de la marca del pick.
+#   pColor/sColor           -> marca MANUAL (y circulo del indicador de picado)
+#   pColorAuto/sColorAuto   -> marca AUTOMATICA; por defecto el manual aclarado 40%
+#   pColorTheo/sColorTheo   -> marca TEORICA;    por defecto el manual aclarado 70%
+# Las claves Auto/Theo son opcionales: si no se declaran se calculan del manual
+# EN CADA DIBUJO, asi que cambiar el manual (aqui o en el menu ☰ > Colours)
+# recolorea tambien a automaticas y teoricas. Elegir una auto/teo en el menu la
+# vuelve explicita (deja de heredar); para volver a heredar, comenta su clave.
+# El hex actual queda en el log para copiarlo aqui.
+#pColor         FF0000   # P manual (marca + circulo del indicador)
+#pColorAuto     FF6666   # P automatica (default: pColor aclarado 40%)
+#pColorTheo     FFB3B3   # P teorica    (default: pColor aclarado 70%)
+#sColor         009900   # S manual
+#sColorAuto     66C266   # S automatica (default: sColor aclarado 40%)
+#sColorTheo     B3E0B3   # S teorica    (default: sColor aclarado 70%)
 
 # Etiquetas de modulo origen para la columna "Mod" (id -> nombre).
 ModuleLabel     162  csnloc
@@ -63,6 +117,10 @@ SdsFallbackHours  168
 # Archivo de estaciones a graficar (Podemos usar el mismo de csntvp)
 StaFile         estaciones_107.txt         # Archivo de estaciones con formato: Estacion Canal Red Loc Escala
 StateFile       csnloc.events             # Estado de eventos de csnloc (solo recuperacion al arrancar)
+# Estaciones sin forma de onda disponible: 1 = ocultas al arrancar, 0 = visibles.
+# Este valor solo fija el estado INICIAL de la sesion: el item "Hide stations
+# without data" del menu lo alterna (con su casilla) y nunca reescribe el .d.
+HideStationsWithoutData  1
 
 # ---------------------------------------------------------------------------
 # Columna derecha: mapa en planta (mismo contrato que csnrv) y panel de perfil
@@ -70,7 +128,7 @@ StateFile       csnloc.events             # Estado de eventos de csnloc (solo re
 # Mapa base: imagen equirectangular de mundo completo (lon -180..180,
 # lat -90..90, ancho = 2*alto, sin canal alpha). Valida con:
 #   python3 ew_gui_tools/common/tools/check_map_image.py <imagen>
-MapImageFile    world_map_con_chile.jpg
+#MapImageFile    world_map_con_chile.jpg
 # Ancho minimo (grados) del auto-encuadre del mapa de planta: con un grupo de
 # soluciones apretado, la vista no se acerca mas que esto (rueda para acercar).
 MapMinSpanDeg   5.0

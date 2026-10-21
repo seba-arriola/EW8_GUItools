@@ -19,6 +19,7 @@ typedef struct {
     int    filter_type;   /* 0=raw, 1=HP, 2=LP, 3=BP (HP+LP) */
     double f1, f2;
     int    order;
+    int    zerophase;     /* 0=causal (compatibilidad), 1=fase cero (picking) */
 } EwFilterParams;
 
 /* Caché del procesado y de la envolvente. Propiedad del llamador;

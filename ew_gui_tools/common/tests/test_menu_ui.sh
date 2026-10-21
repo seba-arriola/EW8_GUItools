@@ -83,6 +83,24 @@ must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.dark-mode' "csnhypodbp pier
 
 must_have "$root/ew_controller/ew_controller_main.c" 'win\.dark-mode' "ew_controller pierde win.dark-mode"
 
+# 4b) ítems con casilla (estado de sesión): fila GtkButton con indicador propio
+must_have "$root/common/include/ewgui/actions.h" 'int[[:space:]]+checkable' \
+    "EwMenuItem debe declarar checkable"
+must_have "$root/common/include/ewgui/actions.h" 'int[[:space:]]+checked' \
+    "EwMenuItem debe declarar checked"
+must_have "$impl" 'menu_check_row_new' \
+    "el helper debe dibujar una fila-casilla para los ítems checkable"
+must_have "$impl" 'gtk_check_button_new\(\)' \
+    "la casilla va sin etiqueta: el texto lo pone la fila"
+must_have "$impl" 'gtk_widget_set_can_target\(chk, FALSE\)' \
+    "el indicador no recibe clics: la fila entera los toma"
+must_have "$impl" 'g_markup_printf_escaped\("<b>' \
+    "la etiqueta de la casilla va en negrita como el resto de las opciones"
+must_not_have "$impl" 'gtk_check_button_new_with_label' \
+    "la casilla ya no se dibuja como checkbutton con etiqueta"
+must_not_have "$impl" 'on_item_toggled' \
+    "la casilla se dispara con clicked, igual que los demás ítems"
+
 # 5) csnhypodbp: busqueda hipocentral (solo Eventos) + backend SDS
 must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.search' "csnhypodbp pierde win.search"
 must_have "$root/csnhypodbp/csnhypodbp_main.c" 'win\.clear-search' "csnhypodbp pierde win.clear-search"

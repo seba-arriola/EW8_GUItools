@@ -7,9 +7,14 @@
  * Composición de los IDs de la base hipocentral (VARCHAR(64)).
  *   event_id             E<qid>-<yyyymmddhhmmss>    (UTC; sin hora: E<qid>)
  *   origin_id            <event_id>:<mod>            (mod = 162/163/164)
+ *                        <event_id>:<mod>:<version>   (confirmacion manual)
  *   magnitude_id         <origin_id>/mag/<TIPO>
  *   station_magnitude_id <magnitude_id>/<NSLCO>
  *   pick_id              <origin_id>/pick/<STA>.<FASE>
+ *
+ * El sufijo `:<version>` (1..9999) identifica una solucion CONFIRMADA a mano:
+ * cada confirmacion es una fila `origin` propia e inmutable (ver
+ * `ewgui_origin_id_build`/`ewgui_origin_id_parse` y docs/DATA-MAPPING.md).
  *
  * Todas devuelven 0 si OK, -1 si algún argumento es inválido o si el
  * resultado no cabe en `out` (garantiza <= 63 caracteres + NUL).

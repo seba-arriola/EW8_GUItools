@@ -22,12 +22,12 @@ EWLIBS = ../common/libewgui_gtk4.a \
 OBJS = csnhypodbp_main.o csnhypodbp_gui.o csnhypodbp_ws.o csnhypodbp_row.o \
        csnhypodbp_group.o csnhypodbp_magchan.o csnhypodbp_trace.o csnhypodbp_tt.o csnhypodbp_master.o \
        csnhypodbp_station.o csnhypodbp_locator.o csnhypodbp_manual.o csnhypodbp_locate.o \
-       csnhypodbp_view.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
-       csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_profile.o \
+       csnhypodbp_view.o csnhypodbp_traces.o csnhypodbp_search.o csnhypodbp_sds.o csnhypodbp_statable.o \
+       csnhypodbp_staitem.o csnhypodbp_preview.o csnhypodbp_fixdepth.o csnhypodbp_profile.o \
        csnhypodbp_mapview.o csnhypodbp_magcfg.o csnhypodbp_magrow.o \
        csnhypodbp_magsta.o csnhypodbp_magitem.o \
         csnhypodbp_magmarks.o csnhypodbp_magview.o csnhypodbp_mww.o csnhypodbp_mwwerr.o \
-        csnhypodbp_mww_over.o
+        csnhypodbp_mww_over.o csnhypodbp_filtercfg.o
 
 all: csnhypodbp install
 
@@ -91,6 +91,10 @@ test_mag_msg: test_mag_msg.c
 test_station_order: test_station_order.c csnhypodbp_station.o
 	$(CC) $(CFLAGS) -o test_station_order test_station_order.c csnhypodbp_station.o -lm
 
+# Rejilla de trazas por pantalla (`tracesPerScreen`): puro, sin GTK ni EW.
+test_traces: test_traces.c csnhypodbp_traces.o
+	$(CC) $(CFLAGS) -o test_traces test_traces.c csnhypodbp_traces.o -lm
+
 # Estado de la vista de ondas: zoom por dos clics, mapeos x<->tiempo, ticks, escala.
 # Enlaza el parser de color de `common` (ewgui_config.o usa kom -> libew_mt.a).
 test_view: test_view.c csnhypodbp_view.o ../common/src/ewgui_config.o
@@ -128,10 +132,10 @@ test_locate: test_locate.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_loc
 # y NO borra el directorio temporal. Necesita resources/ y los binarios
 # instalados, asi que NO forma parte de `make test`:
 #   make -C ew_gui_tools/csnhypodbp chain
-#   ./locate_chain <arc_entrada> [refinador] [tmp_root]
+#   ./locate_chain <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>]
 chain: locate_chain
-locate_chain: locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o
-	$(CC) $(CFLAGS) -o locate_chain locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o -lm
+locate_chain: locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o csnhypodbp_fixdepth.o
+	$(CC) $(CFLAGS) -o locate_chain locate_chain.c csnhypodbp_locate.o csnhypodbp_group.o csnhypodbp_locator.o csnhypodbp_statable.o csnhypodbp_magmarks.o csnhypodbp_fixdepth.o -lm
 
 # Tabla de estaciones: dedup M>A>T, residual de la solucion y color de traza.
 test_statable: test_statable.c csnhypodbp_statable.o csnhypodbp_trace.o
@@ -151,8 +155,12 @@ test_search: test_search.c csnhypodbp_search.o
 	$(CC) $(CFLAGS) -o test_search test_search.c csnhypodbp_search.o -lm
 
 # Tablita del preview de `locate`: titulos por estado y formato de los 7 valores.
-test_preview: test_preview.c csnhypodbp_preview.o
-	$(CC) $(CFLAGS) -o test_preview test_preview.c csnhypodbp_preview.o -lm
+test_preview: test_preview.c csnhypodbp_preview.o csnhypodbp_search.o
+	$(CC) $(CFLAGS) -o test_preview test_preview.c csnhypodbp_preview.o csnhypodbp_search.o -lm
+
+# Caja `depth` + `Fix`: parseo/validacion locale-independente y formateo.
+test_fixdepth: test_fixdepth.c csnhypodbp_fixdepth.o
+	$(CC) $(CFLAGS) -o test_fixdepth test_fixdepth.c csnhypodbp_fixdepth.o -lm
 
 # Perfiles de profundidad: recta, distancia perpendicular, mas cercano y
 # lector de polilineas de slab/topografia.
@@ -203,11 +211,15 @@ test_magchan: test_magchan.c csnhypodbp_magchan.o
 	      $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o \
 	      $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm
 
+# Presets de filtro y atajos: logica pura, sin GTK/EW.
+test_filtercfg: test_filtercfg.c csnhypodbp_filtercfg.o
+	$(CC) $(CFLAGS) -o test_filtercfg test_filtercfg.c csnhypodbp_filtercfg.o -lm
+
 test: test_filter test_group test_parse_solution test_magstore test_trace test_tt \
       test_master_store test_mag_msg test_magchan test_station_order test_locator test_manual test_locate \
-      test_fetch_span test_view test_search test_sds_read test_statable test_staitem \
-      test_preview test_profile test_mapview test_magcfg test_magrow test_magsta \
-      test_magitem test_magmarks test_magview test_mww_error test_mww_over
+      test_fetch_span test_view test_traces test_search test_sds_read test_statable test_staitem \
+      test_preview test_fixdepth test_profile test_mapview test_magcfg test_magrow test_magsta \
+      test_magitem test_magmarks test_magview test_mww_error test_mww_over test_filtercfg
 	./test_filter
 	./test_group
 	./test_parse_solution
@@ -223,11 +235,13 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_locate
 	./test_fetch_span
 	./test_view
+	./test_traces
 	./test_search
 	./test_sds_read
 	./test_statable
 	./test_staitem
 	./test_preview
+	./test_fixdepth
 	./test_profile
 	./test_mapview
 	./test_magcfg
@@ -238,6 +252,7 @@ test: test_filter test_group test_parse_solution test_magstore test_trace test_t
 	./test_magview
 	./test_mww_error
 	./test_mww_over
+	./test_filtercfg
 	sh ./test_ui_invariants.sh
 	sh ./test_config.sh
 
@@ -257,10 +272,10 @@ test-live: csnhypodbp
 clean:
 	rm -f csnhypodbp test_filter test_group test_parse_solution test_magstore \
 	      test_trace test_tt test_master_store test_mag_msg test_station_order \
-	      test_locator test_manual test_locate test_fetch_span test_view test_search \
-	      test_sds_read test_statable test_staitem test_preview test_profile \
+	      test_locator test_manual test_locate test_fetch_span test_view test_traces test_search \
+	      test_sds_read test_statable test_staitem test_preview test_fixdepth test_profile \
 	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
-	      test_magmarks test_magview test_mww_error test_mww_over \
+	      test_magmarks test_magview test_mww_error test_mww_over test_filtercfg \
 	      locate_chain *.o
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------

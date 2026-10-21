@@ -819,15 +819,15 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_object_unref(actions);
 
     static const EwMenuItem ctrl_items[] = {
-        { "Events number", "win.events-number", NULL, 0 },
+        { "Events number", "win.events-number", NULL, 0, 0, 0 },
     };
     static const EwMenuItem view_items[] = {
-        { "Export view...", "win.export", NULL, 0 },
-        { "Dark mode", "win.dark-mode", NULL, 0 },
+        { "Export view...", "win.export", NULL, 0, 0, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 },
     };
     static const EwMenuItem overlay_items[] = {
-        { "Layers...", "win.overlay-layers", NULL, 0 },
-        { "Reload", "win.overlay-reload", NULL, 0 },
+        { "Layers...", "win.overlay-layers", NULL, 0, 0, 0 },
+        { "Reload", "win.overlay-reload", NULL, 0, 0, 0 },
     };
     static const EwMenuGroup menu_groups[] = {
         { "Control Panel", ctrl_items, 1 },

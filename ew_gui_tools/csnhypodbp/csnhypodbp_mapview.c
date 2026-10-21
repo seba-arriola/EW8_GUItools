@@ -4,6 +4,7 @@
  */
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -136,6 +137,163 @@ void csnhypodbp_mapfit_at(double ref_lat, double ref_lon,
     if (zoom) *zoom = z;
     if (cx) *cx = rx;
     if (cy) *cy = ry;
+}
+
+/* --- lienzo de proyeccion de la planta (sin MapImageFile) --- */
+
+int csnhypodbp_map_canvas(int has_image, int pw, int ph, double *iw, double *ih)
+{
+    if (!iw || !ih) return -1;
+    if (has_image && pw > 0 && ph > 0) {
+        *iw = (double)pw;
+        *ih = (double)ph;
+        return 0;
+    }
+    *iw = CSNHYPODBP_MAP_VIRTUAL_W;
+    *ih = CSNHYPODBP_MAP_VIRTUAL_H;
+    return 1;
+}
+
+int csnhypodbp_map_screen(double lat, double lon, double iw, double ih,
+                          int cw, int ch, double zoom, double cx, double cy,
+                          double pan_x, double pan_y, double *sx, double *sy)
+{
+    double x, y;
+
+    if (!sx || !sy) return -1;
+    if (!isfinite(lat) || !isfinite(lon)) return -1;
+    if (!isfinite(iw) || !isfinite(ih) || iw <= 0.0 || ih <= 0.0) return -1;
+    if (!isfinite(zoom) || zoom <= 0.0) return -1;
+    if (!isfinite(cx) || !isfinite(cy)) return -1;
+    if (cw <= 0 || ch <= 0) return -1;
+    if (!isfinite(pan_x)) pan_x = 0.0;
+    if (!isfinite(pan_y)) pan_y = 0.0;
+
+    ewgui_geo_project(lat, lon, iw, ih, &x, &y);
+    *sx = (x - cx) * zoom + cw / 2.0 + pan_x;
+    *sy = (y - cy) * zoom + ch / 2.0 + pan_y;
+    return 0;
+}
+
+int csnhypodbp_map_view_bounds(double iw, double ih, int cw, int ch,
+                               double zoom, double cx, double cy,
+                               double pan_x, double pan_y,
+                               double *lon0, double *lon1, double *lat0, double *lat1)
+{
+    double x0, x1, y0, y1, lo0, lo1, la0, la1;
+
+    if (!lon0 || !lon1 || !lat0 || !lat1) return -1;
+    if (!isfinite(iw) || !isfinite(ih) || iw <= 0.0 || ih <= 0.0) return -1;
+    if (!isfinite(zoom) || zoom <= 0.0) return -1;
+    if (!isfinite(cx) || !isfinite(cy)) return -1;
+    if (cw <= 0 || ch <= 0) return -1;
+    if (!isfinite(pan_x)) pan_x = 0.0;
+    if (!isfinite(pan_y)) pan_y = 0.0;
+
+    /* Inversa de la transformacion de csnhypodbp_map_screen(). */
+    x0 = (0.0 - cw / 2.0 - pan_x) / zoom + cx;
+    x1 = ((double)cw - cw / 2.0 - pan_x) / zoom + cx;
+    y0 = (0.0 - ch / 2.0 - pan_y) / zoom + cy;
+    y1 = ((double)ch - ch / 2.0 - pan_y) / zoom + cy;
+
+    /* Inversa de ewgui_geo_project(): y mayor = latitud menor. */
+    lo0 = x0 * 360.0 / iw - 180.0;
+    lo1 = x1 * 360.0 / iw - 180.0;
+    la0 = 90.0 - y1 * 180.0 / ih;
+    la1 = 90.0 - y0 * 180.0 / ih;
+
+    if (lo0 < -180.0) lo0 = -180.0;
+    if (lo1 > 180.0) lo1 = 180.0;
+    if (la0 < -90.0) la0 = -90.0;
+    if (la1 > 90.0) la1 = 90.0;
+    if (!(lo1 > lo0) || !(la1 > la0)) return -1;
+
+    *lon0 = lo0;
+    *lon1 = lo1;
+    *lat0 = la0;
+    *lat1 = la1;
+    return 0;
+}
+
+int csnhypodbp_map_fit_bounds(const CsnhypodbpMapPt *pt, int n, double min_span,
+                              double *lon0, double *lon1, double *lat0, double *lat1)
+{
+    double lo0, lo1, la0, la1;
+
+    if (!lon0 || !lon1 || !lat0 || !lat1) return -1;
+    if (csnhypodbp_map_bbox(pt, n, &lo0, &lo1, &la0, &la1) == 0) {
+        csnhypodbp_map_span_min(&lo0, &lo1, &la0, &la1, min_span);
+        *lon0 = lo0;
+        *lon1 = lo1;
+        *lat0 = la0;
+        *lat1 = la1;
+        return 0;
+    }
+    /* Sin soluciones con posicion el mapa se abre igual: al mundo completo. */
+    *lon0 = -180.0;
+    *lon1 = 180.0;
+    *lat0 = -90.0;
+    *lat1 = 90.0;
+    return 1;
+}
+
+/* Serie de pasos de grilla, en grados. Se elige el primero que no de mas de ~8
+   divisiones en el span visible, asi la grilla no desaparece a ningun zoom. */
+static const double GRID_STEPS[] = {
+    0.05, 0.1, 0.2, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 45.0, 90.0
+};
+
+double csnhypodbp_map_grid_step(double span_deg)
+{
+    const int nsteps = (int)(sizeof(GRID_STEPS) / sizeof(GRID_STEPS[0]));
+    double raw;
+    int i;
+
+    if (!isfinite(span_deg) || span_deg <= 0.0) return 10.0;
+    raw = span_deg / 8.0;
+    for (i = 0; i < nsteps; i++)
+        if (GRID_STEPS[i] >= raw) return GRID_STEPS[i];
+    return GRID_STEPS[nsteps - 1];
+}
+
+void csnhypodbp_map_axis_fmt(double step, double value, char *buf, size_t n)
+{
+    if (!buf || n == 0) return;
+    if (!isfinite(step) || step <= 0.0) step = 10.0;
+    if (!isfinite(value)) {
+        snprintf(buf, n, "?");
+        return;
+    }
+    if (value == 0.0) value = 0.0;              /* evita imprimir "-0" */
+    if (step >= 1.0)
+        snprintf(buf, n, "%.0f", value);
+    else if (step >= 0.1)
+        snprintf(buf, n, "%.1f", value);
+    else
+        snprintf(buf, n, "%.2f", value);
+}
+
+int csnhypodbp_map_label_pick(const double *pos, int n, double min_gap, int *keep)
+{
+    double last = 0.0;
+    int i, have = 0;
+
+    if (!pos || !keep) return -1;
+    if (!isfinite(min_gap) || min_gap < 0.0) min_gap = 0.0;
+    for (i = 0; i < n; i++) {
+        if (!isfinite(pos[i])) {
+            keep[i] = 0;
+            continue;
+        }
+        if (have && fabs(pos[i] - last) < min_gap) {
+            keep[i] = 0;
+            continue;
+        }
+        keep[i] = 1;
+        last = pos[i];
+        have = 1;
+    }
+    return 0;
 }
 
 int csnhypodbp_map_split_parse(const char *s, double *frac)

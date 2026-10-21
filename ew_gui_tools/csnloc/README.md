@@ -135,6 +135,7 @@ anterior de grilla única (regresión).
 | `RefineIterations` | 3 | Iteraciones del refinamiento |
 | `RefineNodeKm` | 5.0 | Paso inicial de la caja de refinamiento (km) |
 | `RefineDepthKm` | 2*RefineNodeKm | Semiancho de la caja de refinamiento **en profundidad** (km), desacoplado del horizontal. Un valor mayor permite a `z` escapar de la cuantización de los nodos de grilla; `0` = auto |
+| `FixedDepthKm` | -1 | Profundidad **fija** (km): deja la grilla con un solo nodo en z y el refinamiento no mueve `z` (solo lat/lon). `<0` = búsqueda libre. `0` es una profundidad válida |
 | `DepthPriorKm` / `DepthPriorSigmaKm` | 0 / 0 | Prior gaussiano de profundidad (km). `0` = desactivado (sin sesgo) |
 | `AgencyID` / `Author` | `CL` / `csnloc` | Metadatos de salida |
 | `EventTTLSec` | 300.0 | Expiración de eventos activos sin actualizaciones (s) |

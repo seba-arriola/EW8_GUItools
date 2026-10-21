@@ -35,7 +35,7 @@ int main(void)
     EwTraceCache c;
     ewgui_trace_cache_init(&c);
 
-    EwFilterParams raw = {0, 0.0, 0.0, 0};
+    EwFilterParams raw = {0, 0.0, 0.0, 0, 0};
 
     /* 1. Primera llamada: recalcula (1) */
     int r1 = ewgui_trace_envelope(circ, CAP, last_abs, rate, t_end,
@@ -61,7 +61,7 @@ int main(void)
     assert(memcmp(max1, c.env_max, sizeof(double) * width) == 0);
 
     /* 3. Cambio de filtro: recalcula (1) */
-    EwFilterParams hp = {1, 5.0, 0.0, 2};
+    EwFilterParams hp = {1, 5.0, 0.0, 2, 0};
     int r3 = ewgui_trace_envelope(circ, CAP, last_abs, rate, t_end,
                                   window_secs, pad_secs, width, &hp, &c);
     assert(r3 == 1);
@@ -101,7 +101,7 @@ int main(void)
         /* cola recortada en 180 */
         assert(ewgui_trace_length(t) == 180);
 
-        EwFilterParams hp = {1, 0.7, 0.0, 4};
+        EwFilterParams hp = {1, 0.7, 0.0, 4, 0};
         ewgui_trace_filter(t, &hp);
         int32_t *filt = ewgui_trace_filtered(t);
         long mx = 0;
@@ -143,6 +143,47 @@ int main(void)
             long k0 = (long)((win_start - ewgui_trace_oldest(t)) * ewgui_trace_rate(t));
             assert(k0 >= 0 && k0 < ewgui_trace_length(t));
         }
+        ewgui_trace_free(t);
+    }
+
+    /* 8. zerophase: no mueve el pico y NO toca el buffer crudo */
+    {
+        const long len = 4000;
+        EwGuiTrace *t = ewgui_trace_new(len);
+        assert(t != NULL);
+        for (long i = 0; i < len; i++)
+            ewgui_trace_raw(t)[i] = 0;
+        /* una wavelet tipo Ricker (~1.5 Hz), aislada, en el centro */
+        for (long i = 1850; i < 2150; i++) {
+            double u = (double)(i - 2000) / 30.0;
+            ewgui_trace_raw(t)[i] = (int32_t)(8000.0 * (1.0 - 2.0*u*u) * exp(-u*u));
+        }
+        ewgui_trace_set_span(t, 0.0, rate, len);
+
+        int32_t *raw = ewgui_trace_raw(t);
+        int32_t *snapshot = malloc((size_t)len * sizeof(int32_t));
+        memcpy(snapshot, raw, (size_t)len * sizeof(int32_t));
+
+        EwFilterParams bp = {3, 1.0, 20.0, 2, 1};
+        ewgui_trace_filter(t, &bp);
+
+        assert(memcmp(snapshot, raw, (size_t)len * sizeof(int32_t)) == 0);
+
+        int32_t *filt = ewgui_trace_filtered(t);
+        long peak = 0;
+        for (long i = 100; i < len - 100; i++)
+            if (labs((long)filt[i]) > labs((long)filt[peak])) peak = i;
+        assert(labs(peak - 2000) <= 1);
+
+        /* el mismo filtro en causal sí se retrasa */
+        EwFilterParams bpc = {3, 1.0, 20.0, 2, 0};
+        ewgui_trace_filter(t, &bpc);
+        long peakc = 0;
+        for (long i = 100; i < len - 100; i++)
+            if (labs((long)filt[i]) > labs((long)filt[peakc])) peakc = i;
+        assert(peakc - 2000 >= 5);
+
+        free(snapshot);
         ewgui_trace_free(t);
     }
 

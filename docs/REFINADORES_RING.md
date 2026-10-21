@@ -82,9 +82,11 @@ Para analizar: `grep ' LOC ' run_working_v8/log/hyp2000_ring_*.log`.
 |---|---|---|
 | `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS` |
 | `nlloc_ring` | `nlloc_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `OutRoot`, `WorkDir`, `GridFile`, `ModelBand` (repetible), `ModelFallback`, `TransOrigin`, `LocGrid`, `NllIntervalSec`, `NllTTLSec`, `NllMaxPending` |
-| `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `ModuleLabel` |
+| `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `ConfRing HYPO_RING_REF2`, `ModuleLabel` |
 
-`HYPO_RING_REF2` queda sin uso (se conserva definido en `earthworm.d`).
+`HYPO_RING_REF2` es el **anillo de confirmaciones**: `csnhypodbp` publica ahí el ARC de cada solución
+confirmada a mano y `hypodb_ingest` lo consume (`hypodb.d`: `InRingConf HYPO_RING_REF2`) para
+guardarla como fila `origin` propia (`<event>:<mod>:<version>`). Los refinadores no lo usan.
 
 ## Puesta en marcha
 

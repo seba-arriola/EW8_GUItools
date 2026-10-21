@@ -18,12 +18,18 @@ typedef void (*EwActionCb)(GSimpleAction *action, GVariant *param, gpointer user
 void ewgui_action_add(GActionMap *map, const char *name, const char *param_type,
                       EwActionCb cb, gpointer user_data);
 
-/* Ítem de menú. label==NULL => separador de sección. */
+/* Ítem de menú. label==NULL => separador de sección.
+ * `checkable`/`checked` permiten una casilla con estado: el diálogo la dibuja
+ * marcada según `checked` y, al pulsarla, activa la misma acción. El estado lo
+ * mantiene el módulo (el menú no tiene acceso público al GSimpleAction); el
+ * `.d` no se reescribe: `checked` es estado de sesión. */
 typedef struct {
     const char *label;
     const char *action;      /* p. ej. "win.colour" */
     const char *target_fmt;  /* "i" o NULL */
     int         target_int;
+    int         checkable;   /* 0 = comando (default histórico); 1 = casilla */
+    int         checked;     /* estado que dibuja la casilla al abrir el menú */
 } EwMenuItem;
 
 /* Submenú de primer nivel. */

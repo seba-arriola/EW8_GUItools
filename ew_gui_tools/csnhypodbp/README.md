@@ -35,6 +35,13 @@ incremental queda en un mismo evento.
 corre una **segunda instancia** `csnmags csnmags_raw.d` que lee `HYPO_RING` y publica ahí
 (`MOD_MAGNITUDES_RAW`). `csnhypodbp` las recibe por ambos anillos (`InRing` + `InRingRaw`).
 
+En el `locate`, `csnhypodbp` pide a `csnmags` **las cuatro magnitudes** (ML/Mwp/Mb/Ms; Mww es
+`csnwphase`, no se recalcula). La entrada son las **mismas P efectivas** de la tabla de picking
+(`M>A>Teo`, con las casillas por fila y los filtros A/M/Teo); las S solo van al localizador. Cada
+ventana se ancla en el `t_pick` de esa P y usa la franja ajustada del panel de magnitudes si existe;
+si no, `Ml/Mwp/Mb/Ms_Window` del `.d`. Se emiten overrides para las 4 magnitudes de cada estación,
+así la ventana sigue a una picada manual/teórica y no al tiempo del ARC refinado.
+
 Las magnitudes son **por solución** (`qid` + módulo origen), no por evento: `csnloc` crudo (162),
 `hyp2000` (163) y `nlloc` (164) publican ARCs con el **mismo `qid`**, así que el `qid` solo no
 distingue una solución de otra. `csnmags` indexa sus eventos por `(qid, mod)` (`mag_key.c`) y
@@ -117,10 +124,12 @@ Por estación se dibuja **una sola P y una sola S** (la de mayor rango `M > A > 
 cercana a la teórica). Si hay una picada manual, **desplaza** a la automática y a la teórica (no se
 dibujan ambas). La traza se **alinea con la P** de la estación (manual/automática, o la **P teórica**
 IASP91 si no hay); la ventana es **común a la estación** (`winStart` compartido) para que todas las
-trazas y el eje UTC coincidan. Traza **negra** si la P es **leída** (real del `PICK_RING` o manual);
-**gris más oscuro (0.55)** si solo teórica. Los picks usan los colores de fase configurables
-(`pColor`/`sColor`). Regla del origen idéntica a `csntvp`: token 12 `M` ⇒ manual; ausente ⇒ `A`; sin
-picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
+trazas y el eje UTC coincidan. La traza es **siempre negra**; el origen de la picada se distingue
+por el **color de su marca**: manual (`pColor`/`sColor`), automática (`pColorAuto`/`sColorAuto`) y
+teórica (`pColorTheo`/`sColorTheo`). Si las claves `*Auto`/`*Theo` no se declaran, su color se
+**deriva del manual** aclarándolo al 40 % / 70 % en cada dibujo (cambiar el manual las recolorea);
+elegirlas en el menú las vuelve explícitas. Regla del origen idéntica a `csntvp`: token 12 `M` ⇒
+manual; ausente ⇒ `A`; sin picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
 
 ### Interacción: zoom, eje de tiempo y picado
 
@@ -172,26 +181,40 @@ picada ⇒ teórica. Ya **no** hay LED verde/rojo por traza (era ambiguo).
   evento.
 
 Barra inferior: a la **izquierda** `Cancel`; a la **derecha** los checkboxes de origen
-**`A` / `M` / `Teo`** (M marcada por defecto; deciden qué picadas se mandan al localizador), la caja
-con el **localizador activo** y los botones `locators` y `locate`. El resto de controles viven en el
+**`A` / `M` / `Teo`** (M marcada por defecto; deciden qué picadas se mandan al localizador), el
+grupo **`depth [caja] [☑ Fix]`** (profundidad fija de la corrida; la caja solo es sensible con
+`Fix` marcado, se aplica al confirmar —Enter o salir del campo— y un valor inválido deja `locate`
+insensible), la caja con el **localizador activo** y los botones `locators` y `locate`. `Fix` no se
+persiste en el `.d`: viaja por corrida en una copia temporal de la configuración del localizador.
+Con `csnloc`/`hyp2000_ring` la solución sale **exactamente** en esa profundidad; con `nlloc_ring`
+NLLoc no la soporta de forma nativa y se emula en una ventana de ±`FixDepthSpacingKm`/2 (0.05 km
+por defecto), como avisa el tooltip. El resto de controles viven en el
 menú **☰** del headerbar, que es **dependiente de la vista**: en *Eventos* los grupos `Search`
-(`Search events…`, `Clear search`) y `View`; en *Ondas* añade el grupo
-`Waveforms` con `Filters…` (tipo/F1/F2/orden, ventana modal), `Fetch waveforms` (distancia),
-`Time window…` (ventana de registro) y `Hide stations without data`, el grupo `Colours` con
-`P phase` / `S phase` (diálogo de color GTK4; el hex resultante queda en el log para copiarlo al
-`.d`) y, **al final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
+(`Search events…`, `Clear search`) y `View`; en *Ondas* añade, **primero**, el grupo
+`Stations` con la casilla `Hide stations without data`; después el grupo `Waveforms` con
+`Filters…` (presets del `.d` + tipo/F1/F2/orden manual, ventana modal), `Fetch waveforms` (distancia) y
+`Time window…` (ventana de registro); el grupo `Colours` con
+`P manual` / `P automatic` / `P theoretical` / `S manual` / `S automatic` / `S theoretical`
+(diálogo de color GTK4; el hex de las seis claves queda en el log para copiarlo al `.d`) y, **al
+final**, el grupo `Help` con `Commands…`, que abre una ventana modal con la lista de
 comandos de teclado/ratón.
 
-`Hide stations without data` (clave `HideEmptyStations`) es un **modo dinámico no destructivo**:
-filtra la lista dejando solo las estaciones con datos en la ventana del evento; no borra filas, así
-que una estación que vuelve a tener datos (p. ej. por SeedLink) reaparece en la siguiente pasada.
+`Hide stations without data` es un **modo dinámico no destructivo** con una **casilla** en su
+propio grupo (`Stations`, el primero del menú): la fila se dibuja centrada y en negrita como el
+resto de las opciones, con el indicador como única marca de estado y **toda la fila clicable**.
+Filtra la lista dejando solo las estaciones con datos en la ventana del evento; no borra
+filas, así que una estación que vuelve a tener datos (p. ej. por SeedLink) reaparece en la
+siguiente pasada. La casilla refleja y alterna el estado de la **sesión**; el valor inicial lo fija
+la clave `HideStationsWithoutData` (`1` = ocultas al arrancar, `0` = visibles) y alternarla **nunca
+reescribe el `.d`**. Con `1` y antes del primer `fetch` la tabla queda vacía (`bHasData[]` nace en
+0) hasta que llegan las ondas; es el comportamiento esperado.
 
 `locators` abre la lista de localizadores declarados con `locator <nombre> <bin> <cfg>`; la caja de
 la barra inferior muestra el **activo**. `locate` ejecuta la **cadena offline** en un worker con las
 picadas de la **tabla** (una P y una S por estación, **con su canal**) filtradas por la selección de
 estaciones/picks y por los checkboxes `A`/`M`/`Teo` (las `Teo` son la P teórica IASP91 de las
 estaciones sin P A ni M). El set enviado es **exactamente lo que muestra la tabla**: una estación que
-no aparece (por `MaxDistKm` o `HideEmptyStations`) no se manda. La cadena escribe las picadas →
+no aparece (por `MaxDistKm` o `HideStationsWithoutData`) no se manda. La cadena escribe las picadas →
 `csnloc` offline (`DumpHypo 1`; el ARC se extrae del log) → refinador
 elegido (`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + `tank` temporal → `csnmags`
 offline). El **residual por fase** lo aporta el propio localizador: el JSONL que `csnloc` emite a
@@ -233,15 +256,35 @@ Detalles de la cadena que importan si vuelve a fallar:
 - Clave **`LocateKeepTmp 1`**: no borra el directorio temporal al fallar y **anexa su ruta al error**
   (`[tmp=…]`), donde quedan `picks.txt`, `event.arc`, `csnloc.err` y `ref.err`. Arnés manual sin GTK:
   `make -C ew_gui_tools/csnhypodbp chain` y
-  `./locate_chain <arc_entrada> [refinador] [tmp_root]` corre la cadena completa con los mismos
-  parámetros que la GUI y no borra nada.
-El resultado se muestra en una **tablita de 2 filas** al tope de la pestaña (cabecera de parámetros
-`Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`/`ML`/`Mwp` y su fila de valores), que **siempre está visible**:
-muestra primero la solución elegida en el detalle y, tras `locate`, la candidata con un **fondo rojo
-muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección muestra guiones.
+  `./locate_chain <arc_entrada> [refinador] [tmp_root] [--fix-depth <km>] [--timeout <s>]` corre la cadena
+  completa con los mismos parámetros que la GUI y no borra nada.
+El resultado se muestra en un **cuadro de dos mitades** al tope de *Procesar* (compartido por
+`picking` y `magnitudes`): a la izquierda el título, `Origin time` y los parámetros
+`Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la derecha el bloque `Magnitude`
+(`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con un radio compacto por magnitud para elegir la preferida al
+confirmar. Una grilla única de 4 filas y un separador vertical mantienen las filas alineadas y
+evitan la franja vacía que dejaba la fila de radios sobre los parámetros. El cuadro **siempre está
+visible**: muestra primero la solución elegida en el detalle y, tras `locate`, la candidata con un
+**fondo rojo muy leve** (`.preview-box.candidate`) para que no pase desapercibida; sin selección
+muestra guiones.
+Mientras corre el `locate`, a la derecha del `Origin time` aparece un spinner y
+`calculando <localizador>… N s` (timer de 1 s), **para todos los localizadores**, y los diez valores
+del cuadro quedan en **guión** (no se muestran cifras de la solución elegida). Solo cuenta la
+solución del **localizador elegido**: `csnloc` es un paso interno de la cadena y no publica
+candidato intermedio. `LocatorTimeoutSec` (600 s en `csnhypodbp.d`) corta el refinador; si no hay
+solución nueva, el renglón muestra `sin solución nueva con <localizador>: <detalle real>`
+(`timeout`, `ref.err` o ARC inválido), los parámetros siguen en guión y el mensaje se borra al
+elegir otro origen en *Origins*. El refinador recibe un `.d` temporal con un `WorkDir` propio
+(`../nlloc_ring_run_<...>`) y, si `Fix` está marcado, `FixedDepthKm`; el ARC se siembra con la
+solución elegida (lat/lon/profundidad/qid) para que NLLoc busque en la banda correcta y el candidato
+siga perteneciendo al evento.
 `Confirm` la convierte en la **solución manual preferida** (se reinyecta por el camino normal de ARC,
-se emiten **una vez** las picadas a `PICK_RING` con origen `M` y se persiste en `ManualStateFile`, que
-se relee al arrancar); `Discard` la descarta para seguir picando (vuelve a mostrar la elegida).
+se emiten **una vez** las picadas a `PICK_RING` con origen `M`, se publica el **ARC confirmado** en
+`ConfRing` —`HYPO_RING_REF2`— para que `hypodb` guarde una fila `origin` propia e inmutable
+`<event>:<mod>:<version>`, y se persiste en `ManualStateFile`, que se relee al arrancar); `Discard`
+la descarta para seguir picando (vuelve a mostrar la elegida). Cada confirmación es una fila más: la
+**más reciente** es la preferida del evento y las anteriores quedan como orígenes manuales históricos
+en *Origins*.
 El texto y el formato de los valores viven en la lógica pura `csnhypodbp_preview.{h,c}`
 (`make test` → `test_preview`), y la capa GTK solo vuelca el resultado en las etiquetas desde
 `csnhypodbp_preview_update()`, el **único** punto que escribe la tablita.
@@ -253,10 +296,19 @@ La ventana tiene una **columna derecha** compartida por las dos pestañas (`GtkP
 
 - **Planta** (`on_draw_map_plan`): mapa equirectangular con el **mismo contrato que `csnrv`** —
   `MapImageFile` (imagen 2:1 de mundo completo, validable con `common/tools/check_map_image.py`),
-  capas `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`), grilla, zoom con
-  la rueda y paneo arrastrando con el botón 1. Encima dibuja las **rectas de los perfiles** (la activa
-  en azul) y las soluciones del evento. El auto-encuadre tiene un ancho mínimo de `MapMinSpanDeg`
-  grados (default 5), para que un grupo de soluciones apretado no deje la vista pegada.
+  capas `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`), grilla con
+  **etiquetas numéricas de latitud y longitud**, zoom con la rueda y paneo arrastrando con el botón 1.
+  Encima dibuja las **rectas de los perfiles** (la activa en azul) y las soluciones del evento. El
+  auto-encuadre tiene un ancho mínimo de `MapMinSpanDeg` grados (default 5), para que un grupo de
+  soluciones apretado no deje la vista pegada.
+  **`MapImageFile` es opcional**: si la clave está comentada (o la imagen no se puede cargar) el panel
+  **no se apaga**; se proyecta sobre un **lienzo virtual** equirectangular 2:1 de 10800×5400
+  (`CSNHYPODBP_MAP_VIRTUAL_W/H`, la escala del mapa de mundo entregado) y se siguen dibujando la
+  grilla con etiquetas, las rectas de perfil, las capas `.lines` y los marcadores. Sin soluciones el
+  encuadre inicial es el **mundo completo**. El paso de la grilla sale del **span visible**
+  (`csnhypodbp_map_grid_step()`, ~8 divisiones) y no del zoom crudo: así a 5° de vista hay meridianos
+  y paralelos en vez de ninguno. `--print-config` informa `MapCanvas image` o
+  `MapCanvas virtual 10800x5400`.
 - **Perfil** (`on_draw_map_profile`): corte con **x = longitud** e **y = profundidad** (hacia abajo)
   del perfil **más cercano a la solución preferida**, con la **subducción** (línea del slab, en km) y
   la **topografía** (elevación/1000) del archivo de ese perfil. Arranca encuadrado **solo a los datos
@@ -325,7 +377,7 @@ muestras a la ventana.
 Al arrancar, la config efectiva queda en el log:
 
 ```
-config channelsOrder=[HH BH HN LH] componentsOrder=[Z N E] HideEmptyStations=0
+config channelsOrder=[HH BH HN LH] componentsOrder=[Z N E] HideStationsWithoutData=0
 ```
 
 `kom` **no** tiene `k_rest()`: `k_str()` devuelve **un solo token**, así que `channelsOrder` y
@@ -368,14 +420,24 @@ resto del módulo (y EarthWorm) lo espera así.
 | `GroupMinMatchPicks` | `3` | mínimo de picadas para fusionar por firma |
 | `channelsOrder` | `HH BH HN LH` | orden externo de canales de la pestaña Ondas |
 | `componentsOrder` | `Z N E` | orden interno de componentes (Z/N/E) |
-| `pColor` | `FF0000` | color de la fase P (marca + círculo del indicador) |
-| `sColor` | `009900` | color de la fase S (marcas + círculo del indicador) |
+| `tracesPerScreen` | `1` | trazas (canales de la estación seleccionada) visibles a la vez en la pestaña picking: **1, 2 o 3**; el resto se alcanza con la rueda. Un valor fuera de `[1,3]` no se aplica: se avisa en el log y se conserva el previo |
+| `pColor` | `FF0000` | color de la marca P **manual** (y círculo del indicador de picado) |
+| `pColorAuto` | heredado (`FF6666`) | marca P automática; ausente = `pColor` aclarado 40 % |
+| `pColorTheo` | heredado (`FFB3B3`) | marca P teórica; ausente = `pColor` aclarado 70 % |
+| `sColor` | `009900` | color de la marca S **manual** |
+| `sColorAuto` | heredado (`66C266`) | marca S automática; ausente = `sColor` aclarado 40 % |
+| `sColorTheo` | heredado (`B3E0B3`) | marca S teórica; ausente = `sColor` aclarado 70 % |
 | `locator` | — | localizador offline: `locator <nombre> <bin> <cfg>` |
 | `ManualStateFile` | `csnhypodbp_manual.events` | soluciones manuales propias (locate+confirm) |
-| `LocatorTimeoutSec` | `180` | timeout (s) por localizador offline |
+| `LocatorTimeoutSec` | `600` | timeout (s) por localizador offline (NLLoc es lento) |
 | `PrefetchNeighbors` | `2` | estaciones vecinas a precargar |
-| `HideEmptyStations` | `0` | ocultar de la tabla las estaciones sin datos en la ventana |
+| `HideStationsWithoutData` | `0` | estado **inicial** de la tabla: `1` = ocultar las estaciones sin datos (el menú lo alterna en la sesión sin reescribir el `.d`) |
 | `MaxDistKm` | `500` | distancia (km) máxima de las estaciones de la tabla (y por tanto del `locate`) |
+| `FilterPhase` | `zero` | fase del filtro de la vista: `zero` (forward+backward, sin desfase) o `causal` (una pasada; retrasa el onset). Ver `docs/FILTERS.md` |
+| `FilterMenu` | `f` | tecla que abre `Filters…` |
+| `FilterRaw` | `0` | tecla que vuelve a la traza cruda |
+| `Filter` | ver README/`.d` | preset con atajo: `Filter [<nombre>] <HP|LP|BP> <tecla> <f1> [<f2>] <orden>` (repetible; orden 2 o 4) |
+| `StaLta` | `t 0.5 10 3 1.5` | STA/LTA visual: `<tecla> <sta_s> <lta_s> <on> <off> [<corr_s>]`; solo dibuja CF y marcas, no crea picks |
 | `LocateKeepTmp` | `0` | `1` = no borrar el directorio temporal del `locate` y anexar su ruta al error |
 | `GroupMaxSolutions` | `100` | tope de versiones por evento |
 | `SearchMaxEvents` | `1000` | tope de eventos que devuelve la búsqueda hipocentral |

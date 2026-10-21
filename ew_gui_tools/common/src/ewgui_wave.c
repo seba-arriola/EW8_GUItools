@@ -106,12 +106,24 @@ void ewgui_trace_filter(EwGuiTrace *t, const EwFilterParams *p)
     if (type == 0)
         return;
 
+    int zerophase = (p->zerophase != 0);
+
     double nyquist = t->rate / 2.0;
     double safe_f1 = p->f1, safe_f2 = p->f2;
     if (safe_f1 >= nyquist) safe_f1 = nyquist * 0.95;
     if (type == 3) {
         if (safe_f2 >= nyquist) safe_f2 = nyquist * 0.95;
         if (safe_f1 >= safe_f2) safe_f1 = safe_f2 * 0.5;
+    }
+
+    if (zerophase) {
+        if (type == 1)
+            ewgui_filter_iir_zp(t->filt, (size_t)t->len, t->rate, EW_FILTER_HP, safe_f1, p->order);
+        else if (type == 2)
+            ewgui_filter_iir_zp(t->filt, (size_t)t->len, t->rate, EW_FILTER_LP, safe_f1, p->order);
+        else if (type == 3)
+            ewgui_filter_bandpass_zp(t->filt, (size_t)t->len, t->rate, safe_f1, safe_f2, p->order);
+        return;
     }
 
     if (type == 1)
@@ -170,6 +182,7 @@ int ewgui_trace_envelope(const int32_t *circ, long circ_size,
         fp = *p;
     else
         memset(&fp, 0, sizeof(fp));
+    fp.zerophase = (fp.zerophase != 0);
 
     int cache_hit =
         c->proc_valid &&
@@ -178,7 +191,8 @@ int ewgui_trace_envelope(const int32_t *circ, long circ_size,
         c->proc_params.filter_type == fp.filter_type &&
         c->proc_params.order == fp.order &&
         c->proc_params.f1 == fp.f1 &&
-        c->proc_params.f2 == fp.f2;
+        c->proc_params.f2 == fp.f2 &&
+        c->proc_params.zerophase == fp.zerophase;
 
     int32_t *trace_buf;
     int found_first;
@@ -257,11 +271,14 @@ int ewgui_trace_envelope(const int32_t *circ, long circ_size,
                 if (safe_f1 >= safe_f2) safe_f1 = safe_f2 * 0.5;
             }
             if (fp.filter_type == 1)
-                ewgui_filter_iir(trace_buf, (size_t)num_samps, rate, EW_FILTER_HP, safe_f1, fp.order);
+                fp.zerophase ? ewgui_filter_iir_zp(trace_buf, (size_t)num_samps, rate, EW_FILTER_HP, safe_f1, fp.order)
+                             : ewgui_filter_iir(trace_buf, (size_t)num_samps, rate, EW_FILTER_HP, safe_f1, fp.order);
             else if (fp.filter_type == 2)
-                ewgui_filter_iir(trace_buf, (size_t)num_samps, rate, EW_FILTER_LP, safe_f1, fp.order);
+                fp.zerophase ? ewgui_filter_iir_zp(trace_buf, (size_t)num_samps, rate, EW_FILTER_LP, safe_f1, fp.order)
+                             : ewgui_filter_iir(trace_buf, (size_t)num_samps, rate, EW_FILTER_LP, safe_f1, fp.order);
             else if (fp.filter_type == 3)
-                ewgui_filter_bandpass(trace_buf, (size_t)num_samps, rate, safe_f1, safe_f2, fp.order);
+                fp.zerophase ? ewgui_filter_bandpass_zp(trace_buf, (size_t)num_samps, rate, safe_f1, safe_f2, fp.order)
+                             : ewgui_filter_bandpass(trace_buf, (size_t)num_samps, rate, safe_f1, safe_f2, fp.order);
         }
 
         c->proc_valid = 1;

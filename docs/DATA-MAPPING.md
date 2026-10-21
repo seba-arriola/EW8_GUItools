@@ -35,14 +35,14 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 | `event_type` | `'EARTHQUAKE'` fijo | `hypodb_ingest.c:535` |
 | `felt` / `published` | `false` / `false` fijos | `hypodb_ingest.c:533` |
 | `creation_time` | DEFAULT `CURRENT_TIMESTAMP` (nadie la escribe) | `schema.sql:16`, `ewgui_db.c:266-269` |
-| `preferred_origin_id` | `UPDATE` posterior, nunca en el INSERT | `hypodb_ingest.c:486`, `ewgui_db.c:419` |
-| `preferred_magnitude_id` | idem | `hypodb_ingest.c:465`, `ewgui_db.c:419` |
+| `preferred_origin_id` | `UPDATE` posterior, nunca en el INSERT; la confirmación manual **más reciente** manda (§1.2) | `hypodb_ingest.c:451-540`, `ewgui_db.c:483-509` |
+| `preferred_magnitude_id` | idem, pero **no se borra** si no hay candidata | `hypodb_ingest.c:530-536`, `ewgui_db.c:483-495` |
 
-### 1.2 `origin` (una fila por `<event>:<mod>`)
+### 1.2 `origin` (una fila viva por `<event>:<mod>` + una por confirmación manual)
 
 | Columna | Valor | Fuente |
 |---|---|---|
-| `origin_id` | `<event_id>:<mod>` | `ewgui/db_ids.c:38` |
+| `origin_id` | `<event_id>:<mod>` (fila viva del pipeline) · `<event_id>:<mod>:<version>` (**confirmación manual**: snapshot inmutable) | `ewgui/db_ids.c:38-107` |
 | `origin_time` | ARC línea 1 `[0:16]` (`YYYYMMDDHHMMSS`+frac) | `csnhypodbp_group.c:101` |
 | `latitude` / `longitude` | ARC `16..22` (+`S`) / `23..30` (+`W`) | `csnhypodbp_group.c:106-116` |
 | `depth` | ARC `31..35` ÷ 100 (km) | `csnhypodbp_group.c:118-120` |
@@ -53,7 +53,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 | `azimuthal_gap` | ARC `42..44`; **NULL si 0** | `hypodb_ingest.c:553` |
 | `station_count` | ARC `39..41` | `hypodb_ingest.c:554` |
 | `standard_error` | ARC `48..51` ÷ 100 (RMS); **NULL si 0** | `hypodb_ingest.c:555` |
-| `status` | manual (byte 174 `M`) → `REVIEWED`; 162 → `PRELIMINARY`; 163/164 → `REVISED` | `hypodb_ingest.c:169-174`, `:556` |
+| `status` | manual (byte 174 `M`) → `REVIEWED`; 162 → `PRELIMINARY`; 163/164 → `REVISED` | `hypodb_ingest.c:169-174`, `:612` |
 | `creation_time` | DEFAULT `CURRENT_TIMESTAMP`; **no se refresca** en el UPSERT | `schema.sql:45`, `ewgui_db.c:286-299` |
 | `latitude_uncertainty`, `longitude_uncertainty`, `depth_uncertainty`, `time_uncertainty`, `error_ellipse` | **nunca escritas** (§3) | `ewgui_db.c:286-299` |
 
@@ -192,11 +192,15 @@ inserción en la BD, `csnhypodbp_ws.c:701`): son fuentes distintas para la misma
 
 1. Con EarthWorm arriba y `hypodb_ingest` consumiendo los anillos, confirma una solución en
    `csnhypodbp` (`Confirm`).
-2. **Qué esperar hoy** (ver P1 en `docs/DATA-MAPPING-PENDIENTES.md`): `csnhypodbp_confirm_manual`
-   **no** publica el ARC; publica las magnitudes a `HYPO_RING_REF` (con `algorithm="CSNMan"`) y los
-   picks con el 12.º token `M` a `PICK_RING`. La fila `origin` la crea `csnloc` (162) al
-   re-localizar esos picks — y `hyp2000_ring`/`nlloc_ring` con 163/164 — con `status='REVIEWED'`
-   por el byte 174. Por eso `origin.author` sigue siendo el módulo que la escribió.
+2. **Qué esperar**: `csnhypodbp_confirm_manual` publica las magnitudes a `HYPO_RING_REF` (con
+   `algorithm="CSNMan"`), los picks con el 12.º token `M` a `PICK_RING` y, además, el **ARC de la
+   solución confirmada** en el anillo de confirmaciones (`ConfRing`, p. ej. `HYPO_RING_REF2`) con el
+   `mod` real del candidato (162/163/164). `hypodb_ingest` lo ingiere por `InRingConf` como
+   **snapshot**: escribe una fila `origin` propia con `origin_id = <event>:<mod>:<version>`,
+   `status='REVIEWED'`, sus picadas, y recalcula `event.preferred_origin_id` = la confirmación
+   **más reciente** (`creation_time`). Las confirmaciones anteriores **no** se pisan: quedan como
+   orígenes manuales históricos. La fila viva `<event>:<mod>` la sigue manteniendo `csnloc`
+   (162) y `hyp2000_ring`/`nlloc_ring` (163/164).
 3. Consultas para inspeccionar el resultado (con los datos de conexión de
    `run_working_v8/params/db.env`):
 

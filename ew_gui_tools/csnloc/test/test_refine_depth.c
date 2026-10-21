@@ -64,9 +64,9 @@ int main(void)
 {
     StationList   st;
     TTModel       tt;
-    CSLocParams   cfg_small, cfg_big;
+    CSLocParams   cfg_small, cfg_big, cfg_fixed;
     Pick          picks[CSLOC_MAX_PICKS];
-    HypoCandidate h_small, h_big;
+    HypoCandidate h_small, h_big, h_fixed;
     double tr_lat_geo = -23.5, tr_lon = -70.0, tr_depth = 60.0;
     double tr_lat_g, t0 = 1.8e9;
     int    npick = 0;
@@ -89,6 +89,9 @@ int main(void)
     cfg_small.RefineDepthKm = 5.0;     /* semiancho vertical chico */
     cfg_big = cfg_small;
     cfg_big.RefineDepthKm = 40.0;      /* semiancho vertical ampliado */
+    cfg_fixed = cfg_big;               /* caja amplia, pero z FIJA */
+    cfg_fixed.FixedDepthOn = 1;
+    cfg_fixed.FixedDepthKm = 60.0;
 
     /* Mismo candidato de partida: epicentro verdadero, z en un NODO (0). */
     memset(&h_small, 0, sizeof(h_small));
@@ -96,8 +99,12 @@ int main(void)
     h_small.depth_km = 0.0; h_small.t0 = t0; h_small.nphases = npick;
     h_big = h_small;
 
+    h_fixed = h_small;
+    h_fixed.depth_km = 0.0;            /* semilla en un nodo, muy lejos de la fija */
+
     RefineHypo(&h_small, &st, picks, &tt, &cfg_small);
     RefineHypo(&h_big, &st, picks, &tt, &cfg_big);
+    RefineHypo(&h_fixed, &st, picks, &tt, &cfg_fixed);
 
     printf("nodo de partida z=0.0  verdad z=%.1f\n", tr_depth);
     printf("small: z=%.1f  escape=%.1f  lat=%.4f lon=%.4f\n",
@@ -112,6 +119,12 @@ int main(void)
           "lat no cambia significativamente al ampliar la caja vertical");
     CHECK(fabs(h_big.lon - h_small.lon) < 0.1,
           "lon no cambia significativamente al ampliar la caja vertical");
+
+    printf("fixed: z=%.3f (objetivo 60.0)\n", h_fixed.depth_km);
+    CHECK(fabs(h_fixed.depth_km - 60.0) < 1e-6,
+          "profundidad fija: z no se mueve aunque la caja sea amplia");
+    CHECK(fabs(h_fixed.lat - tr_lat_g) < 0.1 && fabs(h_fixed.lon - tr_lon) < 0.1,
+          "profundidad fija: lat/lon se siguen refinando");
 
     TTModel_Free(&tt);
 

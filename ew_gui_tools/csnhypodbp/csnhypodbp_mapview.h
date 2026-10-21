@@ -12,6 +12,7 @@
 #define CSNHYPODBP_MAPVIEW_H
 
 #include "csnhypodbp_profile.h"
+#include <stddef.h>
 
 /* Punto a dibujar en cualquiera de los dos paneles.
  * kind: 0 = solucion del evento, 1 = preferida, 2 = candidata del `locate`. */
@@ -52,6 +53,66 @@ void csnhypodbp_mapfit_at(double ref_lat, double ref_lon,
                           double lon0, double lon1, double lat0, double lat1,
                           double img_w, double img_h, int cw, int ch, double margin,
                           double zoom_factor, double *zoom, double *cx, double *cy);
+
+/* Lienzo de proyeccion cuando el .d no declara `MapImageFile` (o la imagen no
+ * se puede cargar). El mapa de planta NO deja de dibujarse: se usa un espacio
+ * equirectangular 2:1 con la misma escala que el mapa de mundo entregado
+ * (10800x5400, 30 px/grado), asi la grilla, el ancho de las capas .lines y el
+ * zoom se comportan igual que con la imagen de fondo. */
+#define CSNHYPODBP_MAP_VIRTUAL_W 10800.0
+#define CSNHYPODBP_MAP_VIRTUAL_H  5400.0
+
+/* Espacio de proyeccion (en pixeles) del mapa de planta. Un solo origen para el
+ * dibujo, las capas .lines y el hit test del clic.
+ *   has_image y pw/ph > 0 -> *iw = pw, *ih = ph   (devuelve 0)
+ *   en cualquier otro caso -> lienzo virtual       (devuelve 1)
+ * Devuelve -1 si falta iw/ih. */
+int csnhypodbp_map_canvas(int has_image, int pw, int ph, double *iw, double *ih);
+
+/* Punto geografico -> pixel de pantalla con la transformacion del dibujo:
+ *     screen = (proyectado - centro) * zoom + canvas/2 + paneo
+ * Es la misma cuenta que usa on_draw_map_plan(), asi la grilla, las etiquetas y
+ * el hit test no se pueden desalinear del dibujo. Devuelve 0 si OK y -1 si
+ * lat/lon no son finitas, falta algun puntero o la geometria no sirve (iw/ih o
+ * zoom <= 0, canvas vacio). Un paneo no finito cuenta como 0. */
+int csnhypodbp_map_screen(double lat, double lon, double iw, double ih,
+                          int cw, int ch, double zoom, double cx, double cy,
+                          double pan_x, double pan_y, double *sx, double *sy);
+
+/* Rango geografico visible en un canvas cw x ch con la transformacion de
+ * csnhypodbp_map_screen(), recortado al mundo (lon -180..180, lat -90..90).
+ * Devuelve 0 si OK y -1 si la geometria no sirve o no queda nada visible
+ * (el mundo entero quedo fuera del canvas). */
+int csnhypodbp_map_view_bounds(double iw, double ih, int cw, int ch,
+                               double zoom, double cx, double cy,
+                               double pan_x, double pan_y,
+                               double *lon0, double *lon1, double *lat0, double *lat1);
+
+/* bbox de encuadre de la planta: el de los puntos (con el suelo `min_span` de
+ * MapMinSpanDeg) o, si no hay ningun punto con posicion valida, el mundo
+ * completo. Con `n` soluciones y su bbox degenerado (un solo punto) se aplica
+ * igual el suelo. Devuelve 0 si uso los puntos, 1 si uso el mundo y -1 si falta
+ * algun puntero. */
+int csnhypodbp_map_fit_bounds(const CsnhypodbpMapPt *pt, int n, double min_span,
+                              double *lon0, double *lon1, double *lat0, double *lat1);
+
+/* Paso de la grilla (grados) para un span visible, apuntando a ~8 divisiones.
+ * `span_deg` no finito o <= 0 -> 10.0. La serie de pasos es
+ * 0.05 0.1 0.2 0.25 0.5 1 2 5 10 15 30 45 90, asi el paso no depende de la
+ * escala del lienzo y a cualquier zoom hay meridianos y paralelos visibles. */
+double csnhypodbp_map_grid_step(double span_deg);
+
+/* Texto de una etiqueta de eje para `value` con el paso `step` (grados):
+ * step >= 1 -> "%.0f"; step >= 0.1 -> "%.1f"; si no -> "%.2f".
+ * Un step invalido se trata como 10 (una division). */
+void csnhypodbp_map_axis_fmt(double step, double value, char *buf, size_t n);
+
+/* Marca en `keep` (1 = se etiqueta, 0 = se omite) que etiquetas caben segun la
+ * separacion minima `min_gap` en pixeles respecto de la ultima aceptada. `pos`
+ * va en pixeles de pantalla y ordenada de menor a mayor. `min_gap` invalido o
+ * <= 0 se trata como 0. Devuelve 0 si OK (n vale 0 -> nada que etiquetar) y -1
+ * si falta pos o keep. */
+int csnhypodbp_map_label_pick(const double *pos, int n, double min_gap, int *keep);
 
 /* Fraccion de altura de la planta a partir de `MapSplit`: "7/3" -> 7/11 (0.7) o
  * "0.7" -> 0.7. Devuelve 0 si el texto no sirve o la fraccion no cae en (0,1). */

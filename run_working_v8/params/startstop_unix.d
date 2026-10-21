@@ -8,12 +8,13 @@
 #    The maximum size of a ring is 1024 kilobytes.
 #    Ring names are listed in file earthworm.h.
 #
-  nRing               9
+  nRing               10
   Ring   WAVE_RING   51200
   Ring    SCN_RING   500
   Ring   PICK_RING   256
   Ring   HYPO_RING   128
   Ring  HYPO_RING_REF 128
+  Ring HYPO_RING_REF2 128
   Ring  SLINK_RING   51200
   Ring   DECI_RING   500
   Ring  ALARM_RING   256

@@ -77,15 +77,35 @@ ck  "calendario: boton junto a su caja"       'gtk_grid_attach\(GTK_GRID\(grid\)
 ck  "calendario: campos de hora anchos"       'time-entry'                                   csnhypodbp_gui.c
 nck "ondas: sin LED verde/rojo"              '0\.2, 0\.8, 0\.2'                            csnhypodbp_gui.c
 
-# --- Preview de la solucion (pestana Ondas): tablita de 2 filas ---
+# --- Preview de la solucion: dos mitades en una grilla de 4 filas ---
 ck  "preview: caja con clase propia"        'gtk_widget_add_css_class\(g_preview_box, "preview-box"\)' csnhypodbp_main.c
 ck  "preview: siempre visible"              'gtk_widget_set_visible\(g_preview_box, TRUE\)' csnhypodbp_main.c
-ck  "preview: radios + cabecera + valores"    'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 2' csnhypodbp_main.c
-ck  "preview: radios en la fila 0"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], i, 0' csnhypodbp_main.c
+ck  "preview: titulo en la grilla (fila 0)"  'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_title, 0, 0' csnhypodbp_main.c
+ck  "preview: otime en la fila 1 (caja)"     'gtk_grid_attach\(GTK_GRID\(grid\), otime_row, 0, 1' csnhypodbp_main.c
+ck  "preview: otime dentro de la caja"       'gtk_box_append\(GTK_BOX\(otime_row\), g_preview_otime\)' csnhypodbp_main.c
+ck  "preview: spinner de calculo"            'g_preview_spinner = gtk_spinner_new\(\)'      csnhypodbp_main.c
+ck  "preview: texto de calculo"              'g_preview_status = gtk_label_new'             csnhypodbp_main.c
+ck  "preview: timer de 1 s"                  'g_timeout_add\(1000, locate_tick'             csnhypodbp_gui.c
+ck  "preview: timer se detiene al terminar"  'g_source_remove\(g_locate_tick_id\)'          csnhypodbp_gui.c
+ck  "preview: estado de calculo visible"     'calculando %s… %ld s'                         csnhypodbp_preview.c
+ck  "preview: titulo de magnitudes"          'gtk_label_new\("Magnitude"\)'                csnhypodbp_main.c
+ck  "preview: separador vertical"            'gtk_separator_new\(GTK_ORIENTATION_VERTICAL\)' csnhypodbp_main.c
+ck  "preview: separador entre bloques (4 filas)" 'gtk_grid_attach\(GTK_GRID\(grid\), sep, CSNHYPODBP_PREVIEW_NPARAMS, 0, 1, 4\)' csnhypodbp_main.c
+ck  "preview: parametros a la izquierda"     'for \(i = 0; i < CSNHYPODBP_PREVIEW_NPARAMS; i\+\+\)' csnhypodbp_main.c
+ck  "preview: magnitudes a la derecha"       'int col = CSNHYPODBP_PREVIEW_NPARAMS \+ 1 \+ k' csnhypodbp_main.c
+ck  "preview: radios en la fila 1"           'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_radio\[k\], col, 1' csnhypodbp_main.c
+ck  "preview: radios compactos (clase)"      'gtk_widget_add_css_class\(g_preview_radio\[k\], "preview-radio"\)' csnhypodbp_main.c
+ck  "preview: radios sin relleno del tema"   '\.preview-radio \{ min-height: 0; min-width: 0; padding: 0; margin: 0; \}' csnhypodbp_main.c
+ck  "preview: cabeceras en la fila 2"        'gtk_grid_attach\(GTK_GRID\(grid\), h, i, 2'   csnhypodbp_main.c
+ck  "preview: valores en la fila 3"          'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], i, 3' csnhypodbp_main.c
+ck  "preview: cabeceras de magnitud (fila 2)" 'gtk_grid_attach\(GTK_GRID\(grid\), h, col, 2' csnhypodbp_main.c
+ck  "preview: valores de magnitud (fila 3)"  'gtk_grid_attach\(GTK_GRID\(grid\), g_preview_val\[i\], col, 3' csnhypodbp_main.c
+ck  "preview: celdas absorben el ancho"      'gtk_widget_set_hexpand\(g_preview_val\[i\], TRUE\)' csnhypodbp_main.c
 ck  "preview: 10 valores en la fila"        'g_preview_val\[CSNHYPODBP_PREVIEW_NVALS\]'   csnhypodbp_main.c
 ck  "preview: cabeceras del nucleo puro"    'csnhypodbp_preview_headers'                  csnhypodbp_main.c
 ck  "preview: botones a la derecha"         'gtk_box_append\(GTK_BOX\(g_preview_box\), pc\)' csnhypodbp_main.c
 nck "preview: sin etiqueta de texto unica"  'g_preview_label'                             csnhypodbp_main.c
+nck "preview: sin caja inner"               'gtk_box_append\(GTK_BOX\(inner\), g_preview_' csnhypodbp_main.c
 ck  "preview: fondo rojo leve de la candidata" '\.preview-box\.candidate'                  csnhypodbp_main.c
 ck  "preview: estilos del titulo y del valor" '\.preview-title|\.preview-val'              csnhypodbp_main.c
 ck  "preview: un solo render"               'csnhypodbp_preview_update'                   csnhypodbp_gui.c
@@ -93,9 +113,34 @@ nck "preview: ya no se oculta al descartar" 'gtk_widget_set_visible\(g_preview_b
 nck "preview: sin la etiqueta vieja"        'g_preview_label'                             csnhypodbp_gui.c
 ck  "preview: refresco al elegir solucion"  'la tablita sigue a la solucion elegida'      csnhypodbp_gui.c
 ck  "preview: botones sensibles solo con candidata" 'set_sensitive\(g_preview_btn_confirm, v\.candidate\)' csnhypodbp_gui.c
+ck  "preview: un solo locate a la vez"       'if \(g_locate_busy\)'                         csnhypodbp_gui.c
+ck  "preview: generacion del job"            'job->gen = g_locate_gen'                      csnhypodbp_gui.c
+ck  "preview: timeout al localizador"        'g_locator_timeout_sec'                        csnhypodbp_gui.c
+nck "preview: sin candidato parcial de csnloc" 'locate_stage'                csnhypodbp_gui.c
+nck "preview: sin guardia de confirmacion en vuelo" 'g_locate_confirmed'      csnhypodbp_gui.c
+ck  "preview: el calculo limpia los valores"  'reset_pending'                csnhypodbp_preview.c
+ck  "preview: mensaje de sin solucion nueva"  'sin solución nueva con'        csnhypodbp_preview.c
+ck  "preview: el aviso se limpia al elegir origen" 'descarta el aviso de "sin solucion nueva"' csnhypodbp_gui.c
+ck  "preview: calculate conserva los valores" 'g_locate_err\[0\] && !g_locate_nosol' csnhypodbp_gui.c
+ck  "preview: tooltip del renglon de estado"  'set_tooltip_text\(g_preview_status' csnhypodbp_gui.c
+ck  "locate: workdir aislado del refinador"  'csnhypodbp_cfg_with_refiner_opts'             csnhypodbp_locate.c
+ck  "locate: timeout de la cadena"           'timeout_sec, cancel'                          csnhypodbp_locate.c
+ck  "locate: error con stdout y stderr"      'ARC invalido'                                 csnhypodbp_locate.c
+ck  "locate: magnitudes desde la base"      'csnhypodbp_hypos_write_mag\(hypos, out, base' csnhypodbp_locate.c
+ck  "locate: solo P para magnitudes"         'phase != .P.'                                 csnhypodbp_locate.c
+ck  "locate: mags sin timeout del refinador" 'run_capture\(cmd, NULL, 0, 0'                 csnhypodbp_locate.c
+ck  "locate: ventanas desde la base"         'mag_ovr_rows_build_locate\(&job->base'        csnhypodbp_gui.c
+ck  "magmarks: overrides por ancla"          'csnhypodbp_mag_ovr_build_anchors'             csnhypodbp_magmarks.c
+ck  "locate: siembra el ARC con la base"     'arc_seed_base\(buf, base\)'                   csnhypodbp_locate.c
+ck  "locate: conserva el qid de la base"     'out->qid = base->qid'                         csnhypodbp_locate.c
+ck  "nlloc: crea el OutRoot loc"             'snprintf\(locdir, sizeof\(locdir\), "%s/loc"' csnhypodbp_locate.c
+ck  "nlloc offline: rewrite comprobado"      'ARC no reescrito'                             ../nlloc_ring/nlloc_ring.c
+ck  "hyp2000 offline: rewrite comprobado"    'ARC no reescrito'                             ../hyp2000_ring/hyp2000_ring.c
 ck  "preview: refresco al llegar magnitudes" 'csnhypodbp_preview_update'                  csnhypodbp_ws.c
 ck  "preview: titulos por estado"           'New solution|Selected solution'              csnhypodbp_preview.c
 ck  "preview: sin seleccion -> guiones"     'No solution selected'                        csnhypodbp_preview.c
+ck  "preview: tiempo de origen en el nucleo puro" 'Origin time:'                          csnhypodbp_preview.c
+ck  "preview: el render vuelca el tiempo de origen" 'gtk_label_set_text\(GTK_LABEL\(g_preview_otime\), v\.otime\)' csnhypodbp_gui.c
 
 # --- Pestañas: raiz Eventos/Procesar con sub-pestañas picking/magnitudes ---
 ck  "pestañas: raiz Procesar"               'gtk_label_new\("Procesar"\)'                 csnhypodbp_main.c
@@ -148,6 +193,11 @@ ck  "magnitudes: todas las componentes"     'if \(strcmp\(StaArray\[i\]\.szStati
 ck  "magnitudes: banda sin traza"           'cairo_show_text\(cr, "sin traza"\);'        csnhypodbp_gui.c
 ck  "fetch: asegura componentes de todas"   'ensure_all_station_channels\(\);'           csnhypodbp_ws.c
 ck  "layout: canvas con alto minimo"        'CSNHYPODBP_BAND_MIN'                        csnhypodbp_gui.c
+ck  "layout: alto de banda por tracesPerScreen" 'csnhypodbp_traces_layout\('              csnhypodbp_gui.c
+nck "layout: el dibujo ya no reparte entre TODAS las bandas" '\(height - 60\) / g_NumSortedNodes' csnhypodbp_gui.c
+ck  "layout: la clave se lee del .d"        'k_its\("tracesPerScreen"\)'                 csnhypodbp_main.c
+ck  "layout: la clave sale en print-config" 'printf\("tracesPerScreen %d'                csnhypodbp_main.c
+ck  "layout: la clave esta documentada"     'tracesPerScreen'                            README.md
 ck  "layout: canvas con ancho minimo"       'CSNHYPODBP_CANVAS_MIN_W'                    csnhypodbp_main.c
 ck  "layout: el paned de mapas deja encoger" 'set_shrink_end_child\(GTK_PANED\(paned_maps\), TRUE\)' csnhypodbp_main.c
 ck  "layout: barra en scrolled window"      'gtk_scrolled_window_set_child\(GTK_SCROLLED_WINDOW\(barsw\), bar\)' csnhypodbp_main.c
@@ -155,6 +205,10 @@ ck  "barra: grupo a la derecha"             'gtk_widget_set_hexpand\(spacer, TRU
 ck  "barra: reset en vez de auto"           'g_mag_ov_reset'                             csnhypodbp_main.c
 ck  "barra: unidad solo en la cabecera"     'gtk_label_new\("distancia \[°\]"\)'          csnhypodbp_main.c
 ck  "barra: grupo profundidad con piso"     'gtk_label_new\("prof\. \[km\]"\)'            csnhypodbp_main.c
+nck "barra: sin el grupo de distancia hipocentral" 'dist\. hip\.'                      csnhypodbp_main.c
+nck "barra: sin el campo km en la GUI"      'MAX_DIST_KM|g_mag_ov_km'                    csnhypodbp_gui.c
+nck "barra: sin el campo km en el nucleo"   'MAX_DIST_KM'                                csnhypodbp_magcfg.h
+nck "barra: el override ya no toca el km"   'CSNHYPODBP_MAG_OV_MAX_DIST_KM|ov->max_dist_km' csnhypodbp_magcfg.c
 ck  "barra: confirmar activa el override"     'csnhypodbp_mag_ov_from_text\(ov, txt\)'     csnhypodbp_gui.c
 ck  "barra: el override se enciende en el nucleo" 'ov->on = 1;'                            csnhypodbp_magcfg.c
 ck  "barra: corte de profundidad"           'csnhypodbp_magcfg_depth_ok'                 csnhypodbp_gui.c
@@ -192,7 +246,7 @@ ck  "barra: reset/calculate llevan su clase"  'add_css_class\(g_mag_ov_reset, "m
 nck "barra: sin el subboton +/- del spin"     'mag-bar-cell > button'                       csnhypodbp_main.c
 ck  "barra: las cajas son texto, no spin"     'GTK_IS_EDITABLE\(cw2\)'                      csnhypodbp_main.c
 nck "barra: sin GTK_IS_SPIN_BUTTON"           'GTK_IS_SPIN_BUTTON\(cw2\)'                   csnhypodbp_main.c
-nck "barra: sin los spins de los overrides"   'gtk_spin_button_new_with_range\(0\.0, (180|2000|700)\.0' csnhypodbp_main.c
+nck "barra: sin los spins de los overrides"   'gtk_spin_button_new_with_range\(0\.0, (180|700|999)\.0' csnhypodbp_main.c
 nck "barra: sin get_value de los overrides"   'gtk_spin_button_get_value\(GTK_SPIN_BUTTON\(g_mag_ov' csnhypodbp_gui.c
 ck  "barra: caja de texto por campo"          'mag_ov_entry_new\(CSNHYPODBP_MAG_OV_MIN_DELTA' csnhypodbp_main.c
 ck  "barra: rango y decimales de una fuente"  'csnhypodbp_mag_ov_field_limits'              csnhypodbp_magcfg.c
@@ -243,6 +297,18 @@ ck  "preferida: confirm guarda el mecanismo" 'csnhypodbp_mww_persist\(&g_preview
 ck  "preferida: el fallo se muestra"         'csnhypodbp_mww_report\(0, err\)'             csnhypodbp_gui.c
 ck  "preferida: marca manual en algorithm"   'CSNMan'                                      csnhypodbp_ws.c
 ck  "preferida: 13.er token en la picada"    '%c M %c'                                     csnhypodbp_ws.c
+# --- Confirmacion manual = fila `origin` propia en la BD (anillo de confirmaciones) ---
+ck  "confirm: snapshot con version valida"   'csnhypodbp_confirmation_arc\(sol'             csnhypodbp_ws.c
+ck  "confirm: publica el ARC confirmado"     'tport_putmsg\(&CRegion, &logo'               csnhypodbp_ws.c
+ck  "confirm: logo con el mod real"          'logo.mod = \(unsigned char\)sol->mod'        csnhypodbp_ws.c
+ck  "confirm: el snapshot exige version"     'sol->version == 0 \|\| sol->version > 9999u' csnhypodbp_locate.c
+ck  "confirm: avisa si no hay ConfRing"      'ConfRing no configurado'                     csnhypodbp_ws.c
+ck  "confirm: la fila confirmada es propia"  'procesar_mensaje_sismo_ex\(tree_global, arc, s.mod, 1\)' csnhypodbp_ws.c
+ck  "historial: id con parser (no strrchr)"  'ewgui_origin_id_parse\(ors\[j\].origin_id'   csnhypodbp_ws.c
+nck "historial: sin strrchr sobre origin_id" 'strrchr\(ors\[j\].origin_id'                 csnhypodbp_ws.c
+ck  "historial: Ver real del confirmado"     'confirmed \? version : 0u'                   csnhypodbp_ws.c
+ck  "preferida: propaga confirmed/created"   'meta\[i\].confirmed = es->confirmed'         csnhypodbp_ws.c
+ck  "preferida: manda la confirmada mas nueva" 'sols\[i\].created > sols\[best\].created'   csnhypodbp_group.c
 ck  "picking: ancla congelada (no la P ganadora)" 'g_win_ref_pick'                          csnhypodbp_gui.c
 nck "picking: el dibujo no re-ancla con la P" 'sta_pick_t'                                   csnhypodbp_gui.c
 nck "picking: sin earliest_pick"              'earliest_pick'                               csnhypodbp_gui.c
@@ -311,6 +377,7 @@ ck  "ventana: el panel Mww no infla el minimo"   'mww_scrolled\(g_mww\.grid, 90\
 ck  "ventana: idem para la salida del motor"     'mww_scrolled\(g_mww\.view, 90\)'    csnhypodbp_mww.c
 nck "ventana: sin size_request en mww_scrolled"  'gtk_widget_set_size_request\(sw, -1, h\)' csnhypodbp_mww.c
 ck  "ventana: la playera con suelo pequeno"      'gtk_widget_set_size_request\(vbox, 120, 120\)' csnhypodbp_mww.c
+nck "ventana: el scrolled de trazas no propaga su alto natural" 'set_propagate_natural_height.*TRUE' csnhypodbp_main.c
 ck  "mww: el resumen no se estira"               'set_hexpand\(g_mww\.summary, FALSE\)'    csnhypodbp_mww.c
 ck  "mww: reparto 1/3-2/3 con columnas homogeneas" 'gtk_grid_set_column_homogeneous\(GTK_GRID\(row\), TRUE\)' csnhypodbp_mww.c
 ck  "mww: los resultados en la columna 0 (1/3)"   'gtk_grid_attach\(GTK_GRID\(row\), frame, 0, 0, 1, 1\)' csnhypodbp_mww.c
@@ -408,6 +475,51 @@ ck  "barra: botones locators y locate"      'btn_locators'                 csnhy
 ck  "localizador: picadas desde la tabla"   'csnhypodbp_locate_picks'      csnhypodbp_gui.c
 ck  "tabla: clave MaxDistKm del .d"          'k_its\("MaxDistKm"\)'         csnhypodbp_main.c
 
+# --- Profundidad fija: depth [caja] [Fix] en la barra de picking ---
+ck  "fix: rotulo depth"                     'gtk_label_new\("depth"\)'                    csnhypodbp_main.c
+ck  "fix: caja de profundidad"              'g_fix_depth_entry = gtk_entry_new\(\)'       csnhypodbp_main.c
+ck  "fix: casilla Fix"                      'gtk_check_button_new_with_label\("Fix"\)'    csnhypodbp_main.c
+ck  "fix: caja insensible sin Fix"          'gtk_widget_set_sensitive\(g_fix_depth_entry, FALSE\)' csnhypodbp_main.c
+ck  "fix: senal toggled"                    'g_signal_connect\(g_fix_depth_chk, "toggled"' csnhypodbp_main.c
+ck  "fix: aplica al confirmar (Enter)"      'on_fix_depth_activate'                       csnhypodbp_main.c
+ck  "fix: aplica al salir del campo"        'on_fix_depth_focus_leave'                    csnhypodbp_main.c
+ck  "fix: parseo del nucleo puro"           'csnhypodbp_fixdepth_parse'                   csnhypodbp_gui.c
+ck  "fix: precarga desde la solucion"       'fix_depth_current_solution'                  csnhypodbp_gui.c
+ck  "fix: locate insensible si invalido"    'g_fix_depth_on && g_fix_depth_km < 0\.0'     csnhypodbp_gui.c
+ck  "fix: tooltip propio de NLLoc"          'NLLoc no fija la profundidad'                csnhypodbp_gui.c
+
+# --- Filtros de picking: presets/atajos del .d, fase cero, HUD y foco -------
+ck  "filtros: claves Filter* del .d"        'k_its\("Filter"\)'                           csnhypodbp_main.c
+ck  "filtros: presets en print-config"      'printf\("Filters %d'                         csnhypodbp_main.c
+ck  "filtros: fase cero en el dibujo"       'g_filtercfg.phase_zero'                      csnhypodbp_gui.c
+ck  "filtros: el locate manda la traza cruda" 'ewgui_trace_raw'                           csnhypodbp_gui.c
+nck "filtros: sin teclas de filtro hardcodeadas" 'GDK_KEY_r|GDK_KEY_k|GDK_KEY_d'            csnhypodbp_gui.c
+ck  "filtros: atajos resueltos por la config" 'csnhypodbp_filtercfg_key_action'            csnhypodbp_gui.c
+ck  "filtros: solo en la sub-pestaña picking" 'get_current_page\(GTK_NOTEBOOK\(g_subnotebook\)\) == 0' csnhypodbp_gui.c
+ck2 "filtros: guarda de foco antes de consumir" 'gtk_window_get_focus' 'GTK_IS_EDITABLE'    csnhypodbp_gui.c
+ck  "filtros: HUD con ellipsize"            'gtk_label_set_ellipsize\(GTK_LABEL\(g_filter_label\)' csnhypodbp_main.c
+ck  "filtros: HUD acotado (max-width-chars)" 'gtk_label_set_max_width_chars\(GTK_LABEL\(g_filter_label\)' csnhypodbp_main.c
+nck "filtros: HUD sin size_request"         'set_size_request\(g_filter_label'            csnhypodbp_main.c
+ck  "filtros: la ayuda sale de la config"   'csnhypodbp_filtercfg_help_text'              csnhypodbp_gui.c
+ck  "filtros: la ventana lista los presets" 'csnhypodbp_filtercfg_format_preset'          csnhypodbp_gui.c
+ck  "filtros: la ventana no persiste"       'g_active_filter = -2'                        csnhypodbp_gui.c
+ck  "fix: el job lleva la profundidad"      'job->fix_depth_km'                           csnhypodbp_gui.c
+ck  "fix: locate_run la recibe"             'job->fix_depth_km, g_locator_timeout_sec'    csnhypodbp_gui.c
+ck  "fix: aviso si el motor no la respeta"  'no respeto la profundidad fija'              csnhypodbp_gui.c
+ck  "fix: sin persistencia en el .d"        'g_fix_depth_on = FALSE'                      csnhypodbp_main.c
+
+# --- Estaciones sin datos: clave del .d + casilla del menu ---
+ck  "config: clave HideStationsWithoutData"  'k_its\("HideStationsWithoutData"\)' csnhypodbp_main.c
+nck "config: ya no se lee HideEmptyStations" 'HideEmptyStations'              csnhypodbp_main.c
+ck  "print-config: HideStationsWithoutData"  'HideStationsWithoutData %d'      csnhypodbp_main.c
+ck  "menu: item con casilla"                 '"Hide stations without data", "win\.hide-empty", NULL, 0, 1, 0' csnhypodbp_main.c
+ck  "menu: la casilla va en su propio grupo" '"Stations",[[:space:]]+hide_items, 1' csnhypodbp_main.c
+ck  "menu: Waveforms ya no lleva la casilla" '"Waveforms", wave_items, 3'     csnhypodbp_main.c
+ck  "menu: 5 grupos en Procesar"             'wave_groups, 5'                csnhypodbp_main.c
+ck  "menu: casilla sincronizada con la sesion" 'hide_items\[0\]\.checked'     csnhypodbp_main.c
+ck  "menu: sincronia al alternar"            'hide_item_sync\(\);.*casilla del menu sigue a la sesion' csnhypodbp_main.c
+ck  "menu: estado inicial antes del boton"   'hide_item_sync\(\);.*estado inicial' csnhypodbp_main.c
+
 # --- Help en el menu ☰, sin texto de instrucciones ---
 nck "sin etiqueta de instrucciones"         'g_help_label'                 csnhypodbp_main.c
 nck "sin csnhypodbp_update_help"            'csnhypodbp_update_help'       csnhypodbp_gui.c
@@ -415,8 +527,49 @@ ck  "menu: grupo Help al final"             '"Help", help_items'           csnhy
 ck  "menu: item Commands -> win.help"       'win\.help'                    csnhypodbp_main.c
 ck  "menu: dialogo de comandos"             'csnhypodbp_help_dialog_run'   csnhypodbp_gui.c
 
-# --- Color de traza no leida ---
-ck  "traza no leida: gris mas oscuro 0.55"  '0\.55'                        csnhypodbp_trace.c
+# --- Color de traza y de las marcas por origen ---
+nck "traza: ya no hay gris 0.55"            '0\.55'                       csnhypodbp_trace.c
+ck  "traza: siempre negra"                  'rgb\[0\] = 0\.0; rgb\[1\] = 0\.0; rgb\[2\] = 0\.0' csnhypodbp_trace.c
+nck "traza: sin parametro de leida"         'trace_rgb\(int'              csnhypodbp_trace.h
+ck  "marcas: color de la P por origen"      'csnhypodbp_color_resolve\(&g_colors_p' csnhypodbp_gui.c
+ck  "marcas: color de la S por origen"      'csnhypodbp_color_resolve\(&g_colors_s' csnhypodbp_gui.c
+ck  "marcas: origen de la P desde la fila"  'csnhypodbp_pick_origin\(sta_row\.p\.origin\)' csnhypodbp_gui.c
+ck  "marcas: origen de la S desde la fila"  'csnhypodbp_pick_origin\(sta_row\.s\.origin\)' csnhypodbp_gui.c
+ck  "indicador: color manual/base"          'g_colors_p\.manual'          csnhypodbp_gui.c
+ck  "menu: 6 colores"                       '"P theoretical", "win\.colour", "i", 3' csnhypodbp_main.c
+ck  "menu: grupo Colours con 6 items"       '"Colours", colour_items, 6'  csnhypodbp_main.c
+ck  "config: .d lee las 6 claves"           'k_its\("sColorTheo"\)'       csnhypodbp_main.c
+ck  "config: color invalido avisa"          'invalido, uso el color heredado' csnhypodbp_main.c
+ck  "log: 6 claves de color"                'sColorTheo %s'               csnhypodbp_gui.c
+ck  "print-config: colores resueltos"       'print_pick_color\("pColorAuto"' csnhypodbp_main.c
+ck  "magnitudes: conserva su color fijo"    'cairo_set_source_rgb\(cr, 0\.05, 0\.05, 0\.05\)' csnhypodbp_gui.c
+nck "ya no queda g_color_p/g_color_s"       'g_color_[ps]\b'              csnhypodbp_gui.c
+
+# --- Mapa de planta: se dibuja aunque el .d no declare MapImageFile ---
+n=$(grep -cE 'if \(g_map_pixbuf\)' csnhypodbp_gui.c)
+if [ "$n" -eq 1 ]; then echo "ok  : planta: el unico if (g_map_pixbuf) es el fondo"
+else echo "FAIL: planta: 'if (g_map_pixbuf)' aparece $n veces (solo debe quedar el fondo)"; fails=$((fails+1)); fi
+ck  "planta: el if (g_map_pixbuf) pinta la imagen" 'gdk_cairo_set_source_pixbuf' csnhypodbp_gui.c
+ck  "planta: geometria unica (lienzo virtual)"     'plan_canvas_get\(&iw, &ih\)'  csnhypodbp_gui.c
+nck "planta: sin iw/ih=1.0 en el dibujo"           'iw = 1\.0|ih = 1\.0'          csnhypodbp_gui.c
+ck  "planta: el fit no exige pixbuf"               'g_map_need_fit && width > 40 && height > 40' csnhypodbp_gui.c
+nck "planta: el fit ya no mira el pixbuf"          'g_map_need_fit && g_map_pixbuf' csnhypodbp_gui.c
+ck  "planta: encuadre por fit_bounds"              'csnhypodbp_map_fit_bounds'    csnhypodbp_gui.c
+ck  "planta: encuadre inicial en el mundo"         'g_map_fit_lon0 = -180\.0'     csnhypodbp_gui.c
+ck  "planta: grilla por span visible"              'csnhypodbp_map_grid_step\(span\)' csnhypodbp_gui.c
+ck  "planta: etiquetas de ejes"                    'draw_plan_axes\(cr, iw, ih'   csnhypodbp_gui.c
+ck  "planta: etiquetas con CTM identidad"          'cairo_identity_matrix\(cr\)'  csnhypodbp_gui.c
+ck  "planta: formato de eje del nucleo puro"       'csnhypodbp_map_axis_fmt'      csnhypodbp_gui.c
+ck  "planta: anticolision de etiquetas"            'csnhypodbp_map_label_pick'    csnhypodbp_gui.c
+lg=$(grep -nE 'draw_plan_grid\(cr, iw, ih, width' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+la=$(grep -nE 'draw_plan_axes\(cr, iw, ih, width' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+lo=$(grep -nE 'ewgui_overlay_draw\(cr, g_map_overlay' csnhypodbp_gui.c | head -1 | cut -d: -f1)
+if [ -n "$lg" ] && [ -n "$la" ] && [ -n "$lo" ] && [ "$lg" -lt "$la" ] && [ "$la" -lt "$lo" ]; then
+    echo "ok  : planta: orden grilla -> ejes -> capas .lines"
+else
+    echo "FAIL: planta: orden grilla($lg) -> ejes($la) -> capas($lo)"; fails=$((fails+1))
+fi
+ck  "planta: lienzo virtual documentado en el .h" 'CSNHYPODBP_MAP_VIRTUAL_W 10800\.0' csnhypodbp_mapview.h
 
 if [ "$fails" -gt 0 ]; then echo; echo "$fails FALLOS"; exit 1; fi
 echo; echo "OK test_ui_invariants"

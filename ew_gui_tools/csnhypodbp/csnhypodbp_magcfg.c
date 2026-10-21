@@ -28,9 +28,10 @@ void csnhypodbp_magcfg_defaults(CsnhypodbpMagCfg *c)
     c->mwp_min_delta = 3.0; c->mwp_max_delta = 90.0;
     c->mb_min_delta = 5.0;  c->mb_max_delta = 105.0;
     c->ms_min_delta = 20.0; c->ms_max_delta = 160.0;
-    /* Corte de profundidad: solo Ms lo trae (60 km, el mismo veto de csnmags);
-       `Ms_DeepCorr != 0` lo desactiva. */
-    c->ml_max_depth = 0.0; c->mwp_max_depth = 0.0; c->mb_max_depth = 0.0;
+    /* Corte de profundidad: Ms veta a 60 km (el mismo veto de csnmags) y
+       `Ms_DeepCorr != 0` lo desactiva. Las otras tres no cortan: 999 es el
+       centinela de "sin corte" para que la caja de la GUI no muestre 0. */
+    c->ml_max_depth = 999.0; c->mwp_max_depth = 999.0; c->mb_max_depth = 999.0;
     c->ms_max_depth = 60.0;
     c->ml_min_depth = 0.0; c->mwp_min_depth = 0.0; c->mb_min_depth = 0.0;
     c->ms_min_depth = 0.0;
@@ -214,7 +215,6 @@ void csnhypodbp_magcfg_apply_override(const CsnhypodbpMagCfg *c, int kind,
     case CSNHYPODBP_MAG_ML:
         out->ml_min_delta = ov->min_delta;
         out->ml_max_delta = ov->max_delta;
-        if (ov->max_dist_km > 0.0) out->ml_max_dist_km = ov->max_dist_km;
         out->ml_min_depth = ov->min_depth;
         out->ml_max_depth = ov->max_depth;
         break;
@@ -312,17 +312,18 @@ void csnhypodbp_magcfg_gate_text(const CsnhypodbpMagCfg *c, int kind,
 /* --- Cajas de la barra de overrides --------------------------------------- */
 
 /* Rango y decimales de cada caja: los del `GtkSpinButton` que la barra usaba
- * (rango, paso y `set_digits`), para que el cambio a `GtkEntry` no mueva ni un
- * limite. El orden es el de `CSNHYPODBP_MAG_OV_*`. */
+ * (rango, paso y `set_digits`), para que el cambio a `GtkEntry` no mueva un
+ * limite. Unica excepcion: el techo de la profundidad maxima es 999 (centinela
+ * de "sin corte", el mismo default), porque 700 era el tope del spin y no
+ * dejaba escribir el default. El orden es el de `CSNHYPODBP_MAG_OV_*`. */
 static const struct {
     double lo, hi;
     int    digits;
 } MAG_OV_FIELD[CSNHYPODBP_MAG_OV_FIELD_N] = {
     {   0.0,  180.0, 1 },   /* min_delta   [deg] */
     {   0.0,  180.0, 1 },   /* max_delta   [deg] */
-    {   0.0, 2000.0, 0 },   /* max_dist_km [km]  */
     {   0.0,  700.0, 0 },   /* min_depth   [km]  */
-    {   0.0,  700.0, 0 }    /* max_depth   [km]  */
+    {   0.0,  999.0, 0 }    /* max_depth   [km]  */
 };
 
 /* Redondeo al mas cercano con `digits` decimales (`.5` hacia arriba en valor
@@ -428,7 +429,6 @@ int csnhypodbp_mag_ov_from_text(CsnhypodbpMagGateOv *ov,
     ov->on = 1;
     ov->min_delta   = v[CSNHYPODBP_MAG_OV_MIN_DELTA];
     ov->max_delta   = v[CSNHYPODBP_MAG_OV_MAX_DELTA];
-    ov->max_dist_km = v[CSNHYPODBP_MAG_OV_MAX_DIST_KM];
     ov->min_depth   = v[CSNHYPODBP_MAG_OV_MIN_DEPTH];
     ov->max_depth   = v[CSNHYPODBP_MAG_OV_MAX_DEPTH];
     return 0;
@@ -442,8 +442,6 @@ void csnhypodbp_mag_ov_texts(const CsnhypodbpMagGateOv *ov,
                           CSNHYPODBP_MAG_OV_MIN_DELTA, ov->min_delta);
     csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DELTA], 24,
                           CSNHYPODBP_MAG_OV_MAX_DELTA, ov->max_delta);
-    csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DIST_KM], 24,
-                          CSNHYPODBP_MAG_OV_MAX_DIST_KM, ov->max_dist_km);
     csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MIN_DEPTH], 24,
                           CSNHYPODBP_MAG_OV_MIN_DEPTH, ov->min_depth);
     csnhypodbp_mag_ov_fmt(out[CSNHYPODBP_MAG_OV_MAX_DEPTH], 24,

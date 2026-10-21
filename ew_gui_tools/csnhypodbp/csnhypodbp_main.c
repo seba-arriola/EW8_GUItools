@@ -15,6 +15,7 @@ char InRingName[MAX_STR];
 char InRingRawName[MAX_STR];   /* 2.º anillo de entrada (csnloc crudo, opcional) */
 char OutRingName[MAX_STR];
 char InRingPickName[MAX_STR];  /* anillo de picks a leer (TYPE_PICK_SCNL) */
+char ConfRingName[MAX_STR];    /* anillo de confirmaciones (ARC confirmado) */
 char DbEnvFile[MAX_STR];       /* credenciales PostgreSQL (historial) */
 char MagConfigFile[MAX_STR] = "csnmags.d";  /* .d de csnmags: defaults de magnitud */
 char MwwConfigFile[MAX_STR] = "csnwphase.d";          /* .d de csnwphase (panel Mww) */
@@ -40,6 +41,7 @@ SHM_INFO InRegion;
 SHM_INFO InRegionRaw;    
 SHM_INFO InRegionPick;   
 SHM_INFO PRegion;        
+SHM_INFO CRegion;        /* confirmaciones: ARC confirmado -> hypodb */
 MSG_LOGO GetLogo[2]; 
 MSG_LOGO PickLogo[1]; 
 
@@ -68,6 +70,7 @@ double  g_pick_window_sec = 600.0;   /* PickCaptureWindowSec */
 char    g_pick_phase = 'P';          /* fase a picar en modo Repick */
 
 EwGuiCanvas *canvas_global = NULL;
+GtkWidget *g_sw_ondas = NULL;   /* scrolled de las trazas: su alto asignado es el viewport */
 GListStore *g_store_hypo = NULL;
 GListStore *g_store_events = NULL;
 GListStore *g_store_detail = NULL;
@@ -89,18 +92,24 @@ int    g_group_max_solutions = 100;
 /* Config de la pestaña Ondas (channelsOrder/componentsOrder/locators). */
 char g_channels_order[128] = "HH BH HN LH";
 char g_components_order[64] = "Z N E";
+int  g_traces_per_screen = CSNHYPODBP_TRACES_PER_SCREEN_MIN; /* tracesPerScreen */
 CsnhypodbpLocator g_locators[MAX_LOCATORS];
 int  g_nlocators = 0;
 char g_active_locator[32] = "";
 char g_manual_state_file[MAX_STR] = "csnhypodbp_manual.events";
-int  g_locator_timeout_sec = 180;
+int  g_locator_timeout_sec = 600;
 int  g_prefetch_neighbors = 2;
-int  g_hide_empty = 0;   /* HideEmptyStations: ocultar estaciones sin datos */
+int  g_hide_empty = 0;   /* HideStationsWithoutData: ocultar estaciones sin datos */
 char g_store_root[512] = "";
 int  g_fetch_threads = 4;
-/* Colores de las fases (pColor/sColor del .d): marca + circulo del indicador. */
-double g_color_p[3] = { 1.0, 0.0, 0.0 };   /* P: rojo */
-double g_color_s[3] = { 0.0, 0.6, 0.0 };   /* S: verde (marca S actual) */
+/* Colores de las picadas (pColor/sColor + pColorAuto/pColorTheo/sColorAuto/
+   sColorTheo del .d): la traza siempre es negra; auto y teorica, si no se
+   declaran, se derivan del manual en el momento de dibujar (aclarado 40 % /
+   70 %, csnhypodbp_color_resolve). */
+CsnhypodbpColorSet g_colors_p = { { 1.0, 0.0, 0.0 }, 0, { 0.0, 0.0, 0.0 },
+                                  0, { 0.0, 0.0, 0.0 } };   /* P: rojo */
+CsnhypodbpColorSet g_colors_s = { { 0.0, 0.6, 0.0 }, 0, { 0.0, 0.0, 0.0 },
+                                  0, { 0.0, 0.0, 0.0 } };   /* S: verde */
 GtkWidget *window_global = NULL; 
 
 double g_max_dist_km = 500.0; 
@@ -150,7 +159,7 @@ CsnhypodbpMagMarks g_mag_marks;   /* ventanas ajustadas por (estacion, magnitud)
 int g_magf_auto = 1, g_magf_manual = 1, g_magf_theo = 0;
 CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];   /* override de distancia */
 GtkWidget *g_magf_chk[3] = { NULL, NULL, NULL };
-GtkWidget *g_mag_ov_min = NULL, *g_mag_ov_max = NULL, *g_mag_ov_km = NULL;
+GtkWidget *g_mag_ov_min = NULL, *g_mag_ov_max = NULL;
 GtkWidget *g_mag_ov_dmin = NULL, *g_mag_ov_depth = NULL;
 GtkWidget *g_mag_ov_reset = NULL;
 GtkWidget *g_mag_btn_calc = NULL, *g_mag_btn_calc_all = NULL;
@@ -179,6 +188,9 @@ int                 g_cursor_valid = 0;                  /* 1 = sobre el canvas 
 /* Preview de locate (solucion candidata). */
 GtkWidget *g_preview_box = NULL;
 GtkWidget *g_preview_title = NULL;
+GtkWidget *g_preview_otime = NULL;
+GtkWidget *g_preview_spinner = NULL;
+GtkWidget *g_preview_status = NULL;
 GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS];
 GtkWidget *g_preview_btn_confirm = NULL, *g_preview_btn_discard = NULL;
 GtkWidget *g_preview_radio[CSNHYPODBP_PREVIEW_MAGS];   /* magnitud preferida */
@@ -192,6 +204,10 @@ int g_filter_manual = 1;
 int g_filter_theo = 0;
 GtkWidget *g_chk_a = NULL, *g_chk_m = NULL, *g_chk_teo = NULL;
 GtkWidget *g_locator_label = NULL;
+GtkWidget *g_fix_depth_label = NULL, *g_fix_depth_entry = NULL, *g_fix_depth_chk = NULL;
+GtkWidget *g_btn_locate = NULL;
+gboolean   g_fix_depth_on = FALSE;
+double     g_fix_depth_km = -1.0;
 
 /* --- Mapas: panel de planta (contrato de csnrv) y panel de perfil --- */
 char  MapImageFile[MAX_STR] = "";            /* mapa base equirectangular (2:1) */
@@ -230,6 +246,9 @@ int      g_filter_type = 0;      /* 0=Raw, 1=HP, 2=LP, 3=BP */
 double   g_filter_f1 = 0.7;      /* F1 (Hz) */
 double   g_filter_f2 = 2.0;      /* F2 (Hz) */
 int      g_filter_order = 4;     /* orden IIR (2 o 4) */
+CsnhypodbpFilterCfg g_filtercfg; /* presets y atajos (defaults + .d) */
+int      g_active_filter = -1;   /* -1 = Raw; -2 = filtro manual del dialogo */
+GtkWidget *g_filter_label = NULL;
 double   g_align_lead = 20.0;    /* segundos antes de la onda P */
 
 gboolean pending_waveform_reload = FALSE;
@@ -280,11 +299,28 @@ static void k_rest_join(char *out, size_t n)
     (void)k_err();
 }
 
+/* Lee un color RRGGBB del .d y lo aplica a `set`. Un valor invalido no toca
+ * el destino (la entrada sigue heredando del manual) y deja aviso en el log. */
+static void read_pick_color(const char *key, const char *str,
+                            CsnhypodbpColorSet *set, CsnhypodbpPickOrigin origin)
+{
+    double rgb[3];
+    if (!str)
+        return;
+    if (csnhypodbp_view_parse_color(str, rgb) != 0) {
+        logit("et", "csnhypodbp: %s <%s> invalido, uso el color heredado\n",
+              key, str);
+        return;
+    }
+    csnhypodbp_color_set_override(set, origin, rgb);
+}
+
 /* --------------------------------------------------------------------
  * LECTURA DE CONFIG Y CONEXION EW
  * -------------------------------------------------------------------- */
 int ReadConfig(char *configfile) {
     int ncommand = 7, nmiss = 0, i; char init[8] = {0}; char *com, *str;
+    csnhypodbp_filtercfg_defaults(&g_filtercfg);
     if (!k_open(configfile)) { fprintf(stderr, "Error abriendo archivo config <%s>\n", configfile); return -1; }
     while (k_rd()) {
         com = k_str(); if (!com || com[0] == '#') continue;
@@ -297,6 +333,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("StateFile")) { str = k_str(); if (str) strcpy(StateFile, str); init[6] = 1; }
         else if (k_its("InRingRaw")) { str = k_str(); if (str) strcpy(InRingRawName, str); }
         else if (k_its("InRingPick")) { str = k_str(); if (str) strcpy(InRingPickName, str); }
+        else if (k_its("ConfRing")) { str = k_str(); if (str) strcpy(ConfRingName, str); }
         else if (k_its("TauModel")) { str = k_str(); if (str) strcpy(TauModel, str); }
         else if (k_its("PickCaptureWindowSec")) { g_pick_window_sec = k_val(); }
         else if (k_its("MaxDistKm")) { double v = k_val(); if (v > 0.0) g_max_dist_km = v; }
@@ -329,6 +366,25 @@ int ReadConfig(char *configfile) {
             char buf[64]; k_rest_join(buf, sizeof(buf));
             if (buf[0]) snprintf(g_components_order, sizeof(g_components_order), "%s", buf);
         }
+        else if (k_its("tracesPerScreen")) {
+            /* Solo 1, 2 o 3 (un digito): mas trazas por pantalla saturan la vista.
+               Cualquier otra cosa ("0", "4", "-1", "2.7", "abc") no se aplica:
+               se avisa con el TEXTO recibido y se conserva el previo (patron de
+               MapZoom). Se lee como token y se parsea aqui para no dejar k_err()
+               (abortaria la lectura del .d) y para no truncar "2.7" a 2. */
+            char *tok = k_str();
+            int v = 0;
+            (void)k_err();
+            if (tok && tok[0] != '\0' && tok[1] == '\0')
+                v = csnhypodbp_traces_per_screen_norm(tok[0] - '0');
+            if (v > 0)
+                g_traces_per_screen = v;
+            else
+                logit("et", "csnhypodbp: tracesPerScreen <%s> fuera de [%d,%d], uso %d\n",
+                      tok && tok[0] ? tok : "(none)",
+                      CSNHYPODBP_TRACES_PER_SCREEN_MIN,
+                      CSNHYPODBP_TRACES_PER_SCREEN_MAX, g_traces_per_screen);
+        }
         else if (k_its("locator")) {
             char *nm = k_str(), *bn = k_str(), *cf = k_str();
             if (nm && bn && cf)
@@ -337,7 +393,7 @@ int ReadConfig(char *configfile) {
         else if (k_its("ManualStateFile")) { str = k_str(); if (str) snprintf(g_manual_state_file, sizeof(g_manual_state_file), "%s", str); }
         else if (k_its("LocatorTimeoutSec")) { g_locator_timeout_sec = k_int(); }
         else if (k_its("PrefetchNeighbors")) { g_prefetch_neighbors = k_int(); }
-        else if (k_its("HideEmptyStations")) { g_hide_empty = k_int() ? 1 : 0; }
+        else if (k_its("HideStationsWithoutData")) { g_hide_empty = k_int() ? 1 : 0; }
         else if (k_its("SearchMaxEvents")) {
             g_search_max_events = k_int();
             if (g_search_max_events <= 0) g_search_max_events = CSNHYPODBP_SEARCH_DEFAULT_LIMIT;
@@ -347,13 +403,27 @@ int ReadConfig(char *configfile) {
         else if (k_its("SdsFallbackHours")) { g_sds_fallback_hours = k_int(); if (g_sds_fallback_hours < 0) g_sds_fallback_hours = 0; }
         else if (k_its("pColor")) {
             str = k_str();
-            if (str && csnhypodbp_view_parse_color(str, g_color_p) != 0)
-                logit("et", "csnhypodbp: pColor <%s> invalido, uso default\n", str);
+            read_pick_color("pColor", str, &g_colors_p, CSNHYPODBP_PICK_MANUAL);
         }
         else if (k_its("sColor")) {
             str = k_str();
-            if (str && csnhypodbp_view_parse_color(str, g_color_s) != 0)
-                logit("et", "csnhypodbp: sColor <%s> invalido, uso default\n", str);
+            read_pick_color("sColor", str, &g_colors_s, CSNHYPODBP_PICK_MANUAL);
+        }
+        else if (k_its("pColorAuto")) {
+            str = k_str();
+            read_pick_color("pColorAuto", str, &g_colors_p, CSNHYPODBP_PICK_AUTO);
+        }
+        else if (k_its("pColorTheo")) {
+            str = k_str();
+            read_pick_color("pColorTheo", str, &g_colors_p, CSNHYPODBP_PICK_THEO);
+        }
+        else if (k_its("sColorAuto")) {
+            str = k_str();
+            read_pick_color("sColorAuto", str, &g_colors_s, CSNHYPODBP_PICK_AUTO);
+        }
+        else if (k_its("sColorTheo")) {
+            str = k_str();
+            read_pick_color("sColorTheo", str, &g_colors_s, CSNHYPODBP_PICK_THEO);
         }
         /* --- Mapas: panel de planta (mismo contrato que csnrv) --- */
         else if (k_its("MapImageFile")) { str = k_str(); if (str) snprintf(MapImageFile, sizeof(MapImageFile), "%s", str); }
@@ -434,6 +504,19 @@ int ReadConfig(char *configfile) {
                 return -1;
             }
         }
+        else if (k_its("Filter") || k_its("FilterMenu") || k_its("FilterRaw") ||
+                 k_its("FilterPhase") || k_its("StaLta")) {
+            /* Presets de filtro y atajos. El parseo y la validacion viven en el
+               nucleo puro csnhypodbp_filtercfg (test_filtercfg.c). Una linea
+               invalida NO se ignora: aborta la lectura, como Profile. */
+            char rest[256] = "", err[256] = "";
+            k_rest_join(rest, sizeof(rest));
+            if (csnhypodbp_filtercfg_add(&g_filtercfg, com, rest, err, sizeof(err)) != 0) {
+                fprintf(stderr, "Error en la linea %s: %s\n", com,
+                        err[0] ? err : "valor invalido");
+                return -1;
+            }
+        }
         else { continue; }
         if (k_err()) { fprintf(stderr, "Error parseando <%s>\n", com); return -1; }
     }
@@ -459,9 +542,37 @@ int ReadConfig(char *configfile) {
 
 /* --- Modos headless (patron de csnrv): no arrancan GTK ni se conectan a EW --- */
 
+/* Una linea de color ya resuelta; marca las entradas que aun heredan del
+ * manual (auto 40 % / teorica 70 %). */
+static void print_pick_color(const char *key, const CsnhypodbpColorSet *set,
+                             CsnhypodbpPickOrigin origin)
+{
+    double rgb[3];
+    char hex[7];
+    const char *sfx = "";
+    csnhypodbp_color_resolve(set, origin, rgb);
+    csnhypodbp_color_to_hex(rgb, hex);
+    if (origin == CSNHYPODBP_PICK_AUTO && !set->has_auto)
+        sfx = " (derived 40%)";
+    else if (origin == CSNHYPODBP_PICK_THEO && !set->has_theo)
+        sfx = " (derived 70%)";
+    printf("%s %s%s\n", key, hex, sfx);
+}
+
 static int maps_print_config(void) {
     int i;
+    /* Estado inicial de la tabla de estaciones en la sesion (el menu lo alterna
+       sin reescribir el .d). */
+    printf("HideStationsWithoutData %d\n", g_hide_empty ? 1 : 0);
+    printf("tracesPerScreen %d\n", g_traces_per_screen);
     printf("MapImageFile %s\n", MapImageFile[0] ? MapImageFile : "(none)");
+    /* Espacio de proyeccion efectivo, sin abrir GTK: sin MapImageFile el mapa de
+       planta se dibuja igual sobre el lienzo virtual (grilla, capas y puntos). */
+    if (MapImageFile[0])
+        printf("MapCanvas image\n");
+    else
+        printf("MapCanvas virtual %.0fx%.0f\n",
+               CSNHYPODBP_MAP_VIRTUAL_W, CSNHYPODBP_MAP_VIRTUAL_H);
     printf("MapMinSpanDeg %.1f\n", g_map_min_span_deg);
     printf("MapZoom %.3f\n", g_map_zoom_factor);
     printf("MapSplit %.4f\n", g_map_split_frac);
@@ -475,6 +586,33 @@ static int maps_print_config(void) {
     printf("OverlayHides %d\n", g_overlay_nhides);
     for (i = 0; i < g_overlay_nhides; i++)
         printf("OverlayHide %s\n", g_overlay_hide_layer[i]);
+    /* Filtros de la vista de ondas: fase, atajos y presets vigentes. */
+    printf("FilterPhase %s\n", g_filtercfg.phase_zero ? "zero" : "causal");
+    printf("FilterMenu %c\n", g_filtercfg.menu_key);
+    printf("FilterRaw %c\n", g_filtercfg.raw_key);
+    printf("Filters %d\n", g_filtercfg.nf);
+    for (i = 0; i < g_filtercfg.nf; i++) {
+        const CsnhypodbpFilterPreset *fp = &g_filtercfg.f[i];
+        if (fp->type == 3)
+            printf("Filter %s BP %c %.4g %.4g %d\n", fp->name, fp->key,
+                   fp->f1, fp->f2, fp->order);
+        else
+            printf("Filter %s %s %c %.4g %d\n", fp->name,
+                   fp->type == 1 ? "HP" : "LP", fp->key, fp->f1, fp->order);
+    }
+    if (g_filtercfg.stalta_declared)
+        printf("StaLta %c %.3f %.3f %.2f %.2f %.3f\n", g_filtercfg.stalta_key,
+               g_filtercfg.stalta_sta, g_filtercfg.stalta_lta,
+               g_filtercfg.stalta_on_thr, g_filtercfg.stalta_off_thr,
+               g_filtercfg.stalta_corr);
+    /* Colores de las picadas (la traza es siempre negra): auto y teorica
+       heredan del manual aclarado si el .d no les da valor propio. */
+    print_pick_color("pColor", &g_colors_p, CSNHYPODBP_PICK_MANUAL);
+    print_pick_color("pColorAuto", &g_colors_p, CSNHYPODBP_PICK_AUTO);
+    print_pick_color("pColorTheo", &g_colors_p, CSNHYPODBP_PICK_THEO);
+    print_pick_color("sColor", &g_colors_s, CSNHYPODBP_PICK_MANUAL);
+    print_pick_color("sColorAuto", &g_colors_s, CSNHYPODBP_PICK_AUTO);
+    print_pick_color("sColorTheo", &g_colors_s, CSNHYPODBP_PICK_THEO);
     printf("ProfileDataDir %s\n", ProfileDataDir[0] ? ProfileDataDir : "(none)");
     /* Parametros de magnitud: los lee la sub-pestaña `magnitudes` para dibujar la
        traza de vista y las franjas de ventana. */
@@ -580,6 +718,10 @@ void csnhypodbp_maps_load(void) {
     } else {
         logit("et", "csnhypodbp: sin MapImageFile; el mapa de planta va sin fondo\n");
     }
+    if (!g_map_pixbuf)
+        logit("t", "csnhypodbp: mapa de planta sobre lienzo virtual %.0fx%.0f "
+                   "(grilla, perfiles y capas .lines se dibujan igual)\n",
+              CSNHYPODBP_MAP_VIRTUAL_W, CSNHYPODBP_MAP_VIRTUAL_H);
     if (g_overlay_nfiles > 0) {
         g_map_overlay = ewgui_overlay_new();
         for (i = 0; g_map_overlay && i < g_overlay_nfiles; i++) {
@@ -645,6 +787,17 @@ void ConnectToEarthworm() {
     }
     logit("t", "=== csnhypodbp: Conectado a %s%s%s, %s (picks) y %s ===\n",
           InRingName, InRingRawName[0] ? " + " : "", InRingRawName, InRingPickName, OutRingName);
+    /* Anillo de CONFIRMACIONES: por ahi viaja el ARC de cada solucion
+     * confirmada a mano, para que `hypodb` le de una fila `origin` propia. */
+    if (ConfRingName[0]) {
+        long ConfKey = GetKey(ConfRingName);
+        if (ConfKey != -1) tport_attach(&CRegion, ConfKey);
+        else {
+            logit("e", "csnhypodbp: ConfRing %s no existe: las confirmaciones no se guardaran\n",
+                  ConfRingName);
+            ConfRingName[0] = '\0';
+        }
+    }
 }
 
 static void drain_ring(SHM_INFO *region, GtkWidget *tree) {
@@ -1089,7 +1242,9 @@ static void on_toggle_dark(GSimpleAction *action, GVariant *param, gpointer user
 }
 
 /* Conmutador "Hide stations without data" (menu del headerbar). Modo dinamico:
-   filtra la lista, no borra filas (una estacion con datos reaparece). */
+   filtra la lista, no borra filas (una estacion con datos reaparece). El valor
+   del .d solo fija el estado inicial; la casilla del menu alterna la sesion. */
+static void hide_item_sync(void);
 static void on_toggle_hide_empty(GSimpleAction *action, GVariant *param, gpointer user_data) {
     GVariant *st;
     gboolean active;
@@ -1099,6 +1254,7 @@ static void on_toggle_hide_empty(GSimpleAction *action, GVariant *param, gpointe
     g_variant_unref(st);
     g_simple_action_set_state(action, g_variant_new_boolean(active));
     g_hide_empty = active ? 1 : 0;
+    hide_item_sync();            /* la casilla del menu sigue a la sesion */
     rebuild_station_list();
     actualizar_altura_canvas();
     if (canvas_global) ewgui_canvas_queue_draw(canvas_global);
@@ -1130,31 +1286,48 @@ static void paned_map_half(GtkWidget *paned, gpointer data)
 
 /* --- Menú del headerbar dependiente de la vista (Eventos vs Ondas) --- */
 static const EwMenuItem view_items[] = {
-    { "Export view...", "win.export", NULL, 0 },
-    { "Dark mode", "win.dark-mode", NULL, 0 },
+    { "Export view...", "win.export", NULL, 0, 0, 0 },
+    { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 },
 };
+/* La casilla es estado de sesion, no una accion del grupo de formas de onda: va
+   en su propio grupo, PRIMERO del menu de Procesar. El menu no lee el
+   GSimpleAction, asi que el estado viaja en el item: `hide_items` NO es const y
+   `hide_item_sync` lo mantiene igual a `g_hide_empty`. */
+static EwMenuItem hide_items[] = {
+    { "Hide stations without data", "win.hide-empty", NULL, 0, 1, 0 },
+};
+
+static void hide_item_sync(void) {
+    hide_items[0].checked = g_hide_empty ? 1 : 0;
+}
+
 static const EwMenuItem wave_items[] = {
-    { "Filters...", "win.filters", NULL, 0 },
-    { "Fetch waveforms", "win.fetch", NULL, 0 },
-    { "Time window...", "win.timewin", NULL, 0 },
-    { "Hide stations without data", "win.hide-empty", NULL, 0 },
+    { "Filters...", "win.filters", NULL, 0, 0, 0 },
+    { "Fetch waveforms", "win.fetch", NULL, 0, 0, 0 },
+    { "Time window...", "win.timewin", NULL, 0, 0, 0 },
 };
+
 static const EwMenuItem colour_items[] = {
-    { "P phase", "win.colour", "i", 1 },
-    { "S phase", "win.colour", "i", 2 },
+    { "P manual", "win.colour", "i", 1, 0, 0 },
+    { "P automatic", "win.colour", "i", 2, 0, 0 },
+    { "P theoretical", "win.colour", "i", 3, 0, 0 },
+    { "S manual", "win.colour", "i", 4, 0, 0 },
+    { "S automatic", "win.colour", "i", 5, 0, 0 },
+    { "S theoretical", "win.colour", "i", 6, 0, 0 },
 };
 static const EwMenuItem help_items[] = {
-    { "Commands...", "win.help", NULL, 0 },
+    { "Commands...", "win.help", NULL, 0, 0, 0 },
 };
 static const EwMenuGroup wave_groups[] = {
-    { "Waveforms", wave_items, 4 },
-    { "Colours", colour_items, 2 },
+    { "Stations",  hide_items, 1 },
+    { "Waveforms", wave_items, 3 },
+    { "Colours", colour_items, 6 },
     { "View", view_items, 2 },
     { "Help", help_items, 1 },
 };
 static const EwMenuItem search_items[] = {
-    { "Search events...", "win.search", NULL, 0 },
-    { "Clear search", "win.clear-search", NULL, 0 },
+    { "Search events...", "win.search", NULL, 0, 0, 0 },
+    { "Clear search", "win.clear-search", NULL, 0, 0, 0 },
 };
 static const EwMenuGroup base_groups[] = {
     { "Search", search_items, 2 },
@@ -1186,7 +1359,7 @@ void csnhypodbp_update_search_ui(void)
 static void on_notebook_switch_page(GtkNotebook *nb, GtkWidget *page, guint num, gpointer ud) {
     (void)nb; (void)num; (void)ud;
     if (!g_menu_btn) return;
-    if (page == g_page_procesar) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 4);
+    if (page == g_page_procesar) ewgui_menu_button_set_groups(g_menu_btn, wave_groups, 5);
     else                         ewgui_menu_button_set_groups(g_menu_btn, base_groups, 2);
 }
 
@@ -1423,6 +1596,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             ".preview-box { background-image: none; background-color: #fff8e1; border: 1px solid alpha(@theme_fg_color, 0.35); border-radius: 4px; padding: 2px 8px; }\n"
             ".preview-box.candidate { background-color: #fde7e7; border-color: #e8a0a0; }\n"
             ".preview-title { font-weight: bold; font-size: 0.9em; }\n"
+            /* Radios de magnitud del preview: sin el relleno/minimo del tema,
+               que imponia una fila alta y dejaba una franja vacia a su lado. */
+            ".preview-radio { min-height: 0; min-width: 0; padding: 0; margin: 0; }\n"
+            ".preview-busy { font-size: 0.85em; color: alpha(@theme_fg_color, 0.75); }\n"
+            ".preview-busy.preview-error { color: #b00020; }\n"
             ".preview-hdr { font-size: 0.75em; color: alpha(@theme_fg_color, 0.7); }\n"
             ".preview-val { font-weight: bold; }\n"
             /* Caption de los paneles de mapa (columna derecha). */
@@ -1490,6 +1668,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_insert_action_group(window_global, "win", G_ACTION_GROUP(actions));
     g_object_unref(actions);
 
+    hide_item_sync();   /* estado inicial: HideStationsWithoutData del .d */
     g_menu_btn = ewgui_menu_button_new(base_groups, 2);
 
     GtkWidget *header = adw_header_bar_new();
@@ -1683,6 +1862,7 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     GtkWidget *page_waves = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
     GtkWidget *sw_ondas = gtk_scrolled_window_new();
+    g_sw_ondas = sw_ondas;   /* el canvas de trazas mide su rejilla con este alto */
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sw_ondas), GTK_POLICY_AUTOMATIC, GTK_POLICY_ALWAYS);
     gtk_widget_set_vexpand(sw_ondas, TRUE);
     gtk_widget_set_hexpand(sw_ondas, TRUE);
@@ -1770,10 +1950,11 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
        va por encima del sub-notebook. */
     GtkWidget *page_procesar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
-    /* Preview de la solucion: tablita de 2 filas (cabecera de parametros +
-       valores) con Confirm/Discard a la derecha. Muestra la solucion elegida en
-       el detalle y, tras `locate`, la candidata (fondo rojo leve). SIEMPRE
-       visible: sin seleccion muestra guiones, asi no salta el layout. */
+    /* Preview de la solucion: una grilla de 4 filas dividida en dos mitades
+       (parametros a la izquierda, magnitudes a la derecha) para no dejar una
+       franja vacia encima de Lat..RMS. Confirm/Discard a la derecha. Muestra la
+       elegida en el detalle y, tras `locate`, la candidata (fondo rojo leve).
+       SIEMPRE visible: sin seleccion muestra guiones, asi no salta el layout. */
     g_preview_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
     gtk_widget_add_css_class(g_preview_box, "preview-box");
     gtk_widget_set_margin_start(g_preview_box, 8);
@@ -1781,48 +1962,105 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_set_margin_top(g_preview_box, 4);
     gtk_widget_set_margin_bottom(g_preview_box, 2);
     {
-        GtkWidget *inner = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
         GtkWidget *grid = gtk_grid_new();
         GtkWidget *pc = gtk_button_new_with_label("Confirm");
         GtkWidget *pd = gtk_button_new_with_label("Discard");
-        int i;
-        gtk_widget_set_hexpand(inner, TRUE);
+        GtkWidget *mags_title;
+        GtkWidget *sep;
+        GtkWidget *otime_row;
+        int i, k;
+
+        gtk_widget_set_hexpand(grid, TRUE);
+        gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
+        gtk_grid_set_row_spacing(GTK_GRID(grid), 2);
+        /* Dos mitades en UNA grilla para que las filas queden alineadas:
+             fila 0: titulo      | sep | "Magnitude"
+             fila 1: otime       | sep | radios
+             fila 2: cabeceras   | sep | cabeceras
+             fila 3: valores     | sep | valores
+           El separador ocupa su propia columna entre ambos bloques. */
         g_preview_title = gtk_label_new("");
         gtk_label_set_xalign(GTK_LABEL(g_preview_title), 0.0);
         gtk_widget_add_css_class(g_preview_title, "preview-title");
-        gtk_box_append(GTK_BOX(inner), g_preview_title);
-        gtk_grid_set_column_spacing(GTK_GRID(grid), 14);
-        gtk_grid_set_row_spacing(GTK_GRID(grid), 0);
-        /* Fila 0 = radios de magnitud preferida (solo en las columnas de
-           magnitud), fila 1 = cabeceras, fila 2 = valores (mismo indice). */
-        for (i = 0; i < CSNHYPODBP_PREVIEW_NVALS; i++) {
+        gtk_grid_attach(GTK_GRID(grid), g_preview_title, 0, 0,
+                        CSNHYPODBP_PREVIEW_NPARAMS, 1);
+        /* Fila 1 izquierda: Origin time + indicador de calculo (spinner + texto).
+           El indicador usa el mismo patron que el panel Mww: timer de 1 s y
+           segundos transcurridos; vale para TODOS los localizadores. */
+        g_preview_otime = gtk_label_new("Origin time: --");
+        gtk_label_set_xalign(GTK_LABEL(g_preview_otime), 0.0);
+        gtk_widget_add_css_class(g_preview_otime, "preview-otime");
+        g_preview_spinner = gtk_spinner_new();
+        gtk_widget_set_valign(g_preview_spinner, GTK_ALIGN_CENTER);
+        gtk_widget_set_visible(g_preview_spinner, FALSE);
+        g_preview_status = gtk_label_new("");
+        gtk_label_set_xalign(GTK_LABEL(g_preview_status), 0.0);
+        gtk_label_set_ellipsize(GTK_LABEL(g_preview_status), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(g_preview_status), 48);
+        gtk_widget_add_css_class(g_preview_status, "preview-busy");
+        gtk_widget_set_visible(g_preview_status, FALSE);
+        otime_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+        gtk_widget_set_hexpand(otime_row, TRUE);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_otime);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_spinner);
+        gtk_box_append(GTK_BOX(otime_row), g_preview_status);
+        gtk_grid_attach(GTK_GRID(grid), otime_row, 0, 1,
+                        CSNHYPODBP_PREVIEW_NPARAMS, 1);
+        mags_title = gtk_label_new("Magnitude");
+        gtk_label_set_xalign(GTK_LABEL(mags_title), 0.0);
+        gtk_widget_add_css_class(mags_title, "preview-title");
+        gtk_grid_attach(GTK_GRID(grid), mags_title,
+                        CSNHYPODBP_PREVIEW_NPARAMS + 1, 0,
+                        CSNHYPODBP_PREVIEW_MAGS, 1);
+        sep = gtk_separator_new(GTK_ORIENTATION_VERTICAL);
+        gtk_widget_set_margin_start(sep, 4);
+        gtk_widget_set_margin_end(sep, 4);
+        gtk_grid_attach(GTK_GRID(grid), sep, CSNHYPODBP_PREVIEW_NPARAMS, 0, 1, 4);
+
+        for (i = 0; i < CSNHYPODBP_PREVIEW_NPARAMS; i++) {
             GtkWidget *h = gtk_label_new(csnhypodbp_preview_headers[i]);
+
             gtk_label_set_xalign(GTK_LABEL(h), 0.0);
+            gtk_widget_set_hexpand(h, TRUE);
             gtk_widget_add_css_class(h, "preview-hdr");
             g_preview_val[i] = gtk_label_new("-");
             gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
             gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
+            gtk_widget_set_hexpand(g_preview_val[i], TRUE);
             gtk_widget_add_css_class(g_preview_val[i], "preview-val");
-            if (i >= CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS) {
-                int k = i - (CSNHYPODBP_PREVIEW_NVALS - CSNHYPODBP_PREVIEW_MAGS);
-
-                g_preview_radio[k] = gtk_check_button_new();
-                if (k > 0)   /* en grupo: se comportan como radios */
-                    gtk_check_button_set_group(GTK_CHECK_BUTTON(g_preview_radio[k]),
-                                               GTK_CHECK_BUTTON(g_preview_radio[0]));
-                gtk_widget_set_halign(g_preview_radio[k], GTK_ALIGN_CENTER);
-                gtk_widget_set_tooltip_text(g_preview_radio[k],
-                    "Marca esta magnitud como la preferida al confirmar");
-                gtk_widget_set_sensitive(g_preview_radio[k], FALSE);
-                g_signal_connect(g_preview_radio[k], "toggled",
-                                 G_CALLBACK(on_preview_pref_toggled), GINT_TO_POINTER(k));
-                gtk_grid_attach(GTK_GRID(grid), g_preview_radio[k], i, 0, 1, 1);
-            }
-            gtk_grid_attach(GTK_GRID(grid), h, i, 1, 1, 1);
-            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), h, i, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], i, 3, 1, 1);
         }
-        gtk_box_append(GTK_BOX(inner), grid);
-        gtk_box_append(GTK_BOX(g_preview_box), inner);
+        for (k = 0; k < CSNHYPODBP_PREVIEW_MAGS; k++) {
+            GtkWidget *h;
+            int col = CSNHYPODBP_PREVIEW_NPARAMS + 1 + k;
+
+            i = CSNHYPODBP_PREVIEW_NPARAMS + k;
+            g_preview_radio[k] = gtk_check_button_new();
+            if (k > 0)   /* en grupo: se comportan como radios */
+                gtk_check_button_set_group(GTK_CHECK_BUTTON(g_preview_radio[k]),
+                                           GTK_CHECK_BUTTON(g_preview_radio[0]));
+            gtk_widget_set_halign(g_preview_radio[k], GTK_ALIGN_CENTER);
+            gtk_widget_add_css_class(g_preview_radio[k], "preview-radio");
+            gtk_widget_set_tooltip_text(g_preview_radio[k],
+                "Marca esta magnitud como la preferida al confirmar");
+            gtk_widget_set_sensitive(g_preview_radio[k], FALSE);
+            g_signal_connect(g_preview_radio[k], "toggled",
+                             G_CALLBACK(on_preview_pref_toggled), GINT_TO_POINTER(k));
+            gtk_grid_attach(GTK_GRID(grid), g_preview_radio[k], col, 1, 1, 1);
+            h = gtk_label_new(csnhypodbp_preview_headers[i]);
+            gtk_label_set_xalign(GTK_LABEL(h), 0.0);
+            gtk_widget_set_hexpand(h, TRUE);
+            gtk_widget_add_css_class(h, "preview-hdr");
+            g_preview_val[i] = gtk_label_new("-");
+            gtk_label_set_xalign(GTK_LABEL(g_preview_val[i]), 0.0);
+            gtk_label_set_width_chars(GTK_LABEL(g_preview_val[i]), 9);
+            gtk_widget_set_hexpand(g_preview_val[i], TRUE);
+            gtk_widget_add_css_class(g_preview_val[i], "preview-val");
+            gtk_grid_attach(GTK_GRID(grid), h, col, 2, 1, 1);
+            gtk_grid_attach(GTK_GRID(grid), g_preview_val[i], col, 3, 1, 1);
+        }
+        gtk_box_append(GTK_BOX(g_preview_box), grid);
         gtk_widget_add_css_class(pc, "suggested-action");
         gtk_widget_set_valign(pc, GTK_ALIGN_CENTER);
         gtk_widget_set_valign(pd, GTK_ALIGN_CENTER);
@@ -1882,13 +2120,24 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         GtkWidget *spacer = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
         GtkWidget *btn_locators = gtk_button_new_with_label("locators");
         GtkWidget *btn_locate = gtk_button_new_with_label("locate");
-
         g_signal_connect(btn_cancel, "clicked", G_CALLBACK(on_btn_cancel_clicked), NULL);
         g_signal_connect(btn_locators, "clicked", G_CALLBACK(on_btn_locators_clicked), NULL);
         gtk_widget_add_css_class(btn_locate, "suggested-action");
         g_signal_connect(btn_locate, "clicked", G_CALLBACK(on_btn_locate_clicked), NULL);
 
         gtk_box_append(GTK_BOX(hbox_bottom), btn_cancel);
+
+        /* HUD del filtro activo: nombre, banda, orden y tecla. Se acota con
+           ellipsize + max-width-chars para no inflar el minimo de la ventana
+           (AGENTS §7: el minimo de un GtkLabel es su texto completo). */
+        g_filter_label = gtk_label_new("");
+        gtk_label_set_ellipsize(GTK_LABEL(g_filter_label), PANGO_ELLIPSIZE_END);
+        gtk_label_set_max_width_chars(GTK_LABEL(g_filter_label), 48);
+        gtk_label_set_xalign(GTK_LABEL(g_filter_label), 0.0);
+        gtk_widget_add_css_class(g_filter_label, "dim-label");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_filter_label);
+        csnhypodbp_filter_hud_update();
+
         gtk_widget_set_hexpand(spacer, TRUE);
         gtk_box_append(GTK_BOX(hbox_bottom), spacer);
 
@@ -1905,12 +2154,40 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
         gtk_box_append(GTK_BOX(hbox_bottom), g_chk_m);
         gtk_box_append(GTK_BOX(hbox_bottom), g_chk_teo);
 
+        /* Profundidad fija: la caja solo pesa con `Fix` marcado. El valor se
+           aplica al confirmar (Enter o salir del campo), como las cajas de
+           magnitudes; un texto invalido no se aplica y bloquea `locate`. */
+        g_fix_depth_label = gtk_label_new("depth");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_label);
+        g_fix_depth_entry = gtk_entry_new();
+        gtk_editable_set_max_width_chars(GTK_EDITABLE(g_fix_depth_entry), 7);
+        gtk_entry_set_placeholder_text(GTK_ENTRY(g_fix_depth_entry), "km");
+        gtk_entry_set_input_purpose(GTK_ENTRY(g_fix_depth_entry), GTK_INPUT_PURPOSE_NUMBER);
+        gtk_editable_set_alignment(GTK_EDITABLE(g_fix_depth_entry), 1.0);
+        gtk_widget_set_sensitive(g_fix_depth_entry, FALSE);
+        g_signal_connect(g_fix_depth_entry, "activate",
+                         G_CALLBACK(on_fix_depth_activate), NULL);
+        {
+            GtkEventController *fc = gtk_event_controller_focus_new();
+            g_signal_connect(fc, "leave",
+                             G_CALLBACK(on_fix_depth_focus_leave), NULL);
+            gtk_widget_add_controller(g_fix_depth_entry, fc);
+        }
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_entry);
+        g_fix_depth_chk = gtk_check_button_new_with_label("Fix");
+        g_signal_connect(g_fix_depth_chk, "toggled",
+                         G_CALLBACK(on_fix_depth_toggled), NULL);
+        gtk_widget_set_tooltip_text(g_fix_depth_chk,
+            "Fija la profundidad de la solucion: el localizador no la resuelve");
+        gtk_box_append(GTK_BOX(hbox_bottom), g_fix_depth_chk);
+
         g_locator_label = gtk_label_new("");
         gtk_box_append(GTK_BOX(hbox_bottom), g_locator_label);
         csnhypodbp_update_locator_label();
 
         gtk_box_append(GTK_BOX(hbox_bottom), btn_locators);
         gtk_box_append(GTK_BOX(hbox_bottom), btn_locate);
+        g_btn_locate = btn_locate;
     }
     gtk_box_append(GTK_BOX(page_waves), hbox_bottom);
 
@@ -2124,15 +2401,6 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_box_append(GTK_BOX(bar), g_mag_ov_max);
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
-            /* Grupo distancia hipocentral: el corte en km de ML. */
-            gtk_box_append(GTK_BOX(bar), gtk_label_new("dist. hip. [km]"));
-            gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
-            g_mag_ov_km = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DIST_KM,
-                "Tope de distancia HIPOCENTRAL en km (el corte en km de ML; "
-                "0 = sin tope).");
-            gtk_box_append(GTK_BOX(bar), g_mag_ov_km);
-            gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
-
             /* Grupo profundidad del EVENTO: `prof. [km]  min [ ]  max [ ]`. */
             gtk_box_append(GTK_BOX(bar), gtk_label_new("prof. [km]"));
             gtk_box_append(GTK_BOX(bar), gtk_label_new("min"));
@@ -2143,7 +2411,8 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
             gtk_box_append(GTK_BOX(bar), gtk_label_new("max"));
             g_mag_ov_depth = mag_ov_entry_new(CSNHYPODBP_MAG_OV_MAX_DEPTH,
                 "Profundidad MAXIMA del evento para esta magnitud, en km (0 = sin "
-                "corte). El veto por defecto de Ms es 60 km.");
+                "corte, 999 = sin corte practico). El veto por defecto de Ms es "
+                "60 km.");
             gtk_box_append(GTK_BOX(bar), g_mag_ov_depth);
             gtk_box_append(GTK_BOX(bar), gtk_separator_new(GTK_ORIENTATION_VERTICAL));
 
@@ -2268,8 +2537,8 @@ int main(int argc, char *argv[]) {
     if (argc != 2) { fprintf(stderr, "Uso: %s <configfile.d>\n", argv[0]); exit(1); }
     if (ReadConfig(argv[1]) != 0) exit(1);
     setenv("TZ", "GMT", 1); tzset(); logit_init(argv[1], 0, 1024, LogFile); MyPid = getpid();
-    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] HideEmptyStations=%d\n",
-          g_channels_order, g_components_order, g_hide_empty);
+    logit("t", "csnhypodbp: config channelsOrder=[%s] componentsOrder=[%s] tracesPerScreen=%d HideStationsWithoutData=%d\n",
+          g_channels_order, g_components_order, g_traces_per_screen, g_hide_empty);
     logit("t", "csnhypodbp: busqueda SearchMaxEvents=%d  SDS enabled=%d root=%s fallbackHours=%d\n",
           g_search_max_events, g_sds_enabled, g_sds_root, g_sds_fallback_hours);
     /* La BD se abre DESPUES de logit_init: si falla (p. ej. falta db.env), el

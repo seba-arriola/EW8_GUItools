@@ -58,6 +58,7 @@ HeartBeatInt    30
 LogFile         1
 StaFile         estaciones.txt
 StateFile       state.events
+HideStationsWithoutData 1
 MapImageFile    mapa.jpg
 OverlayFile     ov1.lines
 OverlayColor    capa FF0000
@@ -93,6 +94,8 @@ cfg "$TMP/ok.d" -22.000000 -20.333333
 rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : print-config rc 0" || { echo "FAIL: print-config rc=$rc"; fails=$((fails+1)); }
 ck  "print-config: MapImageFile"    '^MapImageFile mapa\.jpg$'            "$TMP/pc.txt"
+ck  "print-config: HideStationsWithoutData" '^HideStationsWithoutData 1$'    "$TMP/pc.txt"
+ck  "print-config: lienzo = imagen" '^MapCanvas image$'                   "$TMP/pc.txt"
 ck  "print-config: 1 overlay"       '^OverlayFiles 1$'                    "$TMP/pc.txt"
 ck  "print-config: OverlayColor"    '^OverlayColor capa FF0000$'          "$TMP/pc.txt"
 ck  "print-config: OverlayWidth"    '^OverlayWidth 1\.200$'               "$TMP/pc.txt"
@@ -115,6 +118,30 @@ ck  "print-config: banda Ms"        '^MagBand Ms 0\.045 0\.056$'           "$TMP
 ck  "print-config: ventana de peticion" '^MagFetchSeconds 700\.0$'          "$TMP/pc.txt"
 ck  "print-config: puerta de Ms"    '^MagGate Ms 20\.0 160\.0 0\.0$'        "$TMP/pc.txt"
 ck  "print-config: puerta de ML"    '^MagGate ML 0\.0 8\.0 600\.0$'         "$TMP/pc.txt"
+
+# --- tracesPerScreen: 1..3 validos; fuera de rango se avisa y se conserva ---
+tps() {  # tps <valor> ; deja la salida en $TMP/pc_tps.txt
+    cp "$TMP/ok.d" "$TMP/tps.d"
+    printf 'tracesPerScreen %s\n' "$1" >> "$TMP/tps.d"
+    "$BIN" --print-config "$TMP/tps.d" > "$TMP/pc_tps.txt" 2>/dev/null
+}
+ck  "print-config: tracesPerScreen por defecto" '^tracesPerScreen 1$' "$TMP/pc.txt"
+tps 2
+ck  "print-config: tracesPerScreen 2" '^tracesPerScreen 2$' "$TMP/pc_tps.txt"
+tps 3
+ck  "print-config: tracesPerScreen 3" '^tracesPerScreen 3$' "$TMP/pc_tps.txt"
+tps 4
+ck  "print-config: tracesPerScreen 4 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps 0
+ck  "print-config: tracesPerScreen 0 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps -1
+ck  "print-config: tracesPerScreen -1 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps abc
+ck  "print-config: tracesPerScreen abc conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+tps 2.7
+ck  "print-config: tracesPerScreen 2.7 conserva el default" '^tracesPerScreen 1$' "$TMP/pc_tps.txt"
+ck  "config: el .d versionado declara tracesPerScreen" '^tracesPerScreen [123]' ../../run_working_v8/params/csnhypodbp.d
+ck  "config: README documenta tracesPerScreen"        'tracesPerScreen'        README.md
 
 "$BIN" --check-profiles "$TMP/ok.d" > "$TMP/cp.txt" 2>&1
 rc=$?
@@ -149,6 +176,23 @@ sed 's/^ProfileCols     3 7/ProfileCols     0 -1/' "$TMP/ok.d" > "$TMP/badcols.d
 "$BIN" --print-config "$TMP/badcols.d" > "$TMP/bc.txt" 2>&1
 ck  "print-config: ProfileCols invalido se ignora" '^ProfileCols 3 7$'    "$TMP/bc.txt"
 
+# Sin MapImageFile (clave comentada) NO es error: el mapa de planta pasa a
+# dibujarse sobre el lienzo virtual, con grilla, capas .lines y puntos.
+grep -v '^MapImageFile' "$TMP/ok.d" > "$TMP/nomap.d"
+"$BIN" --print-config "$TMP/nomap.d" > "$TMP/nomap.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : sin MapImageFile no es error" || { echo "FAIL: sin MapImageFile rc=$rc"; fails=$((fails+1)); }
+ck  "print-config: MapImageFile (none)"     '^MapImageFile \(none\)$'      "$TMP/nomap.txt"
+ck  "print-config: lienzo virtual 2:1"      '^MapCanvas virtual 10800x5400$' "$TMP/nomap.txt"
+
+# HideStationsWithoutData: ausente = 0 (se muestran); cualquier entero != 0 = 1.
+grep -v '^HideStationsWithoutData' "$TMP/ok.d" > "$TMP/hide_absent.d"
+"$BIN" --print-config "$TMP/hide_absent.d" > "$TMP/hide0.txt" 2>&1
+ck  "print-config: sin la clave -> 0"       '^HideStationsWithoutData 0$'  "$TMP/hide0.txt"
+sed 's/^HideStationsWithoutData.*/HideStationsWithoutData 7/' "$TMP/ok.d" > "$TMP/hide7.d"
+"$BIN" --print-config "$TMP/hide7.d" > "$TMP/hide7.txt" 2>&1
+ck  "print-config: valor 7 -> 1"            '^HideStationsWithoutData 1$'  "$TMP/hide7.txt"
+
 # La clave Profile mal formada es error de config.
 grep -v '^Profile B' "$TMP/ok.d" > "$TMP/badprof.d"
 echo "Profile C -72 -20 -66" >> "$TMP/badprof.d"
@@ -163,6 +207,71 @@ rc=$?
 [ "$rc" -eq 0 ] && echo "ok  : MagConfigFile ausente no rompe" || { echo "FAIL: MagConfigFile ausente rc=$rc"; fails=$((fails+1)); }
 ck  "print-config: avisa si falta MagConfigFile" 'no se pudo leer MagConfigFile' "$TMP/nm.txt"
 ck  "print-config: sin .d quedan los defaults" '^MagWindow ML 10\.000 45\.000$' "$TMP/nm.txt"
+
+# Colores de las picadas: sin claves en el .d, auto y teorica se derivan del
+# manual aclarado (40 % / 70 %).
+ck  "colores: P manual por defecto"  '^pColor FF0000$'                     "$TMP/pc.txt"
+ck  "colores: S manual por defecto"  '^sColor 009900$'                     "$TMP/pc.txt"
+ck  "colores: P auto hereda 40%"     '^pColorAuto FF6666 \(derived 40%\)$'  "$TMP/pc.txt"
+ck  "colores: P teo hereda 70%"      '^pColorTheo FFB3B3 \(derived 70%\)$'  "$TMP/pc.txt"
+ck  "colores: S auto hereda 40%"     '^sColorAuto 66C266 \(derived 40%\)$'  "$TMP/pc.txt"
+ck  "colores: S teo hereda 70%"      '^sColorTheo B3E0B3 \(derived 70%\)$'  "$TMP/pc.txt"
+
+# Con las seis claves declaradas manda el .d (sin marca de herencia), aunque el
+# orden sea inverso: la herencia se resuelve al dibujar, no al parsear.
+{ cat "$TMP/ok.d"; cat <<'EOF'
+sColorTheo     0000FF
+pColorAuto     00FF00
+pColor         123456
+sColorAuto     654321
+pColorTheo     0A0B0C
+sColor         00FF00
+EOF
+} > "$TMP/colores.d"
+"$BIN" --print-config "$TMP/colores.d" > "$TMP/col.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : colores explicitos rc 0" || { echo "FAIL: colores explicitos rc=$rc"; fails=$((fails+1)); }
+ck  "colores: P manual del .d"       '^pColor 123456$'                     "$TMP/col.txt"
+ck  "colores: S manual del .d"       '^sColor 00FF00$'                     "$TMP/col.txt"
+ck  "colores: P auto explicita"      '^pColorAuto 00FF00$'                 "$TMP/col.txt"
+ck  "colores: P teo explicita"       '^pColorTheo 0A0B0C$'                 "$TMP/col.txt"
+ck  "colores: S auto explicita"      '^sColorAuto 654321$'                 "$TMP/col.txt"
+ck  "colores: S teo explicita"       '^sColorTheo 0000FF$'                 "$TMP/col.txt"
+nck "colores: sin marca de herencia" '\(derived'                           "$TMP/col.txt"
+
+# Hex invalido: no toca el destino y esa entrada sigue heredando del manual.
+{ cat "$TMP/ok.d"; echo "pColorAuto ZZ0000"; } > "$TMP/badcolor.d"
+"$BIN" --print-config "$TMP/badcolor.d" > "$TMP/bcol.txt" 2>&1
+rc=$?
+[ "$rc" -eq 0 ] && echo "ok  : color invalido no rompe" || { echo "FAIL: color invalido rc=$rc"; fails=$((fails+1)); }
+ck  "colores: invalido sigue heredando" '^pColorAuto FF6666 \(derived 40%\)$' "$TMP/bcol.txt"
+
+# --- Filtros de picking: presets/atajos del .d ---
+ck  "filtros: fase cero por defecto"   '^FilterPhase zero$'                    "$TMP/pc.txt"
+ck  "filtros: FilterMenu"              '^FilterMenu f$'                        "$TMP/pc.txt"
+ck  "filtros: FilterRaw"               '^FilterRaw 0$'                         "$TMP/pc.txt"
+ck  "filtros: 7 presets por defecto"   '^Filters 7$'                           "$TMP/pc.txt"
+ck  "filtros: P_local"                 '^Filter P_local BP 1 1 20 2$'          "$TMP/pc.txt"
+ck  "filtros: S_local"                 '^Filter S_local BP 4 0\.5 8 2$'        "$TMP/pc.txt"
+ck  "filtros: HP r"                    '^Filter HP HP r 1 2$'                  "$TMP/pc.txt"
+ck  "filtros: BP d orden 4"            '^Filter BP BP d 0\.001 12 4$'          "$TMP/pc.txt"
+ck  "filtros: StaLta"                  '^StaLta t 0\.500 10\.000 3\.00 1\.50 -0\.250$' "$TMP/pc.txt"
+
+# Un preset extra del .d entra; una tecla duplicada es error de config.
+{ cat "$TMP/ok.d"; echo "Filter BP x 2.0 5.0 2"; } > "$TMP/filt.d"
+"$BIN" --print-config "$TMP/filt.d" > "$TMP/filt.txt" 2>&1
+ck  "filtros: preset extra"            '^Filter BP BP x 2 5 2$'                "$TMP/filt.txt"
+ck  "filtros: ahora 8 presets"         '^Filters 8$'                           "$TMP/filt.txt"
+
+{ cat "$TMP/ok.d"; echo "Filter HP r 1.0 2"; echo "Filter LP r 0.5 2"; } > "$TMP/dupflt.d"
+"$BIN" --print-config "$TMP/dupflt.d" > "$TMP/dupflt.txt" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && echo "ok  : tecla de filtro duplicada -> rc != 0" || { echo "FAIL: tecla duplicada rc=$rc"; fails=$((fails+1)); }
+
+{ cat "$TMP/ok.d"; echo "FilterPhase foo"; } > "$TMP/badphase.d"
+"$BIN" --print-config "$TMP/badphase.d" > "$TMP/badphase.txt" 2>&1
+rc=$?
+[ "$rc" -ne 0 ] && echo "ok  : FilterPhase invalida -> rc != 0" || { echo "FAIL: FilterPhase invalida rc=$rc"; fails=$((fails+1)); }
 
 rm -rf "$TMP"
 if [ "$fails" -gt 0 ]; then echo "FALLOS: $fails"; exit 1; fi

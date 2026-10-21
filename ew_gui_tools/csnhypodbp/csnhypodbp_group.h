@@ -38,6 +38,7 @@ typedef struct {
     int      nph;
     int      gap;
     int      manual;    /* marca de solucion manual (byte 174 del ARC) */
+    int      confirmed; /* 1 = snapshot confirmado a mano (no viaja en el ARC) */
     char     pref_mag;  /* tipo preferido del ARC (BMTYPI): L/W/B/S, 0 = ninguna */
     int      npicks;
     CsnhypodbpPick picks[CSNHYPODBP_MAX_PICKS];
@@ -87,13 +88,16 @@ void csnhypodbp_group_union(CsnhypodbpGroupKey *g, const CsnhypodbpPick *picks,
 /* --- Seleccion de la solucion preferida --- */
 typedef struct {
     int      manual;
+    int      confirmed;  /* 1 = snapshot confirmado a mano (id con version) */
     unsigned version;
     int      nph;
     double   rms;
     double   otime;
+    double   created;    /* epoch: creacion en la BD / insercion en la GUI */
 } CsnhypodbpSolMeta;
 
-/* Manual mas reciente si hay manuales; si no, mas fases y menor RMS. -1 si n=0. */
+/* Confirmada mas reciente si hay confirmadas; si no, manual mas reciente; si
+ * no, mas fases y menor RMS. -1 si n=0. */
 int csnhypodbp_preferred_index(const CsnhypodbpSolMeta *sols, int n);
 
 /* --- Almacen de magnitudes por SOLUCION -----------------------------------

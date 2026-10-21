@@ -53,6 +53,7 @@ Se excluyen del build los `.f` duplicados del vendorizado original.
 | `WorkDir` | carpeta PROPIA del módulo (`../hyp2000_ring`): ahí escribe `arcIn`/`arcOut`; el módulo la crea si falta. Las entradas (`.hyp`/`.sta`/`.crh`) viven en `params/` y se referencian como `../params/...` |
 | `GridFile` | `.grid` de `csnloc` (opcional): solo se refinan eventos en su bbox |
 | `MinPhases`, `MaxRMS` | filtros de calidad (`0` = sin filtro) |
+| `FixedDepthKm` | profundidad **fija** (km) de la corrida; `<0` (default) = libre. El módulo emite `ZTR <z> T` después del `.hyp`, así el motor no mueve `z` (`DEPFIXA`). La GUI la pasa por corrida en una copia temporal del `.d`; en modo anillo solo se activa si se escribe en el `.d` |
 
 `hyp2000_ring.hyp` (arranque de HYPOINVERSE): modelo + estaciones + `ZTR` + `DAM`.
 El módulo ya fija por evento `PHS`/`ARC`/`SUM`/`COP 5`/`CAR 3`.

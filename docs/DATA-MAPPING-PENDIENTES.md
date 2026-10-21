@@ -14,26 +14,26 @@ Lo que **no está decidido** o **no se resuelve** en la iteración de auditoría
 
 ## Pendientes por resolver
 
-### P1 = D1 · La solución confirmada no tiene autoría propia
-`csnhypodbp_confirm_manual` (`csnhypodbp_ws.c:1724`) **no publica** ningún `TYPE_HYP2000ARC`:
-sólo magnitudes a `HYPO_RING_REF` (`algorithm="CSNMan"`, `:1679`) y picks a `PICK_RING`
-(12.º token `M`, `:1715`). La BD recibe `origin` de `csnloc`(162)/`hyp2000`(163)/`nlloc`(164) con
-`status=REVIEWED`; **no existe** ninguna fila con `author='csnhypodbp'` hasta resolverlo.
+### P1 = D1 · La solución confirmada no tiene autoría propia — **RESUELTO**
 
-- Impacto: no se puede verificar "confirmé y quedó"; la solución que ve el usuario puede diferir de
-  la que `csnloc` recalcula con esos picks (mismo conjunto de picks, otro localizador/modelo).
-- Opciones: (a) publicar el ARC confirmado con `mod 158` (a `HYPO_RING` → se refina y crea fila
-  163; a `HYPO_RING_REF` → fila 158 directa) + `mod_author(158)`; (b) escribir directo a PostgreSQL
-  desde la GUI (rompe el principio "solo `hypodb` escribe"); (c) dejarlo como está y marcar la
-  autoría sólo en `pick.pick_status`/`status`.
+`csnhypodbp_confirm_manual` publica ahora el **ARC de la solución confirmada** en el anillo de
+confirmaciones (`ConfRing`, `HYPO_RING_REF2`) con el `mod` real del candidato, y `hypodb_ingest` lo
+ingiere por `InRingConf` (`hypodb_feed_confirmed`) como **snapshot inmutable**:
+`origin_id = <event>:<mod>:<version>`, `status='REVIEWED'`, con sus picadas, y
+`event.preferred_origin_id` pasa a esa confirmación. Cada `Confirm` es una fila propia, así que la
+solución que el usuario confirmó queda registrada tal cual, sin depender de lo que `csnloc`
+recalcule después. Implementado en `ewgui_origin_id_build/parse` (`common`),
+`csnhypodbp_confirmation_arc` (`csnhypodbp_locate.c`), `hypodb_feed_confirmed` (`hypodb_ingest.c`)
+y la regla de preferencia de `csnhypodbp_preferred_index`. De las opciones que se barajaron se
+eligió (a) pero con el `mod` real (no 158), para conservar `location_algorithm`.
 
-### P2 = D4 · La versión de la solución no sobrevive al viaje por la BD
-`origin_id = <event>:<mod>` (`ewgui/db_ids.c:38`) y el UPSERT pisa; `Ver` en historial es la
-constante `"0"` (`csnhypodbp_ws.c:716,752`), así que la columna `Ver` de *Origins* miente.
+### P2 = D4 · La versión de la solución no sobrevive al viaje por la BD — **PARCIALMENTE RESUELTO**
 
-- Opciones: (a) columna `version` en `origin` (toca `db/schema.sql`, que es copia literal de
-  `test_db`); (b) incluir la versión en `origin_id` y parsearla al leer; (c) no persistir y mostrar
-  `Ver = "-"` en historial.
+Se eligió la opción (b): las **confirmaciones** llevan la versión en `origin_id`
+(`<event>:<mod>:<version>`) y `csnhypodbp` la parsea con `ewgui_origin_id_parse`, así que la columna
+`Ver` de *Origins* es real para ellas. Las filas vivas siguen sin versión
+(`origin_id = <event>:<mod>` y el UPSERT pisa), así que para ellas `Ver` sigue siendo `0` hasta
+decidir si se añade una columna `version` al esquema.
 
 ### P3 = D6 · `origin.creation_time` no se refresca en el UPSERT
 `ON CONFLICT (origin_id) DO UPDATE SET ...` (`ewgui_db.c:286-299`) no incluye `creation_time`, así

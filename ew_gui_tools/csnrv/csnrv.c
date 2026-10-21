@@ -719,12 +719,12 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_widget_insert_action_group(window, "win", G_ACTION_GROUP(actions));
 
     static const EwMenuItem view_items[] = {
-        { "Export view...", "win.export", NULL, 0 },
-        { "Dark mode", "win.dark-mode", NULL, 0 },
+        { "Export view...", "win.export", NULL, 0, 0, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 },
     };
     static const EwMenuItem overlay_items[] = {
-        { "Layers...", "win.overlay-layers", NULL, 0 },
-        { "Reload", "win.overlay-reload", NULL, 0 },
+        { "Layers...", "win.overlay-layers", NULL, 0, 0, 0 },
+        { "Reload", "win.overlay-reload", NULL, 0, 0, 0 },
     };
     static const EwMenuGroup view_groups[] = {
         { "View", view_items, 2 },

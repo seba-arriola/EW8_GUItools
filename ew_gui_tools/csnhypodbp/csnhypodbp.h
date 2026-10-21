@@ -27,9 +27,11 @@
 #include "csnhypodbp_magitem.h"
 #include "csnhypodbp_magmarks.h"
 #include "csnhypodbp_magview.h"
+#include "csnhypodbp_filtercfg.h"
 #include "ewgui/overlay.h"
 #include "csnhypodbp_tt.h"
 #include "csnhypodbp_view.h"
+#include "csnhypodbp_traces.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -90,18 +92,20 @@ typedef struct {
 #include "csnhypodbp_station.h"
 #include "csnhypodbp_manual.h"
 #include "csnhypodbp_locate.h"
+#include "csnhypodbp_trace.h"
 #define MAX_LOCATORS 8
 extern char g_channels_order[128];     /* channelsOrder (orden externo de canales) */
 extern char g_components_order[64];    /* componentsOrder (orden interno) */
+extern int  g_traces_per_screen;       /* tracesPerScreen (trazas por pantalla, 1..3) */
 extern CsnhypodbpLocator g_locators[MAX_LOCATORS];
 extern int  g_nlocators;
 extern char g_active_locator[32];      /* localizador elegido para `locate` */
 extern char g_manual_state_file[MAX_STR];  /* ManualStateFile (solucion manual propia) */
 extern int  g_locator_timeout_sec;     /* LocatorTimeoutSec */
 extern int  g_prefetch_neighbors;      /* PrefetchNeighbors */
-extern int  g_hide_empty;              /* HideEmptyStations (ocultar sin datos) */
-extern double g_color_p[3];            /* pColor: P (marca + circulo del indicador) */
-extern double g_color_s[3];            /* sColor: S (marcas + circulo del indicador) */
+extern int  g_hide_empty;              /* HideStationsWithoutData (ocultar sin datos) */
+extern CsnhypodbpColorSet g_colors_p;  /* pColor + pColorAuto/pColorTheo */
+extern CsnhypodbpColorSet g_colors_s;  /* sColor + sColorAuto/sColorTheo */
 void csnhypodbp_log_colors(void);      /* loguea los colores en hex (copiar al .d) */
 extern char MyModName[MAX_STR];
 extern char InRingName[MAX_STR];
@@ -130,6 +134,8 @@ extern SHM_INFO InRegion;
 extern SHM_INFO InRegionRaw;    /* anillo crudo de csnloc (si InRingRaw) */
 extern SHM_INFO InRegionPick;   /* lectura del anillo de picks (TYPE_PICK_SCNL) */
 extern SHM_INFO PRegion;        
+extern SHM_INFO CRegion;        /* anillo de confirmaciones (si ConfRing) */
+extern char ConfRingName[MAX_STR];
 extern MSG_LOGO GetLogo[2]; 
 extern MSG_LOGO PickLogo[1];    /* filtro de lectura de TYPE_PICK_SCNL */
 
@@ -154,6 +160,7 @@ extern double  g_pick_window_sec;      /* ventana de asociacion de picks captura
 extern char    g_pick_phase;           /* fase a picar en modo Repick ('P'|'S') */
 
 extern EwGuiCanvas *canvas_global;
+extern GtkWidget *g_sw_ondas;                 /* scrolled de las trazas (su alto = viewport) */
 extern GtkWidget *tree_global;                /* GtkColumnView maestro (eventos) */
 extern GtkWidget *tree_detail;                /* GtkColumnView detalle (soluciones) */
 extern GListStore *g_store_hypo;              /* todas las soluciones (GTK4) */
@@ -179,7 +186,7 @@ extern int     g_NumSortedNodes;
 extern gboolean g_history_needs_saving; 
 
 /* --- LISTA DE ESTACIONES (pestaña Ondas) --- */
-#define CSNHYPODBP_BAND_MIN 110       /* alto MINIMO por banda: por debajo, scroll */
+#define CSNHYPODBP_BAND_MIN CSNHYPODBP_TRACES_BAND_MIN  /* alto MINIMO por banda (fuente: traces.h) */
 #define CSNHYPODBP_CANVAS_MIN_W 260   /* ancho minimo del canvas (la tabla no lo come) */
 /* La columna de mapas NO lleva `size_request`: su minimo ya lo fijan los dos
    canvas (300 px) y un minimo propio se suma al de la ventana, que es lo que
@@ -227,6 +234,9 @@ void on_axis_drag_end(GtkGestureDrag *g, double ox, double oy, gpointer data);
 /* --- Preview de la solucion: tablita de 2 filas (cabecera + valores) --- */
 extern GtkWidget *g_preview_box;
 extern GtkWidget *g_preview_title;                       /* titulo segun estado */
+extern GtkWidget *g_preview_otime;                       /* tiempo de origen (UTC) */
+extern GtkWidget *g_preview_spinner;                     /* calculando… */
+extern GtkWidget *g_preview_status;                      /* "calculando <loc>… N s" | error */
 extern GtkWidget *g_preview_val[CSNHYPODBP_PREVIEW_NVALS]; /* fila de valores */
 extern GtkWidget *g_preview_btn_confirm, *g_preview_btn_discard;
 /* Radios de magnitud preferida del cuadro de la candidata. */
@@ -285,11 +295,25 @@ extern GtkWidget *g_locator_label;
 void csnhypodbp_update_locator_label(void);
 void on_filter_toggled(GtkCheckButton *b, gpointer data);
 
+/* --- Profundidad fija (barra de picking: depth [caja] [Fix]) --- */
+extern GtkWidget *g_fix_depth_label, *g_fix_depth_entry, *g_fix_depth_chk;
+extern GtkWidget *g_btn_locate;          /* para gatear `locate` con Fix invalido */
+extern gboolean   g_fix_depth_on;
+extern double     g_fix_depth_km;        /* < 0 = sin valor valido */
+void on_fix_depth_toggled(GtkCheckButton *b, gpointer data);
+void on_fix_depth_activate(GtkEntry *e, gpointer data);
+void on_fix_depth_focus_leave(GtkEventControllerFocus *c, gpointer data);
+
 /* --- FILTRO CONFIGURABLE --- */
 extern int      g_filter_type;     /* 0=Raw, 1=High-Pass, 2=Low-Pass, 3=Band-Pass */
 extern double   g_filter_f1;       /* F1 (Hz) */
 extern double   g_filter_f2;       /* F2 (Hz) */
 extern int      g_filter_order;    /* orden IIR (2 o 4) */
+extern CsnhypodbpFilterCfg g_filtercfg;  /* presets y atajos del .d */
+extern int      g_active_filter;   /* indice en g_filtercfg.f; -1=Raw, -2=manual */
+extern GtkWidget *g_filter_label;  /* HUD de la barra inferior (picking) */
+void csnhypodbp_filter_apply_preset(int idx);   /* cambia y redibuja */
+void csnhypodbp_filter_hud_update(void);        /* refresca la etiqueta */
 extern double   g_align_lead;      /* segundos de ventana antes de la onda P */
 extern double   g_mag_fetch_sec;   /* ventana pedida por solucion (s) */
 
@@ -330,6 +354,9 @@ int ParseY2K_Hypo(char *msg, double *otime, double *lat, double *lon, double *de
 
 void cargar_sismos_iniciales(GtkWidget *tree);
 int procesar_mensaje_sismo(GtkWidget *tree, const char *payload, int mod);
+/* `confirmed=1` = snapshot confirmado a mano (fila propia en la tabla/BD). */
+int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
+                              int confirmed);
 int procesar_mensaje_mag(GtkWidget *tree, const char *payload);
 void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid, int mod, int version);
 void FetchStationWaveforms(const char *sta);
@@ -346,6 +373,8 @@ gboolean ew_background_tasks(gpointer user_data);
 
 /* Callbacks de GUI */
 void actualizar_altura_canvas(void);
+/* Reajusta el alto del canvas de trazas si cambio el viewport (resize). */
+void csnhypodbp_canvas_refit_if_needed(void);
 /* --- Sub-pestaña `magnitudes` (tabla de una fila por estacion) --- */
 #define CSNHYPODBP_MAG_NKIND 4
 extern CsnhypodbpMagCfg g_magcfg;             /* parametros del .d de csnmags */
@@ -368,7 +397,7 @@ extern CsnhypodbpMagMarks g_mag_marks;        /* ventanas ajustadas por (estacio
 extern int g_magf_auto, g_magf_manual, g_magf_theo;  /* filtro A/M/Teo de `magnitudes` */
 extern CsnhypodbpMagGateOv g_mag_gate_ov[CSNHYPODBP_MAG_NKIND];  /* override de distancia */
 extern GtkWidget *g_magf_chk[3];              /* checkboxes A/M/Teo de la barra */
-extern GtkWidget *g_mag_ov_min, *g_mag_ov_max, *g_mag_ov_km;  /* puerta activa */
+extern GtkWidget *g_mag_ov_min, *g_mag_ov_max;                 /* puerta activa */
 extern GtkWidget *g_mag_ov_dmin, *g_mag_ov_depth;             /* prof. min / max */
 extern GtkWidget *g_mag_ov_reset;                             /* reset default */
 extern GtkWidget *g_mag_btn_calc, *g_mag_btn_calc_all;        /* calculate / all */
@@ -383,7 +412,7 @@ void csnhypodbp_mag_ov_sync(void);
 void on_mag_filter_toggled(GtkCheckButton *b, gpointer data);
 /* Cajas de la barra de overrides (`GtkEntry`, sin los +/- del spin): `changed`
    solo valida y pinta en rojo; el valor se aplica al CONFIRMAR (`activate`, o al
-   salir del campo) y solo si los cinco campos valen. Ver csnhypodbp_magcfg.h. */
+   salir del campo) y solo si los cuatro campos valen. Ver csnhypodbp_magcfg.h. */
 void on_mag_ov_changed(GtkEditable *e, gpointer data);
 void on_mag_ov_commit(GtkWidget *w, gpointer data);
 void on_mag_ov_focus_leave(GtkEventControllerFocus *fc, gpointer data);

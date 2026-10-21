@@ -24,6 +24,7 @@ int hypodb_config_load(HypodbConfig *cfg, const char *path)
         { "MyModuleId", EW_KEY_STR, cfg->my_module_id, sizeof(cfg->my_module_id), 1 },
         { "InRing", EW_KEY_STR, cfg->in_ring, sizeof(cfg->in_ring), 1 },
         { "InRingRef", EW_KEY_STR, cfg->in_ring_ref, sizeof(cfg->in_ring_ref), 1 },
+        { "InRingConf", EW_KEY_STR, cfg->in_ring_conf, sizeof(cfg->in_ring_conf), 0 },
         { "InPickRing", EW_KEY_STR, cfg->in_pick_ring, sizeof(cfg->in_pick_ring), 0 },
         { "DbEnvFile", EW_KEY_STR, cfg->db_env_file, sizeof(cfg->db_env_file), 1 },
         { "GroupPickTolSec", EW_KEY_DBL, &cfg->group_pick_tol_sec, 0, 0 },

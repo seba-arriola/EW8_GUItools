@@ -83,6 +83,8 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_string_ops.sh
 	@echo "== check_schema_coverage =="
 	@bash tests/test_schema_coverage.sh
+	@echo "== check_ring_conf =="
+	@bash tests/test_ring_conf.sh
 	@echo "== check_lines =="
 	@bash tests/test_check_lines.sh
 	@echo "== check_build_deps =="

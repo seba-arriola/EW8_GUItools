@@ -123,25 +123,25 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     g_object_unref(actions);
 
     static const EwMenuItem ctrl_items[] = {
-        { "Stations per screen", "win.stas-per-screen", NULL, 0 },
-        { "Time window", "win.time-window", NULL, 0 },
-        { "Clean view", "win.clean-view", NULL, 0 },
-        { "Reload default stations", "win.reload-default", NULL, 0 },
+        { "Stations per screen", "win.stas-per-screen", NULL, 0, 0, 0 },
+        { "Time window", "win.time-window", NULL, 0, 0, 0 },
+        { "Clean view", "win.clean-view", NULL, 0, 0, 0 },
+        { "Reload default stations", "win.reload-default", NULL, 0, 0, 0 },
     };
     static const EwMenuItem colour_items[] = {
-        { "Waveforms", "win.colour", "i", 1 },
-        { "Background", "win.colour", "i", 2 },
-        { "Font", "win.colour", "i", 3 },
-        { "Separator", "win.colour", "i", 4 },
-        { "P picks", "win.colour", "i", 5 },
-        { "S picks", "win.colour", "i", 6 },
+        { "Waveforms", "win.colour", "i", 1, 0, 0 },
+        { "Background", "win.colour", "i", 2, 0, 0 },
+        { "Font", "win.colour", "i", 3, 0, 0 },
+        { "Separator", "win.colour", "i", 4, 0, 0 },
+        { "P picks", "win.colour", "i", 5, 0, 0 },
+        { "S picks", "win.colour", "i", 6, 0, 0 },
     };
     static const EwMenuItem filter_items[] = {
-        { "Filter Options", "win.filter-options", NULL, 0 },
+        { "Filter Options", "win.filter-options", NULL, 0, 0, 0 },
     };
     static const EwMenuItem view_items[] = {
-        { "Export view...", "win.export", NULL, 0 },
-        { "Dark mode", "win.dark-mode", NULL, 0 },
+        { "Export view...", "win.export", NULL, 0, 0, 0 },
+        { "Dark mode", "win.dark-mode", NULL, 0, 0, 0 },
     };
     static const EwMenuGroup menu_groups[] = {
         { "Control Panel", ctrl_items, 4 },

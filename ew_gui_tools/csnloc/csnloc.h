@@ -94,6 +94,8 @@ typedef struct {
     double RefineNodeKm;       /* resolucion de grilla fina        */
     double RefineDepthKm;      /* semiancho inicial de la caja en z (km);
                                   0 = auto (2*RefineNodeKm)          */
+    int    FixedDepthOn;       /* 1 = profundidad fija (memset => apagado) */
+    double FixedDepthKm;       /* valor de la profundidad fija (km)        */
     double DepthPriorKm;       /* profundidad a priori (km); 0 = sin prior */
     double DepthPriorSigmaKm;  /* sigma del prior gaussiano (km)          */
 
@@ -316,6 +318,11 @@ double TT_AzimuthDeg(double lat1, double lon1, double lat2, double lon2);
 
 /* grid.c */
 int  Grid_LoadFile(const char *path, int level, Grid *g);
+
+/* Fija el eje z a UN nodo en `depth_km` (profundidad fija): recalcula nz,
+ * n_nodes y descarta el precomputo previo estacion<->nodo. Debe llamarse antes
+ * de Grid_PrecomputeStations. Devuelve 0, -1 si los argumentos son invalidos. */
+int  Grid_ForceDepth(Grid *g, double depth_km);
 int  Grid_BuildAxes(Grid *g);
 int  Grid_PrecomputeStations(Grid *g, const StationList *st);
 int  Grid_ContainsLL(const Grid *g, double lat, double lon, double margin_deg);

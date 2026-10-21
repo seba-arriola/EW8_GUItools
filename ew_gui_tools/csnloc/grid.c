@@ -149,6 +149,37 @@ int Grid_BuildAxes(Grid *g)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Profundidad fija: deja el eje z con UN solo nodo. Se aplica despues de      */
+/* Grid_BuildAxes y ANTES de Grid_PrecomputeStations (el CSR depende de nz).  */
+/* ------------------------------------------------------------------------- */
+int Grid_ForceDepth(Grid *g, double depth_km)
+{
+    if (!g || !isfinite(depth_km) || depth_km < 0.0) return -1;
+
+    free(g->node_sta_off);
+    free(g->node_sta_idx);
+    free(g->sta_mask);
+    g->node_sta_off = NULL;
+    g->node_sta_idx = NULL;
+    g->sta_mask = NULL;
+    g->nnz = 0;
+
+    free(g->depth);
+    g->depth = (double *)malloc(sizeof(double));
+    if (!g->depth) { g->nz = 0; g->n_nodes = 0; return -1; }
+
+    g->depth[0] = depth_km;
+    g->nz = 1;
+    g->n_nodes = g->ny * g->nx;
+    g->n_depth_layers = 1;
+    g->depth_layers[0] = depth_km;
+    g->depth_min = depth_km;
+    g->depth_max = depth_km;
+    g->depth_step = 1.0;
+    return 0;
+}
+
+/* ------------------------------------------------------------------------- */
 /* Carga una grilla desde un archivo .grid. `level` es GRID_LEVEL_*.          */
 /* Devuelve 0, -1 (parseo/spec) o -2 (excede MaxNodes).                       */
 /* ------------------------------------------------------------------------- */

@@ -27,6 +27,8 @@
 #include "kom.h"
 #include "earthworm.h"
 #include "transport.h"
+
+#include "nlloc_depth.h"
 #include <ewgui/arc_layout.h>
 
 #ifndef INST_WILDCARD
@@ -55,7 +57,7 @@ extern int NLLoc(char *pid_main, char *fn_control_main,
 
 static char  MyModName[MAX_STR]   = "MOD_NLLOC_RING";
 static char  InRingName[MAX_STR]  = "HYPO_RING";
-static char  OutRingName[MAX_STR] = "HYPO_RING_REF2";
+static char  OutRingName[MAX_STR] = "HYPO_RING_REF";   /* REF2 = confirmaciones de la GUI */
 static char  ControlFile[MAX_STR] = "";
 static char  TtimeRoot[MAX_STR]   = "";
 static char  OutRoot[MAX_STR]     = "";
@@ -67,6 +69,9 @@ static int   LogFile      = 1;
 static int   Debug        = 0;
 static int   MinPhases    = 0;
 static double MaxRMS      = 0.0;
+/* Profundidad fija (NLLoc no la soporta nativa): ventana z de 2 nodos. */
+static double FixedDepthKm     = -1.0;   /* <0 = busqueda libre */
+static double FixDepthSpacingKm = 0.1;   /* km entre los 2 nodos z */
 static int   NllIntervalSec = 300;   /* 0 = sin rate-limit (procesa cada version) */
 static int   NllTTLSec      = 1800;  /* olvidar un evento sin versiones nuevas */
 static int   NllMaxPending  = 64;
@@ -140,6 +145,8 @@ static int read_config(const char *file)
         else if (k_its("GridFile"))     { str = k_str(); if (str) strncpy(GridFile, str, sizeof(GridFile)-1); }
         else if (k_its("MinPhases"))    MinPhases = k_int();
         else if (k_its("MaxRMS"))       MaxRMS = k_val();
+        else if (k_its("FixedDepthKm")) FixedDepthKm = k_val();
+        else if (k_its("FixDepthSpacingKm")) FixDepthSpacingKm = k_val();
         else if (k_its("NllIntervalSec")) NllIntervalSec = k_int();
         else if (k_its("NllTTLSec"))      NllTTLSec = k_int();
         else if (k_its("NllMaxPending"))  NllMaxPending = k_int();
@@ -446,11 +453,15 @@ static int build_control(const char *tmpl, const char *out,
     FILE *fi = fopen(tmpl, "r");
     FILE *fo = fopen(out, "w");
     char  line[2048];
-    int   replaced = 0, trans = 0, grid = 0;
-    double tlat = 0.0, tlon = 0.0;
+    int   replaced = 0, trans = 0, grid = 0, locsearch = 0;
+    double tlat = 0.0, tlon = 0.0, spacing = FixDepthSpacingKm;
     int   have_trans = 0;
 
     if (!fi || !fo) { if (fi) fclose(fi); if (fo) fclose(fo); return -1; }
+    if (FixedDepthKm >= 0.0 && !(spacing > 0.0)) {
+        logit("et", "nlloc_ring: FixDepthSpacingKm <= 0; uso 0.1 km\n");
+        spacing = 0.1;
+    }
     while (fgets(line, sizeof(line), fi)) {
         if (!replaced && strncmp(line, "LOCFILES", 8) == 0) {
             fprintf(fo, "LOCFILES %s NLLOC_OBS %s %s 0\n", obs, ttroot, outroot);
@@ -468,14 +479,14 @@ static int build_control(const char *tmpl, const char *out,
                 continue;
             }
         }
-        if (strncmp(line, "LOCGRID", 7) == 0) {
-            if (HaveLocGrid && g_use_global_grid && !grid) {
-                fprintf(fo, "LOCGRID %d %d %d %.4f %.4f %.4f %.4f %.4f %.4f PROB_DENSITY SAVE\n",
-                        LG_nx, LG_ny, LG_nz, LG_x0, LG_y0, LG_z0, LG_dx, LG_dy, LG_dz);
-                grid = 1;
-                continue;
-            }
-            if (LocGridKm > 0.0 && have_trans && !grid) {
+        if (strncmp(line, "LOCGRID", 7) == 0 && !grid) {
+            char buf[2048];
+
+            if (HaveLocGrid && g_use_global_grid) {
+                snprintf(buf, sizeof(buf),
+                         "LOCGRID %d %d %d %.4f %.4f %.4f %.4f %.4f %.4f PROB_DENSITY SAVE\n",
+                         LG_nx, LG_ny, LG_nz, LG_x0, LG_y0, LG_z0, LG_dx, LG_dy, LG_dz);
+            } else if (LocGridKm > 0.0 && have_trans) {
                 int    nx, ny, nz, n;
                 double x0, y0, z0, dx, dy, dz;
                 char   rest[128] = "";
@@ -500,13 +511,43 @@ static int build_control(const char *tmpl, const char *out,
                     y0 = ye - (ny2 - 1) * dy / 2.0;
                     if (x0 < xa) x0 = xa; else if (x0 > xb) x0 = xb;
                     if (y0 < ya) y0 = ya; else if (y0 > yb) y0 = yb;
-                    fprintf(fo, "LOCGRID %d %d %d %.4f %.4f %.4f %.4f %.4f %.4f%s\n",
-                            nx2, ny2, nz, x0, y0, z0, dx, dy, dz, rest);
+                    snprintf(buf, sizeof(buf),
+                             "LOCGRID %d %d %d %.4f %.4f %.4f %.4f %.4f %.4f%s\n",
+                             nx2, ny2, nz, x0, y0, z0, dx, dy, dz, rest);
                     if (Debug >= 1)
                         logit("t", "nlloc_ring: LOCGRID %.0f km centrado en %.3f/%.3f"
                                    " -> %dx%d desde %.1f/%.1f km\n",
                               LocGridKm, epi_lat, epi_lon, nx2, ny2, x0, y0);
-                    grid = 1;
+                } else {
+                    snprintf(buf, sizeof(buf), "%s", line);
+                }
+            } else {
+                snprintf(buf, sizeof(buf), "%s", line);
+            }
+
+            /* Profundidad fija: 2 nodos z centrados en el valor pedido. Aplica
+               tanto al LOCGRID global como al de una plantilla de banda. */
+            if (FixedDepthKm >= 0.0) {
+                char fixed[2048];
+
+                if (nlloc_locgrid_fixdepth(buf, fixed, sizeof(fixed),
+                                           FixedDepthKm, spacing) == 0)
+                    fputs(fixed, fo);
+                else
+                    fputs(buf, fo);
+            } else {
+                fputs(buf, fo);
+            }
+            grid = 1;
+            continue;
+        }
+        if (strncmp(line, "LOCSEARCH", 9) == 0 && !locsearch) {
+            locsearch = 1;
+            if (FixedDepthKm >= 0.0) {
+                char fixed[2048];
+
+                if (nlloc_locsearch_fixz(line, fixed, sizeof(fixed)) == 0) {
+                    fputs(fixed, fo);
                     continue;
                 }
             }
@@ -515,6 +556,11 @@ static int build_control(const char *tmpl, const char *out,
     }
     fclose(fi);
     fclose(fo);
+    if (replaced && FixedDepthKm >= 0.0 && !grid) {
+        logit("et", "nlloc_ring: la plantilla <%s> no tiene LOCGRID: "
+                    "no puedo fijar la profundidad\n", tmpl);
+        return -1;
+    }
     return replaced ? 0 : -1;
 }
 
@@ -970,6 +1016,10 @@ int main(int argc, char **argv)
         in[n] = '\0';
         if (locate_arc(in, n, out, &on, why, sizeof(why)) == 0 && on > 0) {
             on = arc_rewrite_id(out, on, in, n);
+            if (on <= 0) {
+                fprintf(stderr, "nlloc_ring: ARC no reescrito\n");
+                return 2;
+            }
             log_result("nlloc_ring", in, n, out, on, 0);
             fwrite(out, 1, (size_t)on, stdout);
             return 0;

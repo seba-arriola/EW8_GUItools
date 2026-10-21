@@ -1,5 +1,6 @@
 #include <limits.h>
 #include <math.h>
+#include <stdlib.h>
 
 #include "ewgui/dsp.h"
 
@@ -9,6 +10,12 @@
 
 /* Portado de csnhypodbp_dsp.c (a su vez de EW7 dataprocessing.c) y de
  * csntvp.c. Misma matemática; solo se unifica el tipo de muestra a int32_t. */
+
+#define EW_MAX_SECTIONS 4   /* orden maximo 8 = 4 biquads */
+
+typedef struct {
+    double b0, b1, b2, a1, a2;
+} EwBiquad;
 
 /* Satura al rango de int32_t. Los no finitos (NaN/Inf) van a 0 para no
  * envenenar el estado del IIR ni dibujar picos basura por cast indefinido. */
@@ -23,67 +30,121 @@ static int32_t clamp_i32(double v)
     return (int32_t)v;
 }
 
+/* Q de las secciones de un Butterworth de orden par: Q_k = 1/(2 cos(theta_k)),
+ * theta_k = pi(2k+1)/(2N). Para N=2 da 0.7071; para N=4, 0.5412 y 1.3066. */
+static int butter_sections(int order, double *Q)
+{
+    if (order < 2)
+        order = 2;
+    if (order & 1)
+        order++;
+    if (order > 8)
+        order = 8;
+
+    int ns = order / 2;
+    for (int k = 0; k < ns; k++) {
+        double th = M_PI * (2.0 * (double)k + 1.0) / (2.0 * (double)order);
+        Q[k] = 1.0 / (2.0 * cos(th));
+    }
+    return ns;
+}
+
+static void butter_design(EwFilterType type, double w0, double Q, EwBiquad *q)
+{
+    double cosW = cos(w0);
+    double sinW = sin(w0);
+    double alpha = sinW / (2.0 * Q);
+    double a0 = 1.0 + alpha;
+
+    if (type == EW_FILTER_HP) {
+        q->b0 = ((1.0 + cosW) / 2.0) / a0;
+        q->b1 = -(1.0 + cosW) / a0;
+        q->b2 = ((1.0 + cosW) / 2.0) / a0;
+    } else {
+        q->b0 = ((1.0 - cosW) / 2.0) / a0;
+        q->b1 = (1.0 - cosW) / a0;
+        q->b2 = ((1.0 - cosW) / 2.0) / a0;
+    }
+    q->a1 = (-2.0 * cosW) / a0;
+    q->a2 = (1.0 - alpha) / a0;
+}
+
+/* Una seccion causal sobre int32 (estado reiniciado en cada gap). */
+static void biquad_causal(int32_t *data, size_t n, const EwBiquad *q, int is_lp)
+{
+    double x1 = (double)data[0], x2 = (double)data[0];
+    double y1 = 0.0, y2 = 0.0;
+
+    if (is_lp) {
+        y1 = (double)data[0];
+        y2 = (double)data[0];
+    }
+
+    for (size_t i = 0; i < n; i++) {
+        if (data[i] == INT_MAX) {
+            x1 = x2 = 0.0;
+            y1 = y2 = 0.0;
+            continue;
+        }
+        double x0 = (double)data[i];
+        double y0 = q->b0*x0 + q->b1*x1 + q->b2*x2 - q->a1*y1 - q->a2*y2;
+        if (!isfinite(y0)) {
+            x1 = x2 = 0.0;
+            y1 = y2 = 0.0;
+            data[i] = 0;
+            continue;
+        }
+        x2 = x1; x1 = x0;
+        y2 = y1; y1 = y0;
+        data[i] = clamp_i32(y0);
+    }
+}
+
+/* Una seccion sobre doubles (para la pasada forward/backward). */
+static void biquad_double(double *x, size_t n, const EwBiquad *q)
+{
+    double x1 = 0.0, x2 = 0.0, y1 = 0.0, y2 = 0.0;
+
+    for (size_t i = 0; i < n; i++) {
+        double x0 = x[i];
+        double y0 = q->b0*x0 + q->b1*x1 + q->b2*x2 - q->a1*y1 - q->a2*y2;
+        if (!isfinite(y0))
+            y0 = 0.0;
+        x2 = x1; x1 = x0;
+        y2 = y1; y1 = y0;
+        x[i] = y0;
+    }
+}
+
+static void reverse_double(double *x, size_t n)
+{
+    for (size_t i = 0, j = n - 1; i < j; i++, j--) {
+        double t = x[i];
+        x[i] = x[j];
+        x[j] = t;
+    }
+}
+
 void ewgui_filter_iir(int32_t *data, size_t n, double fs,
                       EwFilterType type, double fc, int order)
 {
-    if (fs <= 0.0 || n == 0 || fc <= 0.0 || fc >= fs * 0.5)
+    if (!data || fs <= 0.0 || n == 0 || fc <= 0.0 || fc >= fs * 0.5)
         return;   /* sin frecuencia de Nyquist válida: no filtrar (evita inestabilidad) */
 
+    /* Menos de medio ciclo en toda la traza: el biquad no tiene resolución
+     * para esa fc (coeficientes al borde de la cancelación) y su efecto es
+     * indistinguible de no filtrar. */
+    if (fc * (double)n / fs < 0.5)
+        return;
+
+    double Q[EW_MAX_SECTIONS];
+    int ns = butter_sections(order, Q);
     double w0 = 2.0 * M_PI * fc / fs;
-    double cosW = cos(w0);
-    double sinW = sin(w0);
 
-    int n_biquads = (order >= 4) ? 2 : 1;
-
-    double Q[2] = {0.70710678, 0.0};
-    if (n_biquads == 2) {
-        Q[0] = 0.54119610;
-        Q[1] = 1.30656296;
-    }
-
-    for (int b = 0; b < n_biquads; b++) {
-        double alpha = sinW / (2.0 * Q[b]);
-        double a0 = 1.0 + alpha;
-        double b0_f, b1_f, b2_f, a1_f, a2_f;
-
-        if (type == EW_FILTER_HP) {
-            b0_f = ((1.0 + cosW) / 2.0) / a0;
-            b1_f = -(1.0 + cosW) / a0;
-            b2_f = ((1.0 + cosW) / 2.0) / a0;
-        } else {
-            b0_f = ((1.0 - cosW) / 2.0) / a0;
-            b1_f = (1.0 - cosW) / a0;
-            b2_f = ((1.0 - cosW) / 2.0) / a0;
-        }
-
-        a1_f = (-2.0 * cosW) / a0;
-        a2_f = (1.0 - alpha) / a0;
-
-        double x1 = (double)data[0], x2 = (double)data[0];
-        double y1 = 0.0, y2 = 0.0;
-        if (type != EW_FILTER_HP) {
-            y1 = (double)data[0];
-            y2 = (double)data[0];
-        }
-
-        for (size_t i = 0; i < n; i++) {
-            if (data[i] == INT_MAX) {
-                x1 = x2 = 0.0;
-                y1 = y2 = 0.0;
-                continue;
-            }
-            double x0 = (double)data[i];
-            double y0 = b0_f*x0 + b1_f*x1 + b2_f*x2 - a1_f*y1 - a2_f*y2;
-            if (!isfinite(y0)) {
-                x1 = x2 = 0.0;
-                y1 = y2 = 0.0;
-                data[i] = 0;
-                continue;
-            }
-            x2 = x1; x1 = x0;
-            y2 = y1; y1 = y0;
-            data[i] = clamp_i32(y0);
-        }
+    for (int b = 0; b < ns; b++) {
+        EwBiquad q;
+        butter_design(type, w0, Q[b], &q);
+        biquad_causal(data, n, &q, type != EW_FILTER_HP);
     }
 }
 
@@ -92,6 +153,73 @@ void ewgui_filter_bandpass(int32_t *data, size_t n, double fs,
 {
     ewgui_filter_iir(data, n, fs, EW_FILTER_HP, f1, order);
     ewgui_filter_iir(data, n, fs, EW_FILTER_LP, f2, order);
+}
+
+void ewgui_filter_iir_zp(int32_t *data, size_t n, double fs,
+                         EwFilterType type, double fc, int order)
+{
+    if (!data || fs <= 0.0 || n == 0 || fc <= 0.0 || fc >= fs * 0.5)
+        return;
+    if (fc * (double)n / fs < 0.5)
+        return;
+
+    double Q[EW_MAX_SECTIONS];
+    int ns = butter_sections(order, Q);
+    double w0 = 2.0 * M_PI * fc / fs;
+
+    size_t pad = (size_t)(3 * (order + 1));
+    if (pad < 9)
+        pad = 9;
+    if (n < 2 * pad + 2)
+        return;   /* tramo demasiado corto: se queda con el demean */
+
+    size_t i = 0;
+    while (i < n) {
+        if (data[i] == INT_MAX) {
+            i++;
+            continue;
+        }
+        size_t s = i;
+        while (i < n && data[i] != INT_MAX)
+            i++;
+        size_t e = i;
+        size_t m = e - s;
+        if (m < 2 * pad + 2)
+            continue;
+
+        size_t total = m + 2 * pad;
+        double *buf = malloc(total * sizeof(double));
+        if (!buf)
+            continue;
+
+        for (size_t j = 0; j < m; j++)
+            buf[pad + j] = (double)data[s + j];
+        /* Padding por reflexión impar alrededor de los extremos. */
+        for (size_t k = 1; k <= pad; k++) {
+            buf[pad - k]         = 2.0 * (double)data[s]     - (double)data[s + k];
+            buf[pad + m - 1 + k] = 2.0 * (double)data[e - 1] - (double)data[e - 1 - k];
+        }
+
+        for (int b = 0; b < ns; b++) {
+            EwBiquad q;
+            butter_design(type, w0, Q[b], &q);
+            biquad_double(buf, total, &q);
+            reverse_double(buf, total);
+            biquad_double(buf, total, &q);
+            reverse_double(buf, total);
+        }
+
+        for (size_t j = 0; j < m; j++)
+            data[s + j] = clamp_i32(buf[pad + j]);
+        free(buf);
+    }
+}
+
+void ewgui_filter_bandpass_zp(int32_t *data, size_t n, double fs,
+                              double f1, double f2, int order)
+{
+    ewgui_filter_iir_zp(data, n, fs, EW_FILTER_HP, f1, order);
+    ewgui_filter_iir_zp(data, n, fs, EW_FILTER_LP, f2, order);
 }
 
 void ewgui_interpolate_short_gaps(int32_t *data, size_t n, double fs)

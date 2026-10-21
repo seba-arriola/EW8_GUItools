@@ -115,6 +115,7 @@ run_working_v8/params/db.env
 /ew_gui_tools/hyp2000_ring/hyp2000_ring
 /ew_gui_tools/hyp2000_ring/test/test_*
 !/ew_gui_tools/hyp2000_ring/test/test_*.c
+!/ew_gui_tools/hyp2000_ring/test/test_*.sh
 /ew_gui_tools/nlloc_ring/nlloc_ring
 /ew_gui_tools/nlloc_ring/nlloc/Vel2Grid
 /ew_gui_tools/nlloc_ring/nlloc/Grid2Time

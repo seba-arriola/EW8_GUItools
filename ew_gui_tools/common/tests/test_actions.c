@@ -30,9 +30,9 @@ int main(void)
 
     /* Menú: un submenú con un ítem + separador + ítem */
     EwMenuItem items[] = {
-        { "Go",    "win.go",    "i", 7 },
-        { NULL,    NULL,        NULL, 0 },   /* separador */
-        { "Plain", "win.plain", NULL, 0 },
+        { "Go",    "win.go",    "i", 7, 0, 0 },
+        { NULL,    NULL,        NULL, 0, 0, 0 },   /* separador */
+        { "Plain", "win.plain", NULL, 0, 0, 0 },
     };
     EwMenuGroup groups[] = { { "Control", items, 3 } };
     GMenuModel *m = ewgui_menu_build(groups, 1);
