@@ -6,8 +6,11 @@ Objetivo de esta etapa: **plomería**. Conectar la entrada (EarthWorm: tank/stor
 salida (P y S con sus parámetros) de dos modelos deep learning, con configuración
 estándar, para que la calibración se haga después con datos y sin tocar el pipeline.
 
-Nada está declarado en `startstop`: `pickml` no entra en el stack todavía y el modo anillo
-responde `exit 3`. Todo lo de abajo es offline y reproducible.
+Nada está declarado en `startstop`: `pickml` no entra en el stack todavía. El modo anillo
+(`--ring`) está implementado y escribe archivos (JSONL + SCNL), pero **no publica** en
+`PICK_RING` hasta pasar la validación de latencia y calidad. El detalle operativo (cómo se
+integran los modelos, recursos, dependencias, CPU/GPU, migración y resultados medidos) está en
+**`docs/DLdetalles.md`**.
 
 ---
 

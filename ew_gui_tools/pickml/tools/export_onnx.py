@@ -52,12 +52,13 @@ def sha256(path):
     return h.hexdigest()
 
 
-def model_forward(model, x, arch):
+def model_forward(model, x, arch, order=(1, 2, 0)):
     """Normaliza la salida del modelo a [B, T, 3] = (P, S, detección).
 
     EQTransformer (seisbench 0.10): entrada [B,3,T] channel-major y salida
-    TUPLA (Detection, P, S). PhaseNet: entrada [B,3,T] y salida [B,3,T] con
-    clases (N, P, S). El C espera (P, S, detección) en el último eje.
+    TUPLA (Detection, P, S). PhaseNet: entrada [B,3,T] y salida [B,3,T], pero el
+    ORDEN DE LAS CLASES no es estable entre pesos (ver `detect_order`). El C
+    espera (P, S, detección) en el último eje.
     """
     import torch
 
@@ -66,7 +67,7 @@ def model_forward(model, x, arch):
     if arch == "phasenet":
         if isinstance(y, (tuple, list)) or y.ndim != 3 or y.shape[1] != 3:
             raise RuntimeError(f"PhaseNet: salida inesperada {type(y).__name__}")
-        p, s = y[:, 1], y[:, 2]
+        p, s = y[:, order[0]], y[:, order[1]]
         det = torch.maximum(p, s)   # PhaseNet no tiene curva de detección
         return torch.stack([p, s, det], dim=-1)
 
@@ -81,6 +82,33 @@ def model_forward(model, x, arch):
     if y.shape[1] == 3:
         return y.permute(0, 2, 1)
     raise RuntimeError(f"salida de forma inesperada {tuple(y.shape)}")
+
+
+def detect_order(model, arch):
+    """Ubica P y S en la salida cruda de PhaseNet: (p_idx, s_idx, n_idx).
+
+    SeisBench NO garantiza el orden de las clases y los pesos no lo declaran.
+    Medido en 0.10.2: `original` sale (N,P,S) y `jma_wc` (PhaseNetWC) sale
+    (P,S,N). Sobre ruido la clase N domina siempre, asi que se localiza por
+    media maxima y P/S quedan en orden de indice (el orden relativo P->S es el
+    mismo en ambas convenciones).
+    """
+    import torch
+
+    if arch != "phasenet":
+        return (0, 1, 2), []
+
+    g = torch.Generator().manual_seed(0)
+    x = torch.randn(1, 3, WINDOW, generator=g)
+    with torch.no_grad():
+        y = model(model.annotate_batch_pre(x, {}))
+    if isinstance(y, (tuple, list)) or y.ndim != 3 or y.shape[1] != 3:
+        raise RuntimeError(f"PhaseNet: salida inesperada "
+                           f"{tuple(getattr(y, 'shape', ()))}")
+    means = [float(y[:, k].mean()) for k in range(3)]
+    n = max(range(3), key=lambda k: means[k])
+    rest = [k for k in range(3) if k != n]
+    return (rest[0], rest[1], n), means
 
 
 def detect_layout(model, arch):
@@ -99,7 +127,7 @@ def detect_layout(model, arch):
     raise RuntimeError(f"no se pudo determinar el layout de entrada: {last}")
 
 
-def export(model, out, opset, layout, arch):
+def export(model, out, opset, layout, arch, order=(1, 2, 0)):
     import torch
     import torch.nn as nn
 
@@ -112,11 +140,12 @@ def export(model, out, opset, layout, arch):
         S etiquetado como P (P=0.339 sobre S=0.207).
         """
 
-        def __init__(self, m, time_major, arch):
+        def __init__(self, m, time_major, arch, order):
             super().__init__()
             self.m = m
             self.time_major = time_major
             self.arch = arch
+            self.order = order
 
         def forward(self, x):
             if self.time_major:
@@ -124,9 +153,9 @@ def export(model, out, opset, layout, arch):
             pre = self.m.annotate_batch_pre(x, {})
             if isinstance(pre, tuple):      # (batch, piggyback)
                 pre = pre[0]
-            return model_forward(self.m, pre, self.arch)
+            return model_forward(self.m, pre, self.arch, self.order)
 
-    w = Wrap(model, layout == "time_major", arch).eval()
+    w = Wrap(model, layout == "time_major", arch, order).eval()
     dummy = torch.zeros(1, 3, WINDOW)
     with torch.no_grad():
         y = w(dummy)
@@ -259,6 +288,8 @@ def main():
                     help="ruta del .onnx (default: <arch>.onnx)")
     ap.add_argument("--model", default="original", help="variante de pesos de SeisBench")
     ap.add_argument("--opset", type=int, default=17)
+    ap.add_argument("--channel-order", choices=("auto", "nps", "psn"), default="auto",
+                    help="orden de clases de PhaseNet; auto lo detecta del modelo")
     ap.add_argument("--window", type=int, default=None,
                     help="muestras por ventana (default: la nativa del modelo)")
     ap.add_argument("--fixture-tank", help="tank del que extraer la ventana dorada")
@@ -287,7 +318,20 @@ def main():
     layout, shape = detect_layout(model, args.arch)
     print(f"layout de entrada detectado: {layout} (salida modelo {shape})")
 
-    wrapper = export(model, out, args.opset, layout, args.arch)
+    if args.arch == "phasenet":
+        if args.channel_order == "nps":
+            order = (1, 2, 0)
+        elif args.channel_order == "psn":
+            order = (0, 1, 2)
+        else:
+            order, order_means = detect_order(model, args.arch)
+            print("orden de clases detectado: P=%d S=%d N=%d (medias %s)"
+                  % (order[0], order[1], order[2],
+                     " ".join(f"{m:.3f}" for m in order_means)))
+    else:
+        order = None
+
+    wrapper = export(model, out, args.opset, layout, args.arch, order)
     diff = verify(out, wrapper)
 
     meta = {
@@ -298,6 +342,7 @@ def main():
         "seisbench": seisbench.__version__,
         "torch": torch.__version__,
         "weights": args.model,
+        "channel_order": list(order) if order else None,
         "input": {"name": "waveform", "shape": ["batch", 3, WINDOW],
                   "layout": "ZNE", "dtype": "float32"},
         "output": {"name": "psd", "shape": ["batch", WINDOW, 3],

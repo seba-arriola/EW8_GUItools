@@ -18,6 +18,7 @@
  ******************************************************************************/
 
 #include "pickml.h"
+#include "pickml_sds.h"
 
 #include <libpq-fe.h>
 #include <libmseed2.h>
@@ -145,58 +146,7 @@ static void ymd(double t, char *out, size_t n)
     strftime(out, n, "%Y%m%d", &tm);
 }
 
-static void sds_path(char *out, size_t n, const char *root, const char *net,
-                     const char *sta, const char *loc, const char *chan, double t)
-{
-    time_t tt = (time_t)floor(t);
-    struct tm tm;
-    int y, d;
-
-    gmtime_r(&tt, &tm);
-    y = tm.tm_year + 1900;
-    d = tm.tm_yday + 1;
-    if (!loc || !strcmp(loc, "--") || loc[0] == '\0') loc = "";
-    snprintf(out, n, "%s/%04d/%s/%s/%s.D/%s.%s.%s.%s.D.%04d.%03d",
-             root, y, net, sta, chan, net, sta, loc, chan, y, d);
-}
-
-/* ------------------------------------------------------------- remuestreo */
-
-typedef struct { double b0, b1, b2, a1, a2, z1, z2; } Biquad;
-
-/* Butterworth de 2.º orden (Q=1/sqrt(2)) para anti-alias antes de decimar. */
-static void biquad_lp(Biquad *q, double fc, double fs)
-{
-    double w0 = 2.0 * M_PI * fc / fs;
-    double cw = cos(w0), sw = sin(w0);
-    double alpha = sw / (2.0 * 0.7071067811865476);
-    double a0 = 1.0 + alpha;
-
-    q->b0 = (1.0 - cw) * 0.5 / a0;
-    q->b1 = (1.0 - cw) / a0;
-    q->b2 = q->b0;
-    q->a1 = -2.0 * cw / a0;
-    q->a2 = (1.0 - alpha) / a0;
-    q->z1 = q->z2 = 0.0;
-}
-
-static double biquad_run(Biquad *q, double x)
-{
-    double y = q->b0 * x + q->z1;
-    q->z1 = q->b1 * x - q->a1 * y + q->z2;
-    q->z2 = q->b2 * x - q->a2 * y;
-    return y;
-}
-
-static double sample_at(const void *src, char type, long i)
-{
-    switch (type) {
-        case 'i': return (double)((const int32_t *)src)[i];
-        case 'f': return (double)((const float *)src)[i];
-        case 'd': return ((const double *)src)[i];
-        default:  return 0.0;
-    }
-}
+/* El lector SDS y el remuestreo viven en pickml_sds.c. */
 
 /* ------------------------------------------------------------------- datos */
 
@@ -248,10 +198,14 @@ static int store_channel(const FetchCfg *c, const char *net, const char *sta,
     for (day = floor(t0 / 86400.0) * 86400.0; day < t1; day += 86400.0) {
         char  ymdstr[16], path[1024];
         FILE *f;
+        /* El store nombra el directorio con "--" para la localizacion nula.
+         * La picada llega como NET.STA..CHAN (loc vacio): sin esta traduccion
+         * el fopen falla y el evento se va al SDS sin avisar. */
+        const char *locp = (loc && loc[0]) ? loc : "--";
 
         ymd(day, ymdstr, sizeof(ymdstr));
         snprintf(path, sizeof(path), "%s/%s.%s.%s.%s/%s.tank",
-                 c->StoreRoot, net, sta, loc, chan, ymdstr);
+                 c->StoreRoot, net, sta, locp, chan, ymdstr);
         f = fopen(path, "rb");
         if (!f) continue;
 
@@ -295,111 +249,18 @@ static int store_channel(const FetchCfg *c, const char *net, const char *sta,
     return (*n > 0) ? PM_OK : PM_NODATA;
 }
 
-static int sds_channel(const FetchCfg *c, const char *net, const char *sta,
-                       const char *loc, const char *chan, double t0, double t1,
-                       int32_t **out, long *n, double *start)
-{
-    double day;
-    long   cap = 0;
-
-    *out = NULL; *n = 0; *start = 0.0;
-    if (!c->SdsRoot[0]) return PM_NODATA;
-
-    for (day = floor(t0 / 86400.0) * 86400.0; day < t1; day += 86400.0) {
-        char         path[1024];
-        MSFileParam *msfp = NULL;
-        MSRecord    *msr  = NULL;
-        int          rc;
-        long         dec = 1;
-        Biquad       lp = {0, 0, 0, 0, 0, 0, 0};
-        int          lp_on = 0;
-
-        sds_path(path, sizeof(path), c->SdsRoot, net, sta, loc, chan, day);
-        if (access(path, R_OK) != 0) {
-            if (getenv("PICKML_FETCH_DEBUG"))
-                fprintf(stderr, "pickml_fetch: sds SIN ACCESO %s\n", path);
-            continue;
-        }
-        if (getenv("PICKML_FETCH_DEBUG"))
-            fprintf(stderr, "pickml_fetch: sds %s\n", path);
-
-        while ((rc = ms_readmsr_r(&msfp, &msr, path, 0, NULL, NULL, 1, 1, 0)) == MS_NOERROR) {
-            double a, b;
-            long   i0, i1;
-
-            /* starttime es hptime_t (µs desde epoch), NO double: se usa el
-             * accesor de libmseed, igual que csnhypodbp_sds.c. */
-            a = MS_HPTIME2EPOCH(msr_starttime(msr));
-
-            if (getenv("PICKML_FETCH_DEBUG"))
-                fprintf(stderr, "  rec a=%.3f rate=%.2f n=%lld sc=%lld type=%c data=%p\n",
-                        a, msr->samprate, (long long)msr->numsamples,
-                        (long long)msr->samplecnt, msr->sampletype,
-                        msr->datasamples);
-
-            if (!msr->datasamples || msr->numsamples <= 0 || msr->samplecnt <= 0) continue;
-            if (!(msr->samprate > 0.0)) continue;
-
-            /* El picker trabaja a `Rate`. Si la estación corre al doble (o al
-             * cuádruple) se decima con un anti-alias; si no, se omite. */
-            if (fabs(msr->samprate - c->Rate) <= 0.01)                 dec = 1;
-            else if (fabs(msr->samprate - 2.0 * c->Rate) <= 0.01)      dec = 2;
-            else if (fabs(msr->samprate - 4.0 * c->Rate) <= 0.01)      dec = 4;
-            else continue;
-
-            if (dec > 1 && !lp_on) {
-                biquad_lp(&lp, 0.35 * c->Rate, msr->samprate);
-                lp_on = 1;
-            }
-
-            b = a + (double)msr->numsamples / msr->samprate;
-            if (b <= t0 || a >= t1) continue;
-
-            i0 = (t0 > a) ? (long)ceil((t0 - a) * msr->samprate) : 0;
-            i1 = (t1 < b) ? (long)floor((t1 - a) * msr->samprate) : (long)msr->numsamples;
-            if (i0 < 0) i0 = 0;
-            if (i1 > msr->numsamples) i1 = (long)msr->numsamples;
-            if (i1 <= i0) continue;
-
-            {
-                long     k0 = i0 + ((dec - (i0 % dec)) % dec);
-                long     nout, j = 0, k;
-                int32_t *tmp;
-
-                if (k0 >= i1) continue;
-                nout = (i1 - k0 + dec - 1) / dec;
-                tmp = (int32_t *)malloc((size_t)nout * sizeof(int32_t));
-                if (!tmp) {
-                    ms_readmsr_r(&msfp, &msr, NULL, 0, NULL, NULL, 0, 0, 0);
-                    return PM_ERR;
-                }
-                for (k = k0; k < i1; k++) {
-                    double v = sample_at(msr->datasamples, msr->sampletype, k);
-                    if (dec > 1) v = biquad_run(&lp, v);
-                    if ((k - k0) % dec == 0) tmp[j++] = (int32_t)llround(v);
-                }
-                if (*n == 0) *start = a + (double)k0 / msr->samprate;
-                if (append_samples(out, n, &cap, tmp, j) != PM_OK) {
-                    free(tmp);
-                    ms_readmsr_r(&msfp, &msr, NULL, 0, NULL, NULL, 0, 0, 0);
-                    return PM_ERR;
-                }
-                free(tmp);
-            }
-        }
-        ms_readmsr_r(&msfp, &msr, NULL, 0, NULL, NULL, 0, 0, 0);
-        if (getenv("PICKML_FETCH_DEBUG"))
-            fprintf(stderr, "  rc_final=%d (MS_ENDOFFILE=%d)\n", rc, MS_ENDOFFILE);
-    }
-    return (*n > 0) ? PM_OK : PM_NODATA;
-}
+/* sds_channel se movio a pickml_sds.c (pmsds_channel), compartido con
+ * `pickml --sds` para que el tank del fetch y el modo offline lean igual. */
 
 static int channel_data(const FetchCfg *c, const char *net, const char *sta,
                         const char *loc, const char *chan, double t0, double t1,
                         int32_t **out, long *n, double *start)
 {
     if (store_channel(c, net, sta, loc, chan, t0, t1, out, n, start) == PM_OK) return PM_OK;
-    return sds_channel(c, net, sta, loc, chan, t0, t1, out, n, start);
+    if (pmsds_channel(c->SdsRoot, net, sta, loc, chan, t0, t1, c->Rate,
+                      out, n, start, NULL) == PMSDS_OK)
+        return PM_OK;
+    return PM_NODATA;
 }
 
 static int tank_write(FILE *f, const char *sta, const char *net, const char *loc,

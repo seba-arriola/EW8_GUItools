@@ -27,6 +27,8 @@ run_working_v8/nlloc_ring/
 run_working_v8/csnhypodbp/
 run_working_v8/csnwphase/
 run_working_v8/pickml_live/
+# Salidas y corpus de calibración de pickml (tanks + curvas volcadas, cientos de MB)
+run_working_v8/pickml/
 run_working_v8/params/db.env
 
 # ===========================================================================
@@ -121,6 +123,7 @@ run_working_v8/params/db.env
 /ew_gui_tools/pickml/test/test_*
 /ew_gui_tools/pickml/test/gen_tank
 /ew_gui_tools/pickml/test/tmp/
+/ew_gui_tools/pickml/test/tmp_sds/
 !/ew_gui_tools/pickml/test/test_*.c
 !/ew_gui_tools/pickml/test/test_*.sh
 /ew_gui_tools/hyp2000_ring/hyp2000_ring

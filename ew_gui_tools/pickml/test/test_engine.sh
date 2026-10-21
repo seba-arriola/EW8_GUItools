@@ -69,6 +69,15 @@ EOF
 cmp -s "$TMP/eng_a.jsonl" "$TMP/eng_b.jsonl" || {
     echo "FALLO: la inferencia ONNX no es determinista"; exit 1; }
 
+# 2b. el sidecar .idx describe cada ventana volcada (sin el, el volcado no se
+# puede atribuir a ninguna estacion/tiempo y el barrido offline es imposible).
+NWIN=$(( $(wc -c < "$TMP/curve.p.f32") / (4 * 6000) ))
+[ "$NWIN" -gt 0 ] || { echo "FALLO: el volcado no tiene ventanas"; exit 1; }
+[ "$(grep -vc '^#' "$TMP/curve.idx")" -eq "$NWIN" ] || {
+    echo "FALLO: .idx no tiene una linea por ventana (esperadas $NWIN)"; exit 1; }
+awk '!/^#/ && NF != 7 { exit 1 }' "$TMP/curve.idx" || {
+    echo "FALLO: .idx con lineas de campos incompletos"; exit 1; }
+
 # 3. paridad de curvas contra PyTorch
 python3 - "$TMP/curve.p.f32" "$FIX/win1.ref.p.f32" \
           "$TMP/curve.s.f32" "$FIX/win1.ref.s.f32" \

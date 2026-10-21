@@ -13,6 +13,7 @@
  ******************************************************************************/
 
 #include "pickml.h"
+#include "pickml_sds.h"
 #include <errno.h>
 
 #define PM_MAX_SAMP 200000
@@ -41,6 +42,8 @@ struct PmSrc {
     int           shave[PM_MAX_COMP];
     int           seof[PM_MAX_COMP];
     int           sopen;
+
+    void         *sds;           /* backend SDS (ver pickml_sds.h) */
 };
 
 static void copy_fld(char *dst, size_t n, const char *src, size_t maxsrc)
@@ -256,6 +259,9 @@ int pm_src_next(PmSrc *s, PmTrace *tr)
     if (!s || !tr) return PM_ERR;
     memset(tr, 0, sizeof(*tr));
 
+    if (s->kind == PM_SRC_SDS)
+        return pmsds_next(s->sds, tr);
+
     if (s->kind == PM_SRC_TANK) {
         TRACE2_HEADER hd;
         int           rc;
@@ -334,6 +340,38 @@ int pm_src_next(PmSrc *s, PmTrace *tr)
     }
 }
 
+/* ============================= SDS ======================================== */
+
+int pm_src_open_sds(PmSrc **out, const char *root, const PmStation *sta,
+                    int nsta, double t0, double t1, double rate)
+{
+    PmSrc *s;
+
+    if (!out) return PM_ERR;
+    *out = NULL;
+
+    s = (PmSrc *)calloc(1, sizeof(*s));
+    if (!s) return PM_ERR;
+    s->kind = PM_SRC_SDS;
+
+    s->sds = pmsds_open(root, sta, nsta, t0, t1, rate);
+    if (!s->sds) {
+        snprintf(s->err, sizeof(s->err), "no se pudo abrir el SDS %s",
+                 root ? root : "");
+        free(s);
+        return PM_ERR;
+    }
+    *out = s;
+    return PM_OK;
+}
+
+void pm_src_counts(const PmSrc *s, PmSrcCounts *c)
+{
+    if (!c) return;
+    memset(c, 0, sizeof(*c));
+    if (s && s->kind == PM_SRC_SDS) pmsds_counts(s->sds, c);
+}
+
 const char *pm_src_error(const PmSrc *s)
 {
     return (s && s->err[0]) ? s->err : "sin detalle";
@@ -345,6 +383,7 @@ void pm_src_close(PmSrc *s)
     if (!s) return;
     if (s->f) fclose(s->f);
     store_close_day(s);
+    pmsds_close(s->sds);
     free(s->x);
     for (c = 0; c < PM_MAX_COMP; c++) free(s->sx[c]);
     free(s);

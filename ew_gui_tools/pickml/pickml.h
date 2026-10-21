@@ -51,7 +51,7 @@
 enum { PM_COMP_Z = 0, PM_COMP_N = 1, PM_COMP_E = 2 };
 
 enum { PM_ENGINE_STUB = 0, PM_ENGINE_ONNX = 1 };
-enum { PM_SRC_TANK = 0, PM_SRC_STORE = 1 };
+enum { PM_SRC_TANK = 0, PM_SRC_STORE = 1, PM_SRC_SDS = 2 };
 
 /* ---- Estación de pickml.sta ------------------------------------------------
  * Formato (idéntico a pickS.sta):  PickFlag Pin Sta Net Loc ChanE ChanN ChanZ
@@ -210,6 +210,14 @@ int  pm_src_open_store(PmSrc **out, const char *root, const PmStation *sta,
 int  pm_src_next(PmSrc *s, PmTrace *tr);   /* 1 hay, 0 fin, <0 error */
 const char *pm_src_error(const PmSrc *s);
 void pm_src_close(PmSrc *s);
+
+/* Contadores de descartes de la fuente (hoy sólo el backend SDS los llena). */
+typedef struct { long no_day, nodata, rate; } PmSrcCounts;
+
+/* Modo offline sobre un SDS de SeisComP: lee miniSEED y decima a `rate`. */
+int  pm_src_open_sds(PmSrc **out, const char *root, const PmStation *sta,
+                     int nsta, double t0, double t1, double rate);
+void pm_src_counts(const PmSrc *s, PmSrcCounts *c);
 
 /* ============================ anillo (live) ============================== */
 typedef struct PmRing PmRing;

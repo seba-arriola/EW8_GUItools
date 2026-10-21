@@ -90,6 +90,7 @@ con un test end-to-end; no se asume.
 ```sh
 pickml <pickml.d> --tank  <file> [--jsonl] [--stats] [--dump-curves <prefijo>]
 pickml <pickml.d> --store <root> --t0 <t> --t1 <t> [--jsonl] [--stats]
+pickml <pickml.d> --sds   <root> --t0 <t> --t1 <t> [--jsonl] [--stats]
 pickml <pickml.d> --print-config
 pickml <pickml.d> --check-model
 ```
@@ -104,8 +105,9 @@ comparar contra PyTorch; no hace falta en operación.
   ausente (ORT/modelo) o modo no implementado · `4` datos/fuente.
 - La salida offline está **ordenada por (t, sta, fase)**, así que es
   byte-idéntica entre corridas (lo exige `make check-offline`).
-- El modo anillo (fase 4) todavía **no** está activo: `--tank`/`--store` son
-  los modos disponibles.
+- El **modo anillo** (`--ring`) escribe archivos (JSONL + `.picks.txt`) y
+  `--stats`; no publica en `PICK_RING` hasta pasar la validación de latencia
+  y calidad (ver `docs/DLdetalles.md` §8 y §11).
 
 ### El store no se modifica
 
@@ -289,6 +291,23 @@ PhaseNet usa ventana nativa de **3001** muestras (30.01 s); el contrato de
 salida se mantiene en `(P, S, det)` con `det = max(P, S)`, porque PhaseNet no
 tiene curva de detección.
 
+**El orden de clases de PhaseNet no es estable entre pesos** y `--check-model`
+no lo valida (sólo mira formas). Medido en SeisBench 0.10.2: `original` sale
+`(N,P,S)` y `jma_wc` (PhaseNetWC) sale `(P,S,N)`. El exportador lo detecta solo
+(`--channel-order auto`, localiza N por su media sobre ruido) y lo deja en el
+`.onnx.json`; si un peso nuevo saliera mal, forzar `--channel-order nps|psn`.
+Un grafo con el orden equivocado no falla al abrir: entrega P y S
+intercambiadas y un S saturado a 1.0.
+
+Para el modelo actual (PhaseNetWC, pesos `jma_wc`):
+
+```sh
+python3 tools/export_onnx.py --arch phasenet --model jma_wc \
+        --out /mnt/d/resources/pickml/phasenetwc.onnx
+python3 tools/slim_onnx.py /mnt/d/resources/pickml/phasenetwc.onnx \
+        /mnt/d/resources/pickml/phasenetwc.slim.onnx
+```
+
 ## Evaluación con datos reales (2026-10-20, sismo de CX.PB15)
 
 **El veredicto anterior era un artefacto del exportador.** El export llamaba a
@@ -320,7 +339,7 @@ picks manuales: `startstop_unix.d` no declara `pickml`.
 | target | qué cubre | necesita |
 |---|---|---|
 | `make check` | buffer 3C (cobertura/gaps/solape/tasa/deslizamiento), ventanas, post-proceso, formato de pick, config, `.sta` | nada |
-| `make check-offline` | **end-to-end** tank y store con motor stub: 1 P y 1 S en los tiempos esperados, determinismo, tank≡store, store vacío | nada |
+| `make check-offline` | **end-to-end** tank, store y SDS sintético con motor stub: 1 P y 1 S en los tiempos esperados, determinismo, tank≡store≡sds, día ausente y tasa no soportada | nada |
 | `make check-engine` | **paridad numérica** de las curvas P/S contra PyTorch (≤1e-4), determinismo de ORT y, si la referencia tiene un pico P claro, que el pick caiga en él | ORT + `.onnx` + fixture |
 
 ## Estado
@@ -348,9 +367,10 @@ Implementado y verificado:
   valida contra la dimensión declarada del grafo.
 - **Salidas a archivo**: JSONL (`--out`), `TYPE_PICK_SCNL` en texto
   (`--picks-out`) y cabecera JSON de la corrida (`--meta`).
-- Procesamiento offline desde **tank** y desde **store**, con troceo de
-  registros mayores que el buffer (un tank de 60 s con ventana de 30 s no
-  pierde el prefijo).
+- Procesamiento offline desde **tank**, desde **store** y desde un **SDS** de
+  SeisComP (`--sds <root>` + `--t0/--t1`, decimando 1x/2x/4x a `Rate`), con
+  troceo de registros mayores que el buffer (un tank de 60 s con ventana de
+  30 s no pierde el prefijo).
 
 Pendiente, en orden:
 

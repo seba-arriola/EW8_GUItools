@@ -66,6 +66,7 @@ static Stats      stats;
  * de paridad numérica de check-engine. */
 static const char *g_dump_prefix;
 static FILE       *g_dump[3];
+static FILE       *g_dump_idx;   /* sidecar <prefijo>.idx, una línea por ventana */
 static const char *g_dump_suffix[3] = { "p", "s", "det" };
 
 /* ---- modo live (--ring): escritura en streaming, sin acumular ---- */
@@ -293,8 +294,15 @@ static void emit_pick(int si, char phase, double t, float prob, double win_t0)
     picks_push(&p);
 }
 
-/* Procesa todas las ventanas completas de una estación. */
-static void dump_curves(const float *p, const float *s, const float *d)
+/* Volcado crudo de las curvas del modelo (--dump-curves).
+ *
+ * Los tres streams de float32 no llevan ninguna marca temporal, asi que por si
+ * solos no se pueden atribuir a una ventana. El sidecar `<prefijo>.idx` guarda
+ * una linea por ventana, en el mismo orden de append, para que el ajuste del
+ * post-proceso se haga offline (`tools/sweep_post.py`) sin volver a correr el
+ * modelo. */
+static void dump_curves(const float *p, const float *s, const float *d,
+                        int si, double t0)
 {
     int c;
 
@@ -310,10 +318,21 @@ static void dump_curves(const float *p, const float *s, const float *d)
                 return;
             }
         }
+        snprintf(path, sizeof(path), "%s.idx", g_dump_prefix);
+        g_dump_idx = fopen(path, "w");
+        if (!g_dump_idx) {
+            fprintf(stderr, "pickml: no se pudo escribir %s\n", path);
+            g_dump_prefix = NULL;
+            return;
+        }
+        fprintf(g_dump_idx, "# t0_epoch rate win_samples sta net loc chan\n");
     }
     fwrite(p, sizeof(float), (size_t)cfg.WindowSamples, g_dump[0]);
     fwrite(s, sizeof(float), (size_t)cfg.WindowSamples, g_dump[1]);
     fwrite(d, sizeof(float), (size_t)cfg.WindowSamples, g_dump[2]);
+    fprintf(g_dump_idx, "%.6f %.2f %ld %s %s %s %s\n", t0, cfg.Rate,
+            cfg.WindowSamples, sta[si].sta, sta[si].net, sta[si].loc,
+            sta[si].chan[0]);
 }
 
 static void advance(int si)
@@ -391,7 +410,7 @@ static void advance(int si)
                 continue;
             }
         }
-        if (g_dump_prefix) dump_curves(cp, cs, cd);
+        if (g_dump_prefix) dump_curves(cp, cs, cd, si, t0);
 
         np = pm_post_peaks(cp, cfg.WindowSamples, t0, cfg.Rate, cfg.PThreshold,
                            cfg.MinPosSec, maxpos, 'P', pkp, PM_MAX_EMIT);
@@ -667,6 +686,7 @@ static void usage(void)
     fprintf(stderr,
         "Uso: pickml <pickml.d> --tank <file> [--jsonl] [--stats]\n"
         "     pickml <pickml.d> --store <root> --t0 <t> --t1 <t> [--jsonl] [--stats]\n"
+        "     pickml <pickml.d> --sds <root> --t0 <t> --t1 <t> [--jsonl] [--stats]\n"
         "     pickml <pickml.d> --ring                 (live: escribe archivos)\n"
         "     pickml <pickml.d> --print-config\n"
         "     pickml <pickml.d> --check-model\n"
@@ -680,7 +700,7 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-    const char *d = NULL, *tank = NULL, *store = NULL;
+    const char *d = NULL, *tank = NULL, *store = NULL, *sds = NULL;
     const char *t0s = NULL, *t1s = NULL, *dump_prefix = NULL;
     const char *out_path = NULL, *picks_path = NULL, *meta_path = NULL;
     int print_cfg = 0, check_model = 0, want_stats = 0, use_ring = 0;
@@ -694,6 +714,7 @@ int main(int argc, char **argv)
         if (!d && argv[i][0] != '-') { d = argv[i]; continue; }
         if      (!strcmp(argv[i], "--tank"))         { if (++i < argc) tank = argv[i]; }
         else if (!strcmp(argv[i], "--store"))        { if (++i < argc) store = argv[i]; }
+        else if (!strcmp(argv[i], "--sds"))          { if (++i < argc) sds = argv[i]; }
         else if (!strcmp(argv[i], "--ring"))         { use_ring = 1; }
         else if (!strcmp(argv[i], "--t0"))           { if (++i < argc) t0s = argv[i]; }
         else if (!strcmp(argv[i], "--t1"))           { if (++i < argc) t1s = argv[i]; }
@@ -751,9 +772,9 @@ int main(int argc, char **argv)
         return 0;
     }
 
-    if ((tank != NULL) + (store != NULL) + (use_ring != 0) != 1) {
+    if ((tank != NULL) + (store != NULL) + (sds != NULL) + (use_ring != 0) != 1) {
         fprintf(stderr,
-            "pickml: elegir exactamente un modo: --tank, --store o --ring\n");
+            "pickml: elegir exactamente un modo: --tank, --store, --sds o --ring\n");
         return 2;
     }
 
@@ -790,6 +811,17 @@ int main(int argc, char **argv)
             fprintf(stderr, "pickml: no se pudo abrir el store %s\n", store);
             return 4;
         }
+    } else if (sds) {
+        if (!t0s || !t1s ||
+            pm_parse_time(t0s, &t0) != PM_OK || pm_parse_time(t1s, &t1) != PM_OK ||
+            t1 <= t0) {
+            fprintf(stderr, "pickml: --sds exige --t0 y --t1 válidos (t1 > t0)\n");
+            return 2;
+        }
+        if (pm_src_open_sds(&src, sds, sta, nsta, t0, t1, cfg.Rate) != PM_OK) {
+            fprintf(stderr, "pickml: no se pudo abrir el SDS %s\n", sds);
+            return 4;
+        }
     } else {
         /* No alcanzable: la validación de modo exige exactamente uno. */
         fprintf(stderr, "pickml: modo invalido\n");
@@ -803,11 +835,18 @@ int main(int argc, char **argv)
         pm_src_close(src);
         return 4;
     }
+    if (want_stats && sds && src) {
+        PmSrcCounts sc;
+        pm_src_counts(src, &sc);
+        fprintf(stderr, "pickml: sds sin_dia=%ld sin_datos=%ld tasa=%ld\n",
+                sc.no_day, sc.nodata, sc.rate);
+    }
     pm_src_close(src);
 
     qsort(out.v, (size_t)out.n, sizeof(OutPick), cmp_pick);
     if (write_outputs(out_path, picks_path, meta_path,
-                      tank ? "tank" : "store", t0, t1) != PM_OK) {
+                      tank ? "tank" : (store ? "store" : "sds"),
+                      t0, t1) != PM_OK) {
         for (i = 0; i < nsta; i++)
             if (run[i].inited) pm_buf_free(&run[i].buf);
         pm_engine_close(engine);
@@ -819,6 +858,7 @@ int main(int argc, char **argv)
 
     for (i = 0; i < 3; i++)
         if (g_dump[i]) { fclose(g_dump[i]); g_dump[i] = NULL; }
+    if (g_dump_idx) { fclose(g_dump_idx); g_dump_idx = NULL; }
     for (i = 0; i < nsta; i++)
         if (run[i].inited) pm_buf_free(&run[i].buf);
     pm_engine_close(engine);
