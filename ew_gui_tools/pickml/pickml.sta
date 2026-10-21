@@ -1,0 +1,16 @@
+# pickml.sta — lista de estaciones 3C de EJEMPLO.
+#
+# Formato (idéntico a pickS.sta):
+#   PickFlag Pin Sta Net Loc ChanE ChanN ChanZ
+#
+# PickFlag 0 = no picar. Los canales deben coincidir EXACTAMENTE con lo que
+# entrega slink2ew y con la metadata de estaciones_107.txt (ver AGENTS.md
+# §Coherencia HHZ/BHZ): si no, el picker no encuentra la componente y la
+# ventana 3C nunca se completa.
+#
+# Activar por subconjunto: con 130 estaciones y StepSec 10 no hay CPU que
+# sostenga todas las ventanas; ver la tabla de throughput en el README.
+
+1 1 FAR1 C  -- HHE HHN HHZ
+1 2 AC01 C1 -- HHE HHN HHZ
+# 1 3 GO01 C1 00 HHE HHN HHZ
