@@ -2,7 +2,7 @@
 description: Implementación. Ejecuta el plan con cambios mínimos y verifica con tests.
 mode: primary
 model: opencode-go/deepseek-v4.1-flash
-steps: 200
+steps: 1000
 permissions:
   - { action: edit, resource: "*", effect: allow }
   - { action: subagent, resource: "*", effect: deny }

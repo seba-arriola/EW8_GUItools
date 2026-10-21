@@ -26,6 +26,7 @@ run_working_v8/hyp2000_ring/
 run_working_v8/nlloc_ring/
 run_working_v8/csnhypodbp/
 run_working_v8/csnwphase/
+run_working_v8/pickml_live/
 run_working_v8/params/db.env
 
 # ===========================================================================
@@ -78,6 +79,8 @@ run_working_v8/params/db.env
 /ew_8.0/bin/csnwphase
 /ew_8.0/bin/hypodb_ingest
 /ew_8.0/bin/wstore_ingest
+/ew_8.0/bin/pickml
+/ew_8.0/bin/pickml_fetch
 /ew_8.0/bin/tank2store
 /ew_8.0/bin/store2tank
 /ew_8.0/bin/wstore_query
@@ -112,6 +115,14 @@ run_working_v8/params/db.env
 /ew_gui_tools/pickS/test/gen_tank
 !/ew_gui_tools/pickS/test/test_*.c
 !/ew_gui_tools/pickS/test/test_*.sh
+# pickml: binario, tests y el tmp del arnés offline (fixtures generadas)
+/ew_gui_tools/pickml/pickml
+/ew_gui_tools/pickml/pickml_fetch
+/ew_gui_tools/pickml/test/test_*
+/ew_gui_tools/pickml/test/gen_tank
+/ew_gui_tools/pickml/test/tmp/
+!/ew_gui_tools/pickml/test/test_*.c
+!/ew_gui_tools/pickml/test/test_*.sh
 /ew_gui_tools/hyp2000_ring/hyp2000_ring
 /ew_gui_tools/hyp2000_ring/test/test_*
 !/ew_gui_tools/hyp2000_ring/test/test_*.c

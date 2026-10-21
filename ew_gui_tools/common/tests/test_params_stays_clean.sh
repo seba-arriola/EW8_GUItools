@@ -91,11 +91,13 @@ else
 fi
 
 # --- 4. rutas absolutas: lista blanca de claves de LECTURA + existencia ----
-ABS_KEYS=" SdsRoot ResponseDir CalibFile StaCorrFile Mb_QTable OverlayFile ProfileDataDir WphaseHome WphaseBin GfDir TtimeRoot ControlFile ModelFallback ModelBand "
+ABS_KEYS=" SdsRoot ResponseDir CalibFile StaCorrFile Mb_QTable OverlayFile ProfileDataDir WphaseHome WphaseBin GfDir TtimeRoot ControlFile ModelFallback ModelBand ModelFile OrtLib "
 # Claves cuyo valor NO es una ruta (aunque pueda parecerlo) y fuentes OPCIONALES
 # (una fuente ausente es legitima: el codigo la tolera y sigue).
 NOPATH_KEYS=" SetEnvVariable "
-OPTIONAL_KEYS=" SdsRoot "
+# ModelFile/OrtLib son recursos pesados fuera del repo (como GfDir): si no
+# estan descargados, pickml arranca igual y falla al abrir el motor con texto.
+OPTIONAL_KEYS=" SdsRoot ModelFile OrtLib "
 abad=0
 for d in "$PARAMS"/*.d; do
     [ -f "$d" ] || continue
