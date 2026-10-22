@@ -38,7 +38,7 @@ install: csnhypodbp
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csnhypodbp
 
 ../common/libewgui_gtk4.a:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+	$(MAKE) -C ../common
 
 # Panel Mww: la GUI enlaza la MISMA libreria headless que el CLI csnwphase.
 ../csnwphase/libcsnwphase.a:
@@ -113,7 +113,7 @@ test_mww_over: test_mww_over.c csnhypodbp_mww_over.o ../csnwphase/libcsnwphase.a
 	      ../csnwphase/libcsnwphase.a $(EW_HOME)/$(EW_VERSION)/lib/libew_mt.a -lm
 
 ../common/src/ewgui_config.o:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_config.o
+	$(MAKE) -C ../common src/ewgui_config.o
 
 # Localizadores offline (locator <name> <bin> <cfg>).
 test_locator: test_locator.c csnhypodbp_locator.o
@@ -174,7 +174,7 @@ test_mapview: test_mapview.c csnhypodbp_mapview.o ../common/src/ewgui_geo.o
 	      ../common/src/ewgui_geo.o -lm
 
 ../common/src/ewgui_geo.o:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4 src/ewgui_geo.o
+	$(MAKE) -C ../common src/ewgui_geo.o
 
 # Modelo de la fila de la tabla de magnitudes (GObject): una fila por estacion.
 test_magitem: test_magitem.c csnhypodbp_magitem.o csnhypodbp_magrow.o
@@ -277,6 +277,15 @@ clean:
 	      test_mapview test_magcfg test_magrow test_magsta test_magitem \
 	      test_magmarks test_magview test_mww_error test_mww_over test_filtercfg \
 	      locate_chain *.o
+
+# --- Validacion de configuracion (ew8_compile.sh --validate) ----------------
+# Una entrada por comando, formato "binario|argumentos", separadas por `\n`
+# LITERAL: make parte la receta en cada newline real de una variable expandida y
+# el printf queda con la comilla sin cerrar. El target lo lee `ew8_compile.sh`.
+VALIDATE_FLAGS = csnhypodbp|--print-config csnhypodbp.d\ncsnhypodbp|--check-profiles csnhypodbp.d
+.PHONY: print-VALIDATE_FLAGS
+print-VALIDATE_FLAGS:
+	@printf '%b\n' '$(VALIDATE_FLAGS)'
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

@@ -101,13 +101,23 @@ comparar contra PyTorch; no hace falta en operación.
 
 - `--t0/--t1` aceptan `YYYY-MM-DDTHH:MM:SS`, `YYYY-MM-DD HH:MM:SS`,
   `YYYYMMDDhhmmss` o epoch.
+- **Sin flags de fuente el modo es VIVO** (`SLINK_RING`), igual que
+  `csnloc <d>`/`pickS <d>`: es el que usa `startstop`, que sólo pasa el `.d`
+  (`--ring` sigue valiendo como sinónimo explícito). Dos fuentes a la vez
+  (`--tank --sds`, …) siguen siendo error de uso.
+- El **directorio de cada salida se crea si falta** (`PickOutFile`,
+  `PicksOutFile`, `RunMetaFile`, o `--out/--picks-out/--meta`): en un worktree
+  nuevo `run_working_v8/pickml/` no existe y el arranque moría con `4`.
 - Códigos de salida: `0` ok · `2` configuración inválida · `3` dependencia
   ausente (ORT/modelo) o modo no implementado · `4` datos/fuente.
 - La salida offline está **ordenada por (t, sta, fase)**, así que es
   byte-idéntica entre corridas (lo exige `make check-offline`).
-- El **modo anillo** (`--ring`) escribe archivos (JSONL + `.picks.txt`) y
-  `--stats`; no publica en `PICK_RING` hasta pasar la validación de latencia
-  y calidad (ver `docs/DLdetalles.md` §8 y §11).
+- El **modo vivo** escribe archivos (JSONL + `.picks.txt`) y
+  `--stats`, y **publica** los picks como `TYPE_PICK_SCNL` en `OutRing` cuando
+  `PublishRing 1` (con `PublishPhases P|S|PS` y `PublishMaxWeight 0..3`).
+  `--publish-dry-run` valida y cuenta sin escribir. `LogFile` 0/1/2 = consola /
+  ambos / sólo `EW_LOG/pickml_*.log` (el nombre es literal: el `.d` puede
+  llamarse distinto y `diag.sh log pickml` lo encuentra igual).
 
 ### El store no se modifica
 
@@ -204,14 +214,20 @@ fuente (`tank`/`store`), `t0`/`t1`, estaciones, ventanas, picks y `engine_ms`.
 
 ```sh
 source ./ew8_unix.sh
-make -C ew_gui_tools/pickml            # sin ORT: motor stub, tests completos
+make -C ew_gui_tools/pickml            # autodetecta el ORT vendorizado (motor real)
 make -C ew_gui_tools/pickml check
 make -C ew_gui_tools/pickml check-offline
 ```
 
-Con el motor real (ORT presente):
+El Makefile **autodetecta** `/mnt/d/resources/pickml/onnxruntime-linux-x64-*`
+(el mismo ORT que el `.d` carga por `OrtLib`) y compila el motor real; si no lo
+encuentra, avisa y cae al motor `stub`. Ojo: un binario `stub` instalado hace
+que `Engine onnx` falle en runtime (`exit 3`) y el módulo quede muerto bajo
+`startstop`, así que en la máquina de operación el aviso del build no debe
+aparecer. Para forzar cada caso:
 
 ```sh
+make -C ew_gui_tools/pickml ORT_DIR=            # stub explícito (sin motor ONNX)
 make -C ew_gui_tools/pickml ORT_DIR=/ruta/a/onnxruntime
 make -C ew_gui_tools/pickml check-engine ORT_DIR=... \
      PICKML_MODEL=/ruta/eqt.onnx PICKML_ORT=/ruta/libonnxruntime.so
@@ -330,9 +346,12 @@ PhaseNet (3001, normalización en el grafo) corre por el mismo motor: sesión
 **31 ms**, inferencia **1.5 ms/ventana**. Sobre PB15 emite un P en 05:15:22.7
 (0.463) — es la base de integración; su calibración es la etapa siguiente.
 
-**Estado del gate**: la plomería está lista (dos modelos, offline, salidas a
-archivo). La publicación en `PICK_RING` sigue **apagada** hasta calibrar con
-picks manuales: `startstop_unix.d` no declara `pickml`.
+**Estado del gate**: `pickml` está dado de alta en `startstop_unix.d`. Hoy publica en
+`PICK_RING` **sólo la S** (`pickml_iquique.d`, `PublishPhases S`): la P de ese anillo la
+aporta `pick_FP`, porque el ranking de P de los pesos chilenos es el que hay que arreglar
+mientras su S ya funciona. `pickS` y `pickml_eqt` quedaron en `LEGACY_PICK_RING`, sin
+consumidor. Falta la calibración con picks manuales y la comparación de 24 h antes de dar
+los umbrales por buenos.
 
 ## Tests
 
@@ -377,7 +396,8 @@ Pendiente, en orden:
 1. **Calibración** de umbrales/ventanas por modelo con ≥10 eventos, usando
    `pickml_fetch` + `tools/eval_picks.py` (la primera medición ya existe: §Estado).
 2. **`Follow 1`** (tail de store/tank) para live sin anillo.
-3. **`PublishRing 1`** + alta en `startstop_unix.d`, sólo después de (1).
+3. ~~`PublishRing 1` + alta en `startstop_unix.d`~~ **hecho** (publica en `PICK_RING`;
+   los pickers viejos en `LEGACY_PICK_RING`). Queda la comparación de 24 h.
 4. **Arranque de EQT (~58 s)**: aceptable para un módulo de larga vida; el
    grafo tiene 8 269 nodos `Constant` que ORT recorre al cargar.
 

@@ -6,11 +6,15 @@ Objetivo de esta etapa: **plomería**. Conectar la entrada (EarthWorm: tank/stor
 salida (P y S con sus parámetros) de dos modelos deep learning, con configuración
 estándar, para que la calibración se haga después con datos y sin tocar el pipeline.
 
-Nada está declarado en `startstop`: `pickml` no entra en el stack todavía. El modo anillo
-(`--ring`) está implementado y escribe archivos (JSONL + SCNL), pero **no publica** en
-`PICK_RING` hasta pasar la validación de latencia y calidad. El detalle operativo (cómo se
-integran los modelos, recursos, dependencias, CPU/GPU, migración y resultados medidos) está en
-**`docs/DLdetalles.md`**.
+`pickml` **está declarado en `startstop`** (`Process "pickml pickml_iquique.d"`) y publica sus
+picks como `TYPE_PICK_SCNL` en `PICK_RING`: es el picker automático del pipeline vivo. La regla del
+anillo es **un productor por fase**: `pick_FP` aporta la **P** y `pickml_iquique` **sólo la S**
+(`PublishPhases S`); `pickS` y `pickml_eqt` siguen en `LEGACY_PICK_RING`, sin consumidor, para
+comparar.
+El modo live sigue escribiendo además los archivos (JSONL + SCNL). La política de publicación es
+`PublishRing` / `PublishPhases` / `PublishMaxWeight`, con `--publish-dry-run` para ensayar sin
+escribir. El detalle operativo (cómo se integran los modelos, recursos, dependencias, CPU/GPU,
+migración y resultados medidos) está en **`docs/DLdetalles.md`**.
 
 ---
 
@@ -23,11 +27,11 @@ integran los modelos, recursos, dependencias, CPU/GPU, migración y resultados m
 | Exportador (`tools/export_onnx.py --arch eqt\|phasenet`) | operativo |
 | `WindowSamples` configurable (ventana nativa por modelo) | operativo |
 | Salidas: JSONL, `TYPE_PICK_SCNL` texto, cabecera JSON | operativo |
-| Modo live desde anillo (`SLINK_RING`) | **operativo** (sólo escribe archivos) |
+| Modo live desde anillo (`SLINK_RING`) | **operativo** (archivos + publicación en `PICK_RING`) |
 | Modo live siguiendo store/tank (`Follow`) | **no implementado** |
 | `pickml_fetch` (evento de la BD → tank + referencias) | **operativo** (BD + store + SDS, con decimación) |
 | `tools/eval_picks.py` (recall) | **operativo** |
-| Publicación en `PICK_RING` | **no activada** |
+| Publicación en `PICK_RING` | **activa** (`PublishRing 1`; los viejos van a `LEGACY_PICK_RING`) |
 | Espectro / filtros / magnitudes | fuera de alcance (es un picker) |
 
 ---
@@ -132,8 +136,9 @@ Dos `.d` de ejemplo en el módulo, mismo esquema: `pickml.d` (EQT) y `phasenet.d
 | `PickOutFile` / `PicksOutFile` / `RunMetaFile` | vacío | vacío | la CLI los sobreescribe |
 
 Latencia de emisión (una ventana se publica al completarse): **~50–60 s** con EQT y
-**~10–30 s** con PhaseNet. `csnloc` asocia con `AssocWindowSec 45`: con EQT hay que subirlo
-a ~90; con PhaseNet entra sin cambios.
+**~10–30 s** con PhaseNetWC. `csnloc` asocia con `AssocWindowSec 45`: con EQT habría que subirlo
+a ~90; con PhaseNetWC se mantiene 45 y se mide la cola real antes de decidir (el máximo de
+131.8 s de la corrida de 9.3 h es una cola de trazas tardías, ver §8.2).
 
 Fichero de estaciones (idéntico a `pickS.sta`):
 
@@ -149,11 +154,18 @@ Fichero de estaciones (idéntico a `pickS.sta`):
 ### 4.1 Modos implementados
 
 ```sh
-# tank (un registro TRACE2_HEADER + int32 por bloque)
+# tanque (un registro TRACE2_HEADER + int32 por bloque)
 pickml pickml.d --tank evento.tank
 
 # store indexado <root>/NET.STA.LOC.CHAN/YYYYMMDD.tank
 pickml pickml.d --store ../wstore --t0 1792473290 --t1 1792473375
+
+# SDS de SeisComP (histórico): YYYY/NET/STA/CHAN.D
+pickml pickml.d --sds /mnt/sds/archive --t0 ... --t1 ...
+
+# anillo vivo (SLINK_RING -> archivos + PICK_RING si PublishRing 1).
+# Es el MODO POR DEFECTO: sin flags de fuente, como csnloc/pickS. --ring = sinónimo.
+pickml pickml.d
 ```
 
 Formatos de tiempo: `YYYY-MM-DD[T ]HH:MM:SS[.mmm]`, `YYYYMMDDhhmmss`, epoch.
@@ -357,12 +369,14 @@ haber recortado alguna S real cerca de un P espurio de baja probabilidad: el S d
 
 ---
 
-## 8. Modo live (solo archivos) — implementado
+## 8. Modo live (archivos + publicación) — implementado
 
 - **Anillo**: leer `SLINK_RING` (`TYPE_TRACEBUF2`), ensamblar 3C por estación con el buffer
   actual y emitir al completarse cada ventana.
 - En live, los picks se escriben **en streaming** (JSONL y `TYPE_PICK_SCNL`) con `fflush`
-  por pick; no se acumulan en memoria y no se publica nada en `PICK_RING`.
+  por pick; no se acumulan en memoria. Además, con `PublishRing 1`, se envían a `OutRing`
+  con `tport_putmsg` (mismo SCNL, `mod/inst` reales) según `PublishPhases`/`PublishMaxWeight`;
+  `--publish-dry-run` cuenta sin escribir.
 - Se purga el anillo al arrancar y se descartan las trazas más viejas que
   `LiveMaxAgeSec` (120 s): arrancamos en vivo, no re-procesando historial.
 - `--ring` es excluyente con `--tank` y `--store`; `Ctrl-C`/SIGTERM cierra ordenadamente y
@@ -437,9 +451,10 @@ Lectura:
   (EQT, promedio con el arranque; en régimen ~16 %).
 - El grueso de `lag_s` es **algorítmico** (la picada espera a que su ventana se
   complete), no del proceso. Ese es el número que hay que comparar con el
-  `AssocWindowSec` de `csnloc` (45 s, ciclos de 23 s): con `lag` de hasta 40 s, un
-  `AssocWindowSec 45` puede dejar picks fuera. Subirlo a 90 s sigue siendo el paso
-  previo a publicar en `PICK_RING`.
+  `AssocWindowSec` de `csnloc` (45 s, ciclos de 23 s): un pick con `lag` mayor que
+  ~21 s puede quedar fuera del snapshot. La decisión vigente es **medir la cola real**
+  (fracción con `lag_s >= 22 s` en el JSONL) durante la corrida de 24 h antes de
+  subir la ventana; subirla a 90 s sólo corresponde si se activa EQT (ventana 60 s).
 - `entrada` media ~1.1 s es el retraso del anillo; `entrada` máxima aparece esporádica
   en 30–35 s por retransmisiones tardías de SeedLink (y antes del arreglo de abajo
   llegaba al tope de `LiveMaxAgeSec`, 120 s, en el arranque).
@@ -463,8 +478,8 @@ python3 ew_gui_tools/pickml/tools/latency.py run_working_v8/pickml_live/*.jsonl
 ```sh
 source ./ew8_unix.sh
 
-# build con motor real
-make -C ew_gui_tools/pickml ORT_DIR=/mnt/d/resources/pickml/onnxruntime-linux-x64-1.31.0
+# build con motor real (autodetecta el ORT vendorizado; ORT_DIR= fuerza el stub)
+make -C ew_gui_tools/pickml
 
 # unitarios + end-to-end con stub
 make -C ew_gui_tools/pickml check check-offline
@@ -503,7 +518,7 @@ python3 ew_gui_tools/pickml/tools/export_onnx.py --arch phasenet \
 | 3 | `Follow 1` (tail de store/tank) | pendiente |
 | 4 | fuente `SLINK_RING` | **hecho**: ambos modelos en paralelo, sólo archivos |
 | 5 | calibración de umbrales/ventanas por modelo | pendiente (≥10 eventos) |
-| 6 | `PublishRing 1` + alta en `startstop_unix.d` | pendiente, sólo con (5) aprobado |
+| 6 | `PublishRing 1` + alta en `startstop_unix.d` | **hecho**: `pick_FP` (P) + `pickml_iquique` (S) en `PICK_RING`; `pickS`/`pickml_eqt` en `LEGACY_PICK_RING` |
 | 7 | arranque de EQT (~58 s) | opcional: reducir nodos `Constant` |
 
 `AssocWindowSec` de `csnloc` pasa de 45 a ~90 únicamente si se activa EQT en el anillo;

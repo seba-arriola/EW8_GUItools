@@ -31,7 +31,8 @@ static int pm_onnx_open(void **out, const char *ortlib, const char *model,
 {
     (void)out; (void)ortlib; (void)model; (void)nsamp; (void)threads; (void)optlevel;
     if (err) snprintf(err, errn,
-        "ONNX Runtime no compilado: reconstruir con ORT_DIR=<dir de onnxruntime>");
+        "ONNX Runtime no compilado: reconstruir con `make` (autodetecta el ORT "
+        "vendorizado) o `make ORT_DIR=<dir de onnxruntime>`");
     return PM_ERR;
 }
 static int pm_onnx_run(void *h, const float *in, int nwin, long nsamp,

@@ -26,7 +26,7 @@ install: csnrv
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csnrv
 
 ../common/libewgui_gtk4.a:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+	$(MAKE) -C ../common
 
 csnrv: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csnrv $(OBJS) $(EWLIBS) $(LDFLAGS)
@@ -41,6 +41,15 @@ test: csnrv
 
 clean:
 	rm -f csnrv *.o
+
+# --- Validacion de configuracion (ew8_compile.sh --validate) ----------------
+# Una entrada por comando, formato "binario|argumentos", separadas por `\n`
+# LITERAL: make parte la receta en cada newline real de una variable expandida y
+# el printf queda con la comilla sin cerrar. El target lo lee `ew8_compile.sh`.
+VALIDATE_FLAGS = csnrv|--print-config csnrv.d\ncsnrv|--check-overlays csnrv.d
+.PHONY: print-VALIDATE_FLAGS
+print-VALIDATE_FLAGS:
+	@printf '%b\n' '$(VALIDATE_FLAGS)'
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

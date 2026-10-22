@@ -103,6 +103,16 @@ clean:
 
 .PHONY: all test check check-engine check-corpus clean install fixtures
 
+# --- Validacion de configuracion (ew8_compile.sh --validate) ----------------
+# Una entrada por comando, formato "binario|argumentos", separadas por `\n`
+# LITERAL: make parte la receta en cada newline real de una variable expandida y
+# el printf queda con la comilla sin cerrar. OJO: csnwphase lleva el subcomando
+# DESPUES del .d.
+VALIDATE_FLAGS = csnwphase|csnwphase.d --print-config
+.PHONY: print-VALIDATE_FLAGS
+print-VALIDATE_FLAGS:
+	@printf '%b\n' '$(VALIDATE_FLAGS)'
+
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda
 # con un layout de structs viejo mientras la libreria se recompila, y la ABI se

@@ -111,6 +111,12 @@ typedef struct {
     char RunMetaFile[PM_STR_LEN];    /* cabecera JSON de la corrida */
 
     int  LiveMaxAgeSec;              /* live: descarta trazas más viejas (0 = off) */
+
+    /* Publicación al anillo (sólo modo --ring). Default: apagada. */
+    int  PublishRing;                /* 0/1: tport_putmsg a OutRing */
+    int  PublishP;                   /* derivado de PublishPhases */
+    int  PublishS;
+    int  PublishMaxWeight;           /* 0..3: publica si weight <= valor */
 } PmConfig;
 
 /* ---- Traza tal como sale de una fuente ----------------------------------- */
@@ -218,6 +224,17 @@ typedef struct { long no_day, nodata, rate; } PmSrcCounts;
 int  pm_src_open_sds(PmSrc **out, const char *root, const PmStation *sta,
                      int nsta, double t0, double t1, double rate);
 void pm_src_counts(const PmSrc *s, PmSrcCounts *c);
+
+/* ============================ publicacion (anillo) ======================= */
+/* Política pura (sin EarthWorm), testeable headless. */
+typedef enum { PM_PUB_SEND = 0, PM_PUB_SKIP_PHASE, PM_PUB_SKIP_WEIGHT } PmPubDecision;
+
+/* P|S|PS (case-insensitive) -> flags. 0 ok, -1 inválido. */
+int pm_publish_phases_parse(const char *s, int *allow_p, int *allow_s);
+/* Texto canónico de las fases habilitadas: "PS", "P" o "S". */
+void pm_publish_phases_str(int allow_p, int allow_s, char *buf, size_t n);
+/* Decide si un pick se publica, y por qué no. */
+PmPubDecision pm_publish_decide(const PmConfig *c, char phase, int weight);
 
 /* ============================ anillo (live) ============================== */
 typedef struct PmRing PmRing;

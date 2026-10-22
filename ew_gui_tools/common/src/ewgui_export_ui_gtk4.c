@@ -1,7 +1,7 @@
 /*
  * UI de export para GTK4: diálogo "Guardar" + volcado del canvas.
- * Vive en un archivo *gtk* (capa de vista) y SOLO se compila en el build GTK4;
- * en el build GTK3 no se incluye (ver common/Makefile). Ver ewgui/export.h.
+ * Vive en un archivo *gtk* (capa de vista) y sólo se compila en el build GTK4
+ * (ver common/Makefile). Ver ewgui/export.h.
  */
 #include <gtk/gtk.h>
 

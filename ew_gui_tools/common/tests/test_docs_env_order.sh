@@ -44,7 +44,7 @@ AWK
 # --- 1. el detector detecta de verdad (fixture con el patron malo) -----------
 cat > "$TMP/malo.md" <<'EOF'
 ```bash
-make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
+make -C ew_gui_tools/common
 for d in csnloc; do make -C ew_gui_tools/$d; done
 # (un comentario con "source ./ew8_unix.sh" NO cuenta)
 source ./ew8_unix.sh
@@ -60,7 +60,7 @@ fi
 cat > "$TMP/bueno.md" <<'EOF'
 ```bash
 source ./ew8_unix.sh
-make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
+make -C ew_gui_tools/common
 ```
 EOF
 if [ -z "$(awk -f "$TMP/order.awk" "$TMP/bueno.md")" ]; then

@@ -25,7 +25,7 @@ install: ew_controller
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin ew_controller
 
 ../common/libewgui_gtk4.a:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+	$(MAKE) -C ../common
 
 ew_controller: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o ew_controller $(OBJS) $(EWLIBS) $(LDFLAGS)

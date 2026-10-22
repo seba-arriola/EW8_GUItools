@@ -107,6 +107,47 @@ int main(void)
     /* fichero inexistente */
     CHECK(pm_config_load("/tmp/pickml_no_existe.d", &c, err, sizeof(err)) == PM_ERR);
 
+    /* ---- publicación y log: defaults y rangos ESTRICTOS ---- */
+    pm_config_defaults(&c);
+    p = write_cfg("# vacío\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_OK);
+    CHECK(c.PublishRing == 0);                 /* apagada por defecto */
+    CHECK(c.PublishP == 1 && c.PublishS == 1); /* publica P y S */
+    CHECK(c.PublishMaxWeight == 3);
+    CHECK(c.LogFile == 1);
+
+    pm_config_defaults(&c);
+    p = write_cfg("PublishRing 1\nPublishPhases P\nPublishMaxWeight 0\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_OK);
+    CHECK(c.PublishRing == 1);
+    CHECK(c.PublishP == 1 && c.PublishS == 0);
+    CHECK(c.PublishMaxWeight == 0);
+
+    pm_config_defaults(&c);
+    p = write_cfg("PublishPhases PS\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_OK);
+    CHECK(c.PublishP == 1 && c.PublishS == 1);
+
+    pm_config_defaults(&c);
+    p = write_cfg("PublishPhases X\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_ERR);
+    CHECK(strstr(err, "PublishPhases") != NULL);
+
+    pm_config_defaults(&c);
+    p = write_cfg("PublishRing 2\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_ERR);
+    CHECK(strstr(err, "PublishRing") != NULL);
+
+    pm_config_defaults(&c);
+    p = write_cfg("PublishMaxWeight 4\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_ERR);
+    CHECK(strstr(err, "PublishMaxWeight") != NULL);
+
+    pm_config_defaults(&c);
+    p = write_cfg("LogFile 3\n");
+    CHECK(pm_config_load(p, &c, err, sizeof(err)) == PM_ERR);
+    CHECK(strstr(err, "LogFile") != NULL);
+
     if (fails) { fprintf(stderr, "test_config: %d fallos\n", fails); return 1; }
     printf("test_config: OK\n");
     return 0;

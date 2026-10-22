@@ -21,7 +21,7 @@ install: csntvp
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin csntvp
 
 ../common/libewgui_gtk4.a:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+	$(MAKE) -C ../common
 
 csntvp: $(OBJS) ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o csntvp $(OBJS) $(EWLIBS) $(LIBS)

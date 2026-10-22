@@ -3,11 +3,12 @@
  *                                                                            *
  * Lee TYPE_TRACEBUF2 de `InRing` con el cursor propio del proceso (tport),    *
  * purga el historial al arrancar (arrancamos en vivo, no re-procesando el     *
- * anillo) y entrega una PmTrace por mensaje. No publica nada: el modo live    *
- * de pickml sólo escribe archivos.                                           *
+ * anillo) y entrega una PmTrace por mensaje. Este fichero NO publica nada:    *
+ * el envío de picks (PublishRing) vive en pickml_main.c, que necesita además  *
+ * GetModId y el tipo TYPE_PICK_SCNL.                                         *
  *                                                                            *
- * No usa logit ni GetModId: pickml puede correr fuera de startstop, así que   *
- * sólo necesita el anillo en earthworm.d y la shm de EarthWorm.               *
+ * No usa logit: pickml puede correr fuera de startstop, así que aquí sólo     *
+ * necesita el anillo en earthworm.d y la shm de EarthWorm.                    *
  ******************************************************************************/
 
 #include "pickml.h"

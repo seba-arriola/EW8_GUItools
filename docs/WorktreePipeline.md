@@ -32,7 +32,7 @@ Define `EW_HOME`(raíz del repo), `EW_VERSION`(`ew_8.0`), `EW_PARAMS`(`run_worki
 | Repo principal `EW8_GUItools` (hoy) | ❌ **No**: `check_install.sh -v` da **16/16 OK** |
 | **Worktree nuevo** | ✅ **Sí, siempre y una vez**: los binarios de nuestros módulos **no se versionan** (`.gitignore` ignora `/ew_8.0/bin/csnloc`, `csnhypodbp`, …, 16 en total). Solo se versionan **8 de fábrica** (`startstop`, `status`, `slink2ew`, `pick_FP`, `sniffring`, `putpick`, `restart`, `stopmodule`) |
 | Tras tocar un módulo | ✅ solo ese módulo: `make -C ew_gui_tools/<mod>` |
-| Tras tocar `common/` | ✅ `common` **primero** y con `GUI_TOOLKIT=gtk4` (si no: `undefined reference`, o peor, ABI en silencio) |
+| Tras tocar `common/` | ✅ `common` **primero** (si no: `undefined reference`, o peor, ABI en silencio) |
 | Solo para arrancar la BD / el monitor | ❌ no, pero `startstop` dejaría el módulo en `NoExec` → compilá antes de `start` |
 
 **Bloque de compilación (el de `docs/WORKTREES.md` §1 paso 3):**
@@ -41,7 +41,7 @@ Define `EW_HOME`(raíz del repo), `EW_VERSION`(`ew_8.0`), `EW_PARAMS`(`run_worki
 cd <ruta-del-repo>            # ¡la raíz de ESTE repo/worktree, no la del principal!
 source ./ew8_unix.sh
 echo "$EW_HOME"               # 🔎 debe imprimir la raíz de ESTE repo/worktree
-make -C ew_gui_tools/common GUI_TOOLKIT=gtk4            # la lib compartida, primero
+make -C ew_gui_tools/common                          # la lib compartida, primero
 for d in wavestore csnloc csnwphase csnmags pickS csntvp csnrv csnstaevdisp \
          ew_controller hypodb hyp2000_ring nlloc_ring csnhypodbp; do
   make -C ew_gui_tools/$d || break
@@ -57,7 +57,7 @@ Tres detalles que importan:
 🔎 ¿Hace falta `make clean`? Solo si ya compilaste y cambiaste `common/` (la regla de la lib no depende de las fuentes):
 
 ```bash
-make -C ew_gui_tools/common clean GUI_TOOLKIT=gtk4 && make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
+make -C ew_gui_tools/common clean && make -C ew_gui_tools/common
 ```
 
 ---

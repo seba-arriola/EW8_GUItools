@@ -82,10 +82,10 @@ Consulta `AGENTS.md` para la tabla completa de variables.
 
 ## 🛠️ Compilación
 
-El punto de entrada es `ew8_compile.sh`: compila en el orden canónico, fuerza
-`GUI_TOOLKIT=gtk4` (el default de `common/` es gtk3) y usa `make all`, que ya
-instala cada binario en `ew_8.0/bin/` con copia atómica: es seguro con EarthWorm
-en marcha. No hace falta cargar el entorno antes; el script lo carga si falta.
+El punto de entrada es `ew8_compile.sh`: compila en el orden canónico y usa
+`make all`, que ya instala cada binario en `ew_8.0/bin/` con copia atómica: es
+seguro con EarthWorm en marcha. No hace falta cargar el entorno antes; el script
+lo carga si falta.
 
 ```bash
 ./ew8_compile.sh                   # compila e instala todo (incremental)

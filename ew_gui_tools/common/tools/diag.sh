@@ -177,7 +177,7 @@ cmd_env() {
     say "logs       = $LOGDIR"
     say "binarios:"
     local b p
-    for b in startstop csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp \
+    for b in startstop csnloc pickS pickml csnmags csnhypodbp csnrv csntvp csnstaevdisp \
              ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest \
              sniffring; do
         p="$(command -v "$b" 2>/dev/null || true)"
@@ -304,7 +304,7 @@ cmd_errors() {  # errors [n]
 cmd_process() {
     local names pids any=0 b
     names="$(module_list)"
-    [ -n "$names" ] || names="startstop slink2ew pick_FP csnloc pickS csnmags csnhypodbp csnrv csntvp csnstaevdisp ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest"
+    [ -n "$names" ] || names="startstop slink2ew pick_FP csnloc pickS pickml csnmags csnhypodbp csnrv csntvp csnstaevdisp ew_controller hyp2000_ring nlloc_ring wstore_ingest hypodb_ingest"
     for b in $names; do
         pids="$(diag_pids_of "$b" | tr '\n' ' ')"
         [ -n "$pids" ] || continue

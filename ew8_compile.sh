@@ -6,8 +6,8 @@
 #  QUE HACE
 #  --------
 #  Un unico punto de entrada para construir los modulos de ew_gui_tools/ contra
-#  la instalacion vendorizada de EarthWorm 8, en el orden correcto y con el
-#  toolkit GTK4 que exigen los modulos GUI. Ademas puede ejecutar, sobre los
+#  la instalacion vendorizada de EarthWorm 8, en el orden correcto. Ademas puede
+#  ejecutar, sobre los
 #  modulos seleccionados, los tests headless y las validaciones de configuracion
 #  que ya existen en cada Makefile. Traduce cada verbo al
 #  target real del modulo (check, test, test-data, test-config, check-offline,
@@ -16,8 +16,6 @@
 #  POR QUE EXISTE
 #  --------------
 #  La receta manual (ver AGENTS.md seccion 5) exige recordar que:
-#    - common/ SIEMPRE se construye con GUI_TOOLKIT=gtk4 (su default es gtk3,
-#      y con gtk3 la libreria se llama libewgui.a, no libewgui_gtk4.a);
 #    - los modulos se construyen en un orden concreto (common y wavestore antes
 #      que csnmags/csnhypodbp);
 #    - `make all` ya instala en ew_8.0/bin (install_bin.sh, copia atomica: es
@@ -89,7 +87,7 @@
 #        ./ew8_compile.sh hypodb
 #        ./ew8_compile.sh hypodb_ingest       # equivalente
 #        ./ew8_compile.sh wavestore
-#        ./ew8_compile.sh wstore              # equivalente
+#        ./ew8_compile.sh wstore_ingest       # equivalente
 #
 #  5) Compilar por GRUPOS, sin listar modulo por modulo (tambien derivados):
 #        libs      -> los modulos SIN receta install_bin.sh (la libreria)
@@ -256,8 +254,8 @@
 #  SALIDA
 #  ------
 #  Cada paso imprime una linea con su verbo, modulo y comando:
-#     [build]  csnloc    make -C ew_gui_tools/csnloc -j1 all GUI_TOOLKIT=gtk4
-#     [check]  csnloc    make -C ew_gui_tools/csnloc check GUI_TOOLKIT=gtk4
+#     [build]  csnloc    make -C ew_gui_tools/csnloc -j1 all
+#     [check]  csnloc    make -C ew_gui_tools/csnloc check
 #     [skip]   csnrv     --test: sin target check-offline
 #  y al final una tabla-resumen con OK / FAIL / SKIP, duracion y, si fallo, la
 #  ruta del log. Los SKIP no alteran el codigo de salida.
@@ -286,8 +284,8 @@
 #  -----
 #   - `make all` de cada modulo instala en ew_8.0/bin. No hay flag para evitar
 #     la instalacion: es el comportamiento de los Makefiles.
-#   - Todas las invocaciones de make llevan GUI_TOOLKIT=gtk4, incluso en los
-#     modulos headless, para que los sub-makes a common/ nunca caigan en gtk3.
+#   - Todas las invocaciones de make van sin variables de toolkit: common/ tiene
+#     un unico build (GTK4 + libadwaita, T6.5).
 #   - No se compila _legacy_atwc/ ni se ejecutan los arneses manuales `chain`,
 #     `check-valgrind`, `smoke`, `repeat`, `asan-*` y `dbg-*`.
 #   - Los pasos se ejecutan en orden canonico y de fase: primero todos los
@@ -308,7 +306,7 @@ PARAMS_DIR="$ROOT/run_working_v8/params"
 #   - capacidades = los targets que declara su Makefile (check, test, test-*,
 #                   check-offline, test-live, check-engine, check-corpus)
 #   - libreria    = el modulo SIN receta install_bin.sh (p.ej. common)
-#   - GUI         = su Makefile menciona gtk4 / gtk+-3.0 / libadwaita
+#   - GUI         = su Makefile menciona gtk4 / libadwaita
 # Renombrar un directorio, agregar un modulo o cambiarle un binario no exige
 # tocar este script: se descubre solo.
 # -----------------------------------------------------------------------------
@@ -376,7 +374,7 @@ discover_modules() {
         else
             BINS+=("$name")
         fi
-        if grep -qE 'gtk4|gtk\+-3\.0|libadwaita' "$mkf"; then
+        if grep -qE 'gtk4|libadwaita' "$mkf"; then
             MOD_GUI[$name]=1
         fi
     done
@@ -727,8 +725,8 @@ fail_step() {
 # Corre un target de make con el prefijo de --db cuando corresponde.
 emit_make() {  # emit_make <kind> <modulo> <dir-relativo> <target>
     local kind=$1 mod=$2 dir=$3 target=$4
-    local -a cmd=(make -C "$ROOT/$dir" "$target" GUI_TOOLKIT=gtk4)
-    local desc="make -C $dir $target GUI_TOOLKIT=gtk4"
+    local -a cmd=(make -C "$ROOT/$dir" "$target")
+    local desc="make -C $dir $target"
     if (( WITH_DB )); then
         cmd=(env EWGUI_DB_TEST_ENV=1 "${cmd[@]}")
         desc="env EWGUI_DB_TEST_ENV=1 $desc"
@@ -745,12 +743,12 @@ phase_build() {
         (( STOP )) && break
         dir=${MOD_DIR[$mod]}
         if (( CLEAN )); then
-            emit_step clean "$mod" "make -C $dir clean GUI_TOOLKIT=gtk4" "$ROOT" \
-                make -C "$ROOT/$dir" clean GUI_TOOLKIT=gtk4
+            emit_step clean "$mod" "make -C $dir clean" "$ROOT" \
+                make -C "$ROOT/$dir" clean
         fi
         (( STOP )) && break
-        emit_step build "$mod" "make -C $dir -j$JOBS all GUI_TOOLKIT=gtk4" "$ROOT" \
-            make -C "$ROOT/$dir" -j"$JOBS" all GUI_TOOLKIT=gtk4
+        emit_step build "$mod" "make -C $dir -j$JOBS all" "$ROOT" \
+            make -C "$ROOT/$dir" -j"$JOBS" all
     done
 }
 
@@ -812,36 +810,15 @@ phase_test() {
 
 # Comandos de validacion de un modulo: lineas "binario|argumentos".
 #
-# NOTA: esta es la UNICA tabla con nombres de modulo que queda, y es deliberada:
-# los flags de validacion son un contrato de CLI que hoy no esta declarado en
-# ningun lado. Derivarlos por heuristica (p.ej. raspar --help) seria peor: un
-# binario sin DISPLAY no imprime su ayuda y se perderia la validacion en
-# silencio. El paso correcto es que cada Makefile declare `VALIDATE_FLAGS` y
-# que esta funcion lo lea; eso exige tocar 3 Makefiles y queda fuera de este
-# cambio. Mientras tanto, un modulo sin entrada aca queda en SKIP (no FAIL).
-validate_cmds() {
-    case "$1" in
-        csnhypodbp)
-            printf '%s\n' \
-                'csnhypodbp|--print-config csnhypodbp.d' \
-                'csnhypodbp|--check-profiles csnhypodbp.d'
-            ;;
-        csnrv)
-            printf '%s\n' \
-                'csnrv|--print-config csnrv.d' \
-                'csnrv|--check-overlays csnrv.d'
-            ;;
-        csnstaevdisp)
-            printf '%s\n' 'csnstaevdisp|--check-overlays csnstaevdisp.d'
-            ;;
-        csnwphase)
-            # OJO: csnwphase lleva el subcomando DESPUES del .d.
-            printf '%s\n' 'csnwphase|csnwphase.d --print-config'
-            ;;
-        *)
-            :
-            ;;
-    esac
+# La tabla NO vive aca: cada Makefile declara `VALIDATE_FLAGS` (una entrada por
+# comando, formato "binario|argumentos") y expone el target
+# `print-VALIDATE_FLAGS`. Asi un modulo nuevo entra solo declarando sus flags y
+# el script no necesita ninguna lista de nombres. Un modulo sin ese target queda
+# en SKIP (no FAIL): es el caso de las librerias y de los modulos sin validacion
+# de configuracion.
+validate_cmds() {  # validate_cmds <dir-relativo>
+    local dir=$1
+    make -C "$ROOT/$dir" -s --no-print-directory print-VALIDATE_FLAGS 2>/dev/null
 }
 
 phase_validate() {
@@ -862,7 +839,7 @@ phase_validate() {
     for mod in "${SELECTED[@]}"; do
         (( STOP )) && break
         local lines
-        lines=$(validate_cmds "$mod")
+        lines=$(validate_cmds "${MOD_DIR[$mod]}")
         if [ -z "$lines" ]; then
             skip_step validate "$mod" "sin flags de validacion"
             continue
@@ -962,7 +939,7 @@ list_modules() {
         has_target "$mkf" test-live && live=test-live
         bins=${MOD_BINS[$mod]}
         [ -n "$bins" ] || bins="(libreria)"
-        validate=$(validate_cmds "$mod" | sed 's/.*|//' | tr '\n' ',' | sed 's/,$//')
+        validate=$(validate_cmds "${MOD_DIR[$mod]}" | sed 's/.*|//' | tr '\n' ',' | sed 's/,$//')
         [ -n "$validate" ] || validate="-"
         printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
             "$mod" "${MOD_DIR[$mod]}" "$bins" \

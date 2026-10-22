@@ -77,6 +77,12 @@ void pm_config_defaults(PmConfig *c)
     c->PicksOutFile[0] = '\0';
     c->RunMetaFile[0]  = '\0';
     c->LiveMaxAgeSec   = 120;       /* live: no reprocesar más de 2 min de atraso */
+
+    /* Publicación al anillo: APAGADA por defecto. El .d vivo la enciende. */
+    c->PublishRing      = 0;
+    c->PublishP         = 1;
+    c->PublishS         = 1;
+    c->PublishMaxWeight = 3;
 }
 
 int pm_config_load(const char *file, PmConfig *c, char *err, size_t errn)
@@ -158,6 +164,18 @@ int pm_config_load(const char *file, PmConfig *c, char *err, size_t errn)
         else if (k_its("RunMetaFile"))    { str = k_str(); copy_str(c->RunMetaFile, sizeof(c->RunMetaFile), str); }
         else if (k_its("LiveMaxAgeSec"))  c->LiveMaxAgeSec = k_int();
 
+        else if (k_its("PublishRing"))    c->PublishRing = k_int();
+        else if (k_its("PublishPhases"))  {
+            str = k_str();
+            if (pm_publish_phases_parse(str, &c->PublishP, &c->PublishS) != 0) {
+                if (err) snprintf(err, errn,
+                    "PublishPhases='%s' invalido (P|S|PS)", str ? str : "");
+                k_close();
+                return PM_ERR;
+            }
+        }
+        else if (k_its("PublishMaxWeight")) c->PublishMaxWeight = k_int();
+
         else continue;   /* clave desconocida: se ignora, como en pickS */
 
         if (k_err()) {
@@ -223,6 +241,21 @@ int pm_config_load(const char *file, PmConfig *c, char *err, size_t errn)
         if (err) snprintf(err, errn, "W0Prob..W3Prob deben ser decrecientes");
         return PM_ERR;
     }
+    /* LogFile y publicación: rangos estrictos (un valor raro en un productor
+     * vivo falla en silencio, así que se rechaza en el arranque). */
+    if (c->LogFile < 0 || c->LogFile > 2) {
+        if (err) snprintf(err, errn, "LogFile=%d fuera de 0..2", c->LogFile);
+        return PM_ERR;
+    }
+    if (c->PublishRing != 0 && c->PublishRing != 1) {
+        if (err) snprintf(err, errn, "PublishRing=%d debe ser 0 o 1", c->PublishRing);
+        return PM_ERR;
+    }
+    if (c->PublishMaxWeight < 0 || c->PublishMaxWeight > 3) {
+        if (err) snprintf(err, errn, "PublishMaxWeight=%d fuera de 0..3",
+                          c->PublishMaxWeight);
+        return PM_ERR;
+    }
     return PM_OK;
 }
 
@@ -266,4 +299,11 @@ void pm_config_print(const PmConfig *c, FILE *f)
     fprintf(f, "PicksOutFile    %s\n", c->PicksOutFile[0] ? c->PicksOutFile : "(apagado)");
     fprintf(f, "RunMetaFile     %s\n", c->RunMetaFile[0] ? c->RunMetaFile : "(apagado)");
     fprintf(f, "LiveMaxAgeSec   %d\n", c->LiveMaxAgeSec);
+    {
+        char ph[8];
+        pm_publish_phases_str(c->PublishP, c->PublishS, ph, sizeof(ph));
+        fprintf(f, "PublishRing     %d\n", c->PublishRing);
+        fprintf(f, "PublishPhases   %s\n", ph);
+    }
+    fprintf(f, "PublishMaxWeight %d\n", c->PublishMaxWeight);
 }

@@ -5,6 +5,9 @@ MyModId       MOD_PICK_FP      # This instance of pick_FP
 StaFile       "pick_FP.sta"    # File containing station name/pin# info
 InRing           SLINK_RING    # Transport ring to find waveform data on,
 OutRing          PICK_RING     # Transport ring to write output to,
+                             # (P suelta a PICK_RING: la S la pone
+                             #  pickml_iquique.d en el mismo anillo; pickS y
+                             #  pickml_eqt siguen en LEGACY_PICK_RING)
 HeartbeatInt            30     # Heartbeat interval, in seconds,
 RestartLength          100     # Number of samples to process for restart
 MaxGap                  15     # Maximum gap to interpolate

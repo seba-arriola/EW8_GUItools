@@ -1,7 +1,7 @@
 /*
  * UI GTK4 compartida para editar la capa de líneas.
  * Ventana modal con una fila por capa: nombre, visibilidad y color.
- * Solo se compila con GUI_TOOLKIT=gtk4 (ver common/Makefile).
+ * Solo se compila en el build GTK4 (ver common/Makefile).
  */
 #include "ewgui/overlay_ui.h"
 

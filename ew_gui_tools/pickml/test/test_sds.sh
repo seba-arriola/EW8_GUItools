@@ -44,6 +44,7 @@ MyModuleId      MOD_PICKML
 InRing          SLINK_RING
 OutRing         PICK_RING
 StaFile         $TMP/sds.sta
+LogFile         0
 Engine          stub
 WindowSamples   6000
 Rate            100.0

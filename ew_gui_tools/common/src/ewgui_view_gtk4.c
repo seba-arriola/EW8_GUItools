@@ -1,9 +1,9 @@
 /*
  * Implementación GTK4 de EwGuiCanvas (GtkDrawingArea + set_draw_func).
- * Ver ewgui/view.h. Mantiene la misma API que la de GTK3, así que los módulos
- * no cambian. El cairo_t que recibe el draw-func se integra en el snapshot de
- * GTK4; la optimización con GskPath/GLArea queda para más adelante (ver
- * docs/adr-0001-render-backend.md).
+ * Ver ewgui/view.h. Es la única implementación de la API EwGuiCanvas (la de
+ * GTK3 se retiró en T6.5), así que los módulos no cambian. El cairo_t que
+ * recibe el draw-func se integra en el snapshot de GTK4; la optimización con
+ * GskPath/GLArea queda para más adelante (ver docs/adr-0001-render-backend.md).
  */
 #include "ewgui/view.h"
 

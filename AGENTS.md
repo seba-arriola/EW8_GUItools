@@ -176,8 +176,11 @@ hace **`csnloc`** localmente.
     `docs/DATA-MAPPING-PENDIENTES.md`. Ver también `docs/HYPODB.md` y `db/README.md`.
   - `csnloc/`: módulo nativo (C) de asociación de fases + localización rápida. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
   - `pickS/`: picker nativo (C) de **onda S**. Lee ondas `TYPE_TRACEBUF2` de
-    `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `PICK_RING`, y publica
-    picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en `PICK_RING`. Algoritmo
+    `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `LEGACY_PICK_RING`, y
+    publica picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en
+    `LEGACY_PICK_RING` — su propio pipeline: el anillo vivo (`PICK_RING`) es de
+    `pickml`, y mezclarlos haría que `csnloc` asociara dos veces el mismo arribo.
+    Algoritmo
     STA/LTA sobre la envolvente horizontal + refinamiento AIC + polarización 3C
     (Jurkevics) para el criterio de calidad (weight 0-4). En modo `hybrid` exige
     **siempre** una P previa de la misma estación (ventana `GuideMin/MaxDtSec`):
@@ -190,6 +193,29 @@ hace **`csnloc`** localmente.
     (`pickS <pickS.d> <tank> [ppicks]`) análogo a `pick_FP`, con config
     `pickS.d` y lista `pickS.sta`. Tests con `make check` (unitarios) y
     `make check-offline` (integrado determinista). Ver `pickS/README.md`.
+  - `pickml/`: **picker neuronal P/S** (PhaseNetWC sobre ONNX Runtime) en C. Modo vivo:
+    ondas `TYPE_TRACEBUF2` de `SLINK_RING` → `TYPE_PICK_SCNL` en `PICK_RING`; es el
+    picker automático del pipeline vivo, y además escribe JSONL/SCNL a archivo. Hoy corren
+    **dos instancias en paralelo, cada una con su anillo**: `pickml_iquique.d` (pesos
+    `iquique`, entrenados en Chile) → `PICK_RING` y `pickml_eqt.d` (pesos `original`) →
+    `LEGACY_PICK_RING`; PhaseNetWC quedó retirado porque satura esta red (miles de P donde
+    no hay evento, ver `docs/DLdetalles.md` §9.4). El modo
+    vivo es el **default sin flags de fuente** (como `csnloc <d>`/`pickS <d>`: `startstop`
+    sólo pasa el `.d`, y `--ring` es sinónimo explícito) y el módulo **crea** el directorio
+    de sus salidas (`run_working_v8/pickml/`, ignorada por git: en un worktree nuevo no
+    existe y el arranque moría con exit 4). El build **autodetecta** el ORT vendorizado
+    (`make ORT_DIR=<dir>` lo fija, `make ORT_DIR=` fuerza el motor `stub`): un binario
+    `stub` instalado **no** arranca con `Engine onnx` (exit 3) y queda muerto bajo
+    `startstop`, así que el aviso "motor ONNX no compilado" del build es señal de avería.
+    Publicación con `PublishRing` (0/1), `PublishPhases P|S|PS` y `PublishMaxWeight 0..3`
+    (`pickml_iquique.d` publica **sólo S**: la P de `PICK_RING` la pone `pick_FP`);
+    `--publish-dry-run` cuenta sin escribir y un `OutRing` inexistente es fail-fast.
+    Modos offline `--tank`, `--store` y `--sds` (deterministas, motor `stub` en los
+    tests). `logit_init("pickml", …)` escribe `EW_LOG/pickml_*.log` con `LogFile` 0/1/2;
+    ojo: `logit` con flag 0 es **mudo** y sin `EW_LOG` mata el proceso, así que el
+    binario fuerza consola cuando falta la variable. Tests: `make check` (unitarios),
+    `check-offline` (tank/store/SDS + guardas de publicación) y `check-engine` (ONNX).
+    Ver `pickml/README.md` y `docs/DLintegration.md`.
   - `csnwphase/`: inversión de **fase W** (motor `eost/wphase` vendorizado) como cálculo
     **on-demand**: NO es módulo de anillos (no se declara en `startstop_unix.d`) y se
     dispara desde la GUI (*Procesar → magnitudes → `Mww`*) o por CLI. Prepara la entrada
@@ -203,14 +229,14 @@ hace **`csnloc`** localmente.
   - `ew_controller/`: panel de control gráfico para `startstop` (detener/reiniciar/iniciar módulos, ver logs, editar archivos `.d`). Usa un `CONTROL_RING` dedicado (clave 1060). **La identidad de un módulo es su `pid`, nunca el nombre**: `startstop_unix.d` tiene dos `Process` llamados `csnmags` (con `csnmags.d` y `csnmags_raw.d`), y resolver por nombre apuntaba siempre a la 1.ª instancia, así que la fila de la 2.ª mandaba Stop/Restart con el pid de la 1.ª. La fila seleccionada, el objetivo de Stop/Restart/Start (se lee del **item** seleccionado), la restauración de la selección tras un rebuild y el panel de log se resuelven por pid; el nombre sólo se usa para mostrar y para la política "a `startstop` no se le manda Restart". Los selectores de log/Configuration muestran el `.d` **sólo** cuando el nombre está repetido (`csnmags (csnmags_raw.d)`). Al reiniciar un módulo cambia su pid, así que la selección se pierde (precio de no emparejar por nombre). Las dos tablas (*Modules*: `Module/PID/Status/Details`; *Rings*: `Ring/Key/Size KB`) **ordenan pulsando la cabecera** con el helper compartido (`ewgui/table_ui.h`: `GListStore → GtkSortListModel → GtkSingleSelection/GtkNoSelection → GtkColumnView`, desempate `name`, primer clic ascendente). Como el `bind` de `GtkSignalListItemFactory` es un **snapshot** (§7), cualquier cambio visible **reconstruye las filas** (el `ewgui_ctrl_sync_plan`, en `common`, sólo evita el trabajo cuando nada cambió) y la selección se conserva por **pid** de módulo; **con el sort model en medio el índice de la vista no es el del store**, así que la fila seleccionada se resuelve por *item*. El **layout** son dos divisores ajustables (horizontal: tabla de *Modules* ↔ columna derecha; vertical en la derecha: Anillos ↕ Logs): al agrandar, el ancho extra se lo lleva la tabla y el alto extra los logs; el reparto inicial (panel derecho ~400 px, anillos la mitad) se fija **una sola vez** al mapear (`ec_split_h`/`ec_split_v`) y no hay `set_size_request` ni `shrink=FALSE` (fijaban ~1051 px de mínimo a la ventana, que así no podía encoger); las columnas de texto variable llevan `set_expand` + `set_resizable` (sin ninguna `expand` el ancho sobrante **no** se reparte y queda en blanco) y los `GtkScrolledWindow`/etiquetas de estado están acotados (`min_content_width`, elipsis: el mínimo de un `GtkLabel` es su texto completo). El refresco **se congela mientras la pestaña *Configuration* está activa** (no se reconstruye lo que no se mira) y pide confirmación al salir con cambios sin guardar. Si `startstop` no responde durante `PollInt*4` s, la columna `Status` muestra `?` en vez de un `Alive` ya falso. Los selectores de módulo **no** son `GtkDropDown` (su popup queda detrás de la ventana bajo WSLg/Wayland, bug #1299): son botones que abren una ventana modal con la lista. Tests: `make -C ew_gui_tools/ew_controller test` (invariantes de fuente) y `test-live` (GUI sobre
 el EarthWorm en marcha: orden/estado, `--layout`, `--select` y `--dup`, con el estado sintético
 inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI-TESTS.md`).
-  - `common/`: **librería estática compartida `libewgui.a`** para los módulos GUI
+  - `common/`: **librería estática compartida `libewgui_gtk4.a`** para los módulos GUI
     (`config`, `ring`, `log`, `dsp`, `wave`, `geo`, `sta`, `view`, `actions`, `cfgfile`,
     `ctrl`, `export`). Reglas: las capas `core/dsp/wave/geo` **no incluyen `gtk/gtk.h`** (se
     testean headless con `make -C ew_gui_tools/common check`); el único punto con GTK
     es la capa de vista. Los Makefiles de los módulos la enlazan como
-    `../common/libewgui.a`. `export`: volcado de cualquier `EwGuiCanvas` a SVG/PDF/PNG
+    `../common/libewgui_gtk4.a`. `export`: volcado de cualquier `EwGuiCanvas` a SVG/PDF/PNG
     reutilizando su callback cairo (`ewgui_export.h`; núcleo headless + UI `GtkFileDialog`
-    solo en el build GTK4). Los 5 módulos GUI usan **`AdwApplication` + `AdwHeaderBar`**
+    sólo en el build GTK4, que es el único). Los 5 módulos GUI usan **`AdwApplication` + `AdwHeaderBar`**
     (menú propio, "Export view…" y modo oscuro). El menú ☰ **no** es un `GtkMenuButton`
     (su `GtkPopoverMenu` es un popup que queda detrás de la ventana bajo WSLg/Wayland):
     es un botón que abre una **ventana modal** compartida (`menu_ui.h` +
@@ -242,9 +268,8 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
   `psql` y `reset` sí lo exigen. Ver `docs/HYPODB.md`.
 - `ew8_compile.sh`: punto de entrada único de compilación (`all|libs|headless|gui|<módulo>`)
   y de tests/validación (`--check`, `--test`, `--validate`, `--all-checks`, `--slow`,
-  `--live`, `--db`; ver `--help`). Fuerza `GUI_TOOLKIT=gtk4` en todas las invocaciones de
-  `make`, compila en orden canónico y usa `make all`, que instala de forma atómica en
-  `ew_8.0/bin` (seguro con EarthWorm corriendo).
+  `--live`, `--db`; ver `--help`). Compila en orden canónico y usa `make all`,
+  que instala de forma atómica en `ew_8.0/bin` (seguro con EarthWorm corriendo).
 - `ew8_unix.sh`: script de inicialización del entorno (variables de EarthWorm).
 - `ew_monitor.sh`: script de control de EarthWorm (`status|list|start|stop|restart`; `start/stop/restart`
   aceptan `<módulo> ...` para operar sobre uno solo, y `status`/`list` muestran el estado de cada
@@ -259,21 +284,26 @@ SeedLink (10.54.217.9:18000)
         │  slink2ew
         ▼
    SLINK_RING ──────────────► wstore_ingest ──► csnhypodbp (fallback)
-        │  pick_FP
-        ├────────────────────► wstore_ingest ──► store indexado (wstore)
-        ▼
-   PICK_RING ──────────────► csntvp / csnhypodbp (re-picks manuales)
+        │  pick_FP (P) + pickml iquique (S)
+        ├────────────────────► PICK_RING ──► csntvp / csnhypodbp (re-picks manuales)
+        │                          │
+        │                          └─ csnloc (asociador + localizador local) ─┐
+        │                                                                     ▼
+        │            HYPO_RING (TYPE_HYP2000ARC) ──► csnmags  (ML/Mwp/Mb/Ms)  [store]
+        │                                          ──► csnhypodbp  (GUI)      [store]
+        │                                          ──► csnrv       (vista regional)
         │
-        └─ csnloc (asociador + localizador local) ─┐
-                                                   ▼
-   HYPO_RING (TYPE_HYP2000ARC) ──► csnmags  (ML / Mwp / Mb / Ms)  [store]
-                               ──► csnhypodbp  (GUI)              [store]
-                               ──► csnrv       (vista regional)
+        └─ pickS / pickml eqt ─► LEGACY_PICK_RING  (sin consumidor: comparar)
 ```
 
 `csnloc` hace la asociación de fases y la localización **localmente**. El ingester `wstore_ingest`
 lee `SLINK_RING` con su propio cursor y escribe el **store indexado** (`wstore`), fuente primaria de
-ondas de `csnhypodbp` y `csnmags`.
+ondas de `csnhypodbp` y `csnmags`. **`PICK_RING` es el anillo vivo** y su regla es **un productor
+por fase**: `pick_FP` aporta la **P** y `pickml_iquique` **sólo la S** (`PublishPhases S`, porque
+`iquique` rankea mal la P —P 51 % vs 90 % de PhaseNetWC a presupuesto igualado— mientras su S supera
+a la de este último). `pickS` y `pickml_eqt` siguen en `LEGACY_PICK_RING`, sin consumidor, para
+comparar: dos productores de la **misma** fase en un anillo que se lee meten dos arribos y `csnloc`
+asocia el doble.
 
 ---
 
@@ -336,12 +366,12 @@ equivocado y la fase W no arrancaba). Invariante:
 `common/tests/test_build_deps.sh` (dentro de `common check`).
 
 **Ojo** con la librería compartida: su regla no depende de las fuentes, así que
-tras tocar `common/` hay que reconstruirla a mano con el toolkit correcto
-(`GUI_TOOLKIT=gtk4`) o los módulos fallan con `undefined reference`:
+tras tocar `common/` hay que reconstruirla a mano o los módulos fallan con
+`undefined reference`:
 
 ```bash
 source ./ew8_unix.sh
-# Script canónico: compila e instala en orden, con GUI_TOOLKIT=gtk4 en todo make
+# Script canónico: compila e instala en orden canónico
 ./ew8_compile.sh all --clean          # todo desde cero
 ./ew8_compile.sh common --clean       # solo la librería compartida
 ./ew8_compile.sh all --check          # compila + tests headless
@@ -362,8 +392,8 @@ La receta manual sirve para depurar un módulo suelto:
 
 ```bash
 source ./ew8_unix.sh
-make -C ew_gui_tools/common clean GUI_TOOLKIT=gtk4
-make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
+make -C ew_gui_tools/common clean
+make -C ew_gui_tools/common
 make -C ew_gui_tools/common check      # tests headless + check_no_gtk
 make -C ew_gui_tools/csnloc check
 ```
@@ -413,11 +443,12 @@ csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.
 
 - **Un módulo GUI no arranca sin `DISPLAY`** (`csnhypodbp`, `csnrv`, `csntvp`, `csnstaevdisp`,
   `ew_controller`): lánzalos desde una terminal de tu sesión gráfica (en WSLg, `:0`). `csnloc`,
-  `pickS`, `csnmags`, `hypodb_ingest`, `wstore_ingest`, `hyp2000_ring`, `nlloc_ring` son headless.
+  `pickS`, `pickml`, `csnmags`, `hypodb_ingest`, `wstore_ingest`, `hyp2000_ring`, `nlloc_ring` son
+  headless.
 - **Ningún módulo se protege de una segunda instancia** (no hay lock; la unicidad la da
-  `startstop`). Si lanzas a mano un **productor** (`csnloc`, `pickS`, `csnmags`, `hyp2000_ring`,
-  `nlloc_ring`) con `startstop` ya corriéndolo, tendrás **dos escribiendo en los anillos**
-  (picks/soluciones duplicadas). Con los visores no hay problema.
+  `startstop`). Si lanzas a mano un **productor** (`csnloc`, `pickS`, `pickml`, `csnmags`,
+  `hyp2000_ring`, `nlloc_ring`) con `startstop` ya corriéndolo, tendrás **dos escribiendo en los
+  anillos** (picks/soluciones duplicadas). Con los visores no hay problema.
 - **Dejarlo en segundo plano y recuperar el prompt**:
   `<binario> <binario>.d >/tmp/opencode/<binario>.log 2>&1 & disown` (los scripts de §4 usan
   `setsid` para que sobreviva al cierre de la terminal).
@@ -453,11 +484,11 @@ uno, pruébalo)
 | **No ensuciar los logs de producción** | `EW_LOG=/tmp/opencode/log csnhypodbp csnhypodbp.d` | el log del módulo va a ese directorio |
 | **Probar un `.d` sin tocar el de producción** | `EW_PARAMS=/tmp/opencode/params csnhypodbp /tmp/opencode/params/csnhypodbp.d` | el módulo lee la copia aislada |
 | **Comprobar que arranca y se puede matar** | `/usr/bin/timeout 20 csnhypodbp csnhypodbp.d` | corre 20 s y sale solo |
-| **Validar la configuración sin abrir ventana** (sirve sin `DISPLAY`) | `csnhypodbp --print-config csnhypodbp.d` · `csnhypodbp --check-profiles csnhypodbp.d` · `csnrv --print-config csnrv.d` · `csnrv --check-overlays csnrv.d` · `csnstaevdisp --check-overlays csnstaevdisp.d` | reporte a stdout; ⚠ **el flag va ANTES del `.d`** |
-| **Depurar los módulos de anillos** (headless) | `csnloc csnloc.d` · `pickS pickS.d` · `csnmags csnmags.d` · `hypodb_ingest hypodb.d` · `wstore_ingest wavestore.d` · `hyp2000_ring hyp2000_ring.d` · `nlloc_ring nlloc_ring.d` | salida en la terminal; `Ctrl-C` para parar. ⚠ Si `startstop` ya los corre, **no** los lances (duplicas la salida) |
+| **Validar la configuración sin abrir ventana** (sirve sin `DISPLAY`) | `csnhypodbp --print-config csnhypodbp.d` · `csnhypodbp --check-profiles csnhypodbp.d` · `csnrv --print-config csnrv.d` · `csnrv --check-overlays csnrv.d` · `csnstaevdisp --check-overlays csnstaevdisp.d` · `pickml pickml_phasenetwc.d --print-config` | reporte a stdout; ⚠ **el flag va ANTES del `.d`** (en `csnwphase` y `pickml`, DESPUÉS) |
+| **Depurar los módulos de anillos** (headless) | `csnloc csnloc.d` · `pickS pickS.d` · `pickml pickml_phasenetwc.d` · `csnmags csnmags.d` · `hypodb_ingest hypodb.d` · `wstore_ingest wavestore.d` · `hyp2000_ring hyp2000_ring.d` · `nlloc_ring nlloc_ring.d` | salida en la terminal; `Ctrl-C` para parar. ⚠ Si `startstop` ya los corre, **no** los lances (duplicas la salida) |
 | **La inversión de fase W** (on-demand: **no** es módulo de anillos) | `csnwphase csnwphase.d --print-config` · `csnwphase csnwphase.d --prep <rundir> <t0> <lat> <lon> <prof> <mag>` · `csnwphase csnwphase.d --run <rundir> … [--dry-run]` | escribe en el rundir (`run.log`, `wphase.json`); ⚠ **el subcomando va DESPUÉS del `.d`** |
 | **Reprocesar offline** (sin anillos) | `csnloc <csnloc.d> <picksfile>` (reloj virtual; ver `csnloc/README.md`) | un JSON por evento localizado |
-| **Inspeccionar los anillos** | `/usr/bin/timeout 5 sniffring -n PICK_RING` | lo que **ya** está en el anillo; sin `-n` lo drena primero (§7) |
+| **Inspeccionar los anillos** | `/usr/bin/timeout 5 sniffring -n PICK_RING` · `/usr/bin/timeout 5 sniffring -n LEGACY_PICK_RING` | lo que **ya** está en el anillo; sin `-n` lo drena primero (§7). `PICK_RING` = `pick_FP` (P) + `pickml_iquique` (S) + repicks manuales; `LEGACY_PICK_RING` = `pickS`/`pickml_eqt` |
 
 ### Recetas para agentes
 

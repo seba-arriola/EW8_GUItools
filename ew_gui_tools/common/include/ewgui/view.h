@@ -5,10 +5,10 @@
 #include <gtk/gtk.h>
 
 /*
- * Abstracción de canvas de dibujo. Es el ÚNICO punto que cambia al migrar a
- * GTK4: la implementación (ewgui_view_gtk3.c) usa GtkDrawingArea + signal
- * "draw"; la de GTK4 usará set_draw_func/snapshot o GtkGLArea, con la misma
- * API. Los módulos NO deben usar GtkDrawingArea directamente.
+ * Abstracción de canvas de dibujo. Es el ÚNICO punto que dependía del toolkit:
+ * hoy sólo existe la implementación GTK4 (ewgui_view_gtk4.c: GtkDrawingArea +
+ * set_draw_func), con esta misma API. Los módulos NO deben usar
+ * GtkDrawingArea directamente.
  *
  * Nota: este header SÍ incluye GTK (es la capa de vista); está exento de la
  * regla "core/dsp/wave/geo sin GTK" (ver tests/check_no_gtk.sh).

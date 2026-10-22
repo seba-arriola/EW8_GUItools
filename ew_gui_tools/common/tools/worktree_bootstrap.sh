@@ -304,7 +304,7 @@ fi
 say ""
 say "siguiente:"
 say "  source ./ew8_unix.sh"
-say "  make -C ew_gui_tools/common GUI_TOOLKIT=gtk4   &&   make -C ew_gui_tools/<modulo>"
+say "  make -C ew_gui_tools/common   &&   make -C ew_gui_tools/<modulo>"
 say "  ./ew8_db.sh -i $N up            # solo si esta instancia usa su propia base"
 say "  ./ew_monitor.sh start"
 say "  ew_gui_tools/common/tools/worktree_bootstrap.sh . --check"

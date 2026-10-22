@@ -3,8 +3,10 @@
 #
 #  Modulo    : MOD_PICKS (165)
 #  Entrada   : SLINK_RING  (ondas TYPE_TRACEBUF2, canales HH?/BH?)
-#  Guia P    : PICK_RING   (picks P de pick_FP)
-#  Salida    : PICK_RING   (picks S TYPE_PICK_SCNL, 11o token de fase 'S')
+#  Guia P    : LEGACY_PICK_RING   (picks P de pick_FP)
+#  Salida    : LEGACY_PICK_RING   (picks S TYPE_PICK_SCNL, 11o token de fase 'S')
+#              El anillo vivo (PICK_RING) lo publica pickml; mezclar los dos
+#              haria que csnloc asociara dos veces el mismo arribo.
 #
 #  Los valores de algoritmo son calibrables; los defaults son conservadores
 #  para sismologia regional (banda 1-10 Hz).
@@ -12,8 +14,8 @@
 
 MyModuleId      MOD_PICKS
 InRing          SLINK_RING
-PickRing        PICK_RING
-OutRing         PICK_RING
+PickRing        LEGACY_PICK_RING  # guía P: su propio pipeline (no la de pickml)
+OutRing         LEGACY_PICK_RING  # sus S no contaminan PICK_RING
 HeartbeatInt    30
 LogFile         1
 Debug           0

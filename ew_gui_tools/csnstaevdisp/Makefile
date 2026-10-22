@@ -1,4 +1,4 @@
-# Makefile para csnstaevdisp (Visor de Estaciones y Eventos - GTK3 + Earthworm 8)
+# Makefile para csnstaevdisp (Visor de Estaciones y Eventos - GTK4 + Earthworm 8)
 # Carga de estaciones y de la historia de sismos propia (sin libsrc/ATWC).
 
 MODULE = csnstaevdisp
@@ -28,7 +28,7 @@ install: $(MODULE)
 	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin $(MODULE)
 
 ../common/libewgui_gtk4.a:
-	$(MAKE) -C ../common GUI_TOOLKIT=gtk4
+	$(MAKE) -C ../common
 
 $(MODULE): $(MODULE).c ../common/libewgui_gtk4.a
 	$(CC) $(CFLAGS) -o $(MODULE) $(MODULE).c ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
@@ -56,6 +56,15 @@ test/test_data: test/test_data.c $(MODULE).c
 	      ../common/libewgui_gtk4.a $(EW_OBJS) $(LDFLAGS)
 
 .PHONY: all clean test-data test-config
+
+# --- Validacion de configuracion (ew8_compile.sh --validate) ----------------
+# Una entrada por comando, formato "binario|argumentos", separadas por `\n`
+# LITERAL: make parte la receta en cada newline real de una variable expandida y
+# el printf queda con la comilla sin cerrar. El target lo lee `ew8_compile.sh`.
+VALIDATE_FLAGS = csnstaevdisp|--check-overlays csnstaevdisp.d
+.PHONY: print-VALIDATE_FLAGS
+print-VALIDATE_FLAGS:
+	@printf '%b\n' '$(VALIDATE_FLAGS)'
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

@@ -35,6 +35,7 @@
 # >>> ring keys (generado por worktree_bootstrap.sh) >>>
  Ring   WAVE_RING        1000    # public waveform data
  Ring   PICK_RING        1005    # public parametric data
+ Ring   LEGACY_PICK_RING 1006    # picks de los pickers viejos (pick_FP/pickS); sin consumidor
  Ring   HYPO_RING        1015    # public hypocenters etc.
  Ring   HYPO_RING_REF    1016    # hipocentros refinados (hyp2000_ring / nlloc_ring)
  Ring   HYPO_RING_REF2   1017    # confirmaciones manuales de csnhypodbp (ARC -> hypodb)
@@ -241,6 +242,7 @@
  Module   MOD_CSNMAGS_RAW       168
  Module   MOD_HYPODB            169
  Module   MOD_WSTORE            170
+ Module   MOD_PICKML            171    # picker neuronal PhaseNetWC (publica en PICK_RING)
 #--------------------------------------------------------------------------
 #                          Message Types
 #

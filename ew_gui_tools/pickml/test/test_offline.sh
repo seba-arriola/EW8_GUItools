@@ -33,6 +33,7 @@ MyModuleId      MOD_PICKML
 InRing          SLINK_RING
 OutRing         PICK_RING
 StaFile         $TMP/pickml_test.sta
+LogFile         0
 Engine          stub
 WindowSamples   6000
 Rate            100.0

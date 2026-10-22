@@ -264,12 +264,15 @@ y exportar los modelos; una vez que existen los `.onnx`, la operación es 100 % 
 
    ```sh
    source ./ew8_unix.sh
-   make -C ew_gui_tools/pickml ORT_DIR=/opt/onnxruntime-1.31
+   make -C ew_gui_tools/pickml      # autodetecta el ORT vendorizado (ORT_DIR= = stub)
    make -C ew_gui_tools/pickml check
    make -C ew_gui_tools/pickml check-offline
    ```
 
    `ORT_DIR` sólo aporta el **header**; la librería se carga en runtime con `dlopen`.
+   El Makefile lo autodetecta (`/mnt/d/resources/pickml/onnxruntime-linux-x64-*`) y, si no
+   lo encuentra, avisa y compila el motor `stub`: ese binario **no** arranca con
+   `Engine onnx` (exit 3) y el módulo queda muerto bajo `startstop`.
 6. Validar sin abrir ventana ni anillo:
 
    ```sh
@@ -428,6 +431,63 @@ falso positivo: son detecciones adicionales (la referencia no es exhaustiva). Aj
 
 `make check-engine` compara la salida del `.onnx` contra PyTorch sobre una ventana real
 (`test/fixtures/win1.tank`). Sirve para detectar un export mal hecho (diferencias ~1e-07).
+
+### 9.4 EQT sobre la red de 137 estaciones (medición 2026-10-21)
+
+Mismo tramo del store (21:05–21:10 UTC), un modelo a la vez, `pickml_eqt.d` contra
+`pickml_phasenetwc.d`:
+
+| | PhaseNetWC | EQT |
+|---|---|---|
+| ventanas | 4 296 (30.01 s, paso 5 s) | 1 950 (60 s, paso 10 s) |
+| picks | 332 | **2** (con umbrales 0.02) |
+| picks/h | ~3 984 | **24** |
+| máx P por ventana: media / p99 | 0.153 / 0.816 | **0.0007 / 0.001** |
+| ventanas con P ≥ 0.20 | 1 101 | **2** |
+| ventanas con `det` ≥ 0.02 | (`det` = max(P,S), artificial) | 185 |
+
+- **El motor está bien**: paridad vs PyTorch 3.58e-07 (P) / 1.79e-07 (S) y 1 950
+  ventanas procesadas sin un error (`make check-engine PICKML_MODEL=…/eqt.onnx
+  PICKML_ORT=…/libonnxruntime.so.1.31.0`).
+- **Los umbrales 0.20/0.20 del barrido de la otra rama dejan a EQT mudo en esta
+  red** (0 picks en 5 min): sus probabilidades quedan 2–3 órdenes por debajo de lo
+  que ese umbral asume. `pickml_eqt.d` queda con `PThreshold/SThreshold 0.02` y
+  `W3Prob 0.02`.
+- En la ventana dorada del fixture su curva P **sí** llega a 0.92, así que **no
+  está probado que EQT no detecte**: falta el corpus de eventos con referencia
+  (§9.1–9.2) para comparar **recall**, no sólo tasa.
+- El canal `detection` (índice 2 del tensor de EQT) es la única curva con
+  contenido distribuido (p99 0.037): es lo que justifica la compuerta por
+  `DetThreshold`, hoy no-op en el módulo.
+- Reproducir: `pickml <d> --store ../wstore --t0 … --t1 … --dump-curves /tmp/cur`
+  y luego `tools/sweep_post.py --case <dir con curve.*>` para barrer umbrales sin
+  volver a correr el modelo.
+
+### 9.5 Pesos `iquique` (misma arquitectura, datos de Chile)
+
+Exportado el 2026-10-22 con `--arch eqt --model iquique`: `norm=peak` (la v1 de
+esos pesos tenía la normalización mal), salida `(P,S,detection)` `[batch,6000,3]`,
+paridad vs torch `6.86e-07` y 1.6 MB tras `tools/slim_onnx.py`. Lo usa
+`pickml_iquique.d` (publica en `PICK_RING`), mientras `pickml_eqt.d` (`original`)
+queda en `LEGACY_PICK_RING`. Los pesos vienen de la secuencia de réplicas del
+Mw 8.1 de Iquique 2014 (redes CX/DG/C1/7K, 100 Hz 3C), así que son in-domain para
+esta red. **Pendiente**: comparar recall contra `original` con eventos reales.
+
+Medido en el mismo tramo del store (§9.4): a umbral 0.02 da 333 picks en 5 min
+(3 996/h, 40 P + 293 S). El barrido del post-proceso sobre sus curvas
+(`tools/sweep_post.py`) da, con `MinPosSec 20` y `DedupSec 2`:
+
+| `PThreshold` | `SThreshold` | picks/h |
+|---|---|---|
+| 0.10 | 0.10 | 777 |
+| **0.20** | **0.20** | **412** |
+| 0.20 | 0.30 | 177 |
+| 0.30 | 0.30 | 153 |
+
+La tasa la manda `SThreshold` (entre P 0.10 y 0.30 hay ~3 % de diferencia y la S
+se lleva el 80–90 % de las picadas). Referencia: PhaseNetWC ≈ 4 000 picks/h en el
+mismo tramo. `pickml_iquique.d` queda en 0.20/0.20. Su canal `detection` sí tiene
+señal (mediana 0.362, p99 0.854), pero el módulo aún no lo usa como compuerta.
 
 ---
 
@@ -605,8 +665,12 @@ umbrales y geometría sin volver a correr el modelo.
 
 ## 12. Limitaciones y siguientes pasos
 
-- **No publica en `PICK_RING`**: es deliberado hasta validar latencia y calidad. Publicar exige
-  subir `AssocWindowSec` de `csnloc` (45 → 90 s) porque hay `lag` de hasta 40 s.
+- **Publica en `PICK_RING`** (no en un anillo de prueba): `PublishRing 1` en
+  `pickml_phasenetwc.d`, con `PublishPhases`/`PublishMaxWeight` y `--publish-dry-run` para
+  ensayar. Los pickers viejos quedaron en `LEGACY_PICK_RING` (sin consumidor).
+  `AssocWindowSec` de `csnloc` sigue en **45 s**: la propuesta de 90 s era para EQTransformer
+  (ventana 60 s); con PhaseNet hay que medir la fracción de picks con `lag_s >= 22 s` (la que el
+  ciclo de asociación puede descartar) antes de tocarlo.
 - **La latencia mínima la fija la ventana**, no el código: no es un picker de “segundos”.
 - **EQT tarda 25 s en arrancar**; un reinicio por `startstop` tiene ese coste.
 - **La BD de desarrollo no tiene picadas manuales**: para calibrar de verdad hay que usar el dump

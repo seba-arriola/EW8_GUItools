@@ -22,7 +22,7 @@ tocar código.
 (`csnrv`, `csnstaevdisp`, `csntvp`, `csnhypodbp`, `ew_controller`), todos con `AdwApplication` +
 `AdwHeaderBar` + modo oscuro y enlazando `libewgui_gtk4.a`. Detalles del port y mejoras de cierre
 en **§11** (WSLg/CSS/LogDir) y **§12** (export SVG/PDF/PNG, AdwApplication, fluidez).
-Pendiente solo **T6.5** (retirar el build GTK3).
+Pendiente sólo **T6.3** (tablas a `GListModel`); **T6.5** (retirar el build GTK3) está hecho.
 `GSK_RENDERER=cairo` (y **sin** forzar `GDK_BACKEND`: backend por defecto) en `ew8_gtk_env.sh`,
 fuente única que `ew8_unix.sh` hace `source`.
 
@@ -328,14 +328,16 @@ store/SDS en `csnhypodbp_ws.c`) corrían en el hilo de UI dentro de
 
 ### Fase 6 — Migración GTK3→GTK4 + libadwaita
 - [x] **T6.1** Build GTK4+libadwaita en paralelo (librería):
-  `make -C ew_gui_tools/common GUI_TOOLKIT=gtk4` (GTK4 4.14.5 + libadwaita 1.5.0).
-  GTK3 sigue siendo el default. Verificado: `check` y `bench` pasan en ambos toolkits.
+  `make -C ew_gui_tools/common` (GTK4 4.14.5 + libadwaita 1.5.0).
+  GTK4 es el único build (el default GTK3 se retiró en T6.5). Verificado: `check` y
+  `bench` pasan.
 - [x] **T6.2** `ewgui_view_gtk4.c` (GtkDrawingArea + `set_draw_func`; el `cairo_t` se
   integra en el snapshot de GTK4). Misma API (`ewgui_canvas_*`), los módulos no cambian.
   *(Optimización `GskPath`/`GtkGLArea` posterior; ver ADR-0001.)*
 - [ ] **T6.3** Tablas a `GListModel` + `GtkColumnView`/`ListView`.
 - [ ] **T6.4** `AdwApplicationWindow`+`AdwToolbarView`+`AdwHeaderBar`+`AdwStyleManager`.
-- [ ] **T6.5** Retirar build GTK3.
+- [x] **T6.5** Retirar build GTK3 (`libewgui.a`/`ewgui_view_gtk3.c` eliminados; `common`
+  construye sólo `libewgui_gtk4.a`).
 
 **Progreso por módulo (port GTK4):**
 - `csnrv` — ✅ portado a GTK4+libadwaita (`gtk_init()`, `gtk_window_set_child`,
@@ -370,19 +372,17 @@ store/SDS en `csnhypodbp_ws.c`) corrían en el hilo de UI dentro de
   →diálogo modal síncrono (`confirmar`); editor de config sobre `GtkGrid`; `GtkTextView`
   para logs; `g_main_loop`. Compila y golden OK.
 
-**Todos los módulos GUI están en GTK4.** Pendiente de la Fase 6: **T6.4** (ventanas
-`AdwApplicationWindow`/`AdwToolbarView`/`AdwHeaderBar` + `AdwStyleManager` para el look
-libadwaita) y **T6.5** (retirar el build GTK3: los módulos ya enlazan `libewgui_gtk4.a`,
-`libewgui.a`/`ewgui_view_gtk3.c` quedan sin uso).
+**Todos los módulos GUI están en GTK4.** Pendiente de la Fase 6: **T6.3** (tablas a
+`GListModel`). **T6.5 hecho**: el build GTK3 (`libewgui.a`/`ewgui_view_gtk3.c`) se retiró y
+`common` construye sólo `libewgui_gtk4.a`.
 
 **Trampa GTK4 (GtkColumnView):** en GTK **4.14.5** (Ubuntu 24.04) `GtkColumnViewColumn`
 **no** toma su propia referencia de la `GtkListItemFactory`. Si se hace `g_object_unref()`
 de la factory tras `gtk_column_view_column_new()`, queda colgante y **segfaultea** al crear
 las celdas. **No liberar la factory** (o conservar una referencia propia). Verificado con
 repro aislado; `GtkListView` no tiene este problema.
-- Infraestructura: la librería se construye por toolkit (`libewgui.a` GTK3 por defecto,
-  `libewgui_gtk4.a` con `GUI_TOOLKIT=gtk4`); cada módulo enlaza la suya. Al terminar
-  T6.5 se retira la GTK3.
+- Infraestructura: un solo build (`gtk4 libadwaita-1` → `libewgui_gtk4.a`); cada módulo
+  enlaza la suya. GTK3 ya no se construye (T6.5).
 
 ---
 
@@ -477,8 +477,7 @@ dominio desde el port.
 
 ## 10. Evidencia del estado actual (para no re-explorar)
 
-- GTK3 en los 5: `pkg-config gtk+-3.0` (csntvp/Makefile:4,6; csnhypodbp/Makefile:6,9;
-  csnstaevdisp/Makefile:9,25; csnrv/Makefile:6,9; ew_controller/Makefile:6,9).
+- GTK4 en los 5: `pkg-config gtk4 libadwaita-1`; GTK3 ya no se usa (T6.5).
   Ningún `.ui`/GtkBuilder; widgets a mano; sin `GtkGLArea`.
 - cairo en `GtkDrawingArea` vía signal `draw`: csntvp.c:1219/1316/1416/1420;
   csnhypodbp_gui.c:257 + main.c:249/253; csnstaevdisp.c:480/796; csnrv.c:467/756.
@@ -595,8 +594,8 @@ filtro y "reload default" son acciones GIO del menú "Control Panel". Se retiró
 
 - **T6.4** ventanas libadwaita: **hecho** (sesión de cierre, ver §12.2). Los 5 módulos usan
   `AdwApplication` + `AdwToolbarView` + `AdwHeaderBar` + `AdwStyleManager` (modo oscuro).
-- **T6.5** retirar el build GTK3 (`libewgui.a`/`ewgui_view_gtk3.c`): **pendiente**; `common check`
-  todavía construye GTK3 para los tests headless.
+- **T6.5** retirar el build GTK3 (`libewgui.a`/`ewgui_view_gtk3.c`): **hecho**; `common`
+  construye sólo `libewgui_gtk4.a` y `common check` corre una sola pasada.
 
 ---
 

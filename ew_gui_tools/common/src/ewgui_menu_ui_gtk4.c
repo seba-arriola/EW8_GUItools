@@ -2,7 +2,7 @@
  * Menú propio de los módulos GUI como ventana modal (GTK4).
  * Evita `GtkMenuButton`/`GtkPopoverMenu` (superficie popup que bajo
  * WSLg/Wayland queda detrás de la ventana).
- * Solo se compila con GUI_TOOLKIT=gtk4 (ver common/Makefile).
+ * Solo se compila en el build GTK4 (ver common/Makefile).
  */
 #include "ewgui/menu_ui.h"
 

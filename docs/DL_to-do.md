@@ -7,9 +7,11 @@ Estado: 2026-10-21. Este documento lista **sólo lo que falta**. Lo hecho está 
 ## 0. Decisión vigente
 
 - Modelo único: **PhaseNetWC**, pesos `jma_wc`, ventana nativa **3001** (30.01 s), 100 Hz, ZNE crudo.
-- **No se publica en `PICK_RING`** hasta nueva orden, y no por configuración: el binario **no tiene
-  camino de publicación** (`PublishRing` no existe en el código), así que hoy es imposible publicar
-  por accidente.
+- **Ya publica en `PICK_RING`** (modo live, `PublishRing 1` en `pickml_phasenetwc.d`) y sigue
+  escribiendo los archivos de siempre. Los pickers viejos (`pick_FP`, `pickS`) se movieron a
+  `LEGACY_PICK_RING`, que no tiene consumidor: sirven para comparar con `sniffring -n`.
+  La política es pura y testeable (`pickml_publish.c`): `PublishPhases P|S|PS` y
+  `PublishMaxWeight 0..3`; `--publish-dry-run` cuenta sin escribir.
 - `pickml` **no lee del SDS en modo vivo**: el modo vivo lee `SLINK_RING`; el offline admite
   `--tank`, `--store` (disco local, 7 días de retención) y `--sds <root>` (SDS de SeisComP, para
   eventos históricos; decima 1x/2x/4x a `Rate`). El SDS también lo usan `pickml_fetch`
@@ -41,30 +43,37 @@ Primer ajuste con PhaseNetWC sobre 45 eventos y **254 P + 55 S** automáticas (m
 **P 91.7 % / S 92.7 %**, 985 picadas (~402/h). Contra el `original` en el mismo corpus: 91.3 % /
 85.5 % con 672 picadas. Detalle y trampas en `docs/DLdetalles.md` §11.
 
-## 2. Pendiente A — pasar a modo live
+## 2. Pendiente A — pasar a modo live (HECHO: código + alta en el stack)
 
-### 2.1 Código que falta
+El código de publicación y el alta en `startstop` están hechos y cubiertos por tests
+(`pickml check`, `check-offline`, `common/tests/test_pick_rings.sh`). Lo que **falta** es la
+medición de 24 h (§2.5.4) y la decisión sobre `AssocWindowSec` (§2.2).
+
+### 2.1 Código (implementado)
 
 | qué | dónde | nota |
 |---|---|---|
-| `PublishRing 0/1` | `pickml_config.c`, `pickml.h` | default 0; fail-fast `exit 1` si el anillo no existe |
-| `PublishPhases P\|S\|PS` | idem | evita duplicar S con `pickS` |
+| `PublishRing 0/1` | `pickml_config.c`, `pickml.h` | default 0; con 1 y anillo inexistente, fail-fast `exit 1` |
+| `PublishPhases P\|S\|PS` | idem | fase no habilitada ⇒ `pub_skip_phase` |
 | `PublishMaxWeight 0..3` | idem | peso 0 = mejor; publica si `weight <= valor` |
-| envío `tport_putmsg` | `pickml_main.c` | el texto SCNL **ya está** en `pickml_report.c:29-37` |
-| `--publish-dry-run` | `pickml_main.c` | cuenta y loguea, no escribe |
-| contadores | `--stats` | `pub_ok`, `pub_skip_weight`, `pub_err` |
+| envío `tport_putmsg` | `pickml_main.c` (`pub_open`/`pub_one`) | mensaje de `pickml_report.c:29-37` con `mod/inst` reales |
+| política pura | `pickml_publish.{h,c}` | `pm_publish_decide`/`pm_publish_phases_parse`, test headless |
+| `--publish-dry-run` | `pickml_main.c` | valida el anillo y cuenta, no escribe |
+| contadores | `--stats` y el log | `pub_ok`, `pub_skip_phase`, `pub_skip_weight`, `pub_err`, `pub_dry` |
 
 Formato del mensaje (no tocar): `TYPE_PICK_SCNL` =
 `8 mod inst seq STA.CHAN.NET.LOC ?weight YYYYMMDDhhmmss.mmm 0 0 0 P|S A`, origen `A`.
 
 ### 2.2 Configuración que falta
 
-- `earthworm.d`: declarar el anillo de `OutRing` (default `PICK_RING`).
-- `startstop_unix.d`: un `Process` `pickml pickml_phasenetwc.d` con **`MyModuleId` propio**
+- `earthworm.d`: `Ring LEGACY_PICK_RING 1006` (clave) y `Module MOD_PICKML 171`; el anillo nuevo
+  también se declara en `startstop_unix.d` (`nRing 11`).
+- `startstop_unix.d`: `Process "pickml pickml_phasenetwc.d"` con `MyModuleId` propio
   (la identidad de un módulo es el pid; el id del anillo debe ser único).
-- `csnloc.d`: `AssocWindowSec` 45 → **90**. Motivo: `lag_s` de PhaseNet p90 12 s pero **máx 131 s**
-  por trazas tardías; con 45 s la picada llega después de cerrarse la asociación. Subirlo retrasa
-  la solución viva ~1.5 min: es una decisión de producto, no técnica.
+- `csnloc.d`: `AssocWindowSec` **se queda en 45**. La recomendación de 90 s era para
+  EQTransformer (ventana de 60 s); el `lag_s` de PhaseNetWC no está medido en vivo (ver §8). Antes
+  de subirlo hay que medir la fracción de picks con `lag_s >= 22 s` en el JSONL (los que el ciclo de
+  `AssocWindowSec/2` puede descartar) durante la corrida de 24 h.
 - `StaFile`: `pickS.sta` (137). Recordar la coherencia HHZ/BHZ con `slink2ew_*.d`,
   `pick_FP.sta` y `estaciones_107.txt`; un canal que no coincida se descarta **en silencio**.
 - `LiveMaxAgeSec` (120): subirlo da más margen a trazas tardías pero **sube `proc_s`** (los picos
@@ -80,7 +89,9 @@ Formato del mensaje (no tocar): `TYPE_PICK_SCNL` =
 - Anillo lleno o productor lento: medir `pub_err` antes de dar por buena la corrida.
 - `Rate` 100 con `RateTolHz` 0.01: una estación a 200 Hz queda **deshabilitada** (sin error visible
   más allá de `stats`).
-- El log va a `EW_LOG` como `pickml_*.log`; `--stats` por terminal no se guarda solo.
+- El log va a `EW_LOG/pickml_*.log` (`logit_init` con el literal `pickml`, así que
+  `diag.sh log pickml` lo encuentra aunque el `.d` se llame `pickml_phasenetwc.d`), y la línea de
+  `--stats` se escribe **también** ahí, no sólo en la terminal.
 - `MaxGapSec 1.0`: con ventana de 30 s es más frágil que con los 60 s de EQT; si hay huecos de
   SeedLink, subir `MaxGapSec` es más barato que bajar `MaxPosSec`.
 - **El orden de clases de PhaseNet NO es estable entre pesos**: `original` es `(N,P,S)` y `jma_wc`
@@ -103,7 +114,10 @@ el codo, no el extremo.
 
 1. `PublishRing 0` ⇒ cero `tport_putmsg` y anillo intacto.
 2. SCNL publicado **byte-exacto** al contrato (`pickml_report.c:29-37`).
-3. 1 h en un anillo de prueba (`TEST_PICK_RING` propio) sin tocar `PICK_RING`.
+3. Guardas sin anillo: `PublishRing 1` offline ⇒ exit 2, anillo inexistente ⇒ exit 1, y
+   `--publish-dry-run` no escribe (cubierto por `test/test_publish_offline.sh`). La 1 h de prueba
+   ya no usa un anillo aparte: el usuario pidió publicar directo en `PICK_RING`, así que el
+   ensayo es `PublishMaxWeight` + `--publish-dry-run` y la comparación con `LEGACY_PICK_RING`.
 4. 24 h en `PICK_RING` y comparar contra las 24 h previas: nº de soluciones, Nph mediano, RMS
    mediano y eventos con >=4 P **no deben empeorar**. Si empeoran, bajar `PublishMaxWeight`.
 5. Rollback: `PublishRing 0` + `restart` del módulo, < 1 min, sin tocar el resto del stack.
@@ -157,7 +171,7 @@ El primer ajuste se hizo contra picadas automáticas. La decisión final necesit
 | binario | `ew_8.0/bin/pickml` (instalado), `ew_gui_tools/pickml/pickml` (local) |
 | modelos + ORT 1.31 | `/mnt/d/resources/pickml/` (`phasenet.onnx`, `eqt.onnx`, `phasenetwc.onnx`) |
 | venv Python | `~/.venvs/pickml` (seisbench 0.10.2, torch 2.4). **No se usa en runtime** |
-| salidas operativas | `run_working_v8/pickml/` |
+| salidas operativas | `run_working_v8/pickml/` (la crea `pickml` al arrancar si falta; está en `.gitignore`) |
 | corpus de calibración | `run_working_v8/pickml/calib/<event>/` (tank + refs + `curve.*` + `curve.idx`) |
 | configuración | `run_working_v8/params/pickml_phasenetwc.d` |
 | config del fetch | `run_working_v8/params/pickml_fetch_calib.d` (usa `db.env`; `OnlyManual 0` en dev) |
@@ -171,6 +185,9 @@ El primer ajuste se hizo contra picadas automáticas. La decisión final necesit
 
 ```bash
 source ./ew8_unix.sh
+# El Makefile autodetecta el ORT vendorizado y compila el motor real; si el
+# aviso "motor ONNX no compilado (stub)" aparece, pickml no arrancara con
+# `Engine onnx` (exit 3). Para forzarlo: ORT_DIR= / ORT_DIR=<dir>.
 make -C ew_gui_tools/pickml && make -C ew_gui_tools/pickml install
 
 # exportar (venv, no runtime)
@@ -180,8 +197,14 @@ make -C ew_gui_tools/pickml && make -C ew_gui_tools/pickml install
 # validar el grafo sin GUI ni datos
 pickml ew_gui_tools/pickml/pickml.d --check-model
 
-# operativo (sólo archivos), desde params
+# operativo (archivos + publicacion en PICK_RING), desde params
 cd run_working_v8/params && pickml pickml_phasenetwc.d --ring --stats
+
+# ensayo sin escribir en el anillo (cuenta y valida el OutRing)
+cd run_working_v8/params && pickml pickml_phasenetwc.d --ring --publish-dry-run --stats
+
+# rollback de la publicacion sin tocar el resto del stack
+#   PublishRing 0 en pickml_phasenetwc.d  +  ./ew_monitor.sh restart pickml
 
 # evento histórico directo del SDS (sin store ni tank)
 cd run_working_v8/params && pickml pickml_phasenetwc.d --sds /mnt/sds/archive \
@@ -206,6 +229,8 @@ pickml pickml_phasenetwc.d --store <root> --t0 <t0> --t1 <t1> \
 - ~~El store cubre la ventana~~ **verificado**, pero con dos matices: el store rota a
   `YYYYMMDD.tank` a medianoche **UTC** y `pickml_fetch` necesitaba `loc="--"` (corregido).
 - La referencia del corpus es **automática**: no confundirla con la calibración manual (§3).
-- Al publicar, el `lag` de PhaseNetWC **no está medido en vivo**; el de PhaseNet `original` era
-  p90 12 s con cola de hasta 131 s por trazas tardías, así que `AssocWindowSec 90` sigue siendo la
-  apuesta y hay que confirmarla con la corrida de 24 h.
+- Al publicar, el `lag` de PhaseNetWC **no está medido en vivo**. Ojo con la atribución: el
+  máximo de 131.8 s de la corrida de 9.3 h es de PhaseNet `original` (`docs/DLdetalles.md:445`),
+  pero la recomendación de `AssocWindowSec 90` nació de **EQTransformer** (ventana 60 s,
+  `docs/DLintegration.md:135,509`); con PhaseNet se decidió **mantener 45** y medir la cola real
+  (§2.2) antes de tocarlo.

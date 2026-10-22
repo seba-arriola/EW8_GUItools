@@ -42,6 +42,7 @@ EOF
 cat > "$TMP/engine_gate.d" <<EOF
 MyModuleId      MOD_PICKML
 StaFile         $TMP/engine_gate.sta
+LogFile         0
 Engine          onnx
 ModelFile       $PICKML_MODEL
 OrtLib          $PICKML_ORT

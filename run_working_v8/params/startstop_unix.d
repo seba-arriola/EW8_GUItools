@@ -8,10 +8,11 @@
 #    The maximum size of a ring is 1024 kilobytes.
 #    Ring names are listed in file earthworm.h.
 #
-  nRing               10
+  nRing               11
   Ring   WAVE_RING   51200
   Ring    SCN_RING   500
   Ring   PICK_RING   256
+  Ring LEGACY_PICK_RING 256
   Ring   HYPO_RING   128
   Ring  HYPO_RING_REF 128
   Ring HYPO_RING_REF2 128
@@ -69,8 +70,22 @@
  Class/Priority    OTHER 0
 #
 # Picker de onda S (STA/LTA+AIC+polarizacion 3C). Lee ondas de SLINK_RING y
-# picks P de PICK_RING, y publica picks S en PICK_RING (TYPE_PICK_SCNL).
- Process	  "pickS pickS.d"
+# picks P de LEGACY_PICK_RING, y publica picks S en LEGACY_PICK_RING.
+# Process	  "pickS pickS.d"
+# Class/Priority    OTHER 0
+#
+# Pickers neuronales (ONNX), DOS en paralelo con anillos SEPARADOS: dos pickers
+# publicando en el mismo anillo meten dos arribos por fase/estacion y csnloc
+# asocia el doble.
+#   pickml_iquique.d  -> PICK_RING         (pesos `iquique`, entrenados en Chile)
+#   pickml_eqt.d      -> LEGACY_PICK_RING  (pesos `original`; sin consumidor)
+# PhaseNetWC queda retirado: en esta red produce miles de P donde no hay evento
+# (ver docs/DLdetalles.md §9.4). Para volver, descomentar su Process y dejarlo
+# como unico publicador de PICK_RING (el de iquique tendria que bajar a LEGACY).
+# Process	  "pickml pickml_phasenetwc.d"
+# Class/Priority    OTHER 0
+#
+ Process	  "pickml pickml_iquique.d"
  Class/Priority    OTHER 0
 #
  Process	  "csnloc csnloc.d"

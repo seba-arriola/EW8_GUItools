@@ -2,7 +2,7 @@
 #define EWGUI_VERSION_H
 
 /*
- * Librería común de los módulos gráficos de ew_gui_tools (libewgui.a).
+ * Librería común de los módulos gráficos de ew_gui_tools (libewgui_gtk4.a).
  *
  * Reglas de la librería (ver docs/GTK4-MIGRATION.md):
  *   - Las capas core/dsp/wave/geo NO incluyen gtk/gtk.h; se testean headless.

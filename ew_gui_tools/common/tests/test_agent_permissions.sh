@@ -293,7 +293,7 @@ review@@deny@@cat opencode.jsonc
 build@@allow@@ls -1 .opencode
 build@@allow@@git status --short
 build@@allow@@git diff
-build@@allow@@make -C ew_gui_tools/common GUI_TOOLKIT=gtk4
+build@@allow@@make -C ew_gui_tools/common
 build@@deny@@git add -A
 build@@deny@@git commit -m x
 build@@deny@@git push
