@@ -142,3 +142,26 @@ Verificado con el auto-test: `label 0,0 122x19` y `push button 0,19 122x34` ⇒ 
 `gui_run.sh --selftest` lanza `gui_selftest_app.py` (app GTK4 mínima con una etiqueta y un
 botón) y comprueba las tres piezas: leer texto y pulsar por acción, calcular geometría, y
 clicar por coordenadas con `xdotool` verificando que la etiqueta cambió.
+
+## Módulos Qt6 (`commonqt`)
+
+Los módulos Qt **no** usan `gui_run.sh`/`gui_probe.py` como oráculo principal: AT-SPI en Qt
+necesita el puente de accesibilidad y las cabeceras de `GtkColumnView` (bug #8354) no eran el
+problema, pero sí lo es depender de un plugin más. En su lugar el binario se auto-informa:
+
+| gancho | qué hace |
+|---|---|
+| `ECQ_MODE=--dump` | filas de las dos tablas, anillos, `target` (pid seleccionado) y estado de los 4 botones, una línea por elemento |
+| `ECQ_MODE=--layout` | lo anterior + `metric gap_details_ring`, `metric rings_height`, `metric window_min_width/height` |
+| `ECQ_MODE=--shot` | `saveShot(ECQ_SHOT)` (PNG del `grab()`), para revisar la estética a ojo |
+| `ECQ_SELECT_PID=<pid>` | selecciona esa fila por PID antes del volcado (mismo camino que un clic: `selectPid` → `ecq_select_pid`) |
+| `ECQ_EXIT_AFTER_MS=<ms>` | cierra solo (humo) |
+| `QT_QPA_PLATFORM=offscreen` | todo lo anterior sin `DISPLAY` |
+
+El arnés monta un `EW_PARAMS` aislado (copia de `earthworm.d.base` +
+`earthworm_global.d` + `Ring TEST_CTRL_RING 1061`), crea ese anillo con `fake_status --create`
+y publica los fixtures `status_*.txt` del módulo GTK. Nunca toca `CONTROL_RING`.
+
+Los dos arneses que se quedan en `test-live` (necesitan `DISPLAY` + `xdotool` + `xcb`) sólo
+comprueban **supervivencia**: maximizar/des-maximizar (trampa WSLg `Error 71`) y una selección
+por teclado que dispara el rebuild de filas. El resto es determinista y offscreen.

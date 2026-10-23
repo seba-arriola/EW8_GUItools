@@ -4,6 +4,7 @@
  * El orden de resolucion de flags es EXACTAMENTE el de csnhypodbp
  * (csnhypodbp_main.c:2521-2537): los modos headless se atienden ANTES de crear
  * QApplication, asi que funcionan sin DISPLAY, sin PostgreSQL y sin EarthWorm.
+ * Eso (y el LC_NUMERIC=C antes/despues de Qt) lo hace ewguiqt::boot().
  *
  *   csnhypodbpQT --print-config   <archivo.d>   -> stdout, exit 0
  *   csnhypodbpQT --check-profiles <archivo.d>   -> stdout, exit 0/2
@@ -21,84 +22,76 @@
 #include "bpq_mainwindow.h"
 
 #include <QApplication>
-#include <QString>
+#include <QStringList>
 #include <QTimer>
 
-#include <clocale>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-static int print_usage(const char *argv0)
+#include "ewguiqt/boot.h"
+
+static int print_usage(const QString &argv0)
 {
-    std::fprintf(stderr, "Uso: %s <configfile.d> [--state-dir <dir>]\n", argv0);
-    std::fprintf(stderr, "     %s --print-config <configfile.d>\n", argv0);
-    std::fprintf(stderr, "     %s --check-profiles <configfile.d>\n", argv0);
+    const QByteArray p = argv0.toLocal8Bit();
+    std::fprintf(stderr, "Uso: %s <configfile.d> [--state-dir <dir>]\n", p.constData());
+    std::fprintf(stderr, "     %s --print-config <configfile.d>\n", p.constData());
+    std::fprintf(stderr, "     %s --check-profiles <configfile.d>\n", p.constData());
     return 1;
 }
 
-int main(int argc, char **argv)
+/* --print-config / --check-profiles: sin QApplication (sin DISPLAY). */
+static int run_config_cmd(const char *flag, const QStringList &args)
 {
-    const char *cfg_path  = nullptr;
+    char err[512] = "";
+    const char *state_dir = std::getenv("BPQ_STATE_DIR");
+
+    if (args.size() != 1)
+        return print_usage(QStringLiteral("csnhypodbpQT"));
+
+    const QByteArray path = args.at(0).toLocal8Bit();
+    BpqConfig *c = bpq_config_load(path.constData(), state_dir, err, sizeof(err));
+    if (!c) {
+        std::fprintf(stderr, "csnhypodbpQT: %s\n", err);
+        return 1;
+    }
+    const int rc = (std::strcmp(flag, "--print-config") == 0)
+                       ? bpq_config_print(c, stdout)
+                       : bpq_config_check_profiles(c, stdout);
+    bpq_config_free(c);
+    return rc;
+}
+
+static int run_gui(QApplication &app, const QStringList &args)
+{
     const char *state_dir = std::getenv("BPQ_STATE_DIR");
     const char *mode      = std::getenv("BPQ_MODE");
-    char        err[512]  = "";
+    QByteArray state_dir_buf;
+    char       err[512] = "";
 
-    /* El parser de overlays (.lines), perfiles (.tmp) y campos numericos usa
-     * strtod/sscanf, que dependen de LC_NUMERIC. Qt llama setlocale(LC_ALL,"")
-     * al inicializar su plugin de pantalla, asi que en un escritorio con coma
-     * decimal ("es_CL.UTF-8") strtod("-70.43290") corta en "-70" y el resto se
-     * rechaza con cientos de "overlay: coordenada invalida". Se fija
-     * LC_NUMERIC=C aqui y otra vez despues de crear QApplication (que es quien
-     * lo pisa); LC_CTYPE se deja como venga para no romper el texto UTF-8. */
-    std::setlocale(LC_ALL, "");
-    std::setlocale(LC_NUMERIC, "C");
+    /* argv[0] + <configfile.d> [--state-dir <dir>] */
+    if (args.size() < 2 || args.at(1).startsWith(QLatin1Char('-')))
+        return print_usage(args.value(0));
 
-    /* --- 1/2. modos headless: antes de QApplication (sin DISPLAY) --- */
-    if (argc == 3 &&
-        (std::strcmp(argv[1], "--print-config") == 0 ||
-         std::strcmp(argv[1], "--check-profiles") == 0)) {
-        BpqConfig *c = bpq_config_load(argv[2], state_dir, err, sizeof(err));
-        int rc;
-        if (!c) {
-            std::fprintf(stderr, "csnhypodbpQT: %s\n", err);
-            return 1;
-        }
-        rc = (std::strcmp(argv[1], "--print-config") == 0)
-                 ? bpq_config_print(c, stdout)
-                 : bpq_config_check_profiles(c, stdout);
-        bpq_config_free(c);
-        return rc;
+    const QByteArray cfg_path = args.at(1).toLocal8Bit();
+    if (args.size() == 4 && args.at(2) == QStringLiteral("--state-dir")) {
+        state_dir_buf = args.at(3).toLocal8Bit();
+        state_dir = state_dir_buf.constData();
+    } else if (args.size() != 2) {
+        return print_usage(args.value(0));
     }
 
-    /* --- 3. uso --- */
-    if (argc >= 2 && argv[1][0] != '-') {
-        cfg_path = argv[1];
-        if (argc >= 4 && std::strcmp(argv[2], "--state-dir") == 0)
-            state_dir = argv[3];
-        else if (argc != 2)
-            return print_usage(argv[0]);
-    } else {
-        return print_usage(argv[0]);
-    }
-
-    /* --- 4. GUI --- */
-    BpqConfig *cfg = bpq_config_load(cfg_path, state_dir, err, sizeof(err));
+    BpqConfig *cfg = bpq_config_load(cfg_path.constData(), state_dir, err, sizeof(err));
     if (!cfg) {
         std::fprintf(stderr, "csnhypodbpQT: %s\n", err);
         return 1;
     }
 
-    QApplication app(argc, argv);
-    app.setApplicationName(QStringLiteral("csnhypodbpQT"));
-    /* El plugin de pantalla de Qt (xcb/wayland) vuelve a llamar setlocale. */
-    std::setlocale(LC_NUMERIC, "C");
-
     BpqMainWindow win(cfg);
     win.show();
 
-    int  rc    = 0;
-    bool headless = (mode && mode[0]);
+    int rc = 0;
+    const bool headless = (mode && mode[0]);
     if (headless) {
         /* Se difiere al bucle de eventos para que la ventana este realizada. */
         QTimer::singleShot(0, &app, [&win, mode, &rc, &app]() {
@@ -160,4 +153,15 @@ int main(int argc, char **argv)
     const int apprc = app.exec();
     bpq_config_free(cfg);
     return rc ? rc : apprc;
+}
+
+int main(int argc, char **argv)
+{
+    ewguiqt::BootOptions opts;
+    opts.app_name = QStringLiteral("csnhypodbpQT");
+    opts.headless.append({QStringLiteral("--print-config"),
+                          [](const QStringList &a) { return run_config_cmd("--print-config", a); }});
+    opts.headless.append({QStringLiteral("--check-profiles"),
+                          [](const QStringList &a) { return run_config_cmd("--check-profiles", a); }});
+    return ewguiqt::boot(argc, argv, opts, run_gui);
 }

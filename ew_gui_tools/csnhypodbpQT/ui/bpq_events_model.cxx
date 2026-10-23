@@ -100,36 +100,35 @@ QVariant BpqEventsModel::headerData(int section, Qt::Orientation o, int role) co
 /* ------------------------------------------------------------------------- */
 
 BpqSortProxy::BpqSortProxy(QObject *parent)
-    : QSortFilterProxyModel(parent)
+    : ewguiqt::SortProxy(parent)
 {
+    /* Mismo reparto texto/numero que bpq_event_sort_kind(). 32 columnas cubren
+     * de sobra las 15 de la tabla; las sobrantes quedan como Text. */
+    QVector<ewguiqt::SortKind> kinds;
+
+    kinds.reserve(32);
+    for (int c = 0; c < 32; ++c)
+        kinds.push_back(bpq_event_sort_kind(c) == 0 ? ewguiqt::SortKind::Text
+                                                   : ewguiqt::SortKind::Number);
+    setColumnKinds(kinds);
+
+    /* La celda visible no siempre es el valor ordenable: "ML-4" ordena por -4. */
+    setCellTextFn([](const QAbstractItemModel &model, int row, int column) {
+        const auto *m = qobject_cast<const BpqEventsModel *>(&model);
+        const BpqEvent *ev = m ? m->eventAt(row) : nullptr;
+        char buf[64] = {0};
+        if (ev)
+            bpq_event_cell(ev, column, buf, sizeof(buf));
+        return QString::fromUtf8(buf);
+    });
+    setCellNumberFn([](const QAbstractItemModel &model, int row, int column) {
+        const auto *m = qobject_cast<const BpqEventsModel *>(&model);
+        const BpqEvent *ev = m ? m->eventAt(row) : nullptr;
+        return ev ? bpq_event_sort_num(ev, column) : std::nan("");
+    });
+
+    /* El modulo refresca con reset() del modelo; no hace falta re-filtrar. */
     setDynamicSortFilter(false);
-}
-
-bool BpqSortProxy::lessThan(const QModelIndex &l, const QModelIndex &r) const
-{
-    BpqEventsModel *m = qobject_cast<BpqEventsModel *>(sourceModel());
-    if (!m) return QSortFilterProxyModel::lessThan(l, r);
-
-    const int col = l.column();
-    const BpqEvent *a = m->eventAt(l.row());
-    const BpqEvent *b = m->eventAt(r.row());
-    if (!a || !b) return false;
-
-    if (bpq_event_sort_kind(col) == 0) {
-        char ca[64], cb[64];
-        bpq_event_cell(a, col, ca, sizeof(ca));
-        bpq_event_cell(b, col, cb, sizeof(cb));
-        return QString::localeAwareCompare(QString::fromUtf8(ca),
-                                           QString::fromUtf8(cb)) < 0;
-    }
-
-    const double va = bpq_event_sort_num(a, col);
-    const double vb = bpq_event_sort_num(b, col);
-    const bool na = std::isnan(va), nb = std::isnan(vb);
-    if (na && nb) return false;
-    if (na) return false;      /* sin dato al final */
-    if (nb) return true;
-    return va < vb;
 }
 
 /* ------------------------------------------------------------------------- */

@@ -78,6 +78,7 @@ run_working_v8/params/db.env
 /ew_8.0/bin/csntvp
 /ew_8.0/bin/csnstaevdisp
 /ew_8.0/bin/ew_controller
+/ew_8.0/bin/ew_controllerQT
 /ew_8.0/bin/hyp2000_ring
 /ew_8.0/bin/nlloc_ring
 /ew_8.0/bin/csnwphase

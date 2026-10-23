@@ -166,6 +166,10 @@ void BpqMainWindow::openData()
     m_eventsProxy = new BpqSortProxy(this);
     m_eventsProxy->setSourceModel(m_eventsModel);
     m_eventsView->setModel(m_eventsProxy);
+    /* Tabla maestra: primer clic DESC en fecha/numericas y la flecha del header
+     * sigue el orden real (misma semantica que el helper GTK). El orden inicial
+     * es el de su primer clic: fecha DESC = eventos recientes primero. */
+    ewguiqt::wire_header_sort(m_eventsView, m_eventsProxy, 0);
 
     m_originsModel = new BpqOriginsModel(this);
     m_originsView->setModel(m_originsModel);

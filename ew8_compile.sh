@@ -264,7 +264,9 @@
 #  ----------
 #   - gcc, make, pkg-config.
 #   - pkg-config gtk4 libadwaita-1 (GTK >= 4.14, libadwaita >= 1.5) si se
-#     selecciona algun modulo GUI.
+#     selecciona algun modulo con `MOD_KIT = gtk4`.
+#   - qmake6 o pkg-config Qt6Widgets si se selecciona algun modulo con
+#     `MOD_KIT = qt6` (qt6-base-dev qt6-base-dev-tools libxcb-cursor0).
 #   - libpq-dev para hypodb; libmseed2 viene vendorizada en ew_8.0/lib.
 #   - ew8_unix.sh (lo carga el script si hace falta; si ya cargaste el entorno
 #     de este repo, no lo vuelve a cargar).
@@ -306,7 +308,8 @@ PARAMS_DIR="$ROOT/run_working_v8/params"
 #   - capacidades = los targets que declara su Makefile (check, test, test-*,
 #                   check-offline, test-live, check-engine, check-corpus)
 #   - libreria    = el modulo SIN receta install_bin.sh (p.ej. common)
-#   - GUI         = su Makefile menciona gtk4 / libadwaita
+#   - kit         = `MOD_KIT = gtk4|qt6` en su Makefile (fallback: el grep de
+#                   siempre, para los Makefiles que aun no lo declaran)
 # Renombrar un directorio, agregar un modulo o cambiarle un binario no exige
 # tocar este script: se descubre solo.
 # -----------------------------------------------------------------------------
@@ -317,6 +320,7 @@ declare -A MOD_DIR=()
 declare -A MOD_BINS=()
 declare -A MOD_IS_LIB=()
 declare -A MOD_GUI=()
+declare -A MOD_KIT=()   # gtk4 | qt6 | (vacio = headless)
 
 # Binarios que instala un Makefile (su primera receta install_bin.sh), con
 # $(TARGET)/$(MODULE) resueltos. Misma derivacion que check_install.sh.
@@ -357,7 +361,7 @@ check_targets() {  # check_targets <modulo>
 }
 
 discover_modules() {
-    local mkf dir name bins
+    local mkf dir name bins kit
     MODULES=()
     LIBS=()
     BINS=()
@@ -374,7 +378,22 @@ discover_modules() {
         else
             BINS+=("$name")
         fi
-        if grep -qE 'gtk4|libadwaita' "$mkf"; then
+        # Toolkit declarado. MOD_KIT evita el marcador-mentira en el Makefile:
+        # `MOD_GUI: qt6` (un comentario con la cadena que el grep de abajo
+        # encontraba). El fallback mantiene funcionando a los que no lo declaran
+        # y va de mas especifico a menos: `Qt6Widgets` primero porque un modulo
+        # Qt puede nombrar `libewgui_gtk4.a` en un comentario (que era lo que
+        # hacia que el grep historico lo clasificara como GTK).
+        kit=$(sed -n 's/^[[:space:]]*MOD_KIT[[:space:]]*[:?]*=[[:space:]]*\([A-Za-z0-9]*\).*/\1/p' "$mkf" | head -n1)
+        if [ -z "$kit" ]; then
+            if grep -qE 'Qt6Widgets|qmake6' "$mkf"; then
+                kit=qt6
+            elif grep -qE 'libadwaita-1' "$mkf"; then
+                kit=gtk4
+            fi
+        fi
+        if [ -n "$kit" ]; then
+            MOD_KIT[$name]=$kit
             MOD_GUI[$name]=1
         fi
     done
@@ -508,10 +527,10 @@ resolve_targets() {
     (( ${#SELECTED[@]} > 0 )) || die 2 "no hay modulos seleccionados"
 }
 
-is_gui_selected() {
+kit_selected() {  # kit_selected <gtk4|qt6>
     local m
     for m in "${SELECTED[@]}"; do
-        [ -n "${MOD_GUI[$m]:-}" ] && return 0
+        [ "${MOD_KIT[$m]:-}" = "$1" ] && return 0
     done
     return 1
 }
@@ -636,9 +655,15 @@ need_build_tools() {
         command -v pkg-config >/dev/null 2>&1 \
             || die 4 "pkg-config no esta instalado (lo necesitan los Makefiles)"
     fi
-    if (( DO_BUILD || DO_CHECK || DO_TEST )) && is_gui_selected; then
+    if (( DO_BUILD || DO_CHECK || DO_TEST )) && kit_selected gtk4; then
         pkg-config --exists gtk4 libadwaita-1 2>/dev/null \
             || die 4 "faltan gtk4/libadwaita-1 (pkg-config): ver docs/GTK4-MIGRATION.md"
+    fi
+    if (( DO_BUILD || DO_CHECK || DO_TEST )) && kit_selected qt6; then
+        if ! command -v qmake6 >/dev/null 2>&1 \
+           && ! pkg-config --exists Qt6Widgets 2>/dev/null; then
+            die 4 "falta Qt6 (qmake6 / pkg-config Qt6Widgets): qt6-base-dev qt6-base-dev-tools libxcb-cursor0"
+        fi
     fi
     if (( DO_BUILD )); then
         [ -d "$EW_HOME/$EW_VERSION/bin" ] \
@@ -924,11 +949,11 @@ summary() {
 # Listado de capacidades
 # -----------------------------------------------------------------------------
 list_modules() {
-    local mod check test live validate bins mkf
-    printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
-        "MODULO" "DIRECTORIO" "BINARIOS" "--check" "--test" "--live" "--validate"
-    printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
-        "------" "----------" "--------" "-------" "-----" "-----" "---------"
+    local mod check test live validate bins mkf kit
+    printf '%-15s %-28s %-46s %-24s %-22s %-10s %-24s %s\n' \
+        "MODULO" "DIRECTORIO" "BINARIOS" "--check" "--test" "--live" "--validate" "KIT"
+    printf '%-15s %-28s %-46s %-24s %-22s %-10s %-24s %s\n' \
+        "------" "----------" "--------" "-------" "-----" "-----" "---------" "---"
     for mod in "${MODULES[@]}"; do
         mkf=$ROOT/${MOD_DIR[$mod]}/Makefile
         check=$(check_targets "$mod" | tr '\n' ' ')
@@ -941,13 +966,15 @@ list_modules() {
         [ -n "$bins" ] || bins="(libreria)"
         validate=$(validate_cmds "${MOD_DIR[$mod]}" | sed 's/.*|//' | tr '\n' ',' | sed 's/,$//')
         [ -n "$validate" ] || validate="-"
-        printf '%-15s %-28s %-46s %-24s %-22s %-10s %s\n' \
+        kit=${MOD_KIT[$mod]:--}
+        printf '%-15s %-28s %-46s %-24s %-22s %-10s %-24s %s\n' \
             "$mod" "${MOD_DIR[$mod]}" "$bins" \
-            "$check" "$test" "$live" "$validate"
+            "$check" "$test" "$live" "$validate" "$kit"
     done
     echo ""
     echo "grupos: all | libs (sin receta install) | headless | gui"
     echo "verbos: --check (headless)  --test (offline)  --validate (configuracion)"
+    echo "kits: MOD_KIT = gtk4|qt6 en el Makefile del modulo"
     echo "extras: --slow (check-engine/check-corpus)  --live (test-live)  --db (EWGUI_DB_TEST_ENV=1)"
     echo "inventario derivado de ew_gui_tools/*/Makefile: no hay lista de modulos en este script."
 }

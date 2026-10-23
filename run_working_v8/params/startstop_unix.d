@@ -123,12 +123,16 @@
  Process	  "csnrv csnrv.d"
  Class/Priority    OTHER 0
 #
- Process	  "ew_controller ew_controller.d"
- Class/Priority    OTHER 0
+# Process	  "ew_controller ew_controller.d"
+# Class/Priority    OTHER 0
 #
  Process	  "csnstaevdisp csnstaevdisp.d"
  Class/Priority    OTHER 0
 #
  Process	  "csnhypodbpQT csnhypodbpqt.d"
+ Class/Priority    OTHER 0
+#
+# Panel de control Qt (convive con ew_controller; modid distinto).
+ Process	  "ew_controllerQT ew_controller.d"
  Class/Priority    OTHER 0
 #

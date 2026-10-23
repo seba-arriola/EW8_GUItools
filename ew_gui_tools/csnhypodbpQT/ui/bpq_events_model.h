@@ -14,6 +14,8 @@
 
 #include <QAbstractTableModel>
 #include <QSortFilterProxyModel>
+
+#include "ewguiqt/table.h"
 #include <QString>
 #include <QVector>
 
@@ -45,15 +47,15 @@ private:
     BpqEvents *m_store = nullptr;
 };
 
-/* Orden por cabecera: numerico/fecha/texto segun bpq_event_sort_kind(). */
-class BpqSortProxy : public QSortFilterProxyModel
+/* Orden por cabecera: reusa el comparador compartido (commonqt). Las columnas
+ * numericas/fecha se declaran con bpq_event_sort_kind(); el valor ordenable es
+ * bpq_event_sort_num() porque la celda visible no siempre es el numero (p.ej.
+ * "ML-4"). El primer clic lo maneja QTableView::setSortingEnabled(). */
+class BpqSortProxy : public ewguiqt::SortProxy
 {
     Q_OBJECT
 public:
     explicit BpqSortProxy(QObject *parent = nullptr);
-
-protected:
-    bool lessThan(const QModelIndex &l, const QModelIndex &r) const override;
 };
 
 class BpqOriginsModel : public QAbstractTableModel

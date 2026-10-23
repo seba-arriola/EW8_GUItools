@@ -241,6 +241,38 @@ inyectado en un anillo PROPIO del arnés (`TEST_CTRL_RING`); ver §7 y `docs/GUI
     (su `GtkPopoverMenu` es un popup que queda detrás de la ventana bajo WSLg/Wayland):
     es un botón que abre una **ventana modal** compartida (`menu_ui.h` +
     `ewgui_menu_ui_gtk4.c`, `ewgui_menu_button_new`). Ver `docs/GTK4-MIGRATION.md` §12.5.
+  - `commonqt/`: **infraestructura Qt6 compartida** → `libewguiqt.a` (hermana de
+    `common/`, que sigue siendo GTK). La usan los módulos Qt: `boot` (locale
+    `LC_NUMERIC=C` antes/después de `QApplication` y flags headless resueltos **sin**
+    crear la app), `SortProxy` (el orden delega en `ewgui_table_cmp_values`, el mismo
+    comparador del GTK: primer clic DESC en numéricas/fecha), `ListSelectDialog`
+    (selector modal; nunca un desplegable, WSLg #1299), `confirm` (default = No),
+    `theme` (modo oscuro), `LogView` (tail desde borde de línea) y `CanvasWidget`
+    (doble buffer BGRA: **sin cairo en la lib**; la superficie la crea la capa C del
+    módulo). Reglas: cero GTK/cairo/EarthWorm/libpq, cero `QSettings`, y ninguna tabla
+    reimplementa `lessThan`. Tests: `make -C ew_gui_tools/commonqt check`
+    (`QT_QPA_PLATFORM=offscreen`) + `test_no_sci_deps.sh` + `test_no_gtk_link.sh`.
+    Ver `docs/QT-COMMON.md`.
+  - `ew_controllerQT/`: **port Qt6 de `ew_controller`** (paridad completa: tablas
+    *Modules*/*Rings* ordenables y selección **por pid**, `Stop/Restart/Start/Reconfig`
+    con confirmación, `?` y botones apagados si `startstop` no responde en `PollInt*4`,
+    pestaña *Configuration* con el editor del `.d` —refresco congelado, `.bak` atómico—
+    y pestaña *Logs* por prefijo/mtime). Convive con el GTK: mismo `CONTROL_RING` con
+    `Module MOD_EW_CONTROLLERQT **173**` (el id 172 es `MOD_CSNHYPODBPQT`) y `.d` propio
+    `ew_controllerqt.d`, así que los dos paneles pueden correr a la vez; con
+    `Process "ew_controllerQT ew_controller.d"` el port **sustituye** al GTK (mismo
+    `MOD_CONTROL` 160) y con su `.d` propio corre en paralelo (173). Reparto
+    `c/` (C puro: `ecq_config`, `ecq_core`, `ecq_cfg`, `ecq_log`, `ecq_logit`) + `c/ecq_capi.h` como
+    **única** frontera C→C++ + `ui/` (sólo `<Qt…>`, `ewguiqt/*` y `ecq_capi.h`). Escribe su **log
+    propio** en `$EW_LOG/ew_controllerQT_<fecha>.log` con la clave `LogFile` del `.d` (nombre del
+    **proceso**, que es lo que busca `diag.sh log ew_controllerQT`; sin `EW_LOG` escribible baja a
+    consola en vez de morir como haría `logit_init`, y el visor *Logs* compara el prefijo sin
+    distinguir mayúsculas para que el `.d` `ew_controllerqt` encuentre ese fichero). El
+    arnés es determinista y offscreen: `fake_status` publica en un `TEST_CTRL_RING`
+    propio (jamás `CONTROL_RING`) y se compara `ECQ_MODE=--dump|--layout|--shot`
+    (`tests/test_parity.sh`, 19 comprobaciones; `test_layout.sh` gatea el mínimo de
+    ventana). `test-live` (xcb + `xdotool`) sólo comprueba supervivencia a maximizar y a
+    una selección por teclado. Ver `ew_gui_tools/ew_controllerQT/README.md`.
   - `_legacy_atwc/`: herramientas WC/ATWC archivadas (`loc_wcatwc`, `pick_wcatwc`, `disk_wcatwc`); solo referencia histórica.
   - `libsrc/`: **legacy WC/ATWC** (EarlyBird). Ya no lo usa ningún módulo activo; se conserva solo como referencia histórica. Las tablas de tiempos de viaje IASP91 viven ahora en `csnloc/` (vendorizadas).
 - `run_working_v8/`: directorio activo de configuración y logs en ejecución para EarthWorm:
@@ -824,6 +856,24 @@ primero al store algo que ya no está).
   el motor: salta el preámbulo con `csnhypodbp_arc_skip_preamble`). Para diagnosticar:
   `LocateKeepTmp 1` (no borra el temporal y lo pone en el error como `[tmp=…]`) y el arnés
   `make -C ew_gui_tools/csnhypodbp chain` + `./locate_chain <arc> [refinador] [tmp_root]`.
+- **La clasificación GUI/Qt de `ew8_compile.sh` es DERIVADA del Makefile (`MOD_KIT`), no de una
+  lista**: cada módulo gráfico declara `MOD_KIT = gtk4|qt6` (una línea) y el script exige el
+  preflight del kit (`pkg-config gtk4 libadwaita-1` o `qmake6`/`Qt6Widgets`). Antes el criterio
+  era un `grep -qE 'gtk4|libadwaita'` y un módulo Qt caía en `headless`; el port de `csnhypodbpQT`
+  lo rodeó con un comentario-mentira `MOD_GUI: qt6` (ver `docs/testLibQT.md` §5), ya retirado. El
+  *fallback* busca `Qt6Widgets|qmake6` **antes** que `libadwaita-1` porque un módulo Qt puede
+  nombrar `libewgui_gtk4.a` en un comentario. Invariante:
+  `common/tests/test_compile_kits.sh` (dentro de `make -C ew_gui_tools/common check`); `--list`
+  tiene columna `KIT`.
+- **Las tablas Qt ordenan con el comparador del GTK (`ewgui_table_cmp_values`)**: `commonqt`'s
+  `SortProxy` delega en ese `.c` puro, así que el primer clic en una columna numérica/fecha es
+  **descendente** y en texto ascendente, con el mismo criterio de "sin dato" (`""`/`"-"` caen al
+  final en descendente). Reimplementar `lessThan` (lo hacía `bpq_events_model.cxx`) hacía que el
+  port Qt ordenara al revés que la versión GTK. El *accesor* numérico (`setCellNumberFn`) sólo
+  hace falta cuando la celda visible no es el número (p.ej. `"ML-4"` ordena por −4). El cableado
+  vista↔proxy lo hace `ewguiqt::wire_header_sort()`: desactiva el orden propio de Qt (que no conoce
+  la dirección del primer clic) y mantiene la **flecha del header** en el orden real, porque
+  `QHeaderView` la mueve por su cuenta al hacer clic y si no mentiría en el primer clic numérico.
 - **`run_working_v8/params/` es SOLO configuración versionada; el runtime de cada módulo va a su
   carpeta en `run_working_v8/`**: ningún módulo nuestro escribe en `params/`. Los refinadores
   declaran su `WorkDir` **relativo** (`../hyp2000_ring`, `../nlloc_ring`), que se resuelve contra

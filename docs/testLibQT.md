@@ -92,6 +92,7 @@ frente a las ~10.000 líneas GTK actuales de `gui.c`+`main.c`+`ws.c`+`mww.c`.
 | D2 | Reutilización del código C | **in situ**: el build compila los `.c` puros de `../csnhypodbp/` y el subconjunto puro de `../common/src/`; no se copia ni se modifica nada | cero duplicación y cero deriva; a cambio el prototipo depende de archivos ajenos (mitigado por AC3/AC4) |
 | D3 | Backend de dibujo | **cairo sobre `QImage`** (`CAIRO_FORMAT_ARGB32` ↔ `QImage::Format_ARGB32_Premultiplied`) | paridad de píxel con la versión GTK, reutilización de `ewgui_overlay_draw`, y export SVG/PDF/PNG casi gratis; coste: dependencia de cairo (ya instalada) |
 | D4 | Nombre | carpeta `ew_gui_tools/csnhypodbpQT/`, binario `csnhypodbpQT` | coincide con `ew8_compile.sh` (el nombre de carpeta es el nombre de módulo) |
+| D5 | Infraestructura Qt compartida | **`ew_gui_tools/commonqt/` → `libewguiqt.a`** (hermana de `common/`, que sigue siendo GTK): boot, tabla+proxy, selector modal, confirmación, tema, visor de log y canvas BGRA | un solo sitio para lo que repiten los módulos Qt y para la semántica de orden del GTK; no enlaza GTK/cairo/EW. Ver `docs/QT-COMMON.md` |
 
 **Decisiones tomadas en la fase 6.5** (integración, con permiso explícito):
 
@@ -578,15 +579,13 @@ pisarse) ⇒ los sub-makes son seguros.
 
 Consecuencias de que el Makefile Qt **no** mencione gtk4: el módulo cae en el grupo `headless` (lo
 construye `ew8_compile.sh headless`, no `gui`), no dispara el `die 4` de GTK, y su `test-live` sí corre
-con `--live`. **Recomendación:** incluir un comentario marcador que contenga la cadena, para que la
-clasificación sea correcta:
+con `--live`. ~~Recomendación: incluir un comentario marcador~~ **Resuelto en D5**: el Makefile
+declara `MOD_KIT = qt6` y `ew8_compile.sh` clasifica por ese dato (con *fallback* al grep, que
+prioriza `Qt6Widgets|qmake6` sobre `libadwaita-1`). Ya no hace falta ningún comentario-mentira:
 
 ```make
-# MOD_GUI: qt6 — marcador deliberado para ew8_compile.sh:377 (grep 'gtk4|libadwaita'): este modulo ES GUI.
+MOD_KIT = qt6
 ```
-
-Efecto colateral a aceptar: con el marcador, seleccionar este módulo obliga a que existan `gtk4` y
-`libadwaita-1` en `pkg-config` (`:639-642`), que en esta máquina sí existen.
 
 ### 6.4 `.gitignore` (verificado)
 
@@ -1284,8 +1283,10 @@ QMainWindow "CSNhypodbpQT - Hypocenter database picker (EW8/Qt)"  default 1100x7
 └─ QStatusBar: estado de BD/anillos/locate + errores legibles
 ```
 
-Tablas: `QTableView` con `setSortingEnabled(true)`, `setSelectionBehavior(SelectRows)`,
-`setSelectionMode(SingleSelection)`, `horizontalHeader()->setSectionsClickable(true)`, y anchos acotados
+Tablas: `QTableView` cableado con `ewguiqt::wire_header_sort()` (`commonqt`), que desactiva el
+`setSortingEnabled` propio de Qt (no conoce ni la dirección del primer clic ni el comparador
+compartido), conecta `sectionClicked` al `SortProxy` y mantiene la flecha del header en el orden
+real. `setSelectionBehavior(SelectRows)`, `setSelectionMode(SingleSelection)`, y anchos acotados
 (`setMinimumWidth` pequeño + `QHeaderView::ResizeToContents`/`Interactive`) para no inflar el mínimo de la
 ventana (T6). Separadores de fila/columna con `setShowGrid(true)` + `QSS` (paridad estética con las tablas
 GTK).
@@ -1509,7 +1510,7 @@ decidir si se migra.
 | `GtkNotebook` | `QTabWidget` | pestañas `Eventos`/`Procesar` y `picking`/`magnitudes` |
 | `GtkPaned` (+ reparto diferido una sola vez, patrón `ec-split`) | `QSplitter` (+ `setSizes` una vez, `saveState/restoreState`) | **no** meter `QLayout` dentro; no usar `setCollapsible(false)` si infla el mínimo |
 | `GtkColumnView` + `GListStore` + `GtkSortListModel` + `GtkSingleSelection` + `GtkSignalListItemFactory` | `QTableView` + `QAbstractTableModel` + `QSortFilterProxyModel` + `QItemSelectionModel` | Qt **no** tiene el problema del *snapshot* del `bind`; pero el índice de proxy ≠ índice fuente, y `QModelIndex` se invalida en un reset ⇒ identificar por `origin_id` |
-| Cabecera ordenable (`ewgui/table_ui.h`, `ewgui_table_cmp_values`) | `setSortingEnabled(true)` + `lessThan` | primer clic descendente en numéricas/fechas y alfabético en texto; segundo invierte (replicar `ewgui_table_cmp_values`) |
+| Cabecera ordenable (`ewgui/table_ui.h`, `ewgui_table_cmp_values`) | `ewguiqt::wire_header_sort()` + `SortProxy` | primer clic descendente en numéricas/fechas y alfabético en texto; segundo invierte; **un solo** comparador (`ewgui_table_cmp_values`) para GTK y Qt, y la flecha del header siempre coincide con el orden real |
 | `GtkDrawingArea` + `gtk_drawing_area_set_draw_func` + `EwGuiCanvas` | `QWidget::paintEvent` + `QPainter::drawImage` sobre el `QImage` pintado por cairo | `EwDrawFn(canvas, cairo_t*, w, h, ud)` ⇒ `bpq_scene_paint(scene, ctx, bgra, w, h, stride)` |
 | cairo directo | cairo sobre `QImage` (pantalla) y sobre `cairo_*_surface` (export) | paridad de píxel; `QPainter` queda solo para blitear |
 | `GtkMenuButton` + `GMenuModel` (prohibido: bug #1299) ⇒ botón + ventana modal propia | `QToolButton` + `QMenu` con parent | en Qt el popup es nativo y no queda detrás; igual se pone transient parent (Wayland) |
@@ -1570,8 +1571,11 @@ absolutas), y **debe versionarse**: §1 falla mientras quede sin trackear en `pa
 - Ampliar `diag.sh` (lista cerrada) para `config csnhypodbpqt`.
 - Añadir el prototipo a `AGENTS.md` / `docs/` (lo hará quien decida adoptarlo).
 - Migrar `csnrv`, `csntvp`, `csnstaevdisp`, `ew_controller` a Qt.
-- Tocar `common` para crear una variante `libewgui_core.a` sin GTK (sería lo "correcto" a largo plazo,
-  pero modifica código existente; el port compila los `.c` puros directamente y no lo necesita).
+- ~~Tocar `common` para crear una variante `libewgui_core.a` sin GTK~~ **Superado por D5**
+  (ver §17): la infraestructura Qt compartida vive en `ew_gui_tools/commonqt/`
+  (`libewguiqt.a`), hermana de `common/`, sin tocarla. El port de `ew_controller`
+  (`ew_gui_tools/ew_controllerQT/`) ya usa esa lib y `csnhypodbpQT` se migró a
+  ella (canvas, boot y proxy de orden).
 
 ---
 

@@ -11,9 +11,9 @@
 #   - "timeout" solo por ruta absoluta en los .sh (test_timeout_gnu.sh).
 #   - instala con common/tools/install_bin.sh (atomico, siempre).
 #
-# MOD_GUI: qt6 - marcador deliberado para ew8_compile.sh:377, que clasifica un
-# modulo como GUI si su Makefile menciona gtk4|libadwaita. Este modulo ES GUI
-# (aunque no enlace GTK), asi que el marcador tiene que estar.
+# MOD_KIT: qt6 - lo lee ew8_compile.sh (preflight de Qt + grupo GUI). Ya no
+# hace falta el comentario-mentira `MOD_GUI: qt6`: la clasificacion es explicita.
+MOD_KIT = qt6
 .DEFAULT_GOAL := all
 
 CC      ?= gcc
@@ -64,8 +64,9 @@ CW_PURE := ewgui_wave ewgui_dsp ewgui_geo ewgui_sds ewgui_sta ewgui_config \
            ewgui_cfgfile ewgui_db ewgui_db_ids ewgui_ring ewgui_stalta \
            ewgui_table_cmp ewgui_overlay ewgui_version
 
-# Capa C++/Qt (solo <Qt...> y bpq_capi.h).
-UI_SRC  := main bpq_mainwindow bpq_canvas_widget bpq_events_model bpq_ring_worker \
+# Capa C++/Qt (solo <Qt...> y bpq_capi.h). El lienzo vive en commonqt/ y aqui
+# queda solo su adaptador (bpq_canvas_widget.h, sin .cxx).
+UI_SRC  := main bpq_mainwindow bpq_events_model bpq_ring_worker \
            bpq_stations_model bpq_wave_worker bpq_search_dialog bpq_locate_worker \
            bpq_preview_panel bpq_filters_dialog bpq_mag_model bpq_mww_panel
 UI_HDR  := bpq_mainwindow bpq_canvas_widget bpq_events_model bpq_ring_worker \
@@ -103,15 +104,17 @@ CFLAGS   = -Wall -O2 -g -fPIC $(CAIRO) $(PQCFLAGS) -I$(EWINC) \
 CXXFLAGS = -Wall -O2 -g -fPIC -std=c++17 \
            -I$(QT_INC) -I$(QT_INC)/QtWidgets -I$(QT_INC)/QtGui -I$(QT_INC)/QtCore \
            -I$(QT_ARCH)/mkspecs/linux-g++ -Ic -Iui -Itests \
-           -I../csnhypodbp -I../common/include
+           -I../csnhypodbp -I../common/include -I../commonqt/include
 
 MOCFLAGS = -I$(QT_INC) -I$(QT_INC)/QtWidgets -I$(QT_INC)/QtGui -I$(QT_INC)/QtCore \
-           -Ic -Iui -I../csnhypodbp -I../common/include
+           -Ic -Iui -I../csnhypodbp -I../common/include -I../commonqt/include
 
 LDFLAGS  = -L$(QT_LIB) -lQt6Widgets -lQt6Gui -lQt6Core $(CAIRO) $(PQLIBS) -lm -lpthread
 
 # .a / .o ajenos. NO se enlaza libewgui_gtk4.a (arrastraria GTK).
-EWLIBS   = ../csnwphase/libcsnwphase.a ../csnloc/libcsnloc_tt.a \
+# commonqt/build/libewguiqt.a es la infra Qt compartida (canvas, modelos, boot).
+EWLIBS   = ../commonqt/build/libewguiqt.a \
+           ../csnwphase/libcsnwphase.a ../csnloc/libcsnloc_tt.a \
            ../wavestore/libwavestore.a \
            $(EWLIBDIR)/libmseed2.a $(EWLIBDIR)/rw_mag.o $(EWLIBDIR)/libew_mt.a
 
@@ -167,6 +170,8 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 
 # --- librerias ajenas (el orden de ew8_compile.sh es alfabetico: este modulo
 #     va antes que csnloc/csnwphase/wavestore, asi que hay que construirlas) ---
+../commonqt/build/libewguiqt.a:
+	$(MAKE) -C ../commonqt
 ../csnloc/libcsnloc_tt.a:
 	$(MAKE) -C ../csnloc libcsnloc_tt.a
 ../wavestore/libwavestore.a:
