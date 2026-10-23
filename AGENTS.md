@@ -157,21 +157,24 @@ hace **`csnloc`** localmente.
   - `csnrv/`: visor regional / herramienta de visualización. Visor del último sismo (historial de la BD hipocentral + anillo en vivo), con mapa equirectangular, tabla Preferred/Ml/Mwp y zoom/paneo. Zoom inicial configurable con la clave opcional `InitialZoom` de `csnrv.d` (default 8.0; 2.0 = vista regional). El mapa base (clave `MapImageFile`) debe ser una imagen equirectangular de mundo completo (ancho = 2·alto, `lon −180..180`/`lat −90..90`, sin alpha); validación: `common/tools/check_map_image.py`. Dibuja además una **capa vectorial de líneas** (márgenes de placas del mundo, subducción, fallas, límites de regiones) declarada con `OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide` (formato `.lines`, datos en `resources/overlays/`; ver `common/tools/OVERLAYS.md`); `--check-overlays` reporta por capa `visible`, `color`, `width` y `polylines`. Test headless de configuración y overlays: `make test` (incluye `--print-config` y `--check-overlays`).
   - `csnrvQT/`: **port Qt6 de `csnrv`** (paridad completa: resumen del último sismo, tabla
     Ml/Mwp/Mb/Ms, mapa equirectangular con grilla/overlays/zoom/paneo, `Export view...`,
-    `Dark mode`, `Layers...`). **Convive** con el GTK: mismo `HYPO_RING_REF`, `.d` propio
-    `csnrvqt.d` con `MOD_CSNRVQT **174**` (el GTK sigue con `MOD_CSNRV 159`); los dos son
-    lectores del anillo, así que se comparan en vivo. Reparto `c/` (C puro: `crv_config`,
+    `Dark mode`, `Layers...`). **Sustituye** al GTK en `startstop_unix.d`: corre con el **mismo**
+    `csnrv.d` (`MOD_CSNRV` **159**; el `Process` de `csnrv` está retirado) y escribe su
+    **log propio** `$EW_LOG/csnrvQT_<fecha>.log` con la clave `LogFile` (nombre del **proceso**,
+    `diag.sh log csnrvQT`); sin `EW_LOG` escribible baja a consola en vez de morir. El id
+    `MOD_CSNRVQT 174` y el viejo `csnrvqt.d` se retiraron. Reparto `c/` (C puro: `crv_config`,
     `crv_arc`, `crv_magmsg`, `crv_mag`, `crv_fmt`, `crv_db`, `crv_core`, `crv_map`,
     `crv_logit`) + `c/crv_capi.h` como **única** frontera C→C++ + `ui/` (sólo `<Qt…>`,
     `ewguiqt/*` y `crv_capi.h`). **cairo vive sólo en `c/`**: el fondo lo decodifica la UI con
     `QImage` y llega como BGRA (`crv_map_set_background`); el export re-renderiza la misma
     escena a SVG/PDF/PNG. El menú es `QMenuBar` nativo y el diálogo de capas son `QCheckBox`
-    (WSLg #1299). Log propio en `$EW_LOG/csnrvQT_<fecha>.log` con la clave `LogFile` (nombre del
-    **proceso**, `diag.sh log csnrvQT`); sin `EW_LOG` escribible baja a consola en vez de morir.
-    El test de config **reutiliza sin tocarlo** `csnrv/test_config.sh` (`BIN=csnrvQT`), y
-    `test_ui` valida `--dump`/`--layout`/`--shot` offscreen (4 magnitudes, tabla 4×3, mínimo
-    ≤ 700×800). Trampa medida: Qt6 limita `QImageReader` a **128 MB** y el mapa 10800×5400 ocupa
-    233 MB en ARGB32, así que se sube a 1 GB antes de cargar o el visor queda sin fondo
-    (`exceeds the current allocation limit`).
+    (WSLg #1299). **Rueda = zoom anclado al cursor** (`crv_map_zoom_at`) y **arrastre izquierdo
+    = paneo**; las señales de `ewguiqt::CanvasWidget` llegan en px **lógicos** y se multiplican
+    por `devicePixelRatioF()` (el mapa trabaja en físicos). El test de config **reutiliza sin
+    tocarlo** `csnrv/test_config.sh` (`BIN=csnrvQT`), y `test_ui` valida
+    `--dump`/`--layout`/`--shot`/`--interact` offscreen (4 magnitudes, tabla 4×3, mínimo
+    ≤ 700×800, zoom ×1.2 anclado y paneo). Trampa medida: Qt6 limita `QImageReader` a **128 MB**
+    y el mapa 10800×5400 ocupa 233 MB en ARGB32, así que se sube a 1 GB antes de cargar o el
+    visor queda sin fondo (`exceeds the current allocation limit`).
   - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`).
   - `csnstaevdisp/`: visor de estaciones y eventos (mapa equirectangular, triángulos de estación coloreados por elevación, círculos de sismo escalados por magnitud). Usa la BD hipocentral (historial) y `HYPO_RING` (en vivo). Mismo contrato de mapa base que `csnrv` (`MapImageFile`: equirectangular 2:1 de mundo completo, sin alpha) y misma **capa de líneas** (`OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide`, ver `common/tools/OVERLAYS.md`); test headless `make test-config`.
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
@@ -747,6 +750,15 @@ primero al store algo que ya no está).
   sobre datos mutables debe **reconstruir sus filas** (es lo que hace `ew_controller`, con
   `ewgui_ctrl_sync_plan` sólo para saltarse el trabajo cuando nada cambió). Ver
   `docs/GTK4-MIGRATION.md` §12.6.
+- **`ewguiqt::CanvasWidget` emite los gestos, pero no mueve nada**: `zoomed(factor, x, y)` y
+  `dragged(dx, dy)` (`commonqt/src/canvas.cxx`) son **señales**; si el port no las conecta a su
+  capa de vista, rueda y arrastre se pierden **en silencio** y el mapa parece "no interactivo"
+  (fallo reportado en vivo en `csnrvQT`: `crv_map_zoom_factor`/`crv_map_pan` existían y nadie las
+  llamaba). Las coordenadas y los deltas llegan en píxeles **lógicos**: hay que multiplicarlos por
+  `devicePixelRatioF()` porque el buffer del canvas y la proyección trabajan en físicos. El zoom
+  anclado se ajusta con el factor **aplicado** tras el clamp (`crv_map_zoom_at`), no con el
+  pedido, o el pan deriva en cada rueda contra el tope 0.2/50. Invariantes:
+  `tests/test_ui_invariants.sh` (los `connect`) y `tests/test_ui.sh` (`--interact`).
 - **GTK4: las referencias PRESTADAS de los getters de modelo no se liberan (use-after-free)**:
   `gtk_single_selection_get_selected_item()` devuelve un **préstamo** (`transfer none`; GIR
   `<return-value transfer-ownership="none">`, doc: *"the returned data is owned by the instance"*),

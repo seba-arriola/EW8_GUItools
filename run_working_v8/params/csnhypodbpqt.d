@@ -128,7 +128,7 @@ HideStationsWithoutData  1
 # Mapa base: imagen equirectangular de mundo completo (lon -180..180,
 # lat -90..90, ancho = 2*alto, sin canal alpha). Valida con:
 #   python3 ew_gui_tools/common/tools/check_map_image.py <imagen>
-#MapImageFile    world_map_con_chile.jpg
+MapImageFile    world_map_con_chile.jpg
 # Ancho minimo (grados) del auto-encuadre del mapa de planta: con un grupo de
 # soluciones apretado, la vista no se acerca mas que esto (rueda para acercar).
 MapMinSpanDeg   5.0

@@ -63,36 +63,66 @@
 #    To comment out a line, preceed the line by #.
 #
 #
+################################################
+################################################
+# I/O 
+################################################
+################################################
+#
+#
+ Process	  "hypodb_ingest hypodb.d"
+ Class/Priority    OTHER 0
+#
+ Process	  "wstore_ingest wavestore.d"
+ Class/Priority    OTHER 0
+#
  Process	  "slink2ew slink2ew_HHZ.d"
  Class/Priority    OTHER 0
+#
+################################################
+################################################
+# PICKERS
+################################################
+################################################
+#
+#picker_FP clásico forward de Lomax.
 #
  Process	  "pick_FP pick_FP.d"
  Class/Priority    OTHER 0
 #
-# Picker de onda S (STA/LTA+AIC+polarizacion 3C). Lee ondas de SLINK_RING y
-# picks P de LEGACY_PICK_RING, y publica picks S en LEGACY_PICK_RING.
+# Picker de onda S (STA/LTA+AIC+polarizacion 3C). COMENTADO
+#
 # Process	  "pickS pickS.d"
 # Class/Priority    OTHER 0
+#
 #
 # Pickers neuronales (ONNX), DOS en paralelo con anillos SEPARADOS: dos pickers
 # publicando en el mismo anillo meten dos arribos por fase/estacion y csnloc
 # asocia el doble.
 #   pickml_iquique.d  -> PICK_RING         (pesos `iquique`, entrenados en Chile)
 #   pickml_eqt.d      -> LEGACY_PICK_RING  (pesos `original`; sin consumidor)
-# PhaseNetWC queda retirado: en esta red produce miles de P donde no hay evento
-# (ver docs/DLdetalles.md §9.4). Para volver, descomentar su Process y dejarlo
-# como unico publicador de PICK_RING (el de iquique tendria que bajar a LEGACY).
+# PhaseNetWC COMENTADO: produce miles de P donde no hay evento. 
+# 
 # Process	  "pickml pickml_phasenetwc.d"
 # Class/Priority    OTHER 0
 #
  Process	  "pickml pickml_iquique.d"
  Class/Priority    OTHER 0
 #
+#
+################################################
+################################################
+# LOCALIZADORES Y MAGNITUDES
+################################################
+################################################
+#
+#
+#
  Process	  "csnloc csnloc.d"
  Class/Priority    OTHER 0
 #
 # Refinador HYPOINVERSE por anillo: lee HYPO_RING (ARC de csnloc) y escribe
-# el ARC refinado en HYPO_RING_REF. NO usa la cadena sausage (eq*/pipe).
+# el ARC refinado en HYPO_RING_REF.
  Process	  "hyp2000_ring hyp2000_ring.d"
  Class/Priority    OTHER 0
 #
@@ -102,41 +132,39 @@
  Process	  "nlloc_ring nlloc_ring.d"
  Class/Priority    OTHER 0
 #
- Process	  "wstore_ingest wavestore.d"
- Class/Priority    OTHER 0
-#
  Process	  "csnmags csnmags.d"
  Class/Priority    OTHER 0
 #
  Process	  "csnmags csnmags_raw.d"
  Class/Priority    OTHER 0
 #
- Process	  "hypodb_ingest hypodb.d"
- Class/Priority    OTHER 0
+################################################
+################################################
+# VIEJAS GUI CON GTK4
+################################################
+################################################
 #
  Process	  "csntvp csntvp.d"
  Class/Priority    OTHER 0
 #
+ Process	  "csnstaevdisp csnstaevdisp.d"
+ Class/Priority    OTHER 0
+# 
  Process	  "csnhypodbp csnhypodbp.d"
  Class/Priority    OTHER 0
 #
-# Process	  "csnrv csnrv.d"
-# Class/Priority    OTHER 0
+################################################
+################################################
+# NUEVAS GUI CON LIBQT
+################################################
+################################################
 #
-# Visor regional Qt (convive con csnrv; modid 174, .d propio).
  Process	  "csnrvQT csnrv.d"
- Class/Priority    OTHER 0
-#
-# Process	  "ew_controller ew_controller.d"
-# Class/Priority    OTHER 0
-#
- Process	  "csnstaevdisp csnstaevdisp.d"
  Class/Priority    OTHER 0
 #
  Process	  "csnhypodbpQT csnhypodbpqt.d"
  Class/Priority    OTHER 0
 #
-# Panel de control Qt (convive con ew_controller; modid distinto).
  Process	  "ew_controllerQT ew_controller.d"
  Class/Priority    OTHER 0
 #
