@@ -34,6 +34,7 @@
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QHeaderView>
+#include <QImageReader>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
 #include <QLabel>
@@ -193,16 +194,24 @@ void BpqMainWindow::openData()
     m_originsModel = new BpqOriginsModel(this);
     m_originsView->setModel(m_originsModel);
 
-    /* Columna derecha: el mapa base lo decodifica Qt (QImage) y lo pinta cairo;
-     * los overlays .lines los carga la capa C desde el .d. */
+    /* Columna derecha: el mapa base lo decodifica Qt (QImageReader) y lo pinta
+     * cairo; los overlays .lines los carga la capa C desde el .d. El limite de
+     * asignacion del proceso lo fija main.cxx antes de existir la ventana. */
     if (m_cfg->map_image_file[0]) {
-        const QImage img(QString::fromUtf8(m_cfg->map_image_file));
-        if (!img.isNull())
+        QImageReader rd(QString::fromUtf8(m_cfg->map_image_file));
+        const QImage img = rd.read();
+        if (!img.isNull()) {
             m_mapImage = img.convertToFormat(QImage::Format_ARGB32_Premultiplied);
-        else
+        } else {
+            /* Un fallo de carga es invisible en pantalla (la barra de estado se
+             * tapa con el siguiente mensaje): que quede en stderr con el motivo
+             * real (formato no soportado, allocation limit, archivo ausente). */
+            std::fprintf(stderr, "csnhypodbpQT: no se pudo cargar el mapa <%s>: %s\n",
+                         m_cfg->map_image_file, qPrintable(rd.errorString()));
             statusBar()->showMessage(
                 QStringLiteral("MapImageFile no se pudo cargar (%1): mapa virtual")
                     .arg(QString::fromUtf8(m_cfg->map_image_file)), 0);
+        }
     }
     m_map = bpq_map_new(m_cfg);
     m_mapPlan->installEventFilter(this);
@@ -3518,13 +3527,15 @@ QString BpqMainWindow::dumpTree() const
     }
     out += QStringLiteral("data origins=%1\n")
                .arg(m_originsModel ? m_originsModel->rowCount() : 0);
-    /* Estado de la columna derecha: deja verificar el encuadre y el perfil
-     * elegido sin mirar la pantalla. */
-    out += QStringLiteral("panels pts=%1 pref=%2 sel=%3 prof=%4 zoom=%5 layers=%6\n")
+    /* Estado de la columna derecha: deja verificar el encuadre, el perfil
+     * elegido y que el mapa base se decodifico (bg=0x0 = lienzo virtual). */
+    out += QStringLiteral("panels pts=%1 pref=%2 sel=%3 prof=%4 zoom=%5 layers=%6 bg=%7x%8\n")
                .arg(m_npts).arg(m_pref).arg(m_mapCtx.selected)
                .arg(m_profIndex)
                .arg(m_mapCtx.zoom, 0, 'f', 6)
-               .arg(bpq_map_nlayers(m_map));
+               .arg(bpq_map_nlayers(m_map))
+               .arg(m_mapImage.isNull() ? 0 : m_mapImage.width())
+               .arg(m_mapImage.isNull() ? 0 : m_mapImage.height());
 
     out += QStringLiteral("stations rows=%1 picked=%2\n")
                .arg(m_staModel ? m_staModel->rowCount() : 0)

@@ -45,14 +45,16 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
 OK: sin libgtk/libadwaita/libgobject/libgio
-OK: --print-config identico (66 lineas)
+OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
+== mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1077 checks** (1004 en C + 16 de integración + 12 de invariantes + 45 e2e), 0 fallas.
+Total: **1088 checks** (1004 en C + 16 de integración + 12 de invariantes + 45 e2e + 11 del mapa),
+0 fallas.
 
 ### Origen fijado (pin)
 
@@ -114,7 +116,7 @@ $ QT_QPA_PLATFORM=offscreen BPQ_MODE=--dump csnhypodbpQT csnhypodbp.d \
       | grep -E '^data|^panels|^stations|^traces|^db'
 data events=54
 data origins=15
-panels pts=15 pref=6 sel=6 prof=1 zoom=2.106667 layers=5
+panels pts=15 pref=6 sel=6 prof=1 zoom=2.106667 layers=5 bg=10800x5400
 stations rows=274 picked=12
 db avail=1 search=0
 traces rows=12 with=12 win=[1792685408.26,+120]
@@ -123,6 +125,14 @@ traces rows=12 with=12 win=[1792685408.26,+120]
 dibujadas; `prof=1` = perfil P02 (el más cercano a la solución preferida); `zoom` = auto-encuadre
 con el suelo `MapMinSpanDeg`. Con `BPQ_TEST_ARC=<arc>` sobre un evento sintético sale
 `pts=1 pref=0 sel=0 prof=0 zoom=2.106667`.
+
+`bg=<ancho>x<alto>` = el `MapImageFile` ya decodificado; `bg=0x0` = lienzo virtual (clave
+ausente/comentada o imagen ilegible con su motivo en `stderr`). Es el invariante de
+`tests/test_map_background.sh`, que existe por una trampa medida: **Qt6 (hasta 6.4) limita
+`QImageReader` a 128 MB** y el mapa 10800×5400 ocupa 233 MB en ARGB32, así que sin
+`QImageReader::setAllocationLimit(1024)` en `ui/main.cxx` (mismo valor que `csnrvQT`) Qt rechaza
+la imagen y el panel se quedaba **sin fondo en silencio** (sólo un mensaje de barra de estado que
+el siguiente mensaje tapaba).
 
 ### Historial y busqueda en la base hipocentral (2026-10-22)
 
@@ -657,6 +667,10 @@ así que el estado del cuadro se verifica sin mirar la pantalla.
    `../common/libewgui_gtk4.a`, y `ewgui_export.c` se sustituye por `c/bpq_canvas.c`).
 5. `MyModuleId` propio (`MOD_CSNHYPODBPQT` = 172, `earthworm.d.base`) ⇒ **puede correr junto a la
    GUI GTK (158)**; su `.d` aísla el estado manual/Mww en `run_working_v8/csnhypodbpqt/`.
+6. **El fondo del mapa se decodifica de verdad**: `--dump` publica `bg=<ancho>x<alto>`;
+   `tests/test_map_background.sh` exige `bg≠0x0` con `MapImageFile` activo, `bg=0x0` sin la clave
+   y el motivo real en `stderr` si la ruta no existe. El límite de `QImageReader` se fija una vez
+   en `ui/main.cxx` (ver arriba).
 
 ## Lo que se reutiliza (sin copiar)
 

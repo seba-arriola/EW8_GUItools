@@ -22,6 +22,7 @@
 #include "bpq_mainwindow.h"
 
 #include <QApplication>
+#include <QImageReader>
 #include <QStringList>
 #include <QTimer>
 
@@ -80,6 +81,14 @@ static int run_gui(QApplication &app, const QStringList &args)
     } else if (args.size() != 2) {
         return print_usage(args.value(0));
     }
+
+    /* Qt6 (hasta 6.4) limita por defecto la decodificacion a 128 MB y el mapa
+     * 2:1 de 10800x5400 ocupa 233 MB en ARGB32: sin esto QImage RECHAZA la
+     * imagen ("Rejecting image as it exceeds the current allocation limit of
+     * 128 megabytes") y el panel de planta se queda sin fondo, en silencio.
+     * El limite es global del proceso (vale tambien para los mapas futuros) y
+     * `QT_IMAGEIO_MAXALLOC` lo sobreescribe en runtime. Mismo valor que csnrvQT. */
+    QImageReader::setAllocationLimit(1024);
 
     BpqConfig *cfg = bpq_config_load(cfg_path.constData(), state_dir, err, sizeof(err));
     if (!cfg) {

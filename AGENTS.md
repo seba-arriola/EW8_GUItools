@@ -172,9 +172,12 @@ hace **`csnloc`** localmente.
     por `devicePixelRatioF()` (el mapa trabaja en físicos). El test de config **reutiliza sin
     tocarlo** `csnrv/test_config.sh` (`BIN=csnrvQT`), y `test_ui` valida
     `--dump`/`--layout`/`--shot`/`--interact` offscreen (4 magnitudes, tabla 4×3, mínimo
-    ≤ 700×800, zoom ×1.2 anclado y paneo). Trampa medida: Qt6 limita `QImageReader` a **128 MB**
-    y el mapa 10800×5400 ocupa 233 MB en ARGB32, así que se sube a 1 GB antes de cargar o el
-    visor queda sin fondo (`exceeds the current allocation limit`).
+    ≤ 700×800, zoom ×1.2 anclado y paneo). Trampa medida: Qt6 (hasta 6.4) limita `QImageReader` a
+    **128 MB** y el mapa 10800×5400 ocupa 233 MB en ARGB32, así que se sube a 1 GB antes de cargar
+    o el visor queda sin fondo (`exceeds the current allocation limit`). **El límite es global del
+    proceso**: `csnhypodbpQT` paga la misma trampa y lo fija en `ui/main.cxx`; su `--dump` publica
+    `bg=<ancho>x<alto>` y el invariante es `csnhypodbpQT/tests/test_map_background.sh` (`bg=0x0`
+    = lienzo virtual, con el motivo del fallo en `stderr`).
   - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`).
   - `csnstaevdisp/`: visor de estaciones y eventos (mapa equirectangular, triángulos de estación coloreados por elevación, círculos de sismo escalados por magnitud). Usa la BD hipocentral (historial) y `HYPO_RING` (en vivo). Mismo contrato de mapa base que `csnrv` (`MapImageFile`: equirectangular 2:1 de mundo completo, sin alpha) y misma **capa de líneas** (`OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide`, ver `common/tools/OVERLAYS.md`); test headless `make test-config`.
   - `csnstaevdispQT/`: **port Qt6 de `csnstaevdisp`** (paridad completa: triángulos por

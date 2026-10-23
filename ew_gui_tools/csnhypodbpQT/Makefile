@@ -388,7 +388,9 @@ probe: qt_check
 check-scripts: $(TARGET)
 	@sh tests/test_no_gtk_link.sh
 	@sh tests/test_printconfig_parity.sh
+	@sh tests/test_printconfig_parity.sh csnhypodbpqt.d
 	@sh tests/test_integration.sh
+	@sh tests/test_map_background.sh
 	@sh tests/test_pin_invariants.sh
 	@sh tests/test_pin.sh
 
