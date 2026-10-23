@@ -181,6 +181,19 @@ inst_of_name() {
     esac
 }
 
+# Worktree PRINCIPAL (el primero de `git worktree list`, como documenta git),
+# sin importar desde que worktree se ejecute este script: N=0 es SIEMPRE el
+# principal del repo, no la carpeta desde donde se invoca (que en un worktree
+# hacia parecer que la base de la 0 vivia alli).
+main_worktree() {
+    local w=""
+    if command -v git >/dev/null 2>&1; then
+        w="$(git -C "$ROOT" worktree list --porcelain 2>/dev/null | sed -n 's/^worktree //p' | head -1)"
+    fi
+    [ -n "$w" ] || w="$ROOT"
+    printf '%s\n' "$w"
+}
+
 # Instancias >=1 cuyo worktree sigue registrado en ESTE repo, deducidas del
 # DB_PORT de cada worktree (5435+N). stdout: "<N> <ruta>".
 inst_registered() {
@@ -200,9 +213,10 @@ inst_registered() {
 cmd_instances() {
     need_docker
     [ $# -eq 0 ] || die 1 "instances no lleva argumentos"
-    local reg names vols ns n line cname cstate cport vol wt
+    local reg names vols ns n line cname cstate cport vol wt main_wt
 
     reg="$(inst_registered)"
+    main_wt="$(main_worktree)"
     names="$("$DOCKER" ps -a --filter 'name=^ew8_hypodb' --format '{{.Names}}\t{{.Status}}\t{{.Ports}}' 2>/dev/null)"
     vols="$("$DOCKER" volume ls --filter 'name=ew8_hypodb' --format '{{.Name}}' 2>/dev/null)"
 
@@ -236,7 +250,7 @@ cmd_instances() {
 
         wt="$(printf '%s\n' "$reg" | awk -v i="$n" '$1==i {print $2; exit}')"
         if [ "$n" -eq 0 ]; then
-            wt="principal ($ROOT)"
+            wt="principal ($main_wt)"
         elif [ -z "$wt" ]; then
             wt='huerfana (sin worktree registrado)'
         fi

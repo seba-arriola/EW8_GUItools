@@ -153,7 +153,11 @@ for d in "$PARAMS"/*.d; do
         [ -n "$p" ] || continue
         case "$p" in
             /*) [ -e "$p" ] || { echo "       $hyp: $k -> no existe: $p"; cbad=1; } ;;
-            *)  [ -e "$PARAMS/$wd/$p" ] || { echo "       $hyp: $k -> no resuelve desde $wd: $p"; cbad=1; } ;;
+            # `realpath -m` normaliza los `..` SIN exigir que exista el WorkDir:
+            # en un checkout/worktree limpio ese directorio runtime aun no existe
+            # (lo crea el modulo al arrancar) y el kernel no puede atravesar un
+            # `..` por el, aunque el destino final si exista.
+            *)  [ -e "$(realpath -m -- "$PARAMS/$wd/$p")" ] || { echo "       $hyp: $k -> no resuelve desde $wd: $p"; cbad=1; } ;;
         esac
     done < <(sed "s/'//g" "$hyp" | grep -E '^(STA|CRH)[[:space:]]' | awk '{print $1" "$NF}')
 done

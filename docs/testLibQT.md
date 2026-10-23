@@ -5,11 +5,8 @@
 **Ámbito:** prototipo en una carpeta nueva `ew_gui_tools/csnhypodbpQT/`, sin modificar nada del código
 existente, con el objetivo de llegar a algo funcional que se integre completamente en el sistema.
 
-> Nota de convención: este archivo tiene extensión `.d` por pedido explícito. En este repo `*.d` es la
-> extensión de los archivos de configuración **versionados** (`.gitignore:180-183`: "`*.d` NO se ignora").
-> El contenido es documentación, no configuración: ningún módulo lo lee. Si molesta en el inventario de
-> `.d` de `params/`, no lo está (vive en `docs/`, y los tests de configuración solo barren
-> `run_working_v8/params/*.d`).
+> Nota: este documento nació como `docs/testLibQT.d` (por eso algunos comentarios del código lo
+> citan con esa extensión); vive en `docs/` como markdown y ningún módulo lo lee.
 
 ---
 
@@ -1382,7 +1379,7 @@ print-VALIDATE_FLAGS: ; @printf '%s\n' '$(VALIDATE_FLAGS)'
 | # | criterio medible | test que lo verifica |
 |---|---|---|
 | **AC1** | `make -C ew_gui_tools/csnhypodbpQT all` compila e instala `ew_8.0/bin/csnhypodbpQT`; **ningún archivo fuera de `csnhypodbpQT/` cambia** | `tests/test_no_touch.sh` (`git status --porcelain` acotado a rutas permitidas) + `sh common/tools/check_install.sh -v` |
-| **AC2** | El binario **no enlaza** `libgtk-4`, `libadwaita`, `libgobject`, `libgio`, `libglib` | `tests/test_no_gtk_link.sh` (`ldd` + grep) |
+| **AC2** | El binario **no enlaza** `libgtk-4`, `libadwaita`, `libgobject`, `libgio`. (`libglib-2.0` sí aparece en `ldd`: llega por `libQt6Gui`/`QEventDispatcherGlib`, no por nuestro código ni por GTK — verificado en la fase 0) | `tests/test_no_gtk_link.sh` (`ldd` + grep) |
 | **AC3** | Ningún TU C++ incluye C/EW/cairo/glib/GTK; `bpq_capi.h` es C++-safe | `tests/test_capi_purity.sh`: `g++ -std=c++17 -fsyntax-only tests/probe_capi.cxx` + grep de includes prohibidos en `ui/` |
 | **AC4** | Los 24 `.c` y los headers de la lista blanca siguen sin `gtk/gtk.h` | `tests/test_reuse_purity.sh` (lista explícita de archivos, no un grep recursivo) |
 | **AC5** | El Makefile cumple los invariantes del repo y no rompe el `check` de `common` | `make -C ew_gui_tools/common check` **sin modificar** `common` |
