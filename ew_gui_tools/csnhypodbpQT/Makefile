@@ -50,7 +50,7 @@ QT_HAVE := $(shell test -n "$(QT_INC)" && test -d "$(QT_INC)/QtWidgets" && test 
 C_SRC := bpq_config.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
          bpq_map.c bpq_profile.c bpq_wave.c bpq_sds_globals.c bpq_stations.c \
          bpq_traces.c bpq_db.c bpq_locate.c bpq_manual.c bpq_mag.c \
-         bpq_magpanel.c bpq_draw_mag.c bpq_mww.c bpq_draw_ball.c
+         bpq_magpanel.c bpq_draw_mag.c bpq_mww.c bpq_draw_ball.c bpq_pin.c
 
 # Nucleos PUROS de csnhypodbp que se compilan in situ (sin GTK; ver plan §4.1).
 # Excluidos a proposito: row/staitem/magitem/master (GObject) y
@@ -184,7 +184,7 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 # ---------------------------------------------------------------------------
 TEST_C   := test_capi_config test_canvas test_rings test_events test_draw_map test_wave \
             test_stations test_traces test_db test_locate test_preview test_manual \
-            test_magpanel test_mww
+            test_magpanel test_mww test_pin
 TEST_CXX :=
 PROBE_SRC := tests/probe_capi.cxx
 
@@ -358,6 +358,12 @@ test_mww: tests/test_mww.c $(MWW_DEPS) $(EWLIBS)
 	    $(PQLIBS) $(CAIRO) -lm -lpthread
 	@chmod +x $@
 
+# Origen fijado (fase 7): nucleo puro del pin.
+test_pin: tests/test_pin.c $(BUILDDIR)/c_bpq_pin.o
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_pin.c $(BUILDDIR)/c_bpq_pin.o -lm
+	@chmod +x $@
+
 # Fixture de ARCs sinteticos (tests del GUI y demos sin EarthWorm).
 mk_test_arc: tests/mk_test_arc.c $(RINGS_DEPS)
 	rm -f $@
@@ -383,6 +389,8 @@ check-scripts: $(TARGET)
 	@sh tests/test_no_gtk_link.sh
 	@sh tests/test_printconfig_parity.sh
 	@sh tests/test_integration.sh
+	@sh tests/test_pin_invariants.sh
+	@sh tests/test_pin.sh
 
 check-c: $(TEST_C)
 	@chmod +x $(TEST_C)
@@ -400,6 +408,7 @@ check-c: $(TEST_C)
 	@$(THIS_DIR)/test_manual
 	@$(THIS_DIR)/test_magpanel
 	@$(THIS_DIR)/test_mww
+	@$(THIS_DIR)/test_pin
 
 check: qt_check $(TEST_C)
 	@chmod +x $(TEST_C)
@@ -417,6 +426,7 @@ check: qt_check $(TEST_C)
 	@$(THIS_DIR)/test_manual
 	@$(THIS_DIR)/test_magpanel
 	@$(THIS_DIR)/test_mww
+	@$(THIS_DIR)/test_pin
 	@$(MAKE) --no-print-directory probe
 	@$(MAKE) --no-print-directory check-scripts
 

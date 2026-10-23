@@ -1479,6 +1479,21 @@ decidir si se migra.
 | 6.4 | `c/bpq_mww_save.c` | `bpq_db_save_mww(event_id,origin_id,BpqMwwResult*)` | `tests/test_mww_save.c` (BD de prueba) | con el radio `Mww` + `Confirm`: `upsert_event`, `upsert_origin_if_absent`, `upsert_magnitude(Mww)`, `upsert_tensor`, `set_preferred`; el **centroide no** se escribe en `origin` |
 | 6.5 | `README.md`, `tests/test_integration.sh`, `tests/test_maximize.sh` + archivos existentes | `earthworm.d.base`: `Module MOD_CSNHYPODBPQT 172`; `.gitignore`: runtime `/run_working_v8/csnhypodbpqt/`; `startstop_unix.d`: `Process "csnhypodbpQT csnhypodbpqt.d"` **activo**; nuevo `params/csnhypodbpqt.d`; `test_params_stays_clean.sh` §6 | `tests/test_integration.sh` (16 checks), `tests/test_maximize.sh` (5 ciclos), `test_params_stays_clean.sh` | **hecho**; `--validate` OK=5; `make check` verde (991 checks) |
 
+### Fase 7 — Origen fijado (pin)
+
+| id | archivos | interfaz | test | done |
+|---|---|---|---|---|
+| 7.1 | `c/bpq_pin.{h,c}` (nuevo) | `BpqPin`, `bpq_pin_init/set/clear/active/key/matches/reconcile`; `bpq_origin_key()` como **único** formato `<qid>:<mod>:<version>` | `tests/test_pin.c` | **hecho** (29 checks) |
+| 7.2 | `ui/bpq_events_model.{h,cxx}` | `eventKeyAt/rowForEventKey` (identidad estable `qid` + 1.ª `otime`); `keyAt` vía `bpq_origin_key` | `tests/test_pin.sh` `refresh/feed_after` | **hecho**; una confirmación que cambia la preferida no pierde evento ni pin |
+| 7.3 | `ui/bpq_mainwindow.{h,cxx}`, `ui/main.cxx` | `m_pin/m_pinEvent`, `onOriginDoubleClicked`, `pinOrigin(force, switchTab)`, `pinnedSolutionIndex`, `solutionIndexForKey`, `m_syncOrigins`, `m_curSolKey`, `m_candKey`; hooks `BPQ_TEST_FIXTURE/PIN/CLICK/REFRESH/FEED_AFTER/EVENT/PIN_AGAIN/CAND` y `BPQ_WAVE_WAIT_MS`; dump `pin key/ev/tab/fetches/sol` | `tests/test_pin.sh` (45 checks), `tests/test_pin_invariants.sh` (12) | **hecho**; doble clic fija y lleva a Procesar/picking; el clic simple no mueve; el refresh no re-descarga ondas; la candidata se compara por clave; `Discard` vuelve al pin |
+| 7.4 | `README.md`, `Makefile` | `test_pin` en `TEST_C`; `test_pin*.sh` en `check-scripts` | `make check` | **hecho**; total **1077 checks** (1004 C + 16 integración + 12 invariantes + 45 e2e) |
+
+**Decisiones de la fase 7:** el pin solo se cambia **fijando otro origen** (doble clic o
+clic en un marcador de planta); el clic simple y el teclado se revierten a la fila
+fijada; se suelta al cambiar de evento, al buscar/limpiar o si la solución desaparece;
+la candidata del `locate` conserva la precedencia y se identifica por clave (el store
+reordena); `Confirm` no mueve el pin. Estado **en memoria**, sin persistencia.
+
 ---
 
 ## 13. Riesgos y mitigaciones

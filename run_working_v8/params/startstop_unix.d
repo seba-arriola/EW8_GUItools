@@ -120,7 +120,11 @@
  Process	  "csnhypodbp csnhypodbp.d"
  Class/Priority    OTHER 0
 #
- Process	  "csnrv csnrv.d"
+# Process	  "csnrv csnrv.d"
+# Class/Priority    OTHER 0
+#
+# Visor regional Qt (convive con csnrv; modid 174, .d propio).
+ Process	  "csnrvQT csnrv.d"
  Class/Priority    OTHER 0
 #
 # Process	  "ew_controller ew_controller.d"

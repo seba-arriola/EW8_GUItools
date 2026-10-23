@@ -24,6 +24,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 | 4 | picking (trazas, filtros, STA/LTA, repick, **locate**) | **completa**: canvas, picking con el ratón (overlay local visible + persistencia), componentes por estación en el orden del `.d` + `tracesPerScreen`, Shift+flechas, filtros de vista (presets del `.d`, `Filters…`, fase cero) con sus atajos, STA/LTA y **`locate`** con el residual del localizador en la tabla |
 | 5 | preview, `locate`, Confirm/Discard, export | **hecho**: preview de dos mitades con un solo `render` (candidata/elegida/guiones y `Confirm`/`Discard`), spinner `calculando <loc>… N s` junto al `Origin time`, `Fix`/`FixedDepthKm` en la barra, `Confirm` que publica el ARC (byte 174 = `M`) en `ConfRing` y lo deja como origen confirmado en el store, y `Export view…` con el contexto real |
 | 6 | magnitudes, Mww, integración final | **fase 6 completa**: *magnitudes* con tabla de 8 columnas (`magrow`), traza procesada (`magview`) con **franja arrastrable** (`magmarks`), radios ML/Mwp/Mb/Ms, puerta de distancia y `calculate`/`calculate all` (tank + `csnmags` con overrides). Panel **`Mww`** (`csnwphase`) con 31 parámetros (11 editables), `Calculate`/`Cancel` en hilo, playera + resumen y salida completa. **6.4 hecho**: al confirmar se guardan Mww + tensor (WPHASE/WCMT) sobre el `origin` del pipeline y la solución queda preferida (evento reusado por qid + Δt ≤ 300 s, `mod` del localizador). **6.5 hecha**: módulo propio `MOD_CSNHYPODBPQT 172`, `.d` propio `csnhypodbpqt.d`, `Process` activo en `startstop_unix.d` (coexiste con el GTK 158), runtime `run_working_v8/csnhypodbpqt/` y tests de integración |
+| 7 | origen fijado (*pin*) | **hecho**: doble clic en una fila de *Origins* la fija y lleva a *Procesar → picking*. Mientras hay pin, *Selected solution*, *Magnitude*, la tabla de estaciones/residuales, *magnitudes* y las ondas muestran **solo** esa solución; el clic simple no lo mueve y el refresco del anillo no lo pisa. Sobrevive a que cambie la preferida (identidad estable de evento `qid` + 1.ª `otime`); se suelta al cambiar de evento o si la solución desaparece. `bpq_pin.{h,c}` + `tests/test_pin.c` (29 checks), `tests/test_pin.sh` (45 checks e2e offscreen) y `tests/test_pin_invariants.sh` (12 checks) |
 
 ### Verificación actual (`make check`)
 
@@ -42,13 +43,43 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
 == magpanel checks=49 fallas=0 ==   # ventanas a mano, filas, puerta, overrides y canvas de magnitudes
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
+== pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
 OK: sin libgtk/libadwaita/libgobject/libgio
 OK: --print-config identico (66 lineas)
 == integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
+== pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
+== pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **991 checks** (975 en C + 16 de integración), 0 fallas.
+Total: **1077 checks** (1004 en C + 16 de integración + 12 de invariantes + 45 e2e), 0 fallas.
+
+### Origen fijado (pin)
+
+En la pestaña *Eventos*, un **doble clic** en una fila de *Origins* fija esa solución y
+lleva a *Procesar → picking*. Mientras hay un origen fijado:
+
+- *Selected solution* (mitad izquierda) y *Magnitude* (mitad derecha) muestran **solo**
+  las celdas de esa solución (magnitudes por origen, no el agregado del evento ni la
+  preferida);
+- la tabla de estaciones/residuales, la pestaña *magnitudes*, la semilla de `Mww` y las
+  ondas se preparan con sus `picks` y su `otime`;
+- el **clic simple y el teclado no mueven el pin** (la selección vuelve a la fila
+  fijada); solo se cambia fijando otro origen (doble clic o clic en un marcador del
+  mapa), y el pin solo se suelta al cambiar de evento, al buscar/limpiar o si la
+  solución desaparece;
+- el refresco del anillo no pisa la selección y **no vuelve a descargar ondas** de la
+  misma solución; el doble clic sí fuerza la recarga;
+- la candidata del `locate` conserva la precedencia mientras existe; `Discard` vuelve
+  al pin y `Confirm` no lo mueve.
+
+La identidad del evento es **estable** (`qid` + `otime` de la primera solución), así que
+una confirmación que cambia la solución preferida no pierde el evento ni el pin. El
+estado es en memoria (no se persiste).
+
+Tests: `make check` incluye el núcleo C (`tests/test_pin.c`), los invariantes de fuente
+(`tests/test_pin_invariants.sh`) y el end-to-end offscreen (`tests/test_pin.sh`, usa
+`BPQ_TEST_FIXTURE=pins` + `BPQ_MODE=--dump`, sin DISPLAY, anillos ni BD).
 
 `calculate` de magnitudes (fase 6.1: tank real + `csnmags` con la ventana ajustada):
 

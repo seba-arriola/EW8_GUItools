@@ -20,6 +20,7 @@
 #include <QPointF>
 
 #include "bpq_capi.h"
+#include "bpq_pin.h"
 
 class BpqEventsModel;
 class BpqOriginsModel;
@@ -74,13 +75,20 @@ private:
     void openData();          /* anillos + store + modelos + worker */
     void refreshFromStore();  /* reset de la maestra conservando la seleccion */
     void loadTestArc();       /* BPQ_TEST_ARC=<archivo ARC> (tests/demos) */
-    void buildPoints(const BpqEvent *ev);   /* soluciones -> CsnhypodbpMapPt[] */
-    void refreshPanels();                   /* mapa/perfil: contexto + auto-encuadre */
-    void refreshStations(const BpqEvent *ev); /* tabla de estaciones del picking */
+    void buildPoints(const BpqEvent *ev, const QString &keepKey = QString());
+                                            /* soluciones -> CsnhypodbpMapPt[] */    void refreshPanels();                   /* mapa/perfil: contexto + auto-encuadre */
+    void refreshStations(const BpqEvent *ev, bool forceFetch = false); /* tabla + ondas */
     void fetchTraces(const CsnhypodbpSolution *sol); /* ondas de las picadas */
     void buildTraceRows(const CsnhypodbpStaRow *base); /* canales de UNA estacion */
     QString pickDefaultStation() const;      /* la mas cercana con picada */
     const CsnhypodbpSolution *currentSolution() const;
+    /* --- origen fijado (pin) ------------------------------------------- */
+    void onOriginDoubleClicked(const QModelIndex &idx);
+    void pinOrigin(int row, bool forceReload, bool switchTab = true);
+    int  pinnedSolutionIndex() const;        /* punto de m_pts[] del pin (-1) */
+    int  solutionIndexForKey(const BpqEvent *ev, const QString &key) const;
+    void loadPinFixture();                   /* BPQ_TEST_FIXTURE=pins */
+    void feedConfirmedAfter();               /* BPQ_TEST_FEED_AFTER=1 */
     void updateTracesContext();              /* punteros de los canvas de trazas */
     void searchEvents();                     /* dialogo + bpq_db_search */
     void clearSearch();                      /* vuelve a vivo + historial */
@@ -134,6 +142,13 @@ public:
     bool runMagCalcForTest();                /* hook headless BPQ_MODE=--magcalc */
     bool runMwwForTest();                    /* hook headless BPQ_MODE=--mww */
     bool runMouseForTest();                  /* hook headless BPQ_MODE=--mouse */
+    /* Hooks de la fase 7 (BPQ_TEST_FIXTURE/PIN/CLICK/...); sin efecto en
+     * produccion salvo que las variables de entorno esten puestas. */
+    void runTestHooks();
+    bool runPinForTest(const QString &key);
+    bool runClickForTest(const QString &key);
+    bool runEventForTest(const QString &key);
+    bool runCandForTest(bool discard);
 private:
 
     const BpqConfig *m_cfg = nullptr;
@@ -145,6 +160,12 @@ private:
     BpqOriginsModel *m_originsModel = nullptr;
     BpqStationsModel *m_staModel = nullptr;
     QString          m_selKey;
+    QString          m_selEventKey;   /* identidad estable del evento mostrado */
+    /* Origen fijado (fase 7): solo cambia fijando otro; manda en Procesar. */
+    BpqPin           m_pin{};
+    const BpqEvent  *m_pinEvent = nullptr;
+    QString          m_curSolKey;     /* solucion cuyas ondas ya se pidieron */
+    bool             m_syncOrigins = false; /* rebuild: no refrescar dos veces */
 
     /* Columna derecha: mapa y perfil reales (los contextos viven aqui). */
     BpqMap          *m_map = nullptr;
@@ -216,7 +237,7 @@ private:
     CsnhypodbpSolution m_cand{};
     CsnhypodbpMagOut   m_candMag{};
     bool               m_candValid = false;
-    int                m_candForSel = -1;   /* seleccion a la que corresponde */
+    QString            m_candKey;          /* <qid>:<mod>:<version> de la candidata */
     double             m_candSecs = 0.0;
     QString            m_candErr;
     const BpqEvent    *m_curEv = nullptr;   /* evento mostrado (para el locate) */

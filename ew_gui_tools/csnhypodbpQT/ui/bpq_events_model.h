@@ -39,6 +39,11 @@ public:
     /* Identidad estable de la fila: <qid>:<mod>:<version> de la preferida. */
     QString keyAt(int row) const;
     int     rowForKey(const QString &key) const;
+    /* Identidad ESTABLE del evento (no cambia si cambia la preferida):
+     * "<qid>:<otime de la primera solucion>". Se usa para re-seleccionar el
+     * evento tras un refresh; `keyAt` sigue siendo la clave manual. */
+    QString eventKeyAt(int row) const;
+    int     rowForEventKey(const QString &key) const;
 
 public slots:
     void refresh();                           /* reset del modelo (los datos ya cambiaron) */

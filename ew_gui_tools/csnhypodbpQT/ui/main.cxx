@@ -95,9 +95,13 @@ static int run_gui(QApplication &app, const QStringList &args)
     if (headless) {
         /* Se difiere al bucle de eventos para que la ventana este realizada. */
         QTimer::singleShot(0, &app, [&win, mode, &rc, &app]() {
+            /* Fixture/pin/click de la fase 7 (BPQ_TEST_*). */
+            win.runTestHooks();
             /* El fetch de ondas es asincrono: se espera para que el volcado y la
              * captura muestren lo mismo que vera el usuario. */
-            win.waitForWaves(3000);
+            const char *wms = std::getenv("BPQ_WAVE_WAIT_MS");
+            const int wait_ms = (wms && wms[0]) ? std::atoi(wms) : 3000;
+            win.waitForWaves(wait_ms > 0 ? wait_ms : 0);
             if (std::strcmp(mode, "--dump") == 0) {
                 std::fputs(win.dumpTree().toUtf8().constData(), stdout);
             } else if (std::strcmp(mode, "--layout") == 0) {

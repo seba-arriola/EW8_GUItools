@@ -91,6 +91,7 @@ run_working_v8/params/db.env
 /ew_8.0/bin/wstore_query
 /ew_8.0/bin/wstore_prune
 /ew_8.0/bin/csnhypodbpQT
+/ew_8.0/bin/csnrvQT
 # --- 4. Ejecutables generados por los Makefiles (sin extensión) -------------
 /ew_gui_tools/csnloc/csnloc
 /ew_gui_tools/csnloc/csnloc_asan
@@ -102,6 +103,7 @@ run_working_v8/params/db.env
 /ew_gui_tools/csnhypodbp/csnhypodbp
 /ew_gui_tools/csnhypodbp/test_filter
 /ew_gui_tools/csnrv/csnrv
+/ew_gui_tools/csnrvQT/csnrvQT
 /ew_gui_tools/csntvp/csntvp
 /ew_gui_tools/csntvp/test_filter
 /ew_gui_tools/csnstaevdisp/csnstaevdisp

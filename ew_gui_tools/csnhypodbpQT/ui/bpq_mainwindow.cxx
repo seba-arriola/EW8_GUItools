@@ -75,6 +75,16 @@
 #include <cstdio>
 #include <cstdlib>
 
+/* Identidad de una solucion para el pin y la candidata (misma que el modelo). */
+static QString solKey(const CsnhypodbpSolution *s)
+{
+    char buf[BPQ_PIN_KEY_MAX];
+
+    if (!s || bpq_origin_key(s->qid, s->mod, s->version, buf, sizeof(buf)) != 0)
+        return QString();
+    return QString::fromLatin1(buf);
+}
+
 /* Cabeceras de las tablas que aun no tienen modelo propio (fases 3/6). Las de
  * Eventos/Origins viven en la capa C (bpq_event_header/bpq_origin_header), que es
  * donde esta el contrato de paridad con la version GTK. */
@@ -142,6 +152,15 @@ BpqMainWindow::~BpqMainWindow()
         m_locWorker = nullptr;
         delete m_locThread;
         m_locThread = nullptr;
+    }
+    /* El hilo del Mww tambien es hijo de la ventana: si sigue vivo, el
+     * ~QThread aborta al destruir la ventana (y se pierde el --dump). */
+    if (m_mwwThread) {
+        m_mwwThread->quit();
+        m_mwwThread->wait();
+        m_mwwWorker = nullptr;
+        delete m_mwwThread;
+        m_mwwThread = nullptr;
     }
     for (BpqTrace *t : m_traces) bpq_trace_free(t);
     m_traces.clear();
@@ -353,36 +372,83 @@ void BpqMainWindow::openData()
         fetchTraces(currentSolution());
     });
 
-    /* La seleccion de la maestra elige el evento del detalle. */
+    /* La seleccion de la maestra elige el evento del detalle. La identidad del
+     * evento es ESTABLE (eventKeyAt: qid + 1.ª otime), no la preferida: si una
+     * confirmacion cambia la preferida, el evento y el pin no se pierden. */
     connect(m_eventsView->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex &cur, const QModelIndex &) {
-        const BpqEvent *ev = nullptr;
-        if (cur.isValid()) {
-            const QModelIndex src = m_eventsProxy->mapToSource(cur);
-            ev = m_eventsModel->eventAt(src.row());
-            if (ev) m_selKey = m_eventsModel->keyAt(src.row());
+        /* Reset transitorio del modelo (beginResetModel): la seleccion se
+         * restaura despues; no hay que soltar el pin ni limpiar claves. */
+        if (!cur.isValid()) return;
+        const QModelIndex src = m_eventsProxy->mapToSource(cur);
+        const int srcRow = src.row();
+        const BpqEvent *ev = m_eventsModel->eventAt(srcRow);
+        if (!ev) return;
+        m_selKey = m_eventsModel->keyAt(srcRow);
+        m_selEventKey = m_eventsModel->eventKeyAt(srcRow);
+
+        /* El pin no cruza de evento: si cambia el evento mostrado se suelta. */
+        if (ev != m_pinEvent) {
+            bpq_pin_clear(&m_pin);
+            m_pinEvent = nullptr;
         }
+
+        m_syncOrigins = true;
         m_originsModel->setEvent(ev);
-        const int pref = m_originsModel->rowForPreferred();
-        if (pref >= 0) m_originsView->selectRow(pref);
-        buildPoints(ev);
+        const QString keep = bpq_pin_active(&m_pin)
+                                 ? QString::fromLatin1(bpq_pin_key(&m_pin))
+                                 : QString();
+        buildPoints(ev, keep);
+        int row = -1;
+        if (bpq_pin_active(&m_pin)) {
+            row = m_originsModel->rowForKey(keep);
+            if (row < 0) {          /* la solucion fijada desaparecio */
+                bpq_pin_clear(&m_pin);
+                m_pinEvent = nullptr;
+            }
+        }
+        if (row < 0) row = m_originsModel->rowForPreferred();
+        if (row >= 0) m_originsView->selectRow(row);
+        m_syncOrigins = false;
+
         refreshPanels();
         refreshStations(ev);
     });
 
-    /* La fila elegida en Origins es el marcador verde del mapa y del perfil. */
+    /* La fila elegida en Origins es el marcador verde del mapa y del perfil.
+     * Con un origen fijado, el clic simple NO mueve el pin ni Procesar: la
+     * seleccion vuelve a la fila fijada (solo el doble clic fija otro). */
     connect(m_originsView->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex &cur, const QModelIndex &) {
-        const int sol = cur.isValid() ? m_originsModel->solIndexAt(cur.row()) : -1;
+        if (!cur.isValid()) return;
+        const int sol = m_originsModel->solIndexAt(cur.row());
+        if (sol < 0) return;
+
+        if (bpq_pin_active(&m_pin)) {
+            const int prow = m_originsModel->rowForKey(
+                QString::fromLatin1(bpq_pin_key(&m_pin)));
+            if (prow >= 0 && prow != cur.row()) {
+                QSignalBlocker b(m_originsView->selectionModel());
+                m_originsView->selectRow(prow);
+                return;
+            }
+        }
+
         int idx = -1;
-        for (int i = 0; sol >= 0 && i < m_npts; i++)
+        for (int i = 0; i < m_npts; i++)
             if (m_ptSol[i] == sol) { idx = i; break; }
+        if (idx < 0) return;
         m_mapCtx.selected = idx;
         m_profCtx.selected = idx;
         m_mapPlan->requestRepaint();
         m_mapProf->requestRepaint();
+        if (m_syncOrigins) return;      /* el rebuild ya refresca una sola vez */
         refreshStations(m_originsModel->currentEvent());
     });
+
+    /* Doble clic: fija el origen y lleva a Procesar -> picking. */
+    connect(m_originsView, &QTableView::doubleClicked,
+            this, &BpqMainWindow::onOriginDoubleClicked);
 
     /* Zoom, paneo y clic: el estado del encuadre vive en los contextos (C puro),
      * el widget solo entrega pixeles logicos. */
@@ -409,7 +475,13 @@ void BpqMainWindow::openData()
                                          x * d, y * d, 10.0 * d);
         if (idx < 0 || idx >= m_npts) return;
         const int row = m_originsModel->rowForSolution(m_ptSol[idx]);
-        if (row >= 0) m_originsView->selectRow(row);   /* pinta el verde */
+        if (row < 0) return;
+        /* Sin pin, un clic elige (como siempre). Con pin, el marcador es una
+         * eleccion explicita: re-fija ese origen (sin saltar de pestana). */
+        if (bpq_pin_active(&m_pin))
+            pinOrigin(row, false, false);
+        else
+            m_originsView->selectRow(row);   /* pinta el verde */
     });
     connect(m_mapProf, &BpqCanvasWidget::dragged, this,
             [this](double dx, double dy) {
@@ -470,7 +542,11 @@ void BpqMainWindow::openData()
         });
     }
 
-    m_rings = bpq_rings_open(m_cfg, err, sizeof(err));
+    /* Fixture determinista (fase 7): sin anillos ni BD. Los eventos los pone
+     * BPQ_TEST_FIXTURE; asi el dump no depende de lo que haya en produccion. */
+    const bool test_mode = !qgetenv("BPQ_TEST_FIXTURE").isEmpty();
+
+    m_rings = test_mode ? nullptr : bpq_rings_open(m_cfg, err, sizeof(err));
     loadTestArc();          /* BPQ_TEST_ARC: datos sin EarthWorm (tests/demos) */
 
     if (m_rings) {
@@ -492,7 +568,7 @@ void BpqMainWindow::openData()
 
     /* Base hipocentral: historial de las ultimas `DbHistoryHours` horas. Se
      * carga antes de refrescar para que la maestra arranque con pasado + vivo. */
-    {
+    if (!test_mode) {
         char derr[512] = "";
         const int hist = (m_cfg->db_history_hours > 0) ? m_cfg->db_history_hours : 24;
 
@@ -526,7 +602,7 @@ void BpqMainWindow::openData()
 
 /* Soluciones del evento -> puntos del mapa (kind 0 = resto, 1 = preferida).
  * La candidata del locate sera kind 2 en la fase 5. */
-void BpqMainWindow::buildPoints(const BpqEvent *ev)
+void BpqMainWindow::buildPoints(const BpqEvent *ev, const QString &keepKey)
 {
     m_npts = 0;
     m_pref = -1;
@@ -549,11 +625,32 @@ void BpqMainWindow::buildPoints(const BpqEvent *ev)
         m_ptSol[m_npts]     = j;
         m_npts++;
     }
-    /* Arranca marcando la preferida; el clic en Origins mueve el verde. */
-    m_mapCtx.selected = (m_pref >= 0 && m_pref < m_npts) ? m_pref : -1;
+    /* Sin pin, arranca marcando la preferida; con pin, la solucion fijada
+     * (que puede no ser la preferida). El clic simple no mueve el verde si
+     * hay pin; el doble clic re-fija. */
+    {
+        const int keep = keepKey.isEmpty() ? -1 : solutionIndexForKey(ev, keepKey);
+
+        m_mapCtx.selected = (keep >= 0) ? keep
+                            : ((m_pref >= 0 && m_pref < m_npts) ? m_pref : -1);
+    }
 
     if (m_pref >= 0 && m_pref < m_npts)
         selectProfileFor(m_pts[m_pref].lat, m_pts[m_pref].lon);
+}
+
+/* Indice en m_pts[] de la solucion cuya clave es `key` (-1 si no esta). */
+int BpqMainWindow::solutionIndexForKey(const BpqEvent *ev, const QString &key) const
+{
+    if (!ev || key.isEmpty()) return -1;
+    for (int j = 0; j < bpq_event_nsols(ev); j++) {
+        const CsnhypodbpSolution *s = bpq_event_sol(ev, j);
+
+        if (!s || solKey(s) != key) continue;
+        for (int i = 0; i < m_npts; i++)
+            if (m_ptSol[i] == j) return i;
+    }
+    return -1;
 }
 
 void BpqMainWindow::selectProfileFor(double lat, double lon)
@@ -632,11 +729,17 @@ void BpqMainWindow::refreshPanels()
     m_mapProf->setContext(&m_profCtx);
 }
 
-void BpqMainWindow::refreshStations(const BpqEvent *ev)
+void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
 {
     if (!m_staModel) return;
     m_curEv = ev;
     m_candErr.clear();          /* un error del locate no sobrevive al cambio */
+
+    /* El pin pertenece a UN evento: si el evento mostrado es otro, se suelta. */
+    if (bpq_pin_active(&m_pin) && m_pinEvent != ev) {
+        bpq_pin_clear(&m_pin);
+        m_pinEvent = nullptr;
+    }
 
     /* El overlay de picadas manuales es de UN evento: al cambiar de evento se
      * recarga el del nuevo (si su clave no coincide, el archivo se ignora). Si
@@ -647,23 +750,43 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev)
         m_manKey = m_selKey;
     }
 
-    /* La tabla sigue a la solucion elegida en Origins; si no hay, a la preferida. */
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    /* La tabla sigue al origen FIJADO; sin pin, a la solucion elegida y si no
+     * a la preferida. */
+    int pi = pinnedSolutionIndex();
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
     if (!m_staCat || !ev || pi < 0 || pi >= m_npts) {
         m_candValid = false;
+        m_candKey.clear();
         m_staModel->setRows(nullptr, 0);
         m_staRows.clear();
         fetchTraces(nullptr);
         renderPreview();
         return;
     }
-    /* La candidata solo vale para la solucion sobre la que se corrio. */
-    if (m_candValid && m_candForSel != pi) m_candValid = false;
 
     const int solIdx = m_ptSol[pi];
     const CsnhypodbpSolution *sol = bpq_event_sol(ev, solIdx);
+    if (!sol) {
+        m_candValid = false;
+        m_candKey.clear();
+        m_staModel->setRows(nullptr, 0);
+        m_staRows.clear();
+        fetchTraces(nullptr);
+        renderPreview();
+        return;
+    }
+
+    /* La candidata solo vale para la solucion sobre la que se corrio. Se compara
+     * por identidad (el store puede reordenar y cambiar los indices). */
+    if (m_candValid && m_candKey != solKey(sol)) {
+        m_candValid = false;
+        m_candKey.clear();
+    }
+
     rebuildStaTable(sol);
-    fetchTraces(sol);
+    /* Un refresh del anillo NO debe re-descargar las ondas de la misma solucion
+     * (cada tick abriria decenas de canales). El doble clic si fuerza la recarga. */
+    if (forceFetch || m_curSolKey != solKey(sol)) fetchTraces(sol);
     renderPreview();
 }
 
@@ -699,6 +822,7 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
 
     ++m_waveJob;                 /* invalida cualquier resultado en vuelo */
     m_waveWith = 0;
+    m_curSolKey.clear();         /* se fija solo si el pedido sale */
     for (BpqTrace *t : m_traces) bpq_trace_free(t);
     m_traces.clear();
     m_traceRows.clear();
@@ -710,6 +834,9 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
         updateTracesContext();
         return;
     }
+    /* La solucion ya tiene su vista de trazas preparada (aunque no haya
+     * estaciones): un refresh con el mismo pin no debe volver a pedir ondas. */
+    m_curSolKey = solKey(sol);
     m_winT0 = sol->otime - 5.0;
     m_winLen = 120.0;
     m_defT0 = m_winT0;           /* Shift+0 vuelve aca */
@@ -810,10 +937,72 @@ QString BpqMainWindow::pickDefaultStation() const
 
 const CsnhypodbpSolution *BpqMainWindow::currentSolution() const
 {
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    int pi = pinnedSolutionIndex();
 
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
     if (!m_curEv || pi < 0 || pi >= m_npts) return nullptr;
     return bpq_event_sol(m_curEv, m_ptSol[pi]);
+}
+
+/* Indice en m_pts[] del origen FIJADO, o -1 si no hay pin (o es de otro
+ * evento). Es la unica fuente de verdad de "que solucion muestra Procesar". */
+int BpqMainWindow::pinnedSolutionIndex() const
+{
+    if (!bpq_pin_active(&m_pin) || !m_originsModel || m_pinEvent != m_curEv)
+        return -1;
+
+    const int row = m_originsModel->rowForKey(
+        QString::fromLatin1(bpq_pin_key(&m_pin)));
+    if (row < 0) return -1;
+    const int sol = m_originsModel->solIndexAt(row);
+    for (int i = 0; i < m_npts; i++)
+        if (m_ptSol[i] == sol) return i;
+    return -1;
+}
+
+void BpqMainWindow::onOriginDoubleClicked(const QModelIndex &idx)
+{
+    pinOrigin(idx.row(), true, true);
+}
+
+/* Fija la fila `row` de Origins. Es el UNICO camino que cambia el pin (doble
+ * clic o clic en un marcador del mapa); el clic simple nunca lo mueve. */
+void BpqMainWindow::pinOrigin(int row, bool forceReload, bool switchTab)
+{
+    if (!m_originsModel || row < 0 || row >= m_originsModel->rowCount()) return;
+    const int sol = m_originsModel->solIndexAt(row);
+    if (sol < 0) return;
+
+    const QString key = m_originsModel->keyAt(row);
+    if (key.isEmpty() ||
+        bpq_pin_set(&m_pin, key.toLatin1().constData()) != 0)
+        return;
+
+    int idx = -1;
+    for (int i = 0; i < m_npts; i++)
+        if (m_ptSol[i] == sol) { idx = i; break; }
+    if (idx < 0) {                      /* fuera del tope de 64 puntos */
+        bpq_pin_clear(&m_pin);
+        m_pinEvent = nullptr;
+        return;
+    }
+
+    m_pinEvent = m_originsModel->currentEvent();
+    m_mapCtx.selected = idx;
+    m_profCtx.selected = idx;
+    m_mapPlan->requestRepaint();
+    m_mapProf->requestRepaint();
+
+    if (switchTab) {
+        if (m_tabs) m_tabs->setCurrentIndex(1);      /* Procesar */
+        if (m_subtabs) m_subtabs->setCurrentIndex(0);/* picking */
+    }
+
+    {
+        QSignalBlocker b(m_originsView->selectionModel());
+        m_originsView->selectRow(row);
+    }
+    refreshStations(m_originsModel->currentEvent(), forceReload);
 }
 
 /* Los canvas leen del contexto: hay que repuntarlo tras cada cambio del vector. */
@@ -978,7 +1167,8 @@ void BpqMainWindow::emitManualPick(int row, double t)
  * filas dibujadas, el repintado y el archivo. */
 void BpqMainWindow::refreshAfterManual()
 {
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    int pi = pinnedSolutionIndex();
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
     const CsnhypodbpSolution *sol = (m_curEv && pi >= 0 && pi < m_npts)
         ? bpq_event_sol(m_curEv, m_ptSol[pi]) : nullptr;
 
@@ -1346,7 +1536,8 @@ void BpqMainWindow::buildPickingBar(QWidget *parent, QVBoxLayout *lay)
  * corre en el worker: aqui solo se arman copias y se deshabilita el boton. */
 void BpqMainWindow::locateNow()
 {
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    int pi = pinnedSolutionIndex();
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
     const CsnhypodbpSolution *sol = nullptr;
 
     if (m_locBusy) return;
@@ -1482,7 +1673,7 @@ void BpqMainWindow::locateFinished(quint64 job, bool ok, BpqLocateOut *out,
         std::memcpy(&m_cand, &out->sol, sizeof(m_cand));
         std::memcpy(&m_candMag, &out->mag, sizeof(m_candMag));
         m_candValid = true;
-        m_candForSel = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+        m_candKey = solKey(&m_cand);
         {
             char buf[256];
             std::snprintf(buf, sizeof(buf),
@@ -1494,7 +1685,8 @@ void BpqMainWindow::locateFinished(quint64 job, bool ok, BpqLocateOut *out,
         }
         /* Residuales del localizador en la tabla, sin volver a pedir ondas. */
         if (m_curEv) {
-            const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+            int pi = pinnedSolutionIndex();
+            if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
             const CsnhypodbpSolution *sol = (pi >= 0 && pi < m_npts)
                 ? bpq_event_sol(m_curEv, m_ptSol[pi]) : nullptr;
             if (sol) {
@@ -1539,10 +1731,16 @@ double BpqMainWindow::fixDepthKm() const
 void BpqMainWindow::renderPreview()
 {
     CsnhypodbpPreviewVals v;
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    int pi = pinnedSolutionIndex();
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
     const QByteArray loc = (m_locCombo && !m_locCombo->currentText().isEmpty())
                                ? m_locCombo->currentText().toUtf8()
                                : QByteArray("csnloc");
+    const QString piKey = (m_curEv && pi >= 0 && pi < m_npts)
+                              ? solKey(bpq_event_sol(m_curEv, m_ptSol[pi]))
+                              : QString();
+    const bool cand = m_candValid && !m_candKey.isEmpty() &&
+                      m_candKey == piKey;
     int pref;
 
     if (!m_preview) return;
@@ -1551,7 +1749,7 @@ void BpqMainWindow::renderPreview()
     if (m_locBusy) {
         csnhypodbp_preview_set_busy(&v, loc.constData(),
                                     (long)(m_locTimer.elapsed() / 1000));
-    } else if (m_candValid && m_candForSel == pi) {
+    } else if (cand) {
         csnhypodbp_preview_from_candidate(&v, m_cand.otime, loc.constData(),
                                           m_cand.lat, m_cand.lon, m_cand.depth,
                                           m_cand.nph, m_cand.rms,
@@ -1716,6 +1914,7 @@ void BpqMainWindow::confirmCandidate()
     }
 
     m_candValid = false;
+    m_candKey.clear();
     m_candErr.clear();
     /* Confirmado: las picadas ya viajaron en el ARC y a PICK_RING, asi que el
      * overlay local se limpia (si quedara, seguirian como 'M' sobre la elegida). */
@@ -1739,9 +1938,11 @@ void BpqMainWindow::discardCandidate()
 {
     if (!m_candValid) return;
     m_candValid = false;
+    m_candKey.clear();
     renderPreview();
     if (m_curEv) {
-        const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+        int pi = pinnedSolutionIndex();
+        if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
         const CsnhypodbpSolution *sol =
             (pi >= 0 && pi < m_npts) ? bpq_event_sol(m_curEv, m_ptSol[pi]) : nullptr;
 
@@ -2045,8 +2246,13 @@ void BpqMainWindow::magRelease()
  * editadas por el usuario sobreviven a los repintados del panel. */
 void BpqMainWindow::seedMww()
 {
-    const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
-    const bool cand = m_candValid && m_candForSel == pi;
+    int pi = pinnedSolutionIndex();
+    if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+    const QString piKey = (m_curEv && pi >= 0 && pi < m_npts)
+                              ? solKey(bpq_event_sol(m_curEv, m_ptSol[pi]))
+                              : QString();
+    const bool cand = m_candValid && !m_candKey.isEmpty() &&
+                      m_candKey == piKey;
     const CsnhypodbpSolution *sol = cand ? &m_cand : currentSolution();
     const char *cells[4] = { "", "", "", "" };
     char ml[32] = "", mwp[32] = "", mb[32] = "", ms[32] = "";
@@ -2317,10 +2523,15 @@ bool BpqMainWindow::runMwwForTest()
     {
         const char *save = std::getenv("BPQ_MWW_SAVE");
         char smsg[512] = "";
-        const int pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
-        const CsnhypodbpSolution *sol = (m_candValid && m_candForSel == pi)
-                                            ? &m_cand
-                                            : currentSolution();
+        int pi = pinnedSolutionIndex();
+        if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+        const QString piKey = (m_curEv && pi >= 0 && pi < m_npts)
+                                  ? solKey(bpq_event_sol(m_curEv, m_ptSol[pi]))
+                                  : QString();
+        const CsnhypodbpSolution *sol =
+            (m_candValid && !m_candKey.isEmpty() && m_candKey == piKey)
+                ? &m_cand
+                : currentSolution();
 
         if (save && save[0] == '1' && sol && bpq_mww_tensor_ready(m_mww)) {
             const int mod = (sol->mod > 0)
@@ -2665,6 +2876,9 @@ void BpqMainWindow::searchEvents()
     char err[512] = "";
     bpq_events_clear(m_events);          /* el resultado REEMPLAZA la vista */
     m_selKey.clear();
+    m_selEventKey.clear();
+    bpq_pin_clear(&m_pin);
+    m_pinEvent = nullptr;
     const int ne = bpq_db_search(m_db, m_cfg, m_events, t0, t1, dlg.maxEvents(),
                                  err, sizeof(err));
     m_searchFrom = t0;
@@ -2685,6 +2899,9 @@ void BpqMainWindow::clearSearch()
     m_searchMode = false;
     m_searchFrom = m_searchTo = 0.0;
     m_selKey.clear();
+    m_selEventKey.clear();
+    bpq_pin_clear(&m_pin);
+    m_pinEvent = nullptr;
     bpq_events_clear(m_events);
 
     /* Vuelve a vivo + historial. */
@@ -2699,15 +2916,27 @@ void BpqMainWindow::clearSearch()
 
 void BpqMainWindow::refreshFromStore()
 {
-    const QString keep = m_selKey;
+    /* Identidad ESTABLE del evento, no la preferida: una confirmacion puede
+     * cambiarla y no queremos perder el evento (ni el pin) por eso. */
+    const QString keep = m_selEventKey;
     m_eventsModel->refresh();
-    if (m_eventsModel->rowCount() == 0) return;
+    if (m_eventsModel->rowCount() == 0) {
+        bpq_pin_clear(&m_pin);
+        m_pinEvent = nullptr;
+        m_selEventKey.clear();
+        return;
+    }
 
-    int src = keep.isEmpty() ? -1 : m_eventsModel->rowForKey(keep);
+    int src = keep.isEmpty() ? -1 : m_eventsModel->rowForEventKey(keep);
     /* Sin seleccion previa: se elige la primera fila para que el detalle
      * (Origins) no quede vacio al arrancar (la version GTK hace lo mismo). */
     if (src < 0 && keep.isEmpty()) src = 0;
-    if (src < 0) return;
+    if (src < 0) {
+        /* El evento mostrado desaparecio (busqueda/limpieza): sin pin huerfano. */
+        bpq_pin_clear(&m_pin);
+        m_pinEvent = nullptr;
+        return;
+    }
 
     const QModelIndex idx = m_eventsProxy->mapFromSource(m_eventsModel->index(src, 0));
     if (idx.isValid()) m_eventsView->selectRow(idx.row());
@@ -2734,6 +2963,174 @@ void BpqMainWindow::loadTestArc()
         return;
     }
     bpq_events_feed_arc(m_events, &sol);
+}
+
+/* --- hooks de test de la fase 7 (BPQ_TEST_*) ------------------------------ */
+
+/* Solucion sintetica determinista (misma estructura que el store real). */
+static void fillTestSol(CsnhypodbpSolution *s, int qid, int mod, unsigned ver,
+                        double otime, double lat, double lon, double depth,
+                        int nph, double rms, int confirmed, const char *sta)
+{
+    memset(s, 0, sizeof(*s));
+    s->qid = qid;
+    s->mod = mod;
+    s->version = ver;
+    s->otime = otime;
+    s->lat = lat;
+    s->lon = lon;
+    s->depth = depth;
+    s->rms = rms;
+    s->nph = nph;
+    s->gap = 120;
+    s->confirmed = confirmed;
+    s->pref_mag = 'L';
+    s->npicks = 1;
+    snprintf(s->picks[0].sta, sizeof(s->picks[0].sta), "%s", sta);
+    snprintf(s->picks[0].chan, sizeof(s->picks[0].chan), "HHZ");
+    snprintf(s->picks[0].net, sizeof(s->picks[0].net), "CX");
+    snprintf(s->picks[0].loc, sizeof(s->picks[0].loc), "--");
+    s->picks[0].phase = 'P';
+    s->picks[0].t_pick = otime + 5.0;
+    s->picks[0].weight = 0.5;
+    s->picks[0].residual = NAN;
+}
+
+static void feedTestMag(BpqEvents *e, int qid, int mod, const char *type,
+                        double value, int nsta)
+{
+    BpqMagMsg m;
+
+    memset(&m, 0, sizeof(m));
+    m.qid = qid;
+    m.mod = mod;
+    m.value = value;
+    m.nsta = nsta;
+    snprintf(m.type, sizeof(m.type), "%s", type);
+    bpq_events_feed_mag(e, &m);
+}
+
+void BpqMainWindow::loadPinFixture()
+{
+    CsnhypodbpSolution s;
+    const double t0 = 1767323045.0;   /* evento A: el mas nuevo (fila 0) */
+    const double t1 = t0 - 86400.0;   /* evento B: un dia antes */
+
+    if (!m_events) return;
+    fillTestSol(&s, 100, 162, 1, t0, -20.100, -70.100, 10.0, 12, 0.20, 0, "PST");
+    bpq_events_feed_arc(m_events, &s);
+    fillTestSol(&s, 100, 163, 2, t0 + 10.0, -20.900, -70.900, 33.0, 8, 0.50, 0, "PST");
+    bpq_events_feed_arc(m_events, &s);
+    fillTestSol(&s, 200, 162, 1, t1, -30.000, -71.000, 20.0, 6, 0.40, 0, "PST");
+    bpq_events_feed_arc(m_events, &s);
+
+    feedTestMag(m_events, 100, 162, "ML", 4.1, 8);
+    feedTestMag(m_events, 100, 163, "ML", 3.2, 5);
+    feedTestMag(m_events, 100, 163, "Mwp", 3.5, 4);
+    feedTestMag(m_events, 200, 162, "ML", 2.5, 3);
+
+    m_selEventKey.clear();
+    refreshFromStore();
+    (void)runEventForTest(QStringLiteral("100:162:1"));
+}
+
+/* Solucion confirmada nueva del evento mostrado: pasa a preferida y reordena
+ * Origins, sin cambiar la identidad estable del evento. */
+void BpqMainWindow::feedConfirmedAfter()
+{
+    CsnhypodbpSolution s;
+    const CsnhypodbpSolution *b;
+    double t0;
+
+    if (!m_events || !m_curEv) return;
+    b = bpq_event_sol(m_curEv, 0);
+    if (!b) return;
+    t0 = b->otime;
+    fillTestSol(&s, b->qid, 164, 3, t0 + 20.0, -21.500, -71.500, 45.0,
+                15, 0.10, 1, "PST");
+    bpq_events_feed_arc(m_events, &s);
+    feedTestMag(m_events, b->qid, 164, "ML", 4.8, 9);
+    refreshFromStore();
+}
+
+bool BpqMainWindow::runPinForTest(const QString &key)
+{
+    if (!m_originsModel) return false;
+    const int row = m_originsModel->rowForKey(key);
+    if (row < 0) return false;
+    pinOrigin(row, true, true);
+    return bpq_pin_matches(&m_pin, key.toLatin1().constData()) ? true : false;
+}
+
+bool BpqMainWindow::runClickForTest(const QString &key)
+{
+    if (!m_originsModel || !m_originsView) return false;
+    const int row = m_originsModel->rowForKey(key);
+    if (row < 0) return false;
+    m_originsView->selectRow(row);
+    return true;
+}
+
+bool BpqMainWindow::runEventForTest(const QString &key)
+{
+    if (!m_eventsModel || !m_eventsView || !m_eventsProxy) return false;
+    int src = m_eventsModel->rowForKey(key);
+    if (src < 0) src = m_eventsModel->rowForEventKey(key);
+    if (src < 0) return false;
+    const QModelIndex idx = m_eventsProxy->mapFromSource(m_eventsModel->index(src, 0));
+    if (!idx.isValid()) return false;
+    m_eventsView->selectRow(idx.row());
+    return true;
+}
+
+bool BpqMainWindow::runCandForTest(bool discard)
+{
+    if (discard) {
+        if (!m_candValid) return false;
+        discardCandidate();
+        return !m_candValid;
+    }
+
+    const CsnhypodbpSolution *sol = currentSolution();
+    if (!sol) return false;
+    m_cand = *sol;
+    m_cand.depth += 5.0;
+    m_cand.lat += 0.5;
+    m_candKey = solKey(&m_cand);
+    m_candValid = true;
+    m_candErr.clear();
+    renderPreview();
+    return true;
+}
+
+void BpqMainWindow::runTestHooks()
+{
+    const QByteArray fx = qgetenv("BPQ_TEST_FIXTURE");
+    if (fx == QByteArray("pins")) loadPinFixture();
+
+    const QByteArray pins = qgetenv("BPQ_TEST_PIN");
+    if (!pins.isEmpty()) {
+        const QList<QByteArray> list = pins.split(',');
+
+        for (const QByteArray &k : list)
+            if (!k.isEmpty()) (void)runPinForTest(QString::fromUtf8(k));
+    }
+    if (qgetenv("BPQ_TEST_PIN_AGAIN") == QByteArray("1") && bpq_pin_active(&m_pin))
+        (void)runPinForTest(QString::fromLatin1(bpq_pin_key(&m_pin)));
+
+    const QByteArray click = qgetenv("BPQ_TEST_CLICK");
+    if (!click.isEmpty()) (void)runClickForTest(QString::fromUtf8(click));
+
+    if (qgetenv("BPQ_TEST_FEED_AFTER") == QByteArray("1")) feedConfirmedAfter();
+
+    /* Cambio de evento DESPUES de fijar: comprueba que el pin no cruza. */
+    const QByteArray ev = qgetenv("BPQ_TEST_EVENT");
+    if (!ev.isEmpty()) (void)runEventForTest(QString::fromUtf8(ev));
+
+    if (qgetenv("BPQ_TEST_REFRESH") == QByteArray("1")) refreshFromStore();
+
+    if (qgetenv("BPQ_TEST_CAND") == QByteArray("1")) (void)runCandForTest(false);
+    if (qgetenv("BPQ_TEST_CAND_DISCARD") == QByteArray("1")) (void)runCandForTest(true);
 }
 
 void BpqMainWindow::buildUi()
@@ -3102,6 +3499,14 @@ QString BpqMainWindow::dumpTree() const
     /* Resumen de datos: hace de `--dump` un test real del camino
      * anillos -> store -> modelo (no solo de la geometria). */
     out += QStringLiteral("data events=%1\n").arg(m_eventsModel ? m_eventsModel->rowCount() : 0);
+    out += QStringLiteral("pin key=%1 event=%2 tab=%3/%4 fetches=%5\n")
+               .arg(bpq_pin_active(&m_pin)
+                        ? QString::fromLatin1(bpq_pin_key(&m_pin))
+                        : QStringLiteral("-"))
+               .arg(m_selEventKey.isEmpty() ? QStringLiteral("-") : m_selEventKey)
+               .arg(m_tabs ? m_tabs->currentIndex() : -1)
+               .arg(m_subtabs ? m_subtabs->currentIndex() : -1)
+               .arg(m_waveJob);
     if (m_eventsModel) {
         const int n = qMin(3, m_eventsModel->rowCount());
         for (int r = 0; r < n; r++) {
@@ -3163,13 +3568,15 @@ QString BpqMainWindow::dumpTree() const
                .arg(m_searchMode ? 1 : 0);
     {
         int with = 0;
+        const CsnhypodbpSolution *cs = currentSolution();
         for (BpqTrace *t : m_traces)
             if (t) with++;
-        out += QStringLiteral("traces rows=%1 with=%2 win=[%3,+%4]\n")
+        out += QStringLiteral("traces rows=%1 with=%2 win=[%3,+%4] sol=%5\n")
                    .arg(m_traceRows.size())
                    .arg(with)
                    .arg(m_winT0, 0, 'f', 2)
-                   .arg(m_winLen, 0, 'f', 0);
+                   .arg(m_winLen, 0, 'f', 0)
+                   .arg(cs ? solKey(cs) : QStringLiteral("-"));
     }
 
     /* Sub-pestana magnitudes (fase 6.1): filas, cuantas entran al calculo y

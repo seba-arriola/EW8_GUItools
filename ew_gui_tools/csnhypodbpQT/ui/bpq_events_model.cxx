@@ -6,6 +6,7 @@
  * adapta a QVariant.
  */
 #include "bpq_events_model.h"
+#include "bpq_pin.h"
 
 #include <QLocale>
 
@@ -52,12 +53,32 @@ QString BpqEventsModel::keyAt(int row) const
 {
     const BpqEvent *ev = eventAt(row);
     const CsnhypodbpSolution *s;
+    char buf[BPQ_PIN_KEY_MAX];
     int p;
     if (!ev) return QString();
     p = bpq_event_preferred(ev);
     s = bpq_event_sol(ev, p);
     if (!s) return QString();
-    return QStringLiteral("%1:%2:%3").arg(s->qid).arg(s->mod).arg(s->version);
+    if (bpq_origin_key(s->qid, s->mod, s->version, buf, sizeof(buf)) != 0)
+        return QString();
+    return QString::fromLatin1(buf);
+}
+
+QString BpqEventsModel::eventKeyAt(int row) const
+{
+    const BpqEvent *ev = eventAt(row);
+    const CsnhypodbpSolution *s;
+    if (!ev) return QString();
+    s = bpq_event_sol(ev, 0);
+    if (!s) return QString();
+    return QStringLiteral("%1:%2").arg(s->qid).arg(s->otime, 0, 'f', 6);
+}
+
+int BpqEventsModel::rowForEventKey(const QString &key) const
+{
+    for (int i = 0; i < rowCount(); i++)
+        if (eventKeyAt(i) == key) return i;
+    return -1;
 }
 
 int BpqEventsModel::rowForKey(const QString &key) const
@@ -176,10 +197,13 @@ int BpqOriginsModel::columnCount(const QModelIndex &parent) const
 QString BpqOriginsModel::keyAt(int row) const
 {
     const CsnhypodbpSolution *s;
+    char buf[BPQ_PIN_KEY_MAX];
     if (row < 0 || row >= m_order.size()) return QString();
     s = bpq_event_sol(m_ev, m_order[row]);
     if (!s) return QString();
-    return QStringLiteral("%1:%2:%3").arg(s->qid).arg(s->mod).arg(s->version);
+    if (bpq_origin_key(s->qid, s->mod, s->version, buf, sizeof(buf)) != 0)
+        return QString();
+    return QString::fromLatin1(buf);
 }
 
 int BpqOriginsModel::rowForKey(const QString &key) const
