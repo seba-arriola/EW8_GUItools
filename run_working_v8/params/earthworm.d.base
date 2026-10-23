@@ -243,6 +243,7 @@
  Module   MOD_HYPODB            169
  Module   MOD_WSTORE            170
  Module   MOD_PICKML            171    # picker neuronal PhaseNetWC (publica en PICK_RING)
+ Module   MOD_CSNHYPODBPQT      172    # port Qt de csnhypodbp (GUI hipocentral, .d propio)
 #--------------------------------------------------------------------------
 #                          Message Types
 #

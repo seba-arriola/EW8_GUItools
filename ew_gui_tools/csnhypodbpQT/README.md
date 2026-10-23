@@ -23,7 +23,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 | 3 | ondas (store→SDS), tabla de estaciones, búsqueda, historial de BD | **hecho**: ondas store→SDS en `QThread`, tabla de estaciones, canvas de trazas, **historial de BD** (24 h al arrancar) y **búsqueda por rango** (menú *Events*). Queda afinar el picking (fase 4) |
 | 4 | picking (trazas, filtros, STA/LTA, repick, **locate**) | **completa**: canvas, picking con el ratón (overlay local visible + persistencia), componentes por estación en el orden del `.d` + `tracesPerScreen`, Shift+flechas, filtros de vista (presets del `.d`, `Filters…`, fase cero) con sus atajos, STA/LTA y **`locate`** con el residual del localizador en la tabla |
 | 5 | preview, `locate`, Confirm/Discard, export | **hecho**: preview de dos mitades con un solo `render` (candidata/elegida/guiones y `Confirm`/`Discard`), spinner `calculando <loc>… N s` junto al `Origin time`, `Fix`/`FixedDepthKm` en la barra, `Confirm` que publica el ARC (byte 174 = `M`) en `ConfRing` y lo deja como origen confirmado en el store, y `Export view…` con el contexto real |
-| 6 | magnitudes, Mww, integración final | **fase 6 cerrada salvo 6.5 (prohibida)**: *magnitudes* con tabla de 8 columnas (`magrow`), traza procesada (`magview`) con **franja arrastrable** (`magmarks`), radios ML/Mwp/Mb/Ms, puerta de distancia y `calculate`/`calculate all` (tank + `csnmags` con overrides). Panel **`Mww`** (`csnwphase`) con 31 parámetros (11 editables), `Calculate`/`Cancel` en hilo, playera + resumen y salida completa. **6.4 hecho**: al confirmar se guardan Mww + tensor (WPHASE/WCMT) sobre el `origin` del pipeline y la solución queda preferida (evento reusado por qid + Δt ≤ 300 s, `mod` del localizador). Solo falta la integración (`MOD_CSNHYPODBPQT 172`, `startstop`), **no solicitada** |
+| 6 | magnitudes, Mww, integración final | **fase 6 completa**: *magnitudes* con tabla de 8 columnas (`magrow`), traza procesada (`magview`) con **franja arrastrable** (`magmarks`), radios ML/Mwp/Mb/Ms, puerta de distancia y `calculate`/`calculate all` (tank + `csnmags` con overrides). Panel **`Mww`** (`csnwphase`) con 31 parámetros (11 editables), `Calculate`/`Cancel` en hilo, playera + resumen y salida completa. **6.4 hecho**: al confirmar se guardan Mww + tensor (WPHASE/WCMT) sobre el `origin` del pipeline y la solución queda preferida (evento reusado por qid + Δt ≤ 300 s, `mod` del localizador). **6.5 hecha**: módulo propio `MOD_CSNHYPODBPQT 172`, `.d` propio `csnhypodbpqt.d`, `Process` activo en `startstop_unix.d` (coexiste con el GTK 158), runtime `run_working_v8/csnhypodbpqt/` y tests de integración |
 
 ### Verificación actual (`make check`)
 
@@ -44,9 +44,11 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 OK: sin libgtk/libadwaita/libgobject/libgio
 OK: --print-config identico (66 lineas)
+== integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
+== maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **975 checks**, 0 fallas.
+Total: **991 checks** (975 en C + 16 de integración), 0 fallas.
 
 `calculate` de magnitudes (fase 6.1: tank real + `csnmags` con la ventana ajustada):
 
@@ -547,12 +549,38 @@ csnhypodbpQT --check-profiles csnhypodbp.d    # headless
 csnhypodbpQT csnhypodbp.d                     # GUI
 ```
 
-El prototipo lee **el mismo `.d`** que el módulo GTK (`csnhypodbp.d`): no hay archivo de
-configuración nuevo y la paridad de claves/valores es comprobable con `--print-config`.
+El prototipo puede leer el `.d` del módulo GTK (`csnhypodbp.d`) o el **suyo**
+(`csnhypodbpqt.d`), que es el que usa `startstop` y declara su identidad propia:
 
-### Estado de runtime aislado
+```bash
+csnhypodbpQT --print-config csnhypodbpqt.d      # headless, sin DISPLAY
+csnhypodbpQT --check-profiles csnhypodbpqt.d    # headless
+csnhypodbpQT csnhypodbpqt.d                     # GUI (módulo integrado, id 172)
+```
 
-Para no pisar el estado manual de la GUI GTK:
+El `.d` propio es copia del de la GTK con **solo** tres claves cambiadas
+(`MyModuleId MOD_CSNHYPODBPQT`, `ManualStateFile ../csnhypodbpqt/…`,
+`MwwWorkDir ../csnhypodbpqt/mww`); el resto del esquema es idéntico (la paridad se
+comprueba con `tests/test_printconfig_parity.sh` sobre `csnhypodbp.d`).
+
+### Integración en el stack (fase 6.5)
+
+- `run_working_v8/params/earthworm.d.base`: `Module MOD_CSNHYPODBPQT 172`
+  (el `.d` vivo lo hereda al correr `worktree_bootstrap.sh --refresh`).
+- `run_working_v8/params/startstop_unix.d`: `Process "csnhypodbpQT csnhypodbpqt.d"`
+  **activo**, en paralelo al GTK (158): `startstop`, `ew_monitor.sh` y
+  `ew_controller` lo gestionan por pid como a cualquier módulo.
+- Runtime propio: `run_working_v8/csnhypodbpqt/` (`csnhypodbp_manual.events` +
+  `.picks` + `mww/`), ignorado por git. `StateFile` no se toca: `csnloc.events`
+  es solo lectura y lo escribe `csnloc` en `$EW_LOG`.
+- No escribe `EW_LOG` (no usa `logit`): su salida va a la consola de `startstop`.
+- `tests/test_integration.sh` (16 checks, headless) valida identidad, `.d`,
+  `Process`, `.gitignore` y binario; `tests/test_maximize.sh` (`make test-live`)
+  comprueba 5 ciclos maximizar/des-maximizar con `DISPLAY` + EarthWorm.
+
+### Estado de runtime aislado (tests)
+
+`--state-dir` sigue disponible para aislar una corrida de prueba:
 
 ```bash
 csnhypodbpQT csnhypodbp.d --state-dir ../csnhypodbpqt
@@ -596,9 +624,8 @@ así que el estado del cuadro se verifica sin mirar la pantalla.
    `-include $(wildcard …)`, `clean-deps`) y usa `timeout` solo por ruta absoluta.
 4. El binario **no enlaza GTK/Adwaita/glib/gio** (por eso no se enlaza
    `../common/libewgui_gtk4.a`, y `ewgui_export.c` se sustituye por `c/bpq_canvas.c`).
-5. `MyModuleId` es el mismo del módulo GTK (`MOD_CSNHYPODBP` = 158) ⇒ **no correr las dos GUIs a
-   la vez**. Dar un id propio exige `Module MOD_CSNHYPODBPQT 172` en `earthworm.d.base`
-   (archivo existente: solo con permiso explícito).
+5. `MyModuleId` propio (`MOD_CSNHYPODBPQT` = 172, `earthworm.d.base`) ⇒ **puede correr junto a la
+   GUI GTK (158)**; su `.d` aísla el estado manual/Mww en `run_working_v8/csnhypodbpqt/`.
 
 ## Lo que se reutiliza (sin copiar)
 

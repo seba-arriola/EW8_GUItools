@@ -374,9 +374,10 @@ probe: qt_check
 
 # AC2/AC6: invariantes del binario (no necesitan DISPLAY).
 .PHONY: check-scripts
-check-scripts:
+check-scripts: $(TARGET)
 	@sh tests/test_no_gtk_link.sh
 	@sh tests/test_printconfig_parity.sh
+	@sh tests/test_integration.sh
 
 check-c: $(TEST_C)
 	@chmod +x $(TEST_C)
@@ -417,8 +418,9 @@ check: qt_check $(TEST_C)
 test: check
 
 test-live: $(TARGET)
-	@if [ -x tests/test_live_events.sh ]; then sh tests/test_live_events.sh; \
-	 else echo "SKIP test-live: aun no hay tests/test_live_events.sh"; fi
+	@if [ -x tests/test_maximize.sh ]; then sh tests/test_maximize.sh; \
+	 elif [ -x tests/test_live_events.sh ]; then sh tests/test_live_events.sh; \
+	 else echo "SKIP test-live: aun no hay tests/test_maximize.sh"; fi
 
 clean:
 	rm -rf $(BUILDDIR) $(TARGET) $(TEST_C) $(TEST_CXX)
@@ -427,10 +429,10 @@ clean-deps:
 	rm -f $(BUILDDIR)/*.dep
 
 # Contrato de validacion de ew8_compile.sh (flags ANTES del .d, como csnhypodbp).
-# El .d que se valida es el del modulo GTK: el prototipo lee el MISMO esquema y
-# no necesita un archivo nuevo en params/.
+# Se validan los DOS .d: el del modulo GTK (paridad de esquema) y el propio del
+# port (csnhypodbpqt.d, el que declara MOD_CSNHYPODBPQT y usa startstop).
 # OJO: `printf '%b'` (no '%s'): el separador es un `\n` LITERAL dentro del valor.
-VALIDATE_FLAGS = csnhypodbpQT|--print-config csnhypodbp.d\ncsnhypodbpQT|--check-profiles csnhypodbp.d
+VALIDATE_FLAGS = csnhypodbpQT|--print-config csnhypodbp.d\ncsnhypodbpQT|--check-profiles csnhypodbp.d\ncsnhypodbpQT|--print-config csnhypodbpqt.d\ncsnhypodbpQT|--check-profiles csnhypodbpqt.d
 .PHONY: print-VALIDATE_FLAGS
 print-VALIDATE_FLAGS:
 	@printf '%b\n' '$(VALIDATE_FLAGS)'

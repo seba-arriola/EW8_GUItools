@@ -168,9 +168,9 @@ else
 fi
 
 # --- 6. las carpetas de los modulos NO deben estar versionadas -------------
-tracked="$(git ls-files run_working_v8/hyp2000_ring run_working_v8/nlloc_ring run_working_v8/csnhypodbp)"
+tracked="$(git ls-files run_working_v8/hyp2000_ring run_working_v8/nlloc_ring run_working_v8/csnhypodbp run_working_v8/csnhypodbpqt)"
 if [ -z "$tracked" ]; then
-    ok "las carpetas runtime de los modulos (hyp2000_ring/nlloc_ring/csnhypodbp) no se versionan"
+    ok "las carpetas runtime de los modulos (hyp2000_ring/nlloc_ring/csnhypodbp/csnhypodbpqt) no se versionan"
 else
     bad "hay ficheros versionados en las carpetas runtime de los modulos"
     echo "$tracked" | sed 's/^/       /'

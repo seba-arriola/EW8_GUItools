@@ -93,12 +93,12 @@ frente a las ~10.000 líneas GTK actuales de `gui.c`+`main.c`+`ws.c`+`mww.c`.
 | D3 | Backend de dibujo | **cairo sobre `QImage`** (`CAIRO_FORMAT_ARGB32` ↔ `QImage::Format_ARGB32_Premultiplied`) | paridad de píxel con la versión GTK, reutilización de `ewgui_overlay_draw`, y export SVG/PDF/PNG casi gratis; coste: dependencia de cairo (ya instalada) |
 | D4 | Nombre | carpeta `ew_gui_tools/csnhypodbpQT/`, binario `csnhypodbpQT` | coincide con `ew8_compile.sh` (el nombre de carpeta es el nombre de módulo) |
 
-**Decisiones que NO se tomaron y quedan abiertas** (no bloquean la fase 0; sí la 6.5):
+**Decisiones tomadas en la fase 6.5** (integración, con permiso explícito):
 
-- Id de módulo propio (`Module MOD_CSNHYPODBPQT 172` en `earthworm.d.base`) ⇒ toca un archivo existente.
-- Línea `Process "csnhypodbpQT csnhypodbpqt.d"` en `startstop_unix.d` + `.d` propio en `params/` ⇒ archivos nuevos en `params/`, pero el `Process` toca uno existente.
-- Líneas en `.gitignore` para el binario instalado y el directorio de runtime ⇒ toca un archivo existente.
-- Marcador `MOD_GUI` en el Makefile (ver §6.3): recomendado, es un comentario, no toca nada ajeno.
+- Id de módulo propio: `Module MOD_CSNHYPODBPQT 172` en `earthworm.d.base` (hecho).
+- `Process "csnhypodbpQT csnhypodbpqt.d"` **activo** en `startstop_unix.d` + `.d` propio `params/csnhypodbpqt.d` (hecho; coexiste con el GTK 158).
+- `.gitignore`: runtime `/run_working_v8/csnhypodbpqt/` (el binario instalado ya estaba en §3b) (hecho).
+- `common/tests/test_params_stays_clean.sh` §6 ampliado a la carpeta runtime nueva (hecho).
 
 ---
 
@@ -1476,7 +1476,7 @@ decidir si se migra.
 | 6.2 | `c/bpq_magcfg.c` | fachada de `csnhypodbp_magcfg.c` (`MagConfigFile`) | `tests/test_magcfg.c` | mismas ventanas y puertas (`Ml/Mwp/Mb/Ms_MinDelta/MaxDelta`, `Ml_MaxDist`, `Ml_DistType`); la GUI no lista estaciones descartadas por el motor; `MagFetchSeconds` |
 | 6.3 | `c/bpq_mww.c`, `ui/bpq_mww_panel.cxx`, `ui/bpq_mww_worker.cxx` | `bpq_mww_new/prep/start/poll/cancel/log_tail/field_limits/field_parse`, `BpqMwwWorker` | `tests/test_mww.c` (+ `--slow` contra el motor real) | tabla editable con límites/parseo del núcleo (texto inválido no se aplica y destoca); banda derivada de la magnitud y recalculada; grid search; resumen y salida lado a lado con la misma altura (`MWW_ROW_H` 248 px, 1/3–2/3, fuente 134 %/91 %); `GsHdsafe`/`GsOld`/`GsTsAuto`; todo fallo con su texto real y la orden que falló |
 | 6.4 | `c/bpq_mww_save.c` | `bpq_db_save_mww(event_id,origin_id,BpqMwwResult*)` | `tests/test_mww_save.c` (BD de prueba) | con el radio `Mww` + `Confirm`: `upsert_event`, `upsert_origin_if_absent`, `upsert_magnitude(Mww)`, `upsert_tensor`, `set_preferred`; el **centroide no** se escribe en `origin` |
-| 6.5 | `README.md`, `tests/test_integration.sh`, `tests/test_maximize.sh` + **3 líneas en archivos existentes (SOLO CON PERMISO)** | `earthworm.d.base`: `Module MOD_CSNHYPODBPQT 172`; `.gitignore`: `/ew_8.0/bin/csnhypodbpQT` y `/run_working_v8/csnhypodbpqt/`; `startstop_unix.d`: `Process "csnhypodbpQT csnhypodbpqt.d"` + nuevo `params/csnhypodbpqt.d` | `tests/test_integration.sh`, `test_ring_conf.sh`, `test_pick_rings.sh`, `test_params_stays_clean.sh` | AC16, AC17, AC18; id propio ⇒ puede correr junto a `csnhypodbp`; `ew_monitor.sh list/status` y `ew_controller` lo ven (derivan del `.d`, sin nombres literales); el `.d` nuevo respeta §3/§4 de `test_params_stays_clean.sh` |
+| 6.5 | `README.md`, `tests/test_integration.sh`, `tests/test_maximize.sh` + archivos existentes | `earthworm.d.base`: `Module MOD_CSNHYPODBPQT 172`; `.gitignore`: runtime `/run_working_v8/csnhypodbpqt/`; `startstop_unix.d`: `Process "csnhypodbpQT csnhypodbpqt.d"` **activo**; nuevo `params/csnhypodbpqt.d`; `test_params_stays_clean.sh` §6 | `tests/test_integration.sh` (16 checks), `tests/test_maximize.sh` (5 ciclos), `test_params_stays_clean.sh` | **hecho**; `--validate` OK=5; `make check` verde (991 checks) |
 
 ---
 
@@ -1488,12 +1488,12 @@ decidir si se migra.
 | R-2 | **Headers EarthWorm no C++-safe** (`earthworm.h`, `transport.h`, `kom.h`, `rw_mag.h`, `trace_buf.h`, `libmseed2.h` podrían usar palabras clave C++ o macros hostiles) | media / alto | se elimina por construcción: R1 prohíbe incluirlos desde C++ y `test_capi_purity.sh` lo verifica en cada `check` |
 | R-3 | **Deriva de la lista blanca**: si alguien añade glib/GTK a un header puro de `csnhypodbp` o `common`, el prototipo deja de compilar | media / medio | `probe_capi.cxx` falla ruidosamente en `check` (no en silencio); `test_reuse_purity.sh` da el archivo culpable |
 | R-4 | **`ew8_compile.sh` no sabe de Qt**: sin Qt6 el build moriría con un error de `g++` opaco | alta (en máquina nueva) / bajo | fail-fast en el Makefile con el nombre de los paquetes apt (E1, tarea 0.1) |
-| R-5 | **Duplicar un productor de anillos**: el prototipo escribe en `PICK_RING` y `HYPO_RING_REF2` | baja / alto | mientras comparta el id 158 **no** corre junto a `csnhypodbp` (E16 + README + aviso al arrancar); id propio en 6.5 |
+| R-5 | **Duplicar un productor de anillos**: el prototipo escribe en `PICK_RING` y `HYPO_RING_REF2` | baja / alto | **resuelto en 6.5**: id propio 172; las dos GUIs pueden correr a la vez (comparten anillos; solo escriben al picar/confirmar) |
 | R-6 | **`restart <nombre>` al primer match** (`startstop_unix_generic.c:2478/:2497`, documentado en `AGENTS.md`) si se declaran dos `Process` con nombre parecido | media / medio | nombre claramente distinto (`csnhypodbpQT`) y, en todo caso, las acciones por pid (ya es la política de `ew_monitor.sh`/`ew_controller`) |
 | R-7 | **Cairo/`QImage`: stride y premultiplicación** mal manejados ⇒ colores raros o imagen rayada | media / medio | usar `img.bytesPerLine()` (nunca `4*w`), `Format_ARGB32_Premultiplied`, `cairo_surface_finish()` antes de blitear, y `test_canvas_offscreen.cxx` con píxeles de color esperados |
 | R-8 | **Rendimiento del repintado** (trazas con miles de muestras a 60 Hz de paneo) | media / medio | doble buffering con `QImage` reutilizado, `ewgui_trace_envelope` (min/max por columna con caché) en vez de dibujar muestra a muestra, `update()` coalescente; medir con `BPQ_MODE=--shot` y tiempos en el test |
 | R-9 | **Trabajo subestimado en el dibujo**: son ~1.200 líneas cairo dentro de `gui.c`/`mww.c` a reexpresar | alta / medio | fases 2/4/6 lo reparten; empezar por mapa (el más simple) y dejar Mww para el final; los tests de píxeles evitan regressions |
-| R-10 | **`GetModId` exige el nombre en `earthworm.d`** ⇒ sin id propio no hay identidad separada | certeza / bajo (aceptado) | prototipo con `MOD_CSNHYPODBP` y regla de no coexistencia; id 172 libre confirmado (`earthworm.d.base:245` es el máximo) |
+| R-10 | **`GetModId` exige el nombre en `earthworm.d`** ⇒ sin id propio no hay identidad separada | certeza / bajo | **resuelto en 6.5**: `MOD_CSNHYPODBPQT 172` en `earthworm.d.base`; el `.d` vivo se regenera con `worktree_bootstrap.sh --refresh` |
 | R-11 | **`hypodb` sobreescribe el `origin` confirmado** si las dos GUIs confirman el mismo evento+versión (`hypodb_ingest.c:614,642`) | baja / bajo | comportamiento idéntico al actual (el `mod` del Confirm es `sol->mod`, no el de la GUI); documentado |
 | R-12 | **Qt6 y WSLg**: plugin `xcb` necesita `libxcb-cursor0` desde 6.5; en Wayland los menús necesitan transient parent | media / medio | paquete en el prerequisito; `QT_QPA_PLATFORM=xcb` como escape documentado; menús con parent; `QT_QPA_PLATFORM=offscreen` para tests |
 | R-13 | **Dos GUI ⇒ doble mantenimiento** de la capa de presentación | certeza / alto (estratégico) | corte recomendado al final de la fase 4: decidir con evidencia antes de invertir en 5-6 |
@@ -1550,23 +1550,20 @@ enlazado dinámico), `community.kde.org/Guidelines_and_HOWTOs/Wayland_Porting_No
 
 Todo el prototipo vive en `ew_gui_tools/csnhypodbpQT/`. **Ningún** archivo de `csnhypodbp/`, `common/`,
 `csnloc/`, `wavestore/`, `csnwphase/`, `hypodb/`, `ew8_compile.sh`, `ew_monitor.sh`, `diag.sh`,
-`startstop_unix.d`, `earthworm.d.base`, `.gitignore` ni `AGENTS.md` se modifica en las fases 0-5.
+`startstop_unix.d`, `earthworm.d.base`, `.gitignore` ni `AGENTS.md` se modifica en las fases 0-5; la 6.5 toca **solo** lo listado en §15.2.
 
-### 15.2 Los 3 (4) toques que requieren permiso explícito (fase 6.5)
+### 15.2 Los toques de la fase 6.5 (hechos, con permiso explícito)
 
-| archivo | cambio | por qué | efecto de NO hacerlo |
-|---|---|---|---|
-| `run_working_v8/params/earthworm.d.base` | +1 línea: `Module MOD_CSNHYPODBPQT 172` | `GetModId` solo resuelve nombres declarados (`earthworm_simple_funcs.h:64`; fatal en `csnhypodbp_main.c:764`) | el prototipo usa el id 158 y **no puede** correr junto a `csnhypodbp` |
-| `.gitignore` §3b | +1 línea: `/ew_8.0/bin/csnhypodbpQT` | la sección ignora binarios instalados **por nombre literal** | `git status` muestra el binario instalado (ruido; ningún test falla) |
-| `.gitignore` runtime | +1 línea: `/run_working_v8/csnhypodbpqt/` | igual que `:25-28` para los otros módulos | ruido en `git status` |
-| `run_working_v8/params/startstop_unix.d` | +1 línea: `Process "csnhypodbpQT csnhypodbpqt.d"` | para que `startstop`/`ew_monitor.sh`/`ew_controller` lo gestionen | se arranca a mano; no aparece en `list`/`status` |
-| (nuevo, no modifica) `run_working_v8/params/csnhypodbpqt.d` | archivo nuevo | solo si se declara el `Process` (necesita su propio nombre de `.d`) | se usa `csnhypodbp.d` + `--state-dir` |
+| archivo | cambio | por qué |
+|---|---|---|
+| `run_working_v8/params/earthworm.d.base` | `Module MOD_CSNHYPODBPQT 172` | `GetModId` solo resuelve nombres declarados (`earthworm_simple_funcs.h:64`); sin esto usa el id 158 y no puede correr junto a `csnhypodbp` |
+| `.gitignore` runtime | `/run_working_v8/csnhypodbpqt/` | igual que `:25-28` para los otros módulos (el binario instalado ya estaba en §3b) |
+| `run_working_v8/params/startstop_unix.d` | `Process "csnhypodbpQT csnhypodbpqt.d"` + `Class/Priority` | `startstop`/`ew_monitor.sh`/`ew_controller` lo gestionan por pid |
+| `run_working_v8/params/csnhypodbpqt.d` (nuevo) | copia del `.d` GTK con `MyModuleId`, `ManualStateFile` y `MwwWorkDir` propios | identidad y runtime separados; `StateFile` se deja igual (solo lectura de `csnloc`) |
+| `ew_gui_tools/common/tests/test_params_stays_clean.sh` | §6 incluye `run_working_v8/csnhypodbpqt` | la carpeta runtime nueva también debe quedar fuera de git |
 
-Si se añade el `.d` nuevo, debe respetar `test_params_stays_clean.sh` §3 (`WorkDir`/`MwwWorkDir`/
-`StoreRoot` = `../<algo>`) y §4 (rutas absolutas solo para claves de la lista blanca: `SdsRoot`,
-`ResponseDir`, `OverlayFile`, `ProfileDataDir`, `GfDir`, `TtimeRoot`, `ControlFile`, `ModelFallback`,
-`ModelBand`, `ModelFile`, `OrtLib`, `WphaseHome`, `WphaseBin`, `CalibFile`, `StaCorrFile`, `Mb_QTable`), y
-estar **versionado** (§1 falla si queda sin versionar a la vista en `params/`).
+El `.d` nuevo respeta §3 (`ManualStateFile`/`MwwWorkDir` = `../csnhypodbpqt/…`) y §4 (no añade rutas
+absolutas), y **debe versionarse**: §1 falla mientras quede sin trackear en `params/`.
 
 ### 15.3 Fuera de alcance (deliberado)
 
