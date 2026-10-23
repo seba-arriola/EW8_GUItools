@@ -177,6 +177,23 @@ hace **`csnloc`** localmente.
     visor queda sin fondo (`exceeds the current allocation limit`).
   - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`).
   - `csnstaevdisp/`: visor de estaciones y eventos (mapa equirectangular, triángulos de estación coloreados por elevación, círculos de sismo escalados por magnitud). Usa la BD hipocentral (historial) y `HYPO_RING` (en vivo). Mismo contrato de mapa base que `csnrv` (`MapImageFile`: equirectangular 2:1 de mundo completo, sin alpha) y misma **capa de líneas** (`OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide`, ver `common/tools/OVERLAYS.md`); test headless `make test-config`.
+  - `csnstaevdispQT/`: **port Qt6 de `csnstaevdisp`** (paridad completa: triángulos por
+    elevación, círculos por magnitud, leyenda, `Export view...`, `Dark mode`, `Events number`,
+    `Layers...`/`Reload`). **Sustituye** al GTK en `startstop_unix.d`: corre con el **mismo**
+    `csnstaevdisp.d` (`MOD_STAEVDISP` **161**; el `Process` del GTK se retira) y escribe su
+    **log propio** `$EW_LOG/csnstaevdispQT_<fecha>.log` con la clave `LogFile` (nombre del
+    **proceso**, `diag.sh log csnstaevdispQT`); sin `EW_LOG` escribible baja a consola. **No lee
+    mensajes del anillo**: sólo late en `HYPO_RING` y atiende TERMINATE. Reparto `c/` (C puro:
+    `sev_config`, `sev_sta`, `sev_db`, `sev_core`, `sev_map`, `sev_logit`) + `c/sev_capi.h` como
+    **única** frontera C→C++ + `ui/` (sólo `<Qt…>`, `ewguiqt/*` y `sev_capi.h`). **cairo vive sólo
+    en `c/`**: el fondo lo decodifica la UI con `QImage` y llega como BGRA; el export re-renderiza
+    a SVG/PDF/PNG. **Rueda = zoom anclado al cursor** (`sev_map_zoom_at`, clamp 0.2–100) y
+    **arrastre izquierdo = paneo**; las señales de `ewguiqt::CanvasWidget` se multiplican por
+    `devicePixelRatioF()`. El refresco de datos (2 s) **no resetea** zoom/pan (el GTK tampoco lo
+    hacía). El test de config **reutiliza sin tocarlo** `csnstaevdisp/test_config.sh`
+    (`BIN=csnstaevdispQT`), y `test_ui` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen
+    (5 estaciones, 3 sismos y 2 capas de fixture, mínimo ≤ 700×800, zoom ×1.2 anclado, arrastre y
+    que un snapshot nuevo no mueva la vista).
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
     PostgreSQL (esquema QuakeML simplificado, `db/schema.sql`). Entradas: `HYPO_RING` (csnloc 162)
     y `HYPO_RING_REF` (hyp2000 163 / nlloc 164, distinguidos por el `mod` del logo) + `PICK_RING`
@@ -754,11 +771,14 @@ primero al store algo que ya no está).
   `dragged(dx, dy)` (`commonqt/src/canvas.cxx`) son **señales**; si el port no las conecta a su
   capa de vista, rueda y arrastre se pierden **en silencio** y el mapa parece "no interactivo"
   (fallo reportado en vivo en `csnrvQT`: `crv_map_zoom_factor`/`crv_map_pan` existían y nadie las
-  llamaba). Las coordenadas y los deltas llegan en píxeles **lógicos**: hay que multiplicarlos por
-  `devicePixelRatioF()` porque el buffer del canvas y la proyección trabajan en físicos. El zoom
-  anclado se ajusta con el factor **aplicado** tras el clamp (`crv_map_zoom_at`), no con el
-  pedido, o el pan deriva en cada rueda contra el tope 0.2/50. Invariantes:
-  `tests/test_ui_invariants.sh` (los `connect`) y `tests/test_ui.sh` (`--interact`).
+  llamaba; `csnstaevdispQT` paga la misma trampa). Las coordenadas y los deltas llegan en píxeles
+  **lógicos**: hay que multiplicarlos por `devicePixelRatioF()` porque el buffer del canvas y la
+  proyección trabajan en físicos. El zoom anclado se ajusta con el factor **aplicado** tras el
+  clamp (`crv_map_zoom_at`/`sev_map_zoom_at`), no con el pedido, o el pan deriva en cada rueda
+  contra el tope del módulo (0.2/50 en `csnrvQT`, 0.2/100 en `csnstaevdispQT`). En
+  `csnstaevdispQT` el refresco de datos **no** debe llamar a `sev_map_reset`: rompería zoom/pan
+  (el invariante lo prohíbe). Invariantes: `tests/test_ui_invariants.sh` (los `connect`) y
+  `tests/test_ui.sh` (`--interact`).
 - **GTK4: las referencias PRESTADAS de los getters de modelo no se liberan (use-after-free)**:
   `gtk_single_selection_get_selected_item()` devuelve un **préstamo** (`transfer none`; GIR
   `<return-value transfer-ownership="none">`, doc: *"the returned data is owned by the instance"*),

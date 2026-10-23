@@ -147,9 +147,6 @@
  Process	  "csntvp csntvp.d"
  Class/Priority    OTHER 0
 #
- Process	  "csnstaevdisp csnstaevdisp.d"
- Class/Priority    OTHER 0
-# 
  Process	  "csnhypodbp csnhypodbp.d"
  Class/Priority    OTHER 0
 #
@@ -166,5 +163,8 @@
  Class/Priority    OTHER 0
 #
  Process	  "ew_controllerQT ew_controller.d"
+ Class/Priority    OTHER 0
+#
+ Process	  "csnstaevdispQT csnstaevdisp.d"
  Class/Priority    OTHER 0
 #
