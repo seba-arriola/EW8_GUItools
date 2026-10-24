@@ -90,6 +90,12 @@ private:
  * en ew_controllerQT (dos tablas) y en csnhypodbpQT (eventos). */
 void wire_header_sort(QTableView *view, SortProxy *proxy, int initialColumn);
 
+/* Ajusta cada seccion visible al max(ancho de su cabecera, texto mas largo de
+ * sus celdas) + padding, sin estirar la ultima. `maxColumnWidth > 0` acota el
+ * resultado. Devuelve el ancho total de las secciones (para repartir el panel).
+ * No toca las columnas ocultas ni el modelo. */
+int fit_columns(QTableView *view, int padding = 10, int maxColumnWidth = -1);
+
 } /* namespace ewguiqt */
 
 #endif /* EWGUIQT_TABLE_H */

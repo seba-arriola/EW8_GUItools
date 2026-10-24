@@ -35,6 +35,8 @@ public:
     /* Indice de la fase de una fila de la vista: 0 = P, 1 = S, -1 invalido. */
     int  phaseAt(int row) const;
     int  staIndexAt(int row) const;    /* indice en m_rows */
+    /* Valor numerico para el proxy de ordenacion (NaN = columna de texto). */
+    double sortValue(int row, int col) const;
 
 private:
     const CsnhypodbpStaPick *pickAt(int row) const;

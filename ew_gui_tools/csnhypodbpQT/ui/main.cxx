@@ -155,6 +155,12 @@ static int run_gui(QApplication &app, const QStringList &args)
                     rc = 1;
                 else
                     std::fputs(win.dumpTree().toUtf8().constData(), stdout);
+            } else if (std::strcmp(mode, "--sort") == 0) {
+                /* Clic REAL en una cabecera + volcado del orden resultante. */
+                if (!win.runSortForTest())
+                    rc = 1;
+                else
+                    std::fputs(win.dumpTree().toUtf8().constData(), stdout);
             } else {
                 std::fprintf(stderr, "csnhypodbpQT: BPQ_MODE desconocido <%s>\n", mode);
                 rc = 1;

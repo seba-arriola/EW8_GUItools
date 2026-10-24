@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "bpq_capi.h"
 
@@ -231,9 +232,50 @@ int main(void)
         ck_cell(ev, 13, "2", __LINE__);
     }
 
-    /* --- 8. argumentos invalidos --- */
+    /* --- 8. created: la BD manda su hora y el re-feed no la pisa --- */
+    {
+        const double c1 = 1700000000.0, c2 = 1700000123.0;
+        const BpqEvent *ev;
+        double before, after;
+
+        make_sol(&s, 600, 162, 1, 6, 0.3, 0, 'Z');
+        CK(bpq_events_feed_arc_at(e, &s, c1) == 0);
+        ev = bpq_events_at(e, 4);
+        CK(ev != NULL);
+        CK(fabs(bpq_origin_sort_num(ev, 0, 3) - c1) < 1e-9);
+
+        make_sol(&s, 600, 163, 1, 6, 0.3, 0, 'Z');
+        CK(bpq_events_feed_arc_at(e, &s, c2) == 0);
+        CK(bpq_event_nsols(ev) == 2);
+        CK(fabs(bpq_origin_sort_num(ev, 1, 3) - c2) < 1e-9);
+        {
+            char a[64], b[64];
+
+            bpq_origin_cell(ev, 0, 3, a, sizeof(a));
+            bpq_origin_cell(ev, 1, 3, b, sizeof(b));
+            CK(strcmp(a, b) != 0);   /* horas distintas, no el time(NULL) comun */
+        }
+
+        /* El anillo repite el MISMO ARC sin hora de creacion: se conserva. */
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        CK(fabs(bpq_origin_sort_num(ev, 1, 3) - c2) < 1e-9);
+
+        /* Sin epoch explicito, una solucion nueva sella la recepcion. */
+        before = (double)time(NULL);
+        make_sol(&s, 700, 162, 1, 5, 0.4, 0, 'Y');
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        after = (double)time(NULL);
+        ev = bpq_events_at(e, 5);
+        CK(ev != NULL);
+        CK(bpq_origin_sort_num(ev, 0, 3) >= before);
+        CK(bpq_origin_sort_num(ev, 0, 3) <= after);
+    }
+
+    /* --- 9. argumentos invalidos --- */
     CK(bpq_events_feed_arc(NULL, &s) == -1);
     CK(bpq_events_feed_arc(e, NULL) == -1);
+    CK(bpq_events_feed_arc_at(NULL, &s, 1.0) == -1);
+    CK(bpq_events_feed_arc_at(e, NULL, 1.0) == -1);
     CK(bpq_events_feed_mag(NULL, &mag) == -1);
     CK(bpq_events_feed_mag(e, NULL) == -1);
     CK(bpq_events_at(e, -1) == NULL);

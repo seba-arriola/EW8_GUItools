@@ -25,9 +25,13 @@ public:
 
     explicit BpqMagModel(QObject *parent = nullptr);
 
-    void setRows(const QVector<CsnhypodbpMagRow> &rows);
+    /* true si las filas cambiaron (emite reset); false = mismo contenido, sin
+     * reset (la seleccion de la tabla sobrevive a los refrescos de trazas). */
+    bool setRows(const QVector<CsnhypodbpMagRow> &rows);
     const QVector<CsnhypodbpMagRow> &rows() const { return m_rows; }
     const CsnhypodbpMagRow *row(int r) const;
+    /* Valor numerico para el proxy de ordenacion (NaN = columna de texto). */
+    double sortValue(int row, int col) const;
 
     int      rowCount(const QModelIndex &parent = QModelIndex()) const override;
     int      columnCount(const QModelIndex &parent = QModelIndex()) const override;

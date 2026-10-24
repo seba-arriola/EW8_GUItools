@@ -393,6 +393,7 @@ check-scripts: $(TARGET)
 	@sh tests/test_map_background.sh
 	@sh tests/test_pin_invariants.sh
 	@sh tests/test_traces_invariants.sh
+	@sh tests/test_table_ui_invariants.sh
 	@sh tests/test_ui_input.sh
 	@sh tests/test_pin.sh
 

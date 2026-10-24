@@ -32,7 +32,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == checks=97 fallas=0 ==            # config contra csnhypodbp.d real
 == canvas checks=72 fallas=0 ==     # cairo -> buffer, 7 escenas, export
 == rings checks=44 fallas=0 ==      # formato byte a byte del pick, rd_mag seguro, errores de apertura
-== events checks=74 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden
+== events checks=89 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden y Created
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
 == wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
 == stations checks=34 fallas=0 ==  # catalogo (StaFile), distancia/orden y regla M > A > Teo
@@ -50,13 +50,37 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
 == traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
-== ui input checks=11 fallas=0 ==  # scroll/rueda, P/Down con foco en la tabla, texto y 3 bandas mag
+== table ui invariants checks=15 fallas=0 == # 4 proxies, Created de BD, anchos exactos y fit_columns
+== ui input checks=27 fallas=0 ==  # scroll/rueda, teclado, orden de 4 tablas, anchos y seleccion mag
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1158 checks** (1048 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
-teclado + 11 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
+Total: **1204 checks** (1063 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
+teclado + 15 de tablas + 27 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
+
+### Created real, ordenación y anchos (2026-10-24)
+
+- **`Created` por solución**: `bpq_db.c` parsea `origin.creation_time` y lo pasa a
+  `bpq_events_feed_arc_at`; un re-feed del anillo con `created=0` conserva el valor de la BD.
+  Antes todas las filas de una carga compartían el `time(NULL)` de `bpq_events.c`. En vivo (sin
+  fila de BD) el sello sigue siendo la **recepción**: el ARC no trae hora de creación, así que dos
+  soluciones procesadas en el mismo segundo comparten ese segundo; para distinguirlas haría falta
+  mostrar sub-segundos.
+- **Cabeceras ordenables en las 4 tablas** (`master-events`, `detail-solutions`, `sta-table`,
+  `mag-table`): `SortProxy` + `wire_header_sort`; `initialColumn=-1` conserva el orden natural
+  (estaciones/mags por distancia) hasta el primer clic. Los índices de selección se mapean con
+  `mapToSource`/`mapFromSource`.
+- **Anchos exactos en Procesar**: `ewguiqt::fit_columns` ajusta cada columna a
+  `max(cabecera, valor más largo)+padding`, sin stretch de la última; `fitProcesarTable` ensancha
+  el panel del splitter lo justo y el canvas se queda con el resto. `QSizePolicy::Ignored` en la
+  tabla y en la etiqueta de estado evitan que fijen el mínimo de la ventana. Si la ventana no
+  alcanza, el scroll horizontal queda como último recurso.
+- **Selección compartida picking ↔ magnitudes**: al seleccionar una fila de magnitudes,
+  `selectStation` actualiza `m_selSta`, sincroniza ambas tablas y pide las ondas una sola vez;
+  `BpqMagModel::setRows` no resetea si las filas no cambiaron, así la selección sobrevive a
+  `traceReady` y al arrastre de la franja.
+- Tests: `events` 89, `table ui invariants` 15, `ui input` 27; `test_pin.sh` 45 sigue verde.
 
 ### Origen fijado (pin)
 

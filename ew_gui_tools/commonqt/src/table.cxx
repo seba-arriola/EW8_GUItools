@@ -3,8 +3,10 @@
 
 #include <cmath>
 
+#include <QFontMetrics>
 #include <QHeaderView>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTableView>
 
 /* C puro de common/ (sin GTK): el comparador es el MISMO que usa el modulo
@@ -89,6 +91,12 @@ bool SortProxy::lessThan(const QModelIndex &left, const QModelIndex &right) cons
 void SortProxy::sortInitial(int column)
 {
     m_last = column;
+    if (column < 0) {
+        /* Sin columna inicial: se conserva el orden natural del modelo fuente
+         * hasta el primer clic (p.ej. estaciones/mags por distancia). */
+        m_order = Qt::AscendingOrder;
+        return;
+    }
     m_order = firstOrder(column);
     sort(column, m_order);
 }
@@ -123,12 +131,70 @@ void wire_header_sort(QTableView *view, SortProxy *proxy, int initialColumn)
                           * sin saber la direccion del PRIMER clic del proxy: se
                           * re-aplica para que la flecha no mienta. */
                          const QSignalBlocker blocker(header);
+                         header->setSortIndicatorShown(true);
                          header->setSortIndicator(column, proxy->lastOrder());
                      });
 
     proxy->sortInitial(initialColumn);
     const QSignalBlocker blocker(header);
-    header->setSortIndicator(initialColumn, proxy->lastOrder());
+    if (initialColumn >= 0) {
+        header->setSortIndicatorShown(true);
+        header->setSortIndicator(initialColumn, proxy->lastOrder());
+    } else {
+        /* -1 = orden natural hasta que el usuario pulse una cabecera. */
+        header->setSortIndicatorShown(false);
+    }
+}
+
+int fit_columns(QTableView *view, int padding, int maxColumnWidth)
+{
+    if (!view || padding < 0)
+        return 0;
+
+    QAbstractItemModel *model = view->model();
+    QHeaderView *header = view->horizontalHeader();
+    if (!model || !header)
+        return 0;
+
+    const QFontMetrics cellFm(view->font());
+    const QFontMetrics headFm(header->font());
+    const int margin = view->style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr,
+                                                  header);
+    const int mark = view->style()->pixelMetric(QStyle::PM_HeaderMarkSize, nullptr,
+                                                header);
+    const int rows = model->rowCount();
+    int total = 0;
+
+    header->setStretchLastSection(false);
+    for (int c = 0; c < model->columnCount(); ++c) {
+        if (view->isColumnHidden(c))
+            continue;
+
+        /* Cabecera: texto con su propia fuente + margen + hueco de la flecha
+         * (se reserva en todas para que al cambiar el orden no se recorte). */
+        const QString head = model->headerData(c, Qt::Horizontal).toString();
+        int width = headFm.horizontalAdvance(head) + 2 * margin + mark;
+
+        for (int r = 0; r < rows; ++r) {
+            const QString cell = model->data(model->index(r, c),
+                                             Qt::DisplayRole).toString();
+            const int cw = cellFm.horizontalAdvance(cell) + padding;
+
+            if (cw > width)
+                width = cw;
+        }
+        if (maxColumnWidth > 0 && width > maxColumnWidth)
+            width = maxColumnWidth;
+        if (width < 8)
+            width = 8;
+
+        /* Interactive (no Fixed): el ancho queda exacto, pero las secciones no
+         * inflan el minimo de la ventana (trampa WSLg al maximizar). */
+        header->setSectionResizeMode(c, QHeaderView::Interactive);
+        header->resizeSection(c, width);
+        total += width;
+    }
+    return total;
 }
 
 } /* namespace ewguiqt */

@@ -192,6 +192,84 @@ static void checkWireHeaderSort()
           "DESC de texto mal ordenado");
 }
 
+static void checkWireHeaderSortNoInitial()
+{
+    QStandardItemModel model(3, 2);
+    const QString nums[3] = {QStringLiteral("10"), QStringLiteral("5"), QStringLiteral("5.2")};
+    const QString names[3] = {QStringLiteral("b"), QStringLiteral("a"), QStringLiteral("c")};
+
+    for (int i = 0; i < 3; ++i) {
+        model.setItem(i, 0, new QStandardItem(nums[i]));
+        model.setItem(i, 1, new QStandardItem(names[i]));
+    }
+
+    QTableView view;
+    ewguiqt::SortProxy proxy;
+    proxy.setSourceModel(&model);
+    proxy.setColumnKinds({ewguiqt::SortKind::Number, ewguiqt::SortKind::Text});
+    view.setModel(&proxy);
+
+    ewguiqt::wire_header_sort(&view, &proxy, -1);
+
+    QHeaderView *h = view.horizontalHeader();
+    CHECK(proxy.lastColumn() == -1, "sin orden inicial lastColumn debe ser -1");
+    CHECK(!h->isSortIndicatorShown(), "sin orden inicial no debe haber flecha");
+    CHECK(view.model()->index(0, 1).data().toString() == QStringLiteral("b"),
+          "sin orden inicial se debe conservar el orden natural");
+
+    /* El primer clic ordena y enciende la flecha. */
+    QMetaObject::invokeMethod(h, "sectionClicked", Qt::DirectConnection, Q_ARG(int, 1));
+    CHECK(proxy.lastColumn() == 1 && proxy.lastOrder() == Qt::AscendingOrder,
+          "el primer clic de texto debe arrancar ASC");
+    CHECK(h->isSortIndicatorShown(), "el primer clic debe mostrar la flecha");
+    CHECK(view.model()->index(0, 1).data().toString() == QStringLiteral("a"),
+          "el primer clic de texto ordena mal");
+}
+
+static void checkFitColumns()
+{
+    QStandardItemModel model(1, 2);
+
+    model.setHeaderData(0, Qt::Horizontal, QStringLiteral("station"));
+    model.setHeaderData(1, Qt::Horizontal, QStringLiteral("d"));
+    model.setItem(0, 0, new QStandardItem(QStringLiteral("A")));
+    model.setItem(0, 1, new QStandardItem(QStringLiteral("123456.7")));
+
+    QTableView view;
+    view.setModel(&model);
+    const int total = ewguiqt::fit_columns(&view, 10);
+    QHeaderView *h = view.horizontalHeader();
+
+    const QFontMetrics headFm(h->font());
+    const QFontMetrics cellFm(view.font());
+    const int margin = view.style()->pixelMetric(QStyle::PM_HeaderMargin, nullptr, h);
+    const int mark = view.style()->pixelMetric(QStyle::PM_HeaderMarkSize, nullptr, h);
+    const int max0 = headFm.horizontalAdvance(QStringLiteral("station"))
+                     + 2 * margin + mark + 2;
+    const int max1 = cellFm.horizontalAdvance(QStringLiteral("123456.7")) + 10 + 2;
+
+    CHECK(total > 0, "fit_columns devolvio un ancho total invalido");
+    CHECK(!h->stretchLastSection(), "fit_columns debe desactivar el stretch de la ultima");
+    CHECK(h->sectionSize(0) >= headFm.horizontalAdvance(QStringLiteral("station")),
+          "la cabecera no manda en una columna de valores cortos");
+    CHECK(h->sectionSize(0) <= max0, "la columna de la cabecera quedo demasiado ancha");
+    CHECK(h->sectionSize(1) >= cellFm.horizontalAdvance(QStringLiteral("123456.7")),
+          "el valor mas largo no manda en su columna");
+    CHECK(h->sectionSize(1) <= max1, "la columna del valor quedo demasiado ancha");
+    CHECK(h->sectionSize(0) < h->sectionSize(1),
+          "una cabecera corta no puede quedar mas ancha que un valor largo");
+
+    QStandardItemModel empty(0, 2);
+    empty.setHeaderData(0, Qt::Horizontal, QStringLiteral("a"));
+    empty.setHeaderData(1, Qt::Horizontal, QStringLiteral("bb"));
+    QTableView view2;
+    view2.setModel(&empty);
+    CHECK(ewguiqt::fit_columns(&view2, 10) > 0,
+          "un modelo vacio debe ajustarse a sus cabeceras");
+    CHECK(ewguiqt::fit_columns(nullptr, 10) == 0,
+          "fit_columns(NULL) debe devolver 0");
+}
+
 static void checkLogView()
 {
     QTemporaryDir dir;
@@ -227,6 +305,8 @@ int main(int argc, char **argv)
     checkConfirm();
     checkTheme(app);
     checkWireHeaderSort();
+    checkWireHeaderSortNoInitial();
+    checkFitColumns();
     checkLogView();
 
     if (g_fail == 0)

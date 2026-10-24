@@ -102,7 +102,12 @@ static QTableView *make_view(const QString &cls)
     v->setObjectName(cls);
     v->setSelectionBehavior(QAbstractItemView::SelectRows);
     v->setSelectionMode(QAbstractItemView::SingleSelection);
-    v->setSortingEnabled(true);
+    /* El orden lo lleva siempre un SortProxy + wire_header_sort: el orden
+     * propio de Qt no conoce el comparador compartido ni la direccion del
+     * primer clic, y con el activado los modelos sin sort() no hacian nada. */
+    v->setSortingEnabled(false);
+    v->setWordWrap(false);
+    v->setTextElideMode(Qt::ElideRight);
     v->setShowGrid(true);
     v->setAlternatingRowColors(false);
     v->horizontalHeader()->setSectionsClickable(true);
@@ -130,6 +135,16 @@ BpqMainWindow::BpqMainWindow(const BpqConfig *cfg, QWidget *parent)
     /* FilterPhase del .d: el dialogo Filters… lo puede cambiar en memoria. */
     m_phaseZero = cfg && cfg->filtercfg.phase_zero != 0;
     buildUi();
+    /* Ajuste inicial (cabeceras): el panel nace con el ancho que necesita la
+     * tabla, no con columnas de 100 px que obligan a scroll horizontal. */
+    fitProcesarTable(m_staView, m_splitPicking);
+    fitProcesarTable(m_magView, m_splitMag);
+    /* Repeticion diferida: al construir, el splitter aun no tiene su tamano
+     * definitivo y los anchos se calculaban con el viewport inicial. */
+    QTimer::singleShot(0, this, [this]() {
+        fitProcesarTable(m_staView, m_splitPicking);
+        fitProcesarTable(m_magView, m_splitMag);
+    });
     /* Las teclas del picking se resuelven en la VENTANA, no en el widget con
      * foco: la tabla de estaciones no debe hacer type-ahead ni robar P/S. */
     qApp->installEventFilter(this);
@@ -202,7 +217,29 @@ void BpqMainWindow::openData()
     ewguiqt::wire_header_sort(m_eventsView, m_eventsProxy, 0);
 
     m_originsModel = new BpqOriginsModel(this);
-    m_originsView->setModel(m_originsModel);
+    m_originsProxy = new ewguiqt::SortProxy(this);
+    m_originsProxy->setSourceModel(m_originsModel);
+    {
+        /* Reparto de la GTK: Mod/Ver/Est./Created/Date + numericas. */
+        QVector<ewguiqt::SortKind> kinds(15, ewguiqt::SortKind::Text);
+
+        kinds[0] = ewguiqt::SortKind::Number;   /* Mod */
+        kinds[1] = ewguiqt::SortKind::Number;   /* Ver */
+        kinds[3] = ewguiqt::SortKind::Date;     /* Created */
+        kinds[4] = ewguiqt::SortKind::Date;     /* Date (otime) */
+        for (int c = 5; c <= 14; ++c)
+            kinds[c] = ewguiqt::SortKind::Number;
+        m_originsProxy->setColumnKinds(kinds, 4);
+        m_originsProxy->setCellNumberFn(
+            [](const QAbstractItemModel &m, int r, int c) {
+                const auto *om = qobject_cast<const BpqOriginsModel *>(&m);
+                return om ? om->sortValue(r, c) : std::nan("");
+            });
+        m_originsProxy->setDynamicSortFilter(false);
+    }
+    m_originsView->setModel(m_originsProxy);
+    /* Created DESC: el detalle arranca como la GTK. */
+    ewguiqt::wire_header_sort(m_originsView, m_originsProxy, 3);
 
     /* Columna derecha: el mapa base lo decodifica Qt (QImageReader) y lo pinta
      * cairo; los overlays .lines los carga la capa C desde el .d. El limite de
@@ -379,16 +416,21 @@ void BpqMainWindow::openData()
      * sus componentes (en el orden del .d), no una fila por estacion. */
     connect(m_staView->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex &cur, const QModelIndex &) {
-        const int i = m_staModel ? m_staModel->staIndexAt(cur.row()) : -1;
+        const QModelIndex src = m_staProxy ? m_staProxy->mapToSource(cur) : cur;
+        const int i = m_staModel ? m_staModel->staIndexAt(src.row()) : -1;
 
         if (i < 0 || i >= m_staRows.size()) return;
-        {
-            const QString sta = QString::fromUtf8(m_staRows.at(i).sta);
+        selectStation(QString::fromUtf8(m_staRows.at(i).sta));
+    });
 
-            if (sta == m_selSta) return;
-            m_selSta = sta;
-        }
-        fetchTraces(currentSolution());
+    /* La tabla de magnitudes elige la MISMA estacion actual: canvas de mags,
+     * picking y tabla de estaciones quedan sincronizados. */
+    connect(m_magView->selectionModel(), &QItemSelectionModel::currentRowChanged,
+            this, [this](const QModelIndex &cur, const QModelIndex &) {
+        const int src = sourceRowForView(m_magProxy, cur);
+        const CsnhypodbpMagRow *r = m_magModel ? m_magModel->row(src) : nullptr;
+
+        if (r) selectStation(QString::fromUtf8(r->sta));
     });
 
     /* La seleccion de la maestra elige el evento del detalle. La identidad del
@@ -414,6 +456,7 @@ void BpqMainWindow::openData()
 
         m_syncOrigins = true;
         m_originsModel->setEvent(ev);
+        reapplySort(m_originsProxy);
         const QString keep = bpq_pin_active(&m_pin)
                                  ? QString::fromLatin1(bpq_pin_key(&m_pin))
                                  : QString();
@@ -427,7 +470,11 @@ void BpqMainWindow::openData()
             }
         }
         if (row < 0) row = m_originsModel->rowForPreferred();
-        if (row >= 0) m_originsView->selectRow(row);
+        if (row >= 0) {
+            const int vrow = viewRowForSource(m_originsProxy, row);
+
+            if (vrow >= 0) m_originsView->selectRow(vrow);
+        }
         m_syncOrigins = false;
 
         refreshPanels();
@@ -440,15 +487,18 @@ void BpqMainWindow::openData()
     connect(m_originsView->selectionModel(), &QItemSelectionModel::currentRowChanged,
             this, [this](const QModelIndex &cur, const QModelIndex &) {
         if (!cur.isValid()) return;
-        const int sol = m_originsModel->solIndexAt(cur.row());
+        const int vrow = sourceRowForView(m_originsProxy, cur);
+        const int sol = m_originsModel->solIndexAt(vrow);
         if (sol < 0) return;
 
         if (bpq_pin_active(&m_pin)) {
             const int prow = m_originsModel->rowForKey(
                 QString::fromLatin1(bpq_pin_key(&m_pin)));
-            if (prow >= 0 && prow != cur.row()) {
+            if (prow >= 0 && prow != vrow) {
+                const int pview = viewRowForSource(m_originsProxy, prow);
+
                 QSignalBlocker b(m_originsView->selectionModel());
-                m_originsView->selectRow(prow);
+                if (pview >= 0) m_originsView->selectRow(pview);
                 return;
             }
         }
@@ -497,10 +547,13 @@ void BpqMainWindow::openData()
         if (row < 0) return;
         /* Sin pin, un clic elige (como siempre). Con pin, el marcador es una
          * eleccion explicita: re-fija ese origen (sin saltar de pestana). */
-        if (bpq_pin_active(&m_pin))
+        if (bpq_pin_active(&m_pin)) {
             pinOrigin(row, false, false);
-        else
-            m_originsView->selectRow(row);   /* pinta el verde */
+        } else {
+            const int vrow = viewRowForSource(m_originsProxy, row);
+
+            if (vrow >= 0) m_originsView->selectRow(vrow);  /* pinta el verde */
+        }
     });
     connect(m_mapProf, &BpqCanvasWidget::dragged, this,
             [this](double dx, double dy) {
@@ -777,6 +830,7 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
         m_candValid = false;
         m_candKey.clear();
         m_staModel->setRows(nullptr, 0);
+        reapplySort(m_staProxy);
         m_staRows.clear();
         fetchTraces(nullptr);
         renderPreview();
@@ -789,6 +843,7 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
         m_candValid = false;
         m_candKey.clear();
         m_staModel->setRows(nullptr, 0);
+        reapplySort(m_staProxy);
         m_staRows.clear();
         fetchTraces(nullptr);
         renderPreview();
@@ -828,6 +883,9 @@ void BpqMainWindow::rebuildStaTable(const CsnhypodbpSolution *sol)
                                                m_staRows.data(), m_staRows.size());
         m_staRows.resize(n);
         m_staModel->setRows(m_staRows.constData(), n);
+        reapplySort(m_staProxy);
+        fitProcesarTable(m_staView, m_splitPicking);
+        syncStationViews();
     }
 }
 
@@ -912,6 +970,7 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     }
     updateTracesContext();
     renderMagnitudes();      /* el canvas de mags sigue a la estacion actual */
+    syncStationViews();
 
     /* Fixture determinista: las filas ya estan armadas, pero no se pide onda al
      * store/SDS (el test no depende de datos ni del I/O de la capa SDS). */
@@ -964,6 +1023,140 @@ QString BpqMainWindow::pickDefaultStation() const
     return QString();
 }
 
+/* El proxy cambia la numeracion de filas: todo lo que venia usando indices de
+ * la vista/`selectRow` tiene que pasar por aqui. */
+int BpqMainWindow::viewRowForSource(const QSortFilterProxyModel *p, int srcRow) const
+{
+    if (!p || !p->sourceModel() || srcRow < 0) return -1;
+    {
+        const QModelIndex idx = p->mapFromSource(p->sourceModel()->index(srcRow, 0));
+
+        return idx.isValid() ? idx.row() : -1;
+    }
+}
+
+int BpqMainWindow::sourceRowForView(const QSortFilterProxyModel *p,
+                                    const QModelIndex &idx) const
+{
+    if (!p) return idx.isValid() ? idx.row() : -1;
+    {
+        const QModelIndex src = p->mapToSource(idx);
+
+        return src.isValid() ? src.row() : -1;
+    }
+}
+
+/* Tras un reset del modelo fuente el proxy puede perder el orden (y la flecha
+ * seguiria mintiendo); se re-aplica el ultimo clic si hubo uno. */
+void BpqMainWindow::reapplySort(ewguiqt::SortProxy *p)
+{
+    if (!p || p->lastColumn() < 0) return;
+    p->sort(p->lastColumn(), p->lastOrder());
+}
+
+void BpqMainWindow::fitProcesarTable(QTableView *view, QSplitter *split)
+{
+    QList<int> sz;
+    int total, need, avail, rest;
+
+    if (!view || !split) return;
+    total = ewguiqt::fit_columns(view, 10);
+    if (total <= 0) return;
+    /* La barra vertical tambien come ancho: sin ella el viewport se queda
+     * corto y aparece el scroll horizontal que se quiere evitar. */
+    /* +8 de holgura: el marco/handle del splitter y el redondeo del header
+     * dejaban el viewport 1-2 px corto y aparecia el scroll horizontal. */
+    need = total + view->verticalScrollBar()->sizeHint().width()
+           + 2 * view->frameWidth() + 8;
+    sz = split->sizes();
+    if (sz.size() < 2 || sz.at(0) >= need) return;
+    avail = sz.at(0) + sz.at(1);
+    if (need >= avail) return;  /* no cabe ni con todo el panel: scroll */
+    rest = avail - need;
+    split->setSizes(QList<int>() << need << rest);
+}
+
+/* Unico camino de cambio de estacion: m_selSta manda en los dos canvas. */
+void BpqMainWindow::selectStation(const QString &sta)
+{
+    if (sta.isEmpty()) return;
+    if (sta == m_selSta) {
+        syncStationViews();
+        return;
+    }
+    m_selSta = sta;
+    syncStationViews();
+    fetchTraces(currentSolution());
+}
+
+/* Pinta la estacion actual en ambas tablas sin disparar sus slots (bloqueo de
+ * senales): la seleccion programatica no debe provocar otro fetch. */
+void BpqMainWindow::syncStationViews()
+{
+    int si = -1, mi = -1;
+    bool staAlready = false, magAlready = false;
+
+    if (m_selSta.isEmpty()) return;
+    for (int i = 0; i < m_staRows.size(); i++) {
+        if (m_selSta == QString::fromUtf8(m_staRows.at(i).sta)) {
+            si = i;
+            break;
+        }
+    }
+    /* Si la fila elegida YA es de esta estacion, no se toca: el usuario puede
+     * haber elegido la S y no debe saltar a la P (las filas son autonomas). */
+    if (m_staView && m_staProxy && m_staView->currentIndex().isValid()) {
+        const int src = sourceRowForView(m_staProxy, m_staView->currentIndex());
+        const int ci = m_staModel ? m_staModel->staIndexAt(src) : -1;
+
+        if (ci >= 0 && ci < m_staRows.size() &&
+            m_selSta == QString::fromUtf8(m_staRows.at(ci).sta))
+            staAlready = true;
+    }
+    if (!staAlready && m_staView && m_staProxy && m_staView->selectionModel()) {
+        QSignalBlocker b(m_staView->selectionModel());
+
+        if (si >= 0) {
+            const int vr = viewRowForSource(m_staProxy, si * 2);
+
+            if (vr >= 0) {
+                m_staView->selectRow(vr);
+                m_staView->scrollTo(m_staView->model()->index(vr, 0));
+            }
+        } else {
+            m_staView->clearSelection();
+        }
+    }
+
+    for (int i = 0; i < m_magRows.size(); i++) {
+        if (m_selSta == QString::fromUtf8(m_magRows.at(i).sta)) {
+            mi = i;
+            break;
+        }
+    }
+    if (m_magView && m_magProxy && m_magView->currentIndex().isValid()) {
+        const int src = sourceRowForView(m_magProxy, m_magView->currentIndex());
+        const CsnhypodbpMagRow *cr = m_magModel ? m_magModel->row(src) : nullptr;
+
+        if (cr && m_selSta == QString::fromUtf8(cr->sta))
+            magAlready = true;
+    }
+    if (!magAlready && m_magView && m_magProxy && m_magView->selectionModel()) {
+        QSignalBlocker b(m_magView->selectionModel());
+
+        if (mi >= 0) {
+            const int vr = viewRowForSource(m_magProxy, mi);
+
+            if (vr >= 0) {
+                m_magView->selectRow(vr);
+                m_magView->scrollTo(m_magView->model()->index(vr, 0));
+            }
+        } else {
+            m_magView->clearSelection();
+        }
+    }
+}
+
 const CsnhypodbpSolution *BpqMainWindow::currentSolution() const
 {
     int pi = pinnedSolutionIndex();
@@ -991,7 +1184,9 @@ int BpqMainWindow::pinnedSolutionIndex() const
 
 void BpqMainWindow::onOriginDoubleClicked(const QModelIndex &idx)
 {
-    pinOrigin(idx.row(), true, true);
+    const int row = sourceRowForView(m_originsProxy, idx);
+
+    if (row >= 0) pinOrigin(row, true, true);
 }
 
 /* Fija la fila `row` de Origins. Es el UNICO camino que cambia el pin (doble
@@ -1028,8 +1223,10 @@ void BpqMainWindow::pinOrigin(int row, bool forceReload, bool switchTab)
     }
 
     {
+        const int vrow = viewRowForSource(m_originsProxy, row);
+
         QSignalBlocker b(m_originsView->selectionModel());
-        m_originsView->selectRow(row);
+        if (vrow >= 0) m_originsView->selectRow(vrow);
     }
     refreshStations(m_originsModel->currentEvent(), forceReload);
 }
@@ -2124,7 +2321,16 @@ void BpqMainWindow::renderMagnitudes()
                               m_magRows.size());
     }
     m_magRows.resize(n);
-    m_magModel->setRows(m_magRows);
+    /* Durante el arrastre de la franja no se resetea la tabla: el modelo
+     * cambiaria t0/t1 en cada movimiento y perderia la seleccion. Al soltar,
+     * m_magDragGrab vuelve a 0 y este mismo camino refresca las celdas. */
+    if (m_magDragGrab == 0 && m_magModel->setRows(m_magRows)) {
+        reapplySort(m_magProxy);
+        fitProcesarTable(m_magView, m_splitMag);
+        /* El reset del modelo pierde la fila seleccionada: se restaura por
+         * estacion (cambio de magnitud, puerta o solucion). */
+        syncStationViews();
+    }
 
     fillMagCtx();
     if (m_magBar) {
@@ -2135,6 +2341,7 @@ void BpqMainWindow::renderMagnitudes()
         else
             snprintf(st, sizeof(st), "magnitudes sin configuracion");
         m_magBar->setText(QString::fromUtf8(st));
+        m_magBar->setToolTip(QString::fromUtf8(st));
     }
     if (m_magGateLo && m_magGateHi && m_magPanel) {
         char lo[24] = "", hi[24] = "";
@@ -3018,6 +3225,75 @@ bool BpqMainWindow::runInputForTest()
     if (target == QByteArray("text")) QApplication::setActiveWindow(this);
     w->setFocus(Qt::OtherFocusReason);
 
+    /* Seleccion programatica de una estacion (misma que un clic): dispara el
+     * slot de la vista, no solo pinta la fila. `BPQ_INPUT_REFRESH=1` fuerza
+     * ademas el refresco de magnitudes para comprobar que no pierde la fila. */
+    {
+        const QByteArray sel = qgetenv("BPQ_INPUT_SELECT");
+
+        if (!sel.isEmpty()) {
+            int vr = -1;
+            QTableView *tv = nullptr;
+
+            if (target == QByteArray("sta")) {
+                for (int i = 0; i < m_staRows.size(); i++) {
+                    if (sel == m_staRows.at(i).sta) {
+                        vr = viewRowForSource(m_staProxy, i * 2);
+                        break;
+                    }
+                }
+                tv = m_staView;
+            } else if (target == QByteArray("mag")) {
+                for (int i = 0; i < m_magRows.size(); i++) {
+                    if (sel == m_magRows.at(i).sta) {
+                        vr = viewRowForSource(m_magProxy, i);
+                        break;
+                    }
+                }
+                tv = m_magView;
+            } else {
+                std::fprintf(stderr, "csnhypodbpQT: SELECT solo en sta|mag\n");
+                return false;
+            }
+            if (!tv || vr < 0) {
+                std::fprintf(stderr, "csnhypodbpQT: estacion <%s> no esta en la tabla\n",
+                             sel.constData());
+                return false;
+            }
+            {
+                const QModelIndex ix = tv->model()->index(vr, 0);
+
+                tv->setFocus(Qt::OtherFocusReason);
+                tv->setCurrentIndex(ix);
+                tv->selectionModel()->select(
+                    ix, QItemSelectionModel::ClearAndSelect |
+                            QItemSelectionModel::Rows);
+            }
+            if (qgetenv("BPQ_INPUT_REFRESH") == QByteArray("1"))
+                renderMagnitudes();
+            {
+                QString msel = QStringLiteral("-");
+
+                if (m_magView && m_magProxy &&
+                    m_magView->currentIndex().isValid()) {
+                    const int src = sourceRowForView(m_magProxy,
+                                                     m_magView->currentIndex());
+                    const CsnhypodbpMagRow *r = m_magModel ? m_magModel->row(src)
+                                                           : nullptr;
+
+                    if (r) msel = QString::fromUtf8(r->sta);
+                }
+                std::printf("input select=%s target=%s sel_sta=%s mag_sel=%s "
+                            "traces_sta=%s ntr=%d\n",
+                            sel.constData(), target.constData(),
+                            m_selSta.toUtf8().constData(), msel.toUtf8().constData(),
+                            m_selSta.toUtf8().constData(), m_magCtx.ntr);
+            }
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
     {
         const QByteArray wheel = qgetenv("BPQ_INPUT_WHEEL");
 
@@ -3087,6 +3363,76 @@ bool BpqMainWindow::runInputForTest()
         std::fflush(stdout);
         return true;
     }
+}
+
+/* Hook headless (BPQ_MODE=--sort): emite el `sectionClicked` REAL de la
+ * cabecera (pasa por la conexion de wire_header_sort) y vuelca el orden. */
+bool BpqMainWindow::runSortForTest()
+{
+    const QByteArray table = qgetenv("BPQ_SORT_TABLE").toLower();
+    const int col = qgetenv("BPQ_SORT_COL").toInt();
+    int clicks = qgetenv("BPQ_SORT_CLICKS").toInt();
+    QTableView *view = nullptr;
+    ewguiqt::SortProxy *proxy = nullptr;
+
+    if (table == QByteArray("events")) {
+        view = m_eventsView;
+        proxy = m_eventsProxy;
+    } else if (table == QByteArray("origins")) {
+        view = m_originsView;
+        proxy = m_originsProxy;
+    } else if (table == QByteArray("sta")) {
+        view = m_staView;
+        proxy = m_staProxy;
+    } else if (table == QByteArray("mag")) {
+        view = m_magView;
+        proxy = m_magProxy;
+    }
+    if (!view || !proxy || !view->model() || !view->horizontalHeader()) {
+        std::fprintf(stderr, "csnhypodbpQT: BPQ_SORT_TABLE desconocida\n");
+        return false;
+    }
+    if (col < 0 || col >= view->model()->columnCount()) {
+        std::fprintf(stderr, "csnhypodbpQT: columna %d fuera de rango\n", col);
+        return false;
+    }
+    if (clicks <= 0) clicks = 1;
+    for (int i = 0; i < clicks; i++) {
+        QMetaObject::invokeMethod(view->horizontalHeader(), "sectionClicked",
+                                  Qt::DirectConnection, Q_ARG(int, col));
+    }
+
+    QStringList rows;
+    const int n = qMin(3, view->model()->rowCount());
+    for (int r = 0; r < n; r++) {
+        const int src = sourceRowForView(proxy, view->model()->index(r, 0));
+
+        if (table == QByteArray("events")) {
+            rows << (m_eventsModel ? m_eventsModel->keyAt(src)
+                                   : QStringLiteral("-"));
+        } else if (table == QByteArray("origins")) {
+            rows << (m_originsModel ? m_originsModel->keyAt(src)
+                                    : QStringLiteral("-"));
+        } else if (table == QByteArray("sta")) {
+            const int i = m_staModel ? m_staModel->staIndexAt(src) : -1;
+
+            rows << (i >= 0 && i < m_staRows.size()
+                         ? QString::fromUtf8(m_staRows.at(i).sta)
+                               + QLatin1Char((src % 2) ? 'S' : 'P')
+                         : QStringLiteral("-"));
+        } else {
+            const CsnhypodbpMagRow *mr = m_magModel ? m_magModel->row(src)
+                                                    : nullptr;
+
+            rows << (mr ? QString::fromUtf8(mr->sta) : QStringLiteral("-"));
+        }
+    }
+    std::printf("sort table=%s col=%d clicks=%d last=%d order=%s rows=%s\n",
+                table.constData(), col, clicks, proxy->lastColumn(),
+                proxy->lastOrder() == Qt::DescendingOrder ? "desc" : "asc",
+                rows.join(QLatin1Char(',')).toUtf8().constData());
+    std::fflush(stdout);
+    return true;
 }
 
 void BpqMainWindow::searchEvents()
@@ -3267,11 +3613,23 @@ void BpqMainWindow::loadPinFixture()
     /* Estacion del catalogo (StaFile): el fixture tambien ejercita el canvas de
      * trazas con sus tres componentes HHZ/HHN/HHE. */
     fillTestSol(&s, 100, 162, 1, t0, -20.100, -70.100, 10.0, 12, 0.20, 0, "PB01");
-    bpq_events_feed_arc(m_events, &s);
+    /* Segunda estacion picada: ejercita la seleccion cruzada picking <-> mags. */
+    s.npicks = 2;
+    snprintf(s.picks[1].sta, sizeof(s.picks[1].sta), "%s", "PB02");
+    snprintf(s.picks[1].chan, sizeof(s.picks[1].chan), "%s", "HHZ");
+    snprintf(s.picks[1].net, sizeof(s.picks[1].net), "%s", "CX");
+    snprintf(s.picks[1].loc, sizeof(s.picks[1].loc), "%s", "--");
+    s.picks[1].phase = 'P';
+    s.picks[1].t_pick = t0 + 7.0;
+    s.picks[1].weight = 0.5;
+    s.picks[1].residual = NAN;
+    /* `created` explicito: el historial de la BD trae horas distintas y el
+     * detalle las muestra (antes todas caian en el time(NULL) de la carga). */
+    bpq_events_feed_arc_at(m_events, &s, t0 + 200.0);
     fillTestSol(&s, 100, 163, 2, t0 + 10.0, -20.900, -70.900, 33.0, 8, 0.50, 0, "PB01");
-    bpq_events_feed_arc(m_events, &s);
+    bpq_events_feed_arc_at(m_events, &s, t0 + 100.0);
     fillTestSol(&s, 200, 162, 1, t1, -30.000, -71.000, 20.0, 6, 0.40, 0, "PB01");
-    bpq_events_feed_arc(m_events, &s);
+    bpq_events_feed_arc_at(m_events, &s, t1 + 50.0);
 
     feedTestMag(m_events, 100, 162, "ML", 4.1, 8);
     feedTestMag(m_events, 100, 163, "ML", 3.2, 5);
@@ -3316,7 +3674,12 @@ bool BpqMainWindow::runClickForTest(const QString &key)
     if (!m_originsModel || !m_originsView) return false;
     const int row = m_originsModel->rowForKey(key);
     if (row < 0) return false;
-    m_originsView->selectRow(row);
+    {
+        const int vrow = viewRowForSource(m_originsProxy, row);
+
+        if (vrow < 0) return false;
+        m_originsView->selectRow(vrow);
+    }
     return true;
 }
 
@@ -3392,6 +3755,14 @@ void BpqMainWindow::buildUi()
     buildEventsTab();
     buildProcesarTab();
     m_splitH->addWidget(m_tabs);
+    /* Al cambiar de sub-pestana el viewport real cambia: se reajustan los
+     * anchos y el reparto para que no aparezca scroll horizontal. */
+    connect(m_subtabs, &QTabWidget::currentChanged, this, [this](int) {
+        QTimer::singleShot(0, this, [this]() {
+            fitProcesarTable(m_staView, m_splitPicking);
+            fitProcesarTable(m_magView, m_splitMag);
+        });
+    });
 
     buildMapsColumn();
     m_splitH->setStretchFactor(0, 1);
@@ -3435,15 +3806,33 @@ void BpqMainWindow::buildProcesarTab()
     /* --- sub-pestaña picking: tabla de estaciones + trazas + eje --- */
     {
         QWidget *pk = new QWidget;
-        QSplitter *sh = new QSplitter(Qt::Horizontal, pk);
-        sh->setObjectName("split_picking");
+        m_splitPicking = new QSplitter(Qt::Horizontal, pk);
+        m_splitPicking->setObjectName("split_picking");
 
         m_staView = make_table(kStaHeaders, 5, "sta-table");
         m_staModel = new BpqStationsModel(this);
-        m_staView->setModel(m_staModel);
+        m_staProxy = new ewguiqt::SortProxy(this);
+        m_staProxy->setSourceModel(m_staModel);
+        m_staProxy->setColumnKinds({ewguiqt::SortKind::Text,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Text,
+                                    ewguiqt::SortKind::Text,
+                                    ewguiqt::SortKind::Number}, 0);
+        m_staProxy->setCellNumberFn(
+            [](const QAbstractItemModel &m, int r, int c) {
+                const auto *sm = qobject_cast<const BpqStationsModel *>(&m);
+                return sm ? sm->sortValue(r, c) : std::nan("");
+            });
+        m_staProxy->setDynamicSortFilter(false);
+        m_staView->setModel(m_staProxy);
         m_staView->setFocusPolicy(Qt::NoFocus);
         m_staView->setEditTriggers(QAbstractItemView::NoEditTriggers);
-        sh->addWidget(m_staView);
+        /* El ancho exacto lo pone fit_columns; la tabla no debe fijar el
+         * minimo de la ventana (si el usuario la encoge, aparece scroll). */
+        m_staView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        /* -1: conserva el orden natural (distancia) hasta el primer clic. */
+        ewguiqt::wire_header_sort(m_staView, m_staProxy, -1);
+        m_splitPicking->addWidget(m_staView);
 
         QWidget *right = new QWidget;
         QVBoxLayout *v = new QVBoxLayout(right);
@@ -3470,14 +3859,14 @@ void BpqMainWindow::buildProcesarTab()
             if (m_waves) m_waves->requestRepaint();
             if (m_axis) m_axis->requestRepaint();
         });
-        sh->addWidget(right);
-        sh->setStretchFactor(0, 0);
-        sh->setStretchFactor(1, 1);
-        sh->setSizes(QList<int>() << 240 << 640);
+        m_splitPicking->addWidget(right);
+        m_splitPicking->setStretchFactor(0, 0);
+        m_splitPicking->setStretchFactor(1, 1);
+        m_splitPicking->setSizes(QList<int>() << 240 << 640);
 
         QVBoxLayout *lay = new QVBoxLayout(pk);
         lay->setContentsMargins(2, 2, 2, 2);
-        lay->addWidget(sh, 1);
+        lay->addWidget(m_splitPicking, 1);
         buildPickingBar(pk, lay);
 
         m_subtabs->addTab(pk, QStringLiteral("picking"));
@@ -3486,13 +3875,31 @@ void BpqMainWindow::buildProcesarTab()
     /* --- sub-pestaña magnitudes: tabla + traza procesada + eje --- */
     {
         QWidget *mg = new QWidget;
-        QSplitter *sh = new QSplitter(Qt::Horizontal, mg);
-        sh->setObjectName("split_mag");
+        m_splitMag = new QSplitter(Qt::Horizontal, mg);
+        m_splitMag->setObjectName("split_mag");
 
         m_magView = make_table(kMagHeaders, 8, "mag-table");
         m_magModel = new BpqMagModel(this);
-        m_magView->setModel(m_magModel);
-        sh->addWidget(m_magView);
+        m_magProxy = new ewguiqt::SortProxy(this);
+        m_magProxy->setSourceModel(m_magModel);
+        m_magProxy->setColumnKinds({ewguiqt::SortKind::Text,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Text,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Number,
+                                    ewguiqt::SortKind::Text}, 0);
+        m_magProxy->setCellNumberFn(
+            [](const QAbstractItemModel &m, int r, int c) {
+                const auto *mm = qobject_cast<const BpqMagModel *>(&m);
+                return mm ? mm->sortValue(r, c) : std::nan("");
+            });
+        m_magProxy->setDynamicSortFilter(false);
+        m_magView->setModel(m_magProxy);
+        m_magView->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        ewguiqt::wire_header_sort(m_magView, m_magProxy, -1);
+        m_splitMag->addWidget(m_magView);
 
         /* Pila `traza` | `Mww` (como el stack de la GTK): el panel Mww convive
          * con la traza procesada en el mismo tercio derecho. */
@@ -3510,6 +3917,10 @@ void BpqMainWindow::buildProcesarTab()
 
         QTabWidget *rstack = new QTabWidget;
         rstack->setObjectName("mag_stack");
+        /* El panel Mww es una pestana alternativa y no debe fijar el ancho
+         * minimo de la ventana: al mostrar magnitudes el reparto se ajusta a
+         * la tabla y el canvas se queda con el resto. */
+        rstack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
         rstack->addTab(tracePage, QStringLiteral("traza"));
         m_mwwPanel = new BpqMwwPanel(rstack);
         m_mwwPanel->setObjectName("mww_panel");
@@ -3518,8 +3929,10 @@ void BpqMainWindow::buildProcesarTab()
         connect(m_mwwPanel, &BpqMwwPanel::cancelRequested, this,
                 &BpqMainWindow::cancelMww);
         rstack->addTab(m_mwwPanel, QStringLiteral("Mww"));
-        sh->addWidget(rstack);
-        sh->setSizes(QList<int>() << 240 << 640);
+        m_splitMag->addWidget(rstack);
+        m_splitMag->setStretchFactor(0, 0);   /* tabla: ancho ajustado */
+        m_splitMag->setStretchFactor(1, 1);   /* traza/Mww: el resto */
+        m_splitMag->setSizes(QList<int>() << 240 << 640);
 
         /* La franja se arrastra desde su handle: pulsacion (agarre), dragged
          * (nueva ventana) y release (fin). El resto del canvas queda para el
@@ -3533,7 +3946,7 @@ void BpqMainWindow::buildProcesarTab()
 
         QVBoxLayout *lay = new QVBoxLayout(mg);
         lay->setContentsMargins(2, 2, 2, 2);
-        lay->addWidget(sh, 1);
+        lay->addWidget(m_splitMag, 1);
 
         /* Barra: magnitud activa + puerta de distancia + acciones. */
         QWidget *bar = new QWidget(mg);
@@ -3596,7 +4009,10 @@ void BpqMainWindow::buildProcesarTab()
         }
         m_magBar = new QLabel(bar);
         m_magBar->setObjectName("mag_bar");
-        m_magBar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+        /* El texto de estado es largo: no debe fijar el ancho minimo de la
+         * ventana (Ignored) ni dejar sin sitio a la tabla. Ocupa el sobrante. */
+        m_magBar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+        m_magBar->setMinimumWidth(0);
         bl->addWidget(m_magBar, 1);
         lay->addWidget(bar, 0);
 
@@ -3783,6 +4199,30 @@ QString BpqMainWindow::dumpTree() const
     }
     out += QStringLiteral("data origins=%1\n")
                .arg(m_originsModel ? m_originsModel->rowCount() : 0);
+    if (m_originsModel && m_originsModel->rowCount() > 0) {
+        QStringList created, keys;
+        const int n = qMin(3, m_originsModel->rowCount());
+
+        for (int r = 0; r < n; r++) {
+            created << m_originsModel->data(m_originsModel->index(r, 3),
+                                            Qt::DisplayRole).toString();
+            keys << m_originsModel->keyAt(r);
+        }
+        out += QStringLiteral("origins created=%1 keys=%2\n")
+                   .arg(created.join(QLatin1Char(',')))
+                   .arg(keys.join(QLatin1Char(',')));
+    }
+    {
+        QString sel = QStringLiteral("-");
+
+        if (m_originsView && m_originsProxy && m_originsView->currentIndex().isValid()) {
+            const int src = sourceRowForView(m_originsProxy,
+                                             m_originsView->currentIndex());
+
+            if (src >= 0) sel = m_originsModel->keyAt(src);
+        }
+        out += QStringLiteral("origins sel=%1\n").arg(sel);
+    }
     /* Estado de la columna derecha: deja verificar el encuadre, el perfil
      * elegido y que el mapa base se decodifico (bg=0x0 = lienzo virtual). */
     out += QStringLiteral("panels pts=%1 pref=%2 sel=%3 prof=%4 zoom=%5 layers=%6 bg=%7x%8\n")
@@ -3793,9 +4233,10 @@ QString BpqMainWindow::dumpTree() const
                .arg(m_mapImage.isNull() ? 0 : m_mapImage.width())
                .arg(m_mapImage.isNull() ? 0 : m_mapImage.height());
 
-    out += QStringLiteral("stations rows=%1 picked=%2\n")
+    out += QStringLiteral("stations rows=%1 picked=%2 sel=%3\n")
                .arg(m_staModel ? m_staModel->rowCount() : 0)
-               .arg(m_staModel ? m_staModel->pickedCount() : 0);
+               .arg(m_staModel ? m_staModel->pickedCount() : 0)
+               .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta);
     out += QStringLiteral("filter idx=%1 zero=%2 stalta=%3\n")
                .arg(m_filterIdx)
                .arg(m_phaseZero ? 1 : 0)
@@ -3846,13 +4287,14 @@ QString BpqMainWindow::dumpTree() const
                                        int(m_waves->height() * d), &nvis);
         }
         out += QStringLiteral("traces rows=%1 with=%2 first=%3 nvis=%4 "
-                              "scroll=%5 per=%6 win=[%7,+%8] sol=%9\n")
+                              "scroll=%5 per=%6 sta=%7 win=[%8,+%9] sol=%10\n")
                    .arg(m_traceRows.size())
                    .arg(with)
                    .arg(first)
                    .arg(nvis)
                    .arg(m_tracesCtx.scroll_row)
                    .arg(m_tracesCtx.per_screen)
+                   .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta)
                    .arg(m_winT0, 0, 'f', 2)
                    .arg(m_winLen, 0, 'f', 0)
                    .arg(cs ? solKey(cs) : QStringLiteral("-"));
@@ -3871,9 +4313,17 @@ QString BpqMainWindow::dumpTree() const
 
         for (const CsnhypodbpMagRow &r : m_magRows)
             if (r.used) in_use++;
+        QString msel = QStringLiteral("-");
+
+        if (m_magView && m_magProxy && m_magView->currentIndex().isValid()) {
+            const int src = sourceRowForView(m_magProxy, m_magView->currentIndex());
+            const CsnhypodbpMagRow *sr = m_magModel ? m_magModel->row(src) : nullptr;
+
+            if (sr) msel = QString::fromUtf8(sr->sta);
+        }
         out += QStringLiteral("mag kind=%1 rows=%2 in_use=%3 touched=%4 "
-                              "ntr=%5 anchor=%6 magcfg=%7 "
-                              "first=[%8 t0=%9 t1=%10]")
+                              "ntr=%5 anchor=%6 magcfg=%7 sta=%8 sel=%9 "
+                              "first=[%10 t0=%11 t1=%12]")
                    .arg(m_magKind)
                    .arg(m_magRows.size())
                    .arg(in_use)
@@ -3881,10 +4331,39 @@ QString BpqMainWindow::dumpTree() const
                    .arg(m_magCtx.ntr)
                    .arg(m_magCtx.anchor, 0, 'f', 1)
                    .arg(m_magCtx.magcfg ? 1 : 0)
+                   .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta)
+                   .arg(msel)
                    .arg(first ? QString::fromUtf8(first->sta) : QStringLiteral("-"))
                    .arg(first ? first->t0 : 0.0, 0, 'f', 0)
                    .arg(first ? first->t1 : 0.0, 0, 'f', 0)
                + QLatin1Char('\n');
+    }
+
+    /* Anchos: el criterio de "tabla ajustada" es que no haya scroll horizontal
+     * con el ancho por defecto de la ventana. */
+    {
+        static const struct {
+            const char *name;
+            const QTableView *view;
+        } tables[] = {
+            { "sta", m_staView },
+            { "mag", m_magView },
+        };
+
+        for (const auto &t : tables) {
+            int total = 0;
+            const QHeaderView *hh = t.view ? t.view->horizontalHeader() : nullptr;
+
+            if (!t.view || !hh) continue;
+            for (int c = 0; c < (t.view->model() ? t.view->model()->columnCount() : 0); c++)
+                total += hh->sectionSize(c);
+            out += QStringLiteral("table %1 cols=%2 total=%3 viewport=%4 hscroll=%5\n")
+                       .arg(QString::fromLatin1(t.name))
+                       .arg(t.view->model() ? t.view->model()->columnCount() : 0)
+                       .arg(total)
+                       .arg(t.view->viewport()->width())
+                       .arg(t.view->horizontalScrollBar()->isVisible() ? 1 : 0);
+        }
     }
 
     /* Diagnostico de la capa de ondas (fase 3):
@@ -3903,9 +4382,11 @@ QString BpqMainWindow::dumpTree() const
 QString BpqMainWindow::dumpLayout() const
 {
     QString out;
-    const QSplitter *spl[3] = { m_splitH, m_splitV, m_splitEvents };
-    const char *names[3] = { "split_main", "split_maps", "split_events" };
-    for (int i = 0; i < 3; i++) {
+    const QSplitter *spl[5] = { m_splitH, m_splitV, m_splitEvents,
+                                m_splitPicking, m_splitMag };
+    const char *names[5] = { "split_main", "split_maps", "split_events",
+                             "split_picking", "split_mag" };
+    for (int i = 0; i < 5; i++) {
         if (!spl[i]) continue;
         const QList<int> sz = spl[i]->sizes();
         QStringList parts;

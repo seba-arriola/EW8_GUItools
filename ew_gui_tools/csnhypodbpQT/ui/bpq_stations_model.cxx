@@ -54,6 +54,23 @@ int BpqStationsModel::staIndexAt(int row) const
     return (i >= 0 && i < m_rows.size()) ? i : -1;
 }
 
+double BpqStationsModel::sortValue(int row, int col) const
+{
+    const int i = row / 2;
+    const int phase = row % 2;
+    const QString txt = data(index(row, col), Qt::DisplayRole).toString();
+
+    if (i < 0 || i >= m_rows.size()) return std::nan("");
+    if (txt.isEmpty() || txt == QStringLiteral("-")) return std::nan("");
+    if (col == ColDist) return m_rows.at(i).dist_km;
+    if (col == ColRes) {
+        const CsnhypodbpStaPick &pk = (phase == 0) ? m_rows.at(i).p
+                                                   : m_rows.at(i).s;
+        return (pk.present && std::isfinite(pk.resid)) ? pk.resid : std::nan("");
+    }
+    return std::nan("");
+}
+
 int BpqStationsModel::pickedCount() const
 {
     int n = 0;

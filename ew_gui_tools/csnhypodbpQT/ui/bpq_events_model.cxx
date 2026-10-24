@@ -235,6 +235,19 @@ int BpqOriginsModel::rowForSolution(int sol) const
     return -1;
 }
 
+/* Columnas numericas del detalle. El texto visible manda para decidir si hay
+ * dato ("-" = ausente), y las magnitudes usan el valor crudo del ARC. */
+double BpqOriginsModel::sortValue(int row, int col) const
+{
+    const int j = solIndexAt(row);
+    const QString txt = data(index(row, col), Qt::DisplayRole).toString();
+
+    if (!m_ev || j < 0) return std::nan("");
+    if (txt.isEmpty() || txt == QStringLiteral("-")) return std::nan("");
+    if (col == 2) return std::nan("");          /* Est.: texto */
+    return bpq_origin_sort_num(m_ev, j, col);
+}
+
 QVariant BpqOriginsModel::data(const QModelIndex &idx, int role) const
 {
     char buf[64];

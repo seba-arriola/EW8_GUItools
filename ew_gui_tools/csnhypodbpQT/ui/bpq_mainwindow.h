@@ -37,6 +37,7 @@ class QLineEdit;
 class QRadioButton;
 class QScrollBar;
 class QKeyEvent;
+class QSortFilterProxyModel;
 class BpqMagModel;
 class BpqMwwPanel;
 class BpqMwwWorker;
@@ -48,6 +49,8 @@ class BpqCanvasWidget;
 class BpqEventsModel;
 class BpqSortProxy;
 class BpqOriginsModel;
+
+namespace ewguiqt { class SortProxy; }
 class BpqRingWorker;
 
 class BpqMainWindow : public QMainWindow
@@ -89,6 +92,16 @@ private:
     void pinOrigin(int row, bool forceReload, bool switchTab = true);
     int  pinnedSolutionIndex() const;        /* punto de m_pts[] del pin (-1) */
     int  solutionIndexForKey(const BpqEvent *ev, const QString &key) const;
+    /* Puente fila-vista <-> fila-fuente cuando la tabla tiene SortProxy. */
+    int  viewRowForSource(const QSortFilterProxyModel *p, int srcRow) const;
+    int  sourceRowForView(const QSortFilterProxyModel *p, const QModelIndex &idx) const;
+    void reapplySort(ewguiqt::SortProxy *p); /* tras un reset, conserva el orden */
+    /* Ajusta las columnas y ensancha el panel de la tabla lo justo para que no
+     * haga falta scroll horizontal. */
+    void fitProcesarTable(QTableView *view, QSplitter *split);
+    /* Estacion actual unica para picking y magnitudes. */
+    void selectStation(const QString &sta);
+    void syncStationViews();
     void loadPinFixture();                   /* BPQ_TEST_FIXTURE=pins */
     void feedConfirmedAfter();               /* BPQ_TEST_FEED_AFTER=1 */
     void updateTracesContext();              /* punteros de los canvas de trazas */
@@ -148,6 +161,7 @@ public:
     bool runMwwForTest();                    /* hook headless BPQ_MODE=--mww */
     bool runMouseForTest();                  /* hook headless BPQ_MODE=--mouse */
     bool runInputForTest();                  /* hook headless BPQ_MODE=--input */
+    bool runSortForTest();                   /* hook headless BPQ_MODE=--sort */
     /* Hooks de la fase 7 (BPQ_TEST_FIXTURE/PIN/CLICK/...); sin efecto en
      * produccion salvo que las variables de entorno esten puestas. */
     void runTestHooks();
@@ -165,6 +179,9 @@ private:
     BpqSortProxy    *m_eventsProxy = nullptr;
     BpqOriginsModel *m_originsModel = nullptr;
     BpqStationsModel *m_staModel = nullptr;
+    ewguiqt::SortProxy *m_originsProxy = nullptr;
+    ewguiqt::SortProxy *m_staProxy = nullptr;
+    ewguiqt::SortProxy *m_magProxy = nullptr;
     QString          m_selKey;
     QString          m_selEventKey;   /* identidad estable del evento mostrado */
     /* Origen fijado (fase 7): solo cambia fijando otro; manda en Procesar. */
@@ -262,6 +279,8 @@ private:
     QSplitter       *m_splitH = nullptr;    /* izquierda | columna de mapas */
     QSplitter       *m_splitV = nullptr;    /* planta | perfil */
     QSplitter       *m_splitEvents = nullptr;
+    QSplitter       *m_splitPicking = nullptr;  /* tabla estaciones | trazas */
+    QSplitter       *m_splitMag = nullptr;      /* tabla magnitudes | traza */
     QTableView      *m_eventsView = nullptr;
     QTableView      *m_originsView = nullptr;
     QTableView      *m_staView = nullptr;

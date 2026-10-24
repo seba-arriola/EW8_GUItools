@@ -87,6 +87,8 @@ public:
     /* Indice de la solucion en el store para una fila de la vista (el modelo
      * ordena por Created DESC, asi que fila != indice). -1 si no vale. */
     int     solIndexAt(int row) const;
+    /* Valor numerico para el proxy de ordenacion (NaN = texto/ausente). */
+    double  sortValue(int row, int col) const;
 
 private:
     const BpqEvent *m_ev = nullptr;

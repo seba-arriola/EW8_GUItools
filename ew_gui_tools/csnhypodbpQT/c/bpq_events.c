@@ -177,7 +177,8 @@ void bpq_events_clear(BpqEvents *e)
     e->ngroups = 0;
 }
 
-int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol)
+static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
+                         double created)
 {
     int idx[BPQ_MAX_GROUPS];
     int nmatch, gi, j, found = -1;
@@ -217,10 +218,13 @@ int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol)
         g->sols[found] = *sol;
         memset(&g->meta[found], 0, sizeof(g->meta[found]));
         memset(g->mag[found], 0, sizeof(g->mag[found]));
-        /* "created" ordena el detalle por defecto (Created DESC). */
-        g->meta[found].created = (double)time(NULL);
+        /* "created" ordena el detalle por defecto (Created DESC). La BD manda
+         * su origin.creation_time; el camino vivo sella la recepcion. */
+        g->meta[found].created = (created > 0.0) ? created : (double)time(NULL);
     } else {
         e->groups[gi].sols[found] = *sol;
+        /* Un re-feed del anillo no puede pisar la hora de creacion de la BD. */
+        if (created > 0.0) e->groups[gi].meta[found].created = created;
     }
 
     /* 3) Metadatos de la preferida (mismos campos que usa el nucleo). */
@@ -247,6 +251,17 @@ int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol)
         }
     }
     return 0;
+}
+
+int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol)
+{
+    return feed_arc_impl(e, sol, 0.0);
+}
+
+int bpq_events_feed_arc_at(BpqEvents *e, const CsnhypodbpSolution *sol,
+                           double created)
+{
+    return feed_arc_impl(e, sol, created);
 }
 
 int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m)

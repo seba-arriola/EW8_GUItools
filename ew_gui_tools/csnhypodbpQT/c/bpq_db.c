@@ -205,8 +205,12 @@ static int load_event_ids(BpqDb *d, const char *const *ids, int nids,
             CsnhypodbpSolution sol;
             EwGuiMagRow *mg = NULL;
             int nm = 0, k;
+            double created;
 
             sol_from_origin(d, ids[i], &ors[j], &sol);
+            /* La hora de creacion vive en `origin`, no en el ARC: sin esto la
+             * GUI sellaba time(NULL) y todas las filas de una carga coincidian. */
+            created = iso_epoch(ors[j].creation_time);
 
             /* Magnitudes del origen (una fila por tipo). Se publican al store por
              * el mismo camino que las del anillo, para que la maestra y el
@@ -216,7 +220,9 @@ static int load_event_ids(BpqDb *d, const char *const *ids, int nids,
                 nm = 0;
             if (nm > 0) sol.pref_mag = mg[0].magnitude_type[0];
 
-            if (sol.otime > 0.0 && bpq_events_feed_arc(store, &sol) == 0) {
+            if (sol.otime > 0.0 &&
+                (created > 0.0 ? bpq_events_feed_arc_at(store, &sol, created)
+                               : bpq_events_feed_arc(store, &sol)) == 0) {
                 added++;
                 for (k = 0; k < nm; k++) {
                     BpqMagMsg m;

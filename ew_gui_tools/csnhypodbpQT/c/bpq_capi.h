@@ -822,6 +822,12 @@ void       bpq_events_free(BpqEvents *e);
  * (csnhypodbp_group_matches), deduplica por (qid,mod,version) y aplica las
  * magnitudes que hubieran llegado antes. 0 OK, -1 argumentos, -2 sin capacidad. */
 int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol);
+/* Igual que feed_arc, pero con la hora de creacion de la fila de `origin`
+ * (epoch UTC). `created <= 0` = sellar con time(NULL) como el camino vivo; al
+ * re-alimentar una solucion existente con 0 se CONSERVA su `created` (el anillo
+ * repite mensajes y no debe pisar la hora de la BD). */
+int bpq_events_feed_arc_at(BpqEvents *e, const CsnhypodbpSolution *sol,
+                           double created);
 /* Olvida todos los grupos (busqueda: el resultado reemplaza la vista). */
 void bpq_events_clear(BpqEvents *e);
 
