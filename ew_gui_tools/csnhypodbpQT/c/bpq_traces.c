@@ -3,9 +3,11 @@
  *
  * Una banda horizontal por estacion, con la traza dibujada como envolvente
  * min/max por columna de pixel (rapido aunque la traza tenga 30 k muestras y el
- * panel 400 px), la etiqueta de la estacion a la izquierda y las marcas de P y S
- * en su instante, coloreadas por origen con csnhypodbp_color_resolve (manual /
- * automatica / teorica, con la derivacion del manual que ya trae ese nucleo).
+ * panel 400 px) y como polilinea muestra a muestra en el zoom alto, donde la
+ * envolvente degenera en escalones (mismo criterio que la GUI GTK). La etiqueta
+ * de la estacion va a la izquierda y las marcas de P y S en su instante,
+ * coloreadas por origen con csnhypodbp_color_resolve (manual / automatica /
+ * teorica, con la derivacion del manual que ya trae ese nucleo).
  *
  * El eje de tiempos va en su propio canvas (BPQ_SCENE_TRACE_AXIS), igual que en
  * la GUI GTK, y comparte `t0`/`window` con el de trazas.
@@ -100,52 +102,105 @@ static void hhmmss(double epoch, char *out, size_t n)
 /* Muestra ausente (el store rellena con INT_MAX). */
 static int is_gap(int32_t v) { return v >= INT32_MAX - 1; }
 
-/* Envolvente min/max de una traza sobre la ventana del contexto. Lee el buffer
- * FILTRADO si la vista lo pide; el crudo queda intacto para `locate`. */
+/* Traza sobre la ventana del contexto. Lee el buffer FILTRADO si la vista lo
+ * pide; el crudo queda intacto para `locate`.
+ *
+ * Dos regimenes, con el mismo criterio que la GUI GTK
+ * (csnhypodbp_gui.c:4198-4247):
+ *   - spp < 2 (zoom alto): polilinea muestra a muestra. La envolvente degenera
+ *     en segmentos de 1 px por columna (escalones) y la onda no se puede leer.
+ *   - spp >= 2: banda rellena con el min/max de cada columna, con grosor minimo
+ *     para que una zona plana siga dejando trazo.
+ * La escala vertical es la de la VENTANA VISIBLE (no la de toda la traza): al
+ * hacer zoom el detalle visible llena la fila en vez de quedar aplastado por un
+ * maximo que esta fuera del encuadre. */
 static void draw_trace(cairo_t *cr, const BpqTracesCtx *c, const BpqTrace *t,
                        double x0, double yc, double pw, double half)
 {
     const int32_t *s = NULL;
-    double amp = 0.0, sc, t_trace, rate;
-    long n = 0, i;
-    int x;
+    const double dpr = (c->dpr > 0.0) ? c->dpr : 1.0;
+    double t_trace, rate, max_abs = 0.0, sc, gain, row_h, min_half;
+    long n = 0, k0, k1, k;
+    int ncol, x;
 
     t_trace = bpq_trace_t0(t);
     rate = bpq_trace_rate(t);
-    if (!(rate > 0.0)) return;
+    if (!(rate > 0.0) || !(c->window > 0.0)) return;
 
     if (c->use_filtered) s = bpq_trace_filtered(t, &n);
     else (void)bpq_trace_data(t, &s, &n, NULL, NULL);
     if (!s || n <= 0) return;
 
-    for (i = 0; i < n; i++) {
-        if (is_gap(s[i])) continue;
-        {
-            const double v = fabs((double)s[i]);
-            if (v > amp) amp = v;
-        }
-    }
-    if (!(amp > 0.0)) amp = 1.0;
-    {
-        /* Shift+Up/Down de la GTK: exageracion vertical de la vista. Con gain > 1
-         * la traza se recorta contra la banda (el clip lo pone el llamador). */
-        double gain = (c && c->y_gain > 0.0) ? c->y_gain : 1.0;
+    /* Rango visible (una muestra de holgura para que la polilinea entre y salga
+     * del marco) y maximo |muestra| SOLO de ese rango. */
+    k0 = (long)floor((c->t0 - t_trace) * rate) - 1;
+    k1 = (long)ceil((c->t0 + c->window - t_trace) * rate) + 1;
+    if (k1 < 0 || k0 >= n) return;
+    if (k0 < 0) k0 = 0;
+    if (k1 > n) k1 = n;
+    if (k1 <= k0) return;
 
-        if (gain < 0.1) gain = 0.1;
-        if (gain > 50.0) gain = 50.0;
-        sc = half * gain / amp;
+    for (k = k0; k < k1; k++) {
+        const double v = fabs((double)s[k]);
+
+        if (is_gap(s[k])) continue;
+        if (v > max_abs) max_abs = v;
     }
+    if (!(max_abs > 0.0)) return;   /* traza plana: el GTK tampoco pinta */
+
+    /* Shift+Up/Down de la GTK: exageracion vertical de la vista. Con gain > 1
+     * la traza se recorta contra la banda (el clip lo pone el llamador). */
+    gain = (c->y_gain > 0.0) ? c->y_gain : 1.0;
+    if (gain < 0.1) gain = 0.1;
+    if (gain > 50.0) gain = 50.0;
+    /* GTK: scale = row_h * 0.45 / max_abs * g_zoom_factor. `half` excluye
+     * 3*dpr por lado del clip, asi que la fila completa es 2*half + 6*dpr. */
+    row_h = 2.0 * half + 6.0 * dpr;
+    sc = 0.45 * row_h * gain / max_abs;
+
+    ncol = (int)pw;
+    if (ncol < 1) ncol = 1;
 
     cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
-    cairo_set_line_width(cr, 1.0);
+    cairo_set_line_width(cr, 0.8 * dpr);
+    cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+    cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
 
-    for (x = 0; x < (int)pw; x++) {
-        const double ta = c->t0 + (x / pw) * c->window;
-        const double tb = c->t0 + ((x + 1.0) / pw) * c->window;
+    if (csnhypodbp_view_use_polyline(c->window, ncol, rate)) {
+        /* Zoom alto: un pixel cubre menos de 2 muestras y la envolvente deja
+         * rectas de altura 0 (traza "a guiones"/escalones). Se une muestra a
+         * muestra y se corta en los gaps, sin unir a traves del hueco. */
+        int pen = 0;
+
+        for (k = k0; k < k1; k++) {
+            double x, y;
+
+            if (is_gap(s[k])) {
+                pen = 0;
+                continue;
+            }
+            x = x0 + csnhypodbp_view_sample_x(t_trace + (double)k / rate,
+                                              c->t0, c->window, ncol);
+            y = yc - (double)s[k] * sc;
+            if (pen) cairo_line_to(cr, x, y);
+            else cairo_move_to(cr, x, y);
+            pen = 1;
+        }
+        cairo_stroke(cr);
+        return;
+    }
+
+    /* Envolvente: banda rellena por columnas con datos. Las columnas de un gap
+     * no entran al path, asi que la banda se corta ahi; `min_half` (0.8 px
+     * logicos) mantiene visible una zona plana (min == max). */
+    min_half = csnhypodbp_view_min_half(sc, 0.8 * dpr);
+    cairo_new_path(cr);
+    for (x = 0; x < ncol; x++) {
+        const double ta = c->t0 + ((double)x / ncol) * c->window;
+        const double tb = c->t0 + ((double)(x + 1) / ncol) * c->window;
         long ka = (long)floor((ta - t_trace) * rate);
         long kb = (long)ceil((tb - t_trace) * rate);
-        long k;
-        double vmin = 0.0, vmax = 0.0;
+        double vmin = 0.0, vmax = 0.0, ytop, ybot;
         int any = 0;
 
         if (kb < 0 || ka >= n) continue;
@@ -155,6 +210,7 @@ static void draw_trace(cairo_t *cr, const BpqTracesCtx *c, const BpqTrace *t,
 
         for (k = ka; k <= kb; k++) {
             const double v = (double)s[k];
+
             if (is_gap(s[k])) continue;
             if (!any) {
                 vmin = vmax = v;
@@ -165,14 +221,12 @@ static void draw_trace(cairo_t *cr, const BpqTracesCtx *c, const BpqTrace *t,
             }
         }
         if (!any) continue;
-        {
-            const double y1 = yc - vmax * sc;   /* positivo arriba */
-            const double y2 = yc - vmin * sc;
-            cairo_move_to(cr, x0 + x + 0.5, y1);
-            cairo_line_to(cr, x0 + x + 0.5, (y2 - y1 < 1.0) ? y1 + 1.0 : y2);
-        }
+        ytop = yc - (vmax + min_half) * sc;   /* positivo arriba */
+        ybot = yc - (vmin - min_half) * sc;
+        if (ybot <= ytop) continue;
+        cairo_rectangle(cr, x0 + x, ytop, 1.0, ybot - ytop);
     }
-    cairo_stroke(cr);
+    cairo_fill(cr);
 }
 
 /* Curva CF del STA/LTA normalizada a la banda de la fila + disparo estimado. */

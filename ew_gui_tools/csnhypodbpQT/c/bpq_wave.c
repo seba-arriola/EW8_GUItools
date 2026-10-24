@@ -366,6 +366,23 @@ BpqStaLta *bpq_stalta_new(const BpqTrace *t, double sta_s, double lta_s,
     if (!bpq_trace_data(t, &x, &n, &t0, &fs) || !x || n <= 0) return NULL;
     if (!(fs > 0.0) || !(sta_s > 0.0) || !(lta_s >= sta_s)) return NULL;
 
+    /* CF sobre la traza DIBUJADA (filtrada, fase cero), como el GTK
+     * (csnhypodbp_gui.c:3913-3960): si se calcula sobre el crudo, un drift de
+     * baja frecuencia domina la LTA y el disparo se va respecto al modulo GTK.
+     * El buffer filtrado nace en INT_MAX; se usa el crudo solo si la vista no
+     * llego a filtrar (p.ej. un test que llame aqui sin `bpq_trace_filter`). */
+    {
+        const int32_t *xf = bpq_trace_filtered(t, NULL);
+        long k;
+
+        if (xf)
+            for (k = 0; k < n; k++)
+                if (xf[k] < INT32_MAX - 1) {
+                    x = xf;
+                    break;
+                }
+    }
+
     s = (BpqStaLta *)calloc(1, sizeof(*s));
     if (!s) return NULL;
     s->cf = (double *)calloc((size_t)n, sizeof(double));

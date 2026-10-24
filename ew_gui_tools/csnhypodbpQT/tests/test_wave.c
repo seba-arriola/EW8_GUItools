@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include "bpq_capi.h"
+#include "ewgui/stalta.h"
 #include "trace_buf.h"
 
 static int g_fail = 0;
@@ -278,6 +279,97 @@ int main(void)
             CK(bpq_trace_tank(NULL, "PB01", "C", "HHZ", "--", &tk) == 0);
             CK(bpq_trace_tank(t, "PB01", "C", "HHZ", "--", NULL) == 0);
             bpq_trace_free(t);
+            free(s);
+        }
+    }
+
+    /* --- 10. fase cero: el filtro de vista no desplaza el impulso -------- */
+    {
+        const long N = 8000;
+        int32_t *s = (int32_t *)calloc((size_t)N, sizeof(int32_t));
+        BpqTrace *tf;
+        const int32_t *f = NULL;
+        long nf = 0, k, ip;
+        double pre = 0.0;
+
+        CK(s != NULL);
+        if (s) {
+            s[4000] = 10000;
+            tf = bpq_trace_new(1000.0, 100.0, s, N);
+            CK(tf != NULL);
+
+            /* zero: fase neta cero (forward+backward). El pico y la simetria
+             * no se mueven; es la condicion que traia el modulo GTK. */
+            CK(bpq_trace_filter(tf, 1, 1.0, 0.0, 2, 1) == 0);
+            f = bpq_trace_filtered(tf, &nf);
+            CK(f != NULL && nf == N);
+            if (f) {
+                ip = 0;
+                for (k = 0; k < nf; k++)
+                    if (labs((long)f[k]) > labs((long)f[ip])) ip = k;
+                CK(labs(ip - 4000) <= 1);       /* el pico no se mueve */
+                for (k = 3980; k < 4000; k++) pre += fabs((double)f[k]);
+                CK(pre > 0.0);                  /* pre-ringing simetrico */
+            }
+
+            /* causal: salida nula antes del impulso; confirma que el criterio
+             * de arriba distingue de verdad una fase cero. */
+            CK(bpq_trace_filter(tf, 1, 1.0, 0.0, 2, 0) == 0);
+            f = bpq_trace_filtered(tf, &nf);
+            if (f) {
+                pre = 0.0;
+                for (k = 3980; k < 4000; k++) pre += fabs((double)f[k]);
+                CK(pre < 1e-9);
+            }
+            bpq_trace_free(tf);
+            free(s);
+        }
+    }
+
+    /* --- 11. STA/LTA sobre la traza DIBUJADA (filtrada), como el GTK ---- */
+    {
+        const long N = 3000;
+        int32_t *s = (int32_t *)calloc((size_t)N, sizeof(int32_t));
+        BpqTrace *tf, *tu;
+        BpqStaLta *sf, *su;
+        const double *cf_f = NULL, *cf_u = NULL;
+        long nf = 0, nu = 0, k;
+        double dmax = 0.0;
+
+        CK(s != NULL);
+        if (s) {
+            /* drift de 1 Hz (amplitud 1000) + burst de 20 Hz en 1015..1016 s */
+            for (k = 0; k < N; k++) {
+                double v = 1000.0 * sin(2.0 * M_PI * 1.0 * (k / 100.0));
+
+                if (k >= 1500 && k < 1600)
+                    v += 300.0 * sin(2.0 * M_PI * 20.0 * (k / 100.0));
+                s[k] = (int32_t)v;
+            }
+            tf = bpq_trace_new(1000.0, 100.0, s, N);
+            tu = bpq_trace_new(1000.0, 100.0, s, N);    /* sin filtrar */
+            CK(tf != NULL && tu != NULL);
+
+            /* HP 5 Hz, fase cero: el drift de 1 Hz desaparece y manda el burst */
+            CK(bpq_trace_filter(tf, 1, 5.0, 0.0, 2, 1) == 0);
+            sf = bpq_stalta_new(tf, 0.5, 5.0, 3.0, 1.5, 0.0);
+            su = bpq_stalta_new(tu, 0.5, 5.0, 3.0, 1.5, 0.0);
+            CK(sf != NULL && su != NULL);
+            cf_f = bpq_stalta_cf(sf, &nf);
+            cf_u = bpq_stalta_cf(su, &nu);
+            CK(cf_f != NULL && cf_u != NULL && nf == N && nu == N);
+            if (cf_f && cf_u && nf == nu) {
+                for (k = 0; k < nf; k++) {
+                    const double d = fabs(cf_f[k] - cf_u[k]);
+
+                    if (d > dmax) dmax = d;
+                }
+                CK(dmax > 0.01);    /* la CF no es la del crudo */
+            }
+            bpq_stalta_free(sf);
+            bpq_stalta_free(su);
+            bpq_trace_free(tf);
+            bpq_trace_free(tu);
             free(s);
         }
     }

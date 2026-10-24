@@ -8,6 +8,7 @@
  *   - el eje de tiempos, y los bordes (sin filas, sin trazas, argumentos nulos).
  */
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -64,6 +65,48 @@ static int count_px(const Frame *f, int what)
         }
     }
     return n;
+}
+
+/* Pixeles NEGROS (traza) dentro de un rectangulo inclusivo. Se excluye el
+ * margen de etiquetas y el separador de fila (alpha 0.12 no llega a negro). */
+static int count_black_rect(const Frame *f, int x0, int x1, int y0, int y1)
+{
+    int x, y, n = 0;
+
+    if (x0 < 0) x0 = 0;
+    if (x1 >= W) x1 = W - 1;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= H) y1 = H - 1;
+    for (y = y0; y <= y1; y++)
+        for (x = x0; x <= x1; x++) {
+            const unsigned char *p = f->buf + (size_t)y * f->stride + (size_t)x * 4;
+
+            if (p[2] < 70 && p[1] < 70 && p[0] < 70) n++;
+        }
+    return n;
+}
+
+/* Alto (en filas) que ocupa la tinta negra dentro del rectangulo. */
+static int black_extent(const Frame *f, int x0, int x1, int y0, int y1)
+{
+    int x, y, first = -1, last = -1;
+
+    if (x0 < 0) x0 = 0;
+    if (x1 >= W) x1 = W - 1;
+    if (y0 < 0) y0 = 0;
+    if (y1 >= H) y1 = H - 1;
+    for (y = y0; y <= y1; y++) {
+        for (x = x0; x <= x1; x++) {
+            const unsigned char *p = f->buf + (size_t)y * f->stride + (size_t)x * 4;
+
+            if (p[2] < 70 && p[1] < 70 && p[0] < 70) {
+                if (first < 0) first = y;
+                last = y;
+                break;
+            }
+        }
+    }
+    return (first < 0) ? 0 : last - first + 1;
 }
 
 int main(void)
@@ -211,6 +254,90 @@ int main(void)
         CK(bpq_traces_hit(&c, W, H, 10.0, 40.0, &row, &t) == -1);   /* etiquetas */
         CK(bpq_traces_hit(&c, W, H, x0 + 10.0, H - 1.0, &row, &t) == -1);
         CK(bpq_traces_hit(NULL, W, H, 100.0, 40.0, &row, &t) == -1);
+    }
+
+    /* --- 6. zoom: escala por ventana, polilinea y gaps (2026-10-23) ------ */
+    {
+        CsnhypodbpStaRow zrow;
+        BpqTrace *ztr[1];
+        BpqTracesCtx z;
+        int32_t *zs;
+        const int N = 3000;
+        const int mx = 58;               /* left_margin con dpr = 1 */
+        const int pw = W - mx - 6;
+        int band, i;
+
+        zs = (int32_t *)malloc((size_t)N * sizeof(int32_t));
+        CK(zs != NULL);
+        if (zs) {
+            memset(&zrow, 0, sizeof(zrow));
+            snprintf(zrow.sta, sizeof(zrow.sta), "%s", "TEST");
+            memset(&z, 0, sizeof(z));
+            z.rows = &zrow;
+            z.n = 1;
+            z.tr = ztr;
+            z.selected = 0;
+            z.per_screen = 1;
+            band = bpq_traces_band_h(&z, H);
+            CK(band > 0);
+
+            /* 6a. La escala vertical sale de la VENTANA: un burst 50x mayor
+             * fuera del encuadre no debe aplastar la onda visible. */
+            for (i = 0; i < N; i++) {
+                if (i < 1000)
+                    zs[i] = (int32_t)(100.0 * sin(2.0 * M_PI * 2.0 * (i / 100.0)));
+                else if (i >= 1900 && i < 2100)
+                    zs[i] = 5000;
+                else
+                    zs[i] = 0;
+            }
+            ztr[0] = bpq_trace_new(1000.0, 100.0, zs, N);
+            CK(ztr[0] != NULL);
+            z.t0 = 1000.0;
+            z.window = 10.0;
+            memset(fr.buf, 0, (size_t)fr.stride * H);
+            CK(bpq_scene_paint(BPQ_SCENE_TRACES, &z, fr.buf, W, H, fr.stride) == 0);
+            CK(black_extent(&fr, mx, W - 1, 0, band) >= band / 2);
+
+            /* 6b. spp < 2: polilinea muestra a muestra. La envolvente sola
+             * dejaria tinta SOLO en los dos extremos de una senal alternante. */
+            for (i = 0; i < N; i++) zs[i] = (i & 1) ? 1000 : -1000;
+            bpq_trace_free(ztr[0]);
+            ztr[0] = bpq_trace_new(1000.0, 100.0, zs, N);
+            CK(ztr[0] != NULL);
+            z.window = 0.2;
+            memset(fr.buf, 0, (size_t)fr.stride * H);
+            CK(bpq_scene_paint(BPQ_SCENE_TRACES, &z, fr.buf, W, H, fr.stride) == 0);
+            {
+                const int yc = 1 + band / 2;
+                const int dy = (int)(0.15 * band);
+
+                CK(count_black_rect(&fr, mx, W - 1, yc - dy, yc + dy) > 20);
+            }
+
+            /* 6c. Gap dentro de la ventana: la banda se corta, no se une. */
+            for (i = 0; i < N; i++) {
+                if (i >= 1000 && i < 1400) zs[i] = INT32_MAX;
+                else zs[i] = (int32_t)(800.0 * sin(2.0 * M_PI * 1.0 * (i / 100.0)));
+            }
+            bpq_trace_free(ztr[0]);
+            ztr[0] = bpq_trace_new(1000.0, 100.0, zs, N);
+            CK(ztr[0] != NULL);
+            z.window = 20.0;
+            memset(fr.buf, 0, (size_t)fr.stride * H);
+            CK(bpq_scene_paint(BPQ_SCENE_TRACES, &z, fr.buf, W, H, fr.stride) == 0);
+            {
+                /* muestras 1000..1399 = t 1010..1014, con 5 columnas de margen */
+                const int gx0 = mx + (10 * pw) / 20 + 5;
+                const int gx1 = mx + (14 * pw) / 20 - 5;
+
+                CK(gx1 > gx0);
+                CK(count_black_rect(&fr, gx0, gx1, 0, band) == 0);
+            }
+
+            bpq_trace_free(ztr[0]);
+            free(zs);
+        }
     }
 
     frame_free(&fr);

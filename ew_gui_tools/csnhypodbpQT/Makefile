@@ -392,6 +392,7 @@ check-scripts: $(TARGET)
 	@sh tests/test_integration.sh
 	@sh tests/test_map_background.sh
 	@sh tests/test_pin_invariants.sh
+	@sh tests/test_traces_invariants.sh
 	@sh tests/test_pin.sh
 
 check-c: $(TEST_C)

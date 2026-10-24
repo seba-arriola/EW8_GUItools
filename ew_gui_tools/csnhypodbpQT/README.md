@@ -34,9 +34,9 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == rings checks=44 fallas=0 ==      # formato byte a byte del pick, rd_mag seguro, errores de apertura
 == events checks=74 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
-== wave checks=68 fallas=0 ==      # decode TRACE2, fetch, filtro de vista, STA/LTA y tank de magnitudes
+== wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
 == stations checks=34 fallas=0 ==  # catalogo (StaFile), distancia/orden y regla M > A > Teo
-== traces checks=35 fallas=0 ==    # canvas de trazas: envolvente, etiquetas, marcas P/S, eje y clic
+== traces checks=47 fallas=0 ==    # canvas: envolvente, polilinea a zoom alto, escala por ventana, gaps, marcas y clic
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
 == locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
@@ -49,12 +49,13 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
+== traces invariants checks=7 fallas=0 == # grosor xdpr, polilinea, escala por ventana, STA/LTA filtrado
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1088 checks** (1004 en C + 16 de integración + 12 de invariantes + 45 e2e + 11 del mapa),
-0 fallas.
+Total: **1121 checks** (1030 en C + 16 de integración + 12 de invariantes del pin + 7 del render de
+trazas + 45 e2e + 11 del mapa), 0 fallas.
 
 ### Origen fijado (pin)
 
@@ -512,6 +513,31 @@ $ QT_QPA_PLATFORM=offscreen BPQ_MODE=--dump \
 wave AC01.HHE.C1.-- n=30579 rate=100.00 t0=1792685409.730 rango=[-4960,6835]
 ```
 
+### Render de trazas: zoom, escala y dpr (2026-10-23)
+
+- **Escala vertical por ventana visible**. `draw_trace` toma `max |muestra|` solo de
+  `[t0, t0+window]` y usa `0.45 · alto_fila · y_gain / max_abs`, igual que el GTK
+  (`csnhypodbp_gui.c:4160-4193`). Antes se normalizaba contra el máximo de **toda** la traza: al
+  hacer zoom la onda quedaba aplastada y cuantizada en pocos píxeles.
+- **Dos regímenes de dibujo**, con el criterio del módulo GTK (`csnhypodbp_view_use_polyline`,
+  `CSNHYPODBP_POLYLINE_SPP = 2.0`):
+  - spp < 2 (zoom alto): **polilínea muestra a muestra** con `csnhypodbp_view_sample_x`, cortando
+    la pluma en los gaps. Sin esta rama la envolvente dibujaba un segmento vertical de 1 px por
+    columna y el zoom se veía como **escalones/barras** (ver `tmp/1.png`).
+  - spp ≥ 2: **banda rellena** por columnas con datos (`min_half` = 0.8 px lógicos), sin unir a
+    través de un gap.
+- **dpr**: el canvas entrega `w/h` en píxeles de **dispositivo**. El grosor (`0.8·dpr`), el
+  `min_half` y el resto de trazos van multiplicados por `devicePixelRatioF()`; antes la traza era
+  una hairline de 0.5 px lógicos en pantallas 2×.
+- **Filtro de fase cero intacto**: la vista usa `m_phaseZero` del `FilterPhase` y el núcleo común
+  (`ewgui_filter_*_zp`, forward+backward); `locate` sigue mandando el buffer **crudo**.
+- **STA/LTA sobre la traza dibujada**: `bpq_stalta_new` lee el buffer **filtrado** (como
+  `csnhypodbp_gui.c:3913-3960`), con fallback al crudo solo si la vista no filtró. Antes la CF se
+  calculaba sobre el crudo y un drift de baja frecuencia movía el disparo respecto al GTK.
+- Invariantes: `tests/test_traces.c` (escala por ventana, polilínea, gaps), `tests/test_wave.c`
+  (impulso que no se desplaza a fase cero y CF filtrada) y `tests/test_traces_invariants.sh`
+  (grosor ×dpr, ramas del render, sin barrido global, STA/LTA filtrado).
+
 ### Marco, ejes e idioma (2026-10-22)
 
 - **El panel de planta dibuja marco, grilla y etiquetas de coordenadas** (`draw_graticule` en
@@ -671,6 +697,9 @@ así que el estado del cuadro se verifica sin mirar la pantalla.
    `tests/test_map_background.sh` exige `bg≠0x0` con `MapImageFile` activo, `bg=0x0` sin la clave
    y el motivo real en `stderr` si la ruta no existe. El límite de `QImageReader` se fija una vez
    en `ui/main.cxx` (ver arriba).
+7. **El render de trazas trabaja en píxeles de dispositivo**: todo grosor va multiplicado por
+   `dpr`, la escala vertical sale de la ventana visible y el zoom alto usa polilínea
+   (`tests/test_traces_invariants.sh`). El STA/LTA lee el buffer filtrado.
 
 ## Lo que se reutiliza (sin copiar)
 
