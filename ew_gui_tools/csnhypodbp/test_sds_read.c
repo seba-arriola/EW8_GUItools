@@ -214,6 +214,76 @@ int main(void)
         CHECK(errsz == 0, "estacion ausente -> stderr vacio (sin 'Cannot open file')");
     }
 
+    /* F3: el ultimo registro de la ventana empieza antes de t1 y sigue mas
+       alla. El buffer solo tiene cap = (t1-t0)*rate+2 muestras; `filled` debe
+       quedar acotado a lo realmente copiado (antes se iba a off+rn y el
+       memcpy de salida leia fuera del buffer). */
+    {
+        const char *sta3 = "GO03";
+        char path3[1024], dir3[1024];
+        char *raw3 = NULL;
+        long len3 = 0;
+        int rc3;
+        const int long_n = 1000;
+        int32_t long_samples[1000];
+
+        for (i = 0; i < long_n; i++) long_samples[i] = 5000 + i;
+
+        if (ewgui_sds_path(path3, sizeof path3, root, net, sta3, loc, chan,
+                           t1 - 0.5) != 0) {
+            printf("FAIL: no se pudo construir la ruta SDS (F3)\n");
+            return 1;
+        }
+        snprintf(dir3, sizeof dir3, "%s", path3);
+        { char *s = strrchr(dir3, '/'); if (s) *s = '\0'; }
+        mkdirs(dir3);
+
+        msr = msr_init(NULL);
+        if (!msr) { printf("FAIL: msr_init\n"); return 1; }
+        snprintf(msr->network, sizeof msr->network, "%s", net);
+        snprintf(msr->station, sizeof msr->station, "%s", sta3);
+        snprintf(msr->location, sizeof msr->location, "%s", loc);
+        snprintf(msr->channel, sizeof msr->channel, "%s", chan);
+        /* OJO: MS_EPOCH2HPTIME no parentiza su argumento; con `t1 - 0.5`
+         * multiplicaria solo el 0.5 por 1e6. */
+        msr->starttime = (hptime_t)(MS_EPOCH2HPTIME((t1 - 0.5)) + 0.5);
+        msr->samprate = RATE;
+        msr->datasamples = long_samples;
+        msr->numsamples = long_n;
+        msr->samplecnt = long_n;
+        msr->sampletype = 'i';
+        rc3 = msr_writemseed(msr, path3, 1, 4096, DE_STEIM2, 1, 0);
+        msr->datasamples = NULL;
+        msr->numsamples = 0;
+        msr->samplecnt = 0;
+        msr_free(&msr);
+        if (rc3 < 0) {
+            printf("FAIL: msr_writemseed rc=%d (%s)\n", rc3, path3);
+            return 1;
+        }
+
+        rc3 = csnhypodbp_sds_fetch(sta3, net, chan, loc, t0, t1, &raw3, &len3);
+        CHECK(rc3 == 1, "registro que cruza t1 -> datos (F3)");
+        if (rc3 == 1) {
+            TRACE2_HEADER *h3 = (TRACE2_HEADER *)raw3;
+            int32_t *d3 = (int32_t *)(raw3 + sizeof(TRACE2_HEADER));
+            const long cap = (long)((t1 - t0) * RATE) + 2;
+
+            CHECK(h3->nsamp > 0 && (long)h3->nsamp <= cap,
+                  "nsamp acotado a la ventana (sin leer fuera del buffer)");
+            CHECK(len3 == (long)sizeof(TRACE2_HEADER) +
+                       (long)h3->nsamp * (long)sizeof(int32_t),
+                  "longitud coherente con nsamp");
+            CHECK(h3->endtime <= t1 + 2.0 / RATE + 1e-6,
+                  "endtime dentro del margen de 2 muestras");
+            /* El buffer arranca en t0: el bloque que cruza t1 empieza en el
+             * indice (t1 - 0.5 - t0) * RATE = 950, no en 0. */
+            CHECK(d3[950] == long_samples[0] && d3[951] == long_samples[1],
+                  "muestras del bloque largo intactas");
+            free(raw3);
+        }
+    }
+
     /* Punto 2(a): predicado prefer_sds (evento antiguo -> SDS primero). */
     CHECK(csnhypodbp_sds_prefer(200.0, 1, "/mnt/sds", 168) == 1,
           "evento antiguo -> prefer_sds");

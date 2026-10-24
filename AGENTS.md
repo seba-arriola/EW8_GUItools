@@ -51,7 +51,10 @@ hace **`csnloc`** localmente.
     la retención local (misma ventana que el store). `ewgui_sds_path` traduce el location nulo de
     EarthWorm `--` (y vacío/espacios) a vacío — el SDS escribe `NET.STA..CHAN`; los locations reales
     (`00`, `10`, …) pasan literales, y el `TRACE2_HEADER` de salida conserva `--`. Día ausente en el
-    SDS ⇒ no se abre el archivo (sin ruido `Cannot open file` de libmseed2).
+    SDS ⇒ no se abre el archivo (sin ruido `Cannot open file` de libmseed2). El lector acota
+    `filled` a las muestras **realmente copiadas** (un último registro que cruza `t1` ya no hace
+    `nsamp > cap` ni lee fuera del buffer) y convierte el inicio del registro a epoch **con**
+    fracción (no con la división entera de `MS_HPTIME2EPOCH`); `test_sds_read` caso F3 lo fija.
     La pestaña *Ondas* muestra una **tabla de estaciones** en el panel izquierdo (`GtkColumnView` con
     separadores de fila y columna, como la de *Eventos*; fuente `0.75em`, borde propio y **sin scroll
     horizontal**: el marco se dimensiona a la tabla):
@@ -104,8 +107,13 @@ hace **`csnloc`** localmente.
     `csnmags` recibe las **cuatro** magnitudes y las **mismas P efectivas** (`M>A>Teo`) que el
     localizador (casillas por fila + filtros A/M/Teo del picking); las S no generan magnitud. La
     ventana de cada magnitud se ancla en el `t_pick` de esa P y usa la franja ajustada del panel si
-    existe (si no, la del `.d`), con override para las 4; no se recalcula Mww. Ver
-    `docs/MAGNITUDES.md`. La pestaña *magnitudes* tiene además un panel **`Mww`**
+    existe (si no, la del `.d`), con override para las 4; no se recalcula Mww. El port
+    `csnhypodbpQT` añade la **P teórica** IASP91 (`TauModel`, default `iasp91`) a toda estación sin
+    P `M/A`, de modo que la tabla de magnitudes siempre tiene ancla/ventana `Teo`; sus checks
+    `A/M/Teo` de magnitudes son **propios** (los del picking siguen siendo solo del localizador) y
+    `calculate` reconstruye las P efectivas (M/A/Teo) antes de llamar a `csnmags`. En el port, el
+    modo picada se **desarma al colocar la picada**. Ver `docs/MAGNITUDES.md`. La pestaña
+    *magnitudes* tiene además un panel **`Mww`**
     (inversión de fase W on-demand, ver `csnwphase/` y `docs/WPHASE.md`): el área central
     es una pila `Estaciones` | `Mww` y sus claves son `MwwConfigFile` (default
     `csnwphase.d`) y `MwwWorkDir` (run dirs de las corridas). Las **tres tablas ordenan pulsando la cabecera** (helper general

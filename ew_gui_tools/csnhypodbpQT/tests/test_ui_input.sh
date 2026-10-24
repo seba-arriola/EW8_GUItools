@@ -14,6 +14,9 @@
 #   - dos clics a la izquierda del ancla restituyen la vista (sin undo);
 #   - la tabla de magnitudes oculta las estaciones fuera de la puerta;
 #   - el preview es una tabla 2x10 sin fondo amarillo;
+#   - la P teorica (IASP91) existe y abre ventana en la tabla de magnitudes;
+#   - los checks A/M/Teo propios de magnitudes filtran el calculo;
+#   - picar desarma el modo y el siguiente clic vuelve a ser zoom;
 #   - seleccion cruzada picking <-> magnitudes y created por solucion.
 #
 # Uso: sh tests/test_ui_input.sh
@@ -86,6 +89,19 @@ run_clicks() {  # <pares VAR=valor...>
         BPQ_INPUT_TARGET=waves BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_pick() {  # <x,y> [fase]
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_INPUT_TARGET=waves BPQ_INPUT_PICK="$1" \
+        BPQ_INPUT_PHASE="${2:-P}" BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$bin" csnhypodbpqt.d 2>/dev/null )
+}
+run_dump_magopt() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
+        BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 ck() {  # <descripcion> <regex ERE>
     if printf '%s\n' "$out" | grep -qE "$2"; then
         ok "$1"
@@ -105,6 +121,15 @@ run_dump picking
 ck "preview: tabla 2x10 sin fondo"     '^preview grid rows=2 cols=10 headers=Lat,Lon,Depth.km.,Nph,RMS.s.,ML,Mwp,Mb,Ms,Mww values=.* bg=none title_color=#8a5a00$'
 run_dump_cand
 ck "preview: candidata en rojo"        '^preview grid .* bg=none title_color=#a02020$'
+
+# --- 1c. P teorica: estaciones sin M/A + ventana de magnitud -------------
+run_dump magnitudes
+ck "P teorica en las estaciones sin M/A" '^stations rows=[0-9]+ picked=[1-9][0-9]* sta_teo=[1-9][0-9]*'
+ck "ventanas Teo en la tabla"          '^mag .* theo=[1-9][0-9]* win=[1-9][0-9]* origins=111$'
+run_dump_magopt BPQ_MAG_ORIGINS=AM
+ck "checks propios de magnitudes"      '^mag .* origins=110$'
+run_dump_magopt BPQ_MAG_ORIGINS=NONE
+ck "los tres origenes se pueden apagar" '^mag .* origins=000$'
 
 # --- 1b. Created propio de cada solucion (no el time(NULL) de la carga) ---
 run_dump picking
@@ -175,7 +200,7 @@ ck "magnitudes: tabla sin scroll H"   '^table mag cols=8 total=[0-9]+ viewport=[
 run_input BPQ_INPUT_TARGET=mag BPQ_INPUT_SELECT=PB02
 ck "mag: seleccion PB02 cambia canvas" '^mag .* ntr=3 anchor=[1-9][0-9]*\.[0-9] .*sta=PB02 sel=PB02 '
 ck "mag: PB02 tambien mueve picking"   '^traces .* sta=PB02 '
-ck "mag: PB02 seleccionada en sta"     '^stations rows=[0-9]+ picked=[1-9]+ sel=PB02$'
+ck "mag: PB02 seleccionada en sta"     '^stations rows=[0-9]+ picked=[1-9]+ sta_teo=[0-9]+ sel=PB02$'
 run_input BPQ_INPUT_TARGET=mag BPQ_INPUT_SELECT=PB02 BPQ_INPUT_REFRESH=1
 ck "mag: el refresh conserva PB02"     '^input select=PB02 .*mag_sel=PB02 traces_sta=PB02'
 run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_SELECT=PB01
@@ -217,7 +242,7 @@ fi
 
 run_dump_kind Mwp
 ck "Mwp: oculta PB01 (<3 grados) de la tabla" '^mag .* sta=PB01 sel=- '
-ck "Mwp: PB01 sigue en picking"       '^stations rows=[0-9]+ picked=[1-9]+ sel=PB01$'
+ck "Mwp: PB01 sigue en picking"       '^stations rows=[0-9]+ picked=[1-9]+ sta_teo=[0-9]+ sel=PB01$'
 ck "Mwp: PB01 sigue en el canvas"     '^traces .* sta=PB01 '
 mwp_rows=$(printf '%s\n' "$out" | sed -n 's/^mag .* rows=\([0-9]*\) all=.*/\1/p')
 mwp_all=$(printf '%s\n' "$out" | sed -n 's/^mag .* all=\([0-9]*\) .*/\1/p')
@@ -227,6 +252,15 @@ if [ -n "$mwp_rows" ] && [ -n "$mwp_all" ] &&
 else
     bad "Mwp: no filtro la tabla <mwp=$mwp_rows ml=$ml_rows all=$mwp_all>"
 fi
+
+# --- 12. picar desarma y devuelve el puntero al zoom -----------------------
+run_pick 0.60,0.08
+ck "picar coloca y desarma"            '^input pick phase=P placed=1 armed=0 manual=[1-9][0-9]* anchor=0.0$'
+ck "tras picar, el clic vuelve a zoom" '^input pick_zoom anchor=[1-9][0-9]{8}'
+run_pick 0.01,0.50
+ck "clic en la cuneta no desarma"      '^input pick phase=P placed=0 armed=1 manual=[0-9]+'
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_KEY=P,Esc
+ck "Esc desarma la picada"             '^input keyseq=P,Esc target=waves armed=0'
 
 echo "----"
 echo "== ui input checks=$((pass + fail)) fallas=$fail =="

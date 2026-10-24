@@ -140,13 +140,18 @@ int bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                                    &r->t0, &r->t1);
         csnhypodbp_magcfg_gate(&eff, p->kind, r->dist_deg, r->dist_km,
                                &r->in_range);
-        r->used = csnhypodbp_magmarks_used(&p->marks, r->sta, p->kind,
-                                           r->has_data && r->in_range);
         r->eligible = (r->has_data && r->in_range &&
                        csnhypodbp_magmarks_allowed(&p->marks, r->sta, p->kind,
                                                    r->anchor, p->auto_on,
                                                    p->manual_on,
                                                    p->theo_on)) ? 1 : 0;
+        /* `used` no puede ir por delante de la elegibilidad: si el origen de
+         * la ventana esta apagado, la estacion no entra al calculo. Es lo que
+         * hace la GTK (eligible ? magmarks_used : 0). */
+        r->used = r->eligible
+                      ? csnhypodbp_magmarks_used(&p->marks, r->sta, p->kind,
+                                                 r->has_data && r->in_range)
+                      : 0;
     }
     return nr;
 }
@@ -162,6 +167,30 @@ int bpq_magrows_filter_in_range(const CsnhypodbpMagRow *in, int n,
         out[nout++] = in[i];
     }
     return nout;
+}
+
+/* Solucion que ve csnmags en `calculate`: copia la candidata (origen, lat,
+ * lon, prof, qid) y REEMPLAZA sus P/S por las picadas efectivas de la tabla
+ * permitidas por los checks de magnitudes. `hypos_write` solo itera
+ * base->picks, asi que sin esto las manuales nuevas y las teoricas no llegan. */
+int bpq_magpanel_calc_solution(const CsnhypodbpStaRow *stas, int n,
+                               int auto_on, int manual_on, int theo_on,
+                               const CsnhypodbpSolution *base,
+                               CsnhypodbpSolution *out)
+{
+    CsnhypodbpPickFilter f;
+    int np;
+
+    if (!stas || n <= 0 || !base || !out) return -1;
+    *out = *base;
+    f.auto_on = auto_on ? 1 : 0;
+    f.manual_on = manual_on ? 1 : 0;
+    f.theo_on = theo_on ? 1 : 0;
+    np = csnhypodbp_locate_picks(stas, n, NULL, &f, out->picks,
+                                 CSNHYPODBP_MAX_PICKS);
+    out->npicks = np;
+    out->nph = np;
+    return np;
 }
 
 int bpq_magpanel_ovr(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,

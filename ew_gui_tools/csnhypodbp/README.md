@@ -402,6 +402,13 @@ así que `ws_fetch_finish` no distingue el origen. Las muestras `int16`/`float`/
 a `int32`; los huecos entre registros quedan en 0. Si el día no está en el SDS, el archivo ni se abre
 (no ensucia el log con el `Cannot open file` de libmseed2).
 
+El ensamblado acota `filled` a las muestras **realmente copiadas**: un último registro que empieza
+antes de `t1` y sigue más allá solo aporta las muestras de la ventana. Antes `filled = off + rn`
+podía superar `cap` y el `memcpy` de salida leía fuera del buffer (y `nsamp`/`endtime` mentían). El
+inicio de cada registro se convierte a epoch **con** fracción (`(double)hptime / HPTMODULUS`), no con
+la división entera del macro: un registro a 9.5 s se alineaba a 9.0 s. Los dos casos los fija
+`test_sds_read` (F3, registro que cruza `t1`).
+
 **Location code.** El SDS de SeisComP escribe el location vacío (`C1.LL07..HHZ.D…`), mientras
 EarthWorm usa el literal `"--"` (`LOC_NULL_STRING`, `trace_buf.h`). `ewgui_sds_path` traduce
 `--`/vacío/solo-espacios → vacío; los locations reales (`00`, `10`, `04`, …) pasan literales. El
@@ -478,7 +485,8 @@ salto del preámbulo del refinador;
 Help, filtros `A`/`M`/`Teo`); `test_sds_read` genera un miniSEED sintético en el layout SDS y
 comprueba que el lector devuelve el
 buffer `TRACE2_HEADER + i4` con las muestras intactas, que un `loc "--"` encuentra el archivo escrito
-con loc vacío, que un día ausente no escribe en stderr y el predicado `csnhypodbp_sds_prefer`. En
+con loc vacío, que un día ausente no escribe en stderr, que un registro que cruza `t1` no hace
+`nsamp > cap` (F3) y el predicado `csnhypodbp_sds_prefer`. En
 `common`, `test_sds_path` valida la construcción de la ruta SDS (incluido `loc "--"` → `..`) y
 `test_db_search` (integración, gated por `EWGUI_DB_TEST_ENV`) cubre los
 rangos, el orden y el `LIMIT` de `ewguidb_search_events`.

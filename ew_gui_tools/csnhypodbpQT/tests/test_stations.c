@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "bpq_capi.h"
+#include "csnhypodbp_tt.h"
 
 static int g_fail = 0;
 static int g_checks = 0;
@@ -69,6 +70,20 @@ int main(void)
 
     memset(&cfg, 0, sizeof(cfg));
     snprintf(cfg.sta_file, sizeof(cfg.sta_file), "%s", path);
+    /* P teorica: el test corre con cwd=params (tablas iasp91.*). */
+    snprintf(cfg.tau_model, sizeof(cfg.tau_model), "%s", "iasp91");
+    CK(bpq_init_tt(&cfg, err, sizeof(err)) == 1);
+    CK(csnhypodbp_tt_ready() == 1);
+    {
+        BpqConfig bad;
+        char terr[128] = "";
+
+        memset(&bad, 0, sizeof(bad));
+        snprintf(bad.tau_model, sizeof(bad.tau_model), "%s", "no_existe_iasp91");
+        CK(bpq_init_tt(&bad, terr, sizeof(terr)) == 0);
+        CK(terr[0] != '\0');
+        CK(bpq_init_tt(&cfg, err, sizeof(err)) == 1);
+    }
     cat = bpq_stations_open(&cfg, err, sizeof(err));
     CK(cat != NULL);
     CK(err[0] == '\0');
@@ -105,11 +120,25 @@ int main(void)
     CK(fabs(rows[1].p.resid + 0.4) < 0.01);
     CK(rows[1].s.present == 0);
 
-    /* S3 solo tiene S automatica; S1 no tiene ninguna. */
+    /* S3 solo tiene S automatica: la P teorica entra como fallback M>A>Teo.
+     * S1 no tiene ninguna picada, pero tambien recibe la teorica (si el
+     * modelo devuelve un tiempo positivo). */
     CK(rows[2].s.present == 1);
     CK(rows[2].s.origin == 'A');
-    CK(rows[2].p.present == 0);
-    CK(rows[0].p.present == 0);
+    CK(rows[2].p.present == 1);
+    CK(rows[2].p.origin == 'T');
+    {
+        const double tp = csnhypodbp_tt_p(rows[2].dist_deg, sol.depth);
+
+        CK(tp > 0.0);
+        CK(fabs(rows[2].p.t - (sol.otime + tp)) < 1e-6);
+        CK(strcmp(rows[2].p.chan, "HHZ") == 0);
+    }
+    CK(rows[0].p.origin != 'M' && rows[0].p.origin != 'A');
+    if (rows[0].p.present) {
+        CK(rows[0].p.origin == 'T');
+        CK(rows[0].p.t > 0.0);
+    }
     CK(rows[0].s.present == 0);
 
     /* Sin solucion se listan las estaciones igual (todo sin picada). */

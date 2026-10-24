@@ -317,6 +317,11 @@ private:
     double                    m_magViewSpan = 0.0;
     QLineEdit                *m_magGateLo = nullptr;
     QLineEdit                *m_magGateHi = nullptr;
+    /* Origen de la P que entra al calculo de magnitudes (independiente de los
+     * checks A/M/Teo del picking, que solo filtran el localizador). */
+    QCheckBox                *m_magChkA = nullptr;
+    QCheckBox                *m_magChkM = nullptr;
+    QCheckBox                *m_magChkT = nullptr;
     QLabel                   *m_magBar = nullptr;
     QPushButton              *m_magCalc = nullptr;
     /* --- panel Mww (fase 6.3) --- */

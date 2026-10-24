@@ -120,6 +120,8 @@ static void config_defaults(BpqConfig *c)
     set_str(c->mww_workdir,     sizeof(c->mww_workdir),     "/tmp/csnhypodbp_mww");
     set_str(c->manual_state_file, sizeof(c->manual_state_file),
             "csnhypodbp_manual.events");
+    /* Modelo de tiempos de viaje de la P teorica (default de la GTK). */
+    set_str(c->tau_model, sizeof(c->tau_model), "iasp91");
     c->db_history_hours        = 24;
     c->pick_capture_window_s   = 600.0;
     c->group_pick_tol_s        = 0.1;

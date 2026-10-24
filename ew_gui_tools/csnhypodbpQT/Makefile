@@ -47,7 +47,7 @@ QT_HAVE := $(shell test -n "$(QT_INC)" && test -d "$(QT_INC)/QtWidgets" && test 
 # Fuentes
 # ---------------------------------------------------------------------------
 # Capa C propia (fontaneria: config, anillos, BD, ondas, emision, lienzos).
-C_SRC := bpq_config.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
+C_SRC := bpq_config.c bpq_tt.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
          bpq_map.c bpq_profile.c bpq_wave.c bpq_sds_globals.c bpq_stations.c \
          bpq_traces.c bpq_db.c bpq_locate.c bpq_manual.c bpq_mag.c \
          bpq_magpanel.c bpq_draw_mag.c bpq_axis.c bpq_mww.c bpq_draw_ball.c bpq_pin.c
@@ -277,7 +277,8 @@ test_wave: tests/test_wave.c $(WAVE_DEPS) $(EWLIBS)
 	@chmod +x $@
 
 # Catalogo de estaciones + tabla de picadas (statable es el nucleo puro).
-STA_DEPS := $(BUILDDIR)/c_bpq_stations.o $(BUILDDIR)/bp_statable.o \
+STA_DEPS := $(BUILDDIR)/c_bpq_stations.o $(BUILDDIR)/c_bpq_tt.o \
+            $(BUILDDIR)/bp_statable.o \
             $(BUILDDIR)/bp_station.o $(BUILDDIR)/bp_tt.o
 
 test_stations: tests/test_stations.c $(STA_DEPS) $(EWLIBS)
@@ -337,6 +338,7 @@ MAG_DEPS := $(BUILDDIR)/c_bpq_magpanel.o $(BUILDDIR)/c_bpq_draw_mag.o \
             $(BUILDDIR)/c_bpq_axis.o \
             $(BUILDDIR)/c_bpq_wave.o $(BUILDDIR)/c_bpq_sds_globals.o \
             $(BUILDDIR)/bp_magmarks.o $(BUILDDIR)/bp_magcfg.o \
+            $(BUILDDIR)/bp_statable.o \
             $(BUILDDIR)/bp_magrow.o $(BUILDDIR)/bp_magview.o $(BUILDDIR)/bp_sds.o \
             $(BUILDDIR)/cw_ewgui_wave.o $(BUILDDIR)/cw_ewgui_sds.o \
             $(BUILDDIR)/cw_ewgui_dsp.o $(BUILDDIR)/cw_ewgui_stalta.o
@@ -414,7 +416,7 @@ check-c: $(TEST_C)
 	@$(THIS_DIR)/test_events
 	@$(THIS_DIR)/test_draw_map
 	@$(THIS_DIR)/test_wave
-	@$(THIS_DIR)/test_stations
+	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_stations
 	@$(THIS_DIR)/test_traces
 	@$(THIS_DIR)/test_db
 	@$(THIS_DIR)/test_locate
@@ -433,7 +435,7 @@ check: qt_check $(TEST_C)
 	@$(THIS_DIR)/test_events
 	@$(THIS_DIR)/test_draw_map
 	@$(THIS_DIR)/test_wave
-	@$(THIS_DIR)/test_stations
+	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_stations
 	@$(THIS_DIR)/test_traces
 	@$(THIS_DIR)/test_db
 	@$(THIS_DIR)/test_locate

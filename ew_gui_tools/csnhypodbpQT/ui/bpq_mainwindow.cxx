@@ -389,6 +389,18 @@ void BpqMainWindow::openData()
             else if (mk == QByteArray("MWP")) m_magKind = 1;
             else if (mk == QByteArray("MB")) m_magKind = 2;
             else if (mk == QByteArray("MS")) m_magKind = 3;
+            /* Subconjunto de origenes de la ventana (A/M/T). Ausente = todos. */
+            {
+                const QByteArray origins = qgetenv("BPQ_MAG_ORIGINS");
+
+                if (!origins.isNull()) {
+                    const QByteArray o = origins.toUpper();
+
+                    if (m_magChkA) m_magChkA->setChecked(o.contains('A'));
+                    if (m_magChkM) m_magChkM->setChecked(o.contains('M'));
+                    if (m_magChkT) m_magChkT->setChecked(o.contains('T'));
+                }
+            }
         }
         bpq_magpanel_set_kind(m_magPanel, m_magKind);
         if (m_magKind >= 0 && m_magKind < m_magRadios.size() &&
@@ -1025,9 +1037,17 @@ void BpqMainWindow::buildTraceRows(const CsnhypodbpStaRow *base)
 }
 
 /* Estacion por defecto: la primera de la tabla (ordenada por distancia) que tenga
- * picada; asi el panel muestra algo util al arrancar. */
+ * picada; asi el panel muestra algo util al arrancar. La teorica es el ULTIMO
+ * recurso: si se prefiere antes, al activar IASP91 la "mas cercana" pasa a ser
+ * una teorica y cambia la estacion que el usuario ya estaba mirando. */
 QString BpqMainWindow::pickDefaultStation() const
 {
+    for (const CsnhypodbpStaRow &r : m_staRows)
+        if (r.p.present && r.p.origin != 'T' && r.p.origin != 't')
+            return QString::fromUtf8(r.sta);
+    for (const CsnhypodbpStaRow &r : m_staRows)
+        if (r.s.present && r.s.origin != 'T' && r.s.origin != 't')
+            return QString::fromUtf8(r.sta);
     for (const CsnhypodbpStaRow &r : m_staRows)
         if (r.p.present || r.s.present) return QString::fromUtf8(r.sta);
     return QString();
@@ -1517,6 +1537,17 @@ void BpqMainWindow::emitManualPick(int row, double t)
         if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc)) return;
     }
     if (bpq_manual_set(sta, chan, m_pickPhase, t) != 0) return;
+
+    /* Marcada: el modo se apaga de inmediato y el puntero vuelve al default.
+     * El siguiente clic es el zoom de siempre, no otra picada. Si el clic no
+     * acerto una traza (o el overlay fallo), se sigue armado para reintentar. */
+    m_pickArmed = false;
+    m_zoomAnchorX = -1.0;
+    m_zoomAnchorT = 0.0;
+    m_tracesCtx.zoom_anchor_t = 0.0;
+    m_tracesCtx.rubber_active = 0;
+    m_axisDragging = false;
+    updatePickCursor();
 
     refreshAfterManual();
 
@@ -2383,9 +2414,9 @@ void BpqMainWindow::renderMagnitudes()
     if (!m_magModel) return;
     if (m_magPanel)
         bpq_magpanel_set_masks(m_magPanel,
-                               m_chkA ? m_chkA->isChecked() : 1,
-                               m_chkM ? m_chkM->isChecked() : 1,
-                               m_chkT ? m_chkT->isChecked() : 1);
+                               m_magChkA ? m_magChkA->isChecked() : 1,
+                               m_magChkM ? m_magChkM->isChecked() : 1,
+                               m_magChkT ? m_magChkT->isChecked() : 1);
 
     if (m_magPanel && !m_staRows.isEmpty()) {
         /* `has_data` = "el calculo tendra su onda": `calculate` baja el tank de
@@ -2554,6 +2585,8 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     const unsigned kindMask = allKinds ? 0u : (1u << m_magKind);
     double t0 = 0.0, win = 700.0;
     int nm = 0, i;
+    int magA = 0, magM = 0, magT = 0;
+    CsnhypodbpSolution base;
 
     if (!m_magPanel || !m_locWorker || !m_cfg) return;
     if (m_magBusy) {
@@ -2567,6 +2600,20 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         return;
     }
 
+    /* La candidata trae el origen refinado y SOLO las P del ARC. Las picadas
+     * manuales nuevas y las teoricas viven en m_staRows: se reconstruyen en
+     * `base` con el mismo ranking M>A>Teo que la tabla. Sin esto csnmags no
+     * procesa esas estaciones (hypos_write solo itera base->picks). */
+    magA = (m_magChkA && m_magChkA->isChecked()) ? 1 : 0;
+    magM = (m_magChkM && m_magChkM->isChecked()) ? 1 : 0;
+    magT = (m_magChkT && m_magChkT->isChecked()) ? 1 : 0;
+    if (bpq_magpanel_calc_solution(m_staRows.constData(), m_staRows.size(),
+                                   magA, magM, magT, &m_cand, &base) <= 0) {
+        statusBar()->showMessage(
+            QStringLiteral("magnitudes: ningun origen seleccionado"), 4000);
+        return;
+    }
+
     if (m_staCat) {
         for (i = 0; i < m_staRows.size() && req.size() < 24; i++) {
             const CsnhypodbpStaRow &r = m_staRows.at(i);
@@ -2574,9 +2621,9 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
                        *loc = nullptr;
 
             if (!r.p.present) continue;
-            if (r.p.origin == 'A' && m_chkA && !m_chkA->isChecked()) continue;
-            if (r.p.origin == 'M' && m_chkM && !m_chkM->isChecked()) continue;
-            if (r.p.origin == 'T' && m_chkT && !m_chkT->isChecked()) continue;
+            if (r.p.origin == 'A' && !magA) continue;
+            if (r.p.origin == 'M' && !magM) continue;
+            if (r.p.origin == 'T' && !magT) continue;
             if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc))
                 continue;
             req.append(BpqFetchReq{ QString::fromUtf8(sta),
@@ -2598,7 +2645,6 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     statusBar()->showMessage(QStringLiteral("magnitudes: calculando…"), 0);
 
     BpqLocateWorker *w = m_locWorker;
-    const CsnhypodbpSolution base = m_cand;
     const int km = (int)kindMask;
     QMetaObject::invokeMethod(w, [w, id, base, req, t0, win, ovr, km]() {
         w->runMagJob(id, base, req, t0, win, ovr, km);
@@ -3220,11 +3266,15 @@ bool BpqMainWindow::runMouseForTest()
         }
         std::printf("mouse pick n=%d row0=%s %c t=%.3f\n", npicked,
                     firstSta.toUtf8().constData(), firstPh, firstT);
+        std::printf("mouse pick_disarm armed=%d\n", m_pickArmed ? 1 : 0);
 
+        /* Picar ya desarma: para quitar la picada hay que rearmar el modo. */
+        sendKey(m_waves, Qt::Key_P);
         sendRightClick(m_waves, 0.60, 0.08);
         std::printf("mouse right_click manual=%d\n", bpq_manual_count());
         sendClick(m_waves, 0.60, 0.08);   /* se deja puesta para la captura */
-        std::printf("mouse pick_again manual=%d\n", bpq_manual_count());
+        std::printf("mouse pick_again manual=%d armed=%d\n",
+                    bpq_manual_count(), m_pickArmed ? 1 : 0);
 
         sendKey(m_waves, Qt::Key_Escape);
         std::printf("mouse esc armed=%d\n", m_pickArmed ? 1 : 0);
@@ -3418,6 +3468,67 @@ bool BpqMainWindow::runInputForTest()
         }
     }
 
+    /* Picada REAL: arma la fase con la tecla (mismo camino que el usuario),
+     * hace clic sobre la traza y comprueba que el modo se apaga. Si la picada
+     * entro, un segundo clic demuestra que se vuelve al zoom. */
+    {
+        const QByteArray pick = qgetenv("BPQ_INPUT_PICK");
+
+        if (!pick.isEmpty()) {
+            const QList<QByteArray> ab = pick.split(',');
+            const QByteArray phase = qgetenv("BPQ_INPUT_PHASE").toUpper();
+            const int pickKey = (phase == QByteArray("S")) ? Qt::Key_S
+                                                           : Qt::Key_P;
+            int before, placed;
+
+            if (target != QByteArray("waves") || ab.size() != 2) {
+                std::fprintf(stderr, "csnhypodbpQT: PICK invalido <%s>\n",
+                             pick.constData());
+                return false;
+            }
+            {
+                QKeyEvent ev(QEvent::KeyPress, pickKey, Qt::NoModifier);
+
+                QCoreApplication::sendEvent(w, &ev);
+            }
+            before = bpq_manual_count();
+            {
+                const QPointF p(w->width() * ab.at(0).toDouble(),
+                                w->height() * ab.at(1).toDouble());
+                QMouseEvent press(QEvent::MouseButtonPress, p,
+                                  w->mapToGlobal(p.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent rel(QEvent::MouseButtonRelease, p,
+                                w->mapToGlobal(p.toPoint()), Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+
+                QCoreApplication::sendEvent(w, &press);
+                QCoreApplication::sendEvent(w, &rel);
+            }
+            placed = bpq_manual_count() - before;
+            std::printf("input pick phase=%c placed=%d armed=%d manual=%d "
+                        "anchor=%.1f\n",
+                        m_pickPhase, placed, m_pickArmed ? 1 : 0,
+                        bpq_manual_count(), m_tracesCtx.zoom_anchor_t);
+            if (placed == 1) {
+                const QPointF p(w->width() * 0.85, w->height() * 0.5);
+                QMouseEvent press(QEvent::MouseButtonPress, p,
+                                  w->mapToGlobal(p.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent rel(QEvent::MouseButtonRelease, p,
+                                w->mapToGlobal(p.toPoint()), Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+
+                QCoreApplication::sendEvent(w, &press);
+                QCoreApplication::sendEvent(w, &rel);
+                std::printf("input pick_zoom anchor=%.1f\n",
+                            m_tracesCtx.zoom_anchor_t);
+            }
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
     /* Seleccion programatica de una estacion (misma que un clic): dispara el
      * slot de la vista, no solo pinta la fila. `BPQ_INPUT_REFRESH=1` fuerza
      * ademas el refresco de magnitudes para comprobar que no pierde la fila. */
@@ -3512,47 +3623,59 @@ bool BpqMainWindow::runInputForTest()
     }
 
     {
-        const QByteArray key = qgetenv("BPQ_INPUT_KEY").toLower();
-        int k = 0;
+        const QByteArray raw = qgetenv("BPQ_INPUT_KEY");
+        const QList<QByteArray> keys = raw.toLower().split(',');
 
-        if (key.isEmpty()) {
+        if (raw.isEmpty()) {
             std::fprintf(stderr, "csnhypodbpQT: falta BPQ_INPUT_KEY/WHEEL\n");
             return false;
         }
-        if (key.size() == 1) {
-            const char c = key.at(0);
+        for (const QByteArray &key : keys) {
+            int k = 0;
 
-            if (c >= 'a' && c <= 'z') k = Qt::Key_A + (c - 'a');
-            else if (c >= 'A' && c <= 'Z') k = Qt::Key_A + (c - 'A');
-            else if (c >= '0' && c <= '9') k = Qt::Key_0 + (c - '0');
-        } else if (key == QByteArray("escape") || key == QByteArray("esc")) {
-            k = Qt::Key_Escape;
-        } else if (key == QByteArray("up")) {
-            k = Qt::Key_Up;
-        } else if (key == QByteArray("down")) {
-            k = Qt::Key_Down;
-        } else if (key == QByteArray("pageup")) {
-            k = Qt::Key_PageUp;
-        } else if (key == QByteArray("pagedown")) {
-            k = Qt::Key_PageDown;
-        } else if (key == QByteArray("home")) {
-            k = Qt::Key_Home;
-        } else if (key == QByteArray("end")) {
-            k = Qt::Key_End;
-        }
-        if (!k) {
-            std::fprintf(stderr, "csnhypodbpQT: BPQ_INPUT_KEY desconocida <%s>\n",
-                         key.constData());
-            return false;
-        }
-        {
-            QKeyEvent ev(QEvent::KeyPress, k, km);
+            if (key.size() == 1) {
+                const char c = key.at(0);
 
-            QCoreApplication::sendEvent(w, &ev);
+                if (c >= 'a' && c <= 'z') k = Qt::Key_A + (c - 'a');
+                else if (c >= '0' && c <= '9') k = Qt::Key_0 + (c - '0');
+            } else if (key == QByteArray("escape") || key == QByteArray("esc")) {
+                k = Qt::Key_Escape;
+            } else if (key == QByteArray("up")) {
+                k = Qt::Key_Up;
+            } else if (key == QByteArray("down")) {
+                k = Qt::Key_Down;
+            } else if (key == QByteArray("pageup")) {
+                k = Qt::Key_PageUp;
+            } else if (key == QByteArray("pagedown")) {
+                k = Qt::Key_PageDown;
+            } else if (key == QByteArray("home")) {
+                k = Qt::Key_Home;
+            } else if (key == QByteArray("end")) {
+                k = Qt::Key_End;
+            }
+            if (!k) {
+                std::fprintf(stderr,
+                             "csnhypodbpQT: BPQ_INPUT_KEY desconocida <%s>\n",
+                             key.constData());
+                return false;
+            }
+            {
+                QKeyEvent ev(QEvent::KeyPress, k, km);
+
+                QCoreApplication::sendEvent(w, &ev);
+            }
         }
-        std::printf("input key=%s target=%s armed=%d phase=%c scroll=%d win=%.1f\n",
-                    key.constData(), target.constData(), m_pickArmed ? 1 : 0,
-                    m_pickPhase, m_tracesCtx.scroll_row, m_winLen);
+        if (keys.size() == 1) {
+            std::printf("input key=%s target=%s armed=%d phase=%c scroll=%d "
+                        "win=%.1f\n", keys.at(0).constData(),
+                        target.constData(), m_pickArmed ? 1 : 0, m_pickPhase,
+                        m_tracesCtx.scroll_row, m_winLen);
+        } else {
+            std::printf("input keyseq=%s target=%s armed=%d phase=%c scroll=%d "
+                        "win=%.1f\n", raw.constData(), target.constData(),
+                        m_pickArmed ? 1 : 0, m_pickPhase,
+                        m_tracesCtx.scroll_row, m_winLen);
+        }
         std::fflush(stdout);
         return true;
     }
@@ -4175,6 +4298,30 @@ void BpqMainWindow::buildProcesarTab()
                 &BpqMainWindow::applyMagGate);
         bl->addWidget(m_magGateLo);
         bl->addWidget(m_magGateHi);
+        bl->addSpacing(8);
+        bl->addWidget(new QLabel(QStringLiteral("origen:"), bar));
+        {
+            auto mk = [&](const char *txt, const char *name) {
+                QCheckBox *c = new QCheckBox(QString::fromUtf8(txt), bar);
+
+                c->setObjectName(QString::fromUtf8(name));
+                c->setChecked(true);   /* M/A/Teo: la P efectiva de la tabla */
+                c->setToolTip(QStringLiteral(
+                    "Origen de la P que entra al calculo de magnitudes "
+                    "(no filtra el localizador)"));
+                connect(c, &QCheckBox::toggled, this, [this]() {
+                    renderMagnitudes();
+                });
+                return c;
+            };
+
+            m_magChkA = mk("A", "mag_chk_auto");
+            m_magChkM = mk("M", "mag_chk_manual");
+            m_magChkT = mk("Teo", "mag_chk_theo");
+            bl->addWidget(m_magChkA, 0);
+            bl->addWidget(m_magChkM, 0);
+            bl->addWidget(m_magChkT, 0);
+        }
         {
             QPushButton *rst = new QPushButton(QStringLiteral("reset default"), bar);
             QPushButton *calc = new QPushButton(QStringLiteral("calculate"), bar);
@@ -4426,10 +4573,18 @@ QString BpqMainWindow::dumpTree() const
                .arg(m_mapImage.isNull() ? 0 : m_mapImage.width())
                .arg(m_mapImage.isNull() ? 0 : m_mapImage.height());
 
-    out += QStringLiteral("stations rows=%1 picked=%2 sel=%3\n")
-               .arg(m_staModel ? m_staModel->rowCount() : 0)
-               .arg(m_staModel ? m_staModel->pickedCount() : 0)
-               .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta);
+    {
+        int sta_teo = 0;
+
+        for (const CsnhypodbpStaRow &r : m_staRows)
+            if (r.p.present && (r.p.origin == 'T' || r.p.origin == 't'))
+                sta_teo++;
+        out += QStringLiteral("stations rows=%1 picked=%2 sta_teo=%3 sel=%4\n")
+                   .arg(m_staModel ? m_staModel->rowCount() : 0)
+                   .arg(m_staModel ? m_staModel->pickedCount() : 0)
+                   .arg(sta_teo)
+                   .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta);
+    }
     out += QStringLiteral("filter idx=%1 zero=%2 stalta=%3\n")
                .arg(m_filterIdx)
                .arg(m_phaseZero ? 1 : 0)
@@ -4501,13 +4656,16 @@ QString BpqMainWindow::dumpTree() const
     /* Sub-pestana magnitudes (fase 6.1): filas, cuantas entran al calculo y
      * cuantas ventanas ajusto el usuario. */
     {
-        int in_use = 0;
+        int in_use = 0, theo = 0, win = 0;
         const CsnhypodbpMagRow *first = m_magTableRows.isEmpty()
                                             ? nullptr
                                             : &m_magTableRows.first();
 
-        for (const CsnhypodbpMagRow &r : m_magRows)
+        for (const CsnhypodbpMagRow &r : m_magRows) {
             if (r.used) in_use++;
+            if (r.anchor == 'T' || r.anchor == 't') theo++;
+            if (std::isfinite(r.t0) && std::isfinite(r.t1)) win++;
+        }
         QString msel = QStringLiteral("-");
 
         if (m_magView && m_magProxy && m_magView->currentIndex().isValid()) {
@@ -4518,7 +4676,8 @@ QString BpqMainWindow::dumpTree() const
         }
         out += QStringLiteral("mag kind=%1 rows=%2 all=%3 in_use=%4 touched=%5 "
                               "ntr=%6 anchor=%7 magcfg=%8 sta=%9 sel=%10 "
-                              "first=[%11 t0=%12 t1=%13]")
+                              "first=[%11 t0=%12 t1=%13] theo=%14 win=%15 "
+                              "origins=%16%17%18")
                    .arg(m_magKind)
                    .arg(m_magTableRows.size())
                    .arg(m_magRows.size())
@@ -4532,6 +4691,11 @@ QString BpqMainWindow::dumpTree() const
                    .arg(first ? QString::fromUtf8(first->sta) : QStringLiteral("-"))
                    .arg(first ? first->t0 : 0.0, 0, 'f', 0)
                    .arg(first ? first->t1 : 0.0, 0, 'f', 0)
+                   .arg(theo)
+                   .arg(win)
+                   .arg((m_magChkA && m_magChkA->isChecked()) ? 1 : 0)
+                   .arg((m_magChkM && m_magChkM->isChecked()) ? 1 : 0)
+                   .arg((m_magChkT && m_magChkT->isChecked()) ? 1 : 0)
                + QLatin1Char('\n');
     }
 

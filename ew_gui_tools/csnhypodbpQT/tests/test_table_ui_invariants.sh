@@ -22,13 +22,18 @@ axis=$here/../c/bpq_axis.c
 traces=$here/../c/bpq_traces.c
 mag=$here/../c/bpq_draw_mag.c
 panel=$here/../ui/bpq_preview_panel.cxx
+main=$here/../ui/main.cxx
+cfg=$here/../c/bpq_config.c
+tt=$here/../c/bpq_tt.c
+magpanel=$here/../c/bpq_magpanel.c
 
 pass=0
 fail=0
 ok()  { pass=$((pass + 1)); echo "ok   $*"; }
 bad() { fail=$((fail + 1)); echo "FALLA $*"; }
 
-for f in "$ui" "$db" "$ev" "$table" "$axis" "$traces" "$mag" "$panel"; do
+for f in "$ui" "$db" "$ev" "$table" "$axis" "$traces" "$mag" "$panel" \
+         "$main" "$cfg" "$tt" "$magpanel"; do
     if [ -f "$f" ]; then ok "existe $(basename "$f")"; else bad "falta $f"; fi
 done
 
@@ -136,6 +141,48 @@ if grep -q 'm_preview->dump()' "$ui"; then
     ok "el dump incluye la estructura del preview"
 else
     bad "el dump no incluye el preview"
+fi
+
+# 8) Picada: marcar desarma (no persistente); Esc tambien.
+if grep -A30 'void BpqMainWindow::emitManualPick' "$ui" | grep -q 'm_pickArmed = false'; then
+    ok "emitManualPick desarma al colocar"
+else
+    bad "el clic de picada deja el modo armado"
+fi
+if grep -A30 'void BpqMainWindow::emitManualPick' "$ui" | grep -q 'updatePickCursor()'; then
+    ok "el desarme restaura el puntero por defecto"
+else
+    bad "el desarme no llama a updatePickCursor"
+fi
+
+# 9) P teorica: TauModel con default iasp91 y modelo cargado al arrancar.
+if grep -q 'set_str(c->tau_model' "$cfg" && grep -q '"iasp91"' "$cfg"; then
+    ok "TauModel tiene default iasp91"
+else
+    bad "config_defaults no inicializa TauModel"
+fi
+if grep -q 'bpq_init_tt' "$main" && grep -q 'csnhypodbp_tt_init' "$tt"; then
+    ok "el arranque carga el modelo de tiempos"
+else
+    bad "nadie inicializa csnhypodbp_tt"
+fi
+
+# 10) Magnitudes: checks propios + base reconstruida para csnmags.
+if grep -A12 'void BpqMainWindow::renderMagnitudes' "$ui" | grep -q 'm_magChk'; then
+    ok "renderMagnitudes usa los checks propios de magnitudes"
+else
+    bad "magnitudes sigue con los checks del picking"
+fi
+if grep -A60 'void BpqMainWindow::calculateMagnitudes' "$ui" |
+   grep -q 'bpq_magpanel_calc_solution'; then
+    ok "calculate reconstruye las P efectivas"
+else
+    bad "calculate manda la candidata sin picadas efectivas"
+fi
+if grep -q '^int bpq_magpanel_calc_solution' "$magpanel"; then
+    ok "helper de calculate implementado en el nucleo"
+else
+    bad "falta bpq_magpanel_calc_solution"
 fi
 
 echo "----"

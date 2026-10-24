@@ -79,7 +79,10 @@ int csnhypodbp_sds_fetch(const char *sta, const char *net, const char *chan,
             if (!msr || !msr->datasamples || msr->samplecnt <= 0)
                 continue;
 
-            rstart = MS_HPTIME2EPOCH(msr_starttime(msr));
+            /* HPTIME -> epoch CON fraccion: `MS_HPTIME2EPOCH` divide entre
+             * enteros (`hptime_t / HPTMODULUS`) y perderia los microsegundos:
+             * un registro que empieza a 9.5 s se alinearia a 9.0 s. */
+            rstart = (double)msr_starttime(msr) / (double)HPTMODULUS;
             if (rstart > t1)
                 break;          /* registros del dia en orden: fin de la ventana */
             rsrate = msr->samprate;
@@ -117,9 +120,13 @@ int csnhypodbp_sds_fetch(const char *sta, const char *net, const char *chan,
                         samples[k] = (int32_t)lround(((double *)msr->datasamples)[i]);
                     else
                         samples[k] = ((int32_t *)msr->datasamples)[i];
+                    /* Solo cuenta lo REALMENTE copiado: un registro que
+                     * empieza antes de t1 y se extiende mas alla no puede
+                     * dejar `filled` > `cap` (el memcpy de salida leeria
+                     * fuera del buffer). */
+                    if (k + 1 > filled)
+                        filled = k + 1;
                 }
-                if (off + rn > filled)
-                    filled = off + rn;
             }
         }
         sds_close(&msfp, &msr);

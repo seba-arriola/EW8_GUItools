@@ -29,19 +29,19 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 ### Verificación actual (`make check`)
 
 ```
-== checks=97 fallas=0 ==            # config contra csnhypodbp.d real
+== checks=98 fallas=0 ==            # config contra csnhypodbp.d real
 == canvas checks=72 fallas=0 ==     # cairo -> buffer, 7 escenas, export
 == rings checks=44 fallas=0 ==      # formato byte a byte del pick, rd_mag seguro, errores de apertura
 == events checks=89 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden y Created
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
 == wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
-== stations checks=34 fallas=0 ==  # catalogo (StaFile), distancia/orden y regla M > A > Teo
+== stations checks=45 fallas=0 ==  # catalogo, distancia/orden, M > A > Teo y P teorica IASP91
 == traces checks=70 fallas=0 ==    # canvas: etiquetas de canal, envolvente, escala, gaps, marcas, clic y scroll
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
 == locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
-== magpanel checks=72 fallas=0 ==   # ventanas, filas, puerta, filtro de tabla, etiquetas y canvas multibanda
+== magpanel checks=93 fallas=0 ==   # ventanas, Teo, filtro de tabla, overrides, calculate y canvas
 == axis checks=38 fallas=0 ==       # eje comun: fondo/filete/ticks, paso 1-2-5, banda gris y gesto release
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
@@ -51,14 +51,16 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
 == traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
-== table ui invariants checks=28 fallas=0 == # 4 proxies, Created, eje, filtro de mags, preview y fit_columns
-== ui input checks=40 fallas=0 ==  # scroll, teclado, orden, eje/banda, reset de zoom, filtro, anchos y preview
+== table ui invariants checks=39 fallas=0 == # proxies, Created, eje, filtro, preview, Teo, checks y calculate
+== ui input checks=48 fallas=0 ==  # scroll, teclado, orden, eje, reset, filtro, Teo, picada/desarme y preview
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1296 checks** (1129 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
-teclado + 28 de tablas/preview + 40 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
+Total: **1348 checks** (1162 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
+teclado + 39 de tablas/preview + 48 de input/scroll + 45 e2e + 11 del mapa), 0 fallas. El lector SDS
+compartido suma **26** en `make -C ew_gui_tools/csnhypodbp test_sds_read` (incluye el registro que
+cruza `t1` y el arranque en fracción de segundo).
 
 ### Created real, ordenación y anchos (2026-10-24)
 
@@ -262,8 +264,8 @@ Qué hace cada gesto, y dónde vive el estado:
 | arrastre izq. | planta / perfil | paneo; el contenido sigue al cursor (`*_pan`) |
 | clic | planta | selecciona ese origen en *Origins* (marcador verde) |
 | **`P` / `S`** | trazas | **arma el modo picada**: el cursor pasa a ser un **círculo del color de la fase con la letra** (`pColor`/`sColor`); `Esc` lo desarma |
-| clic izq. (armado) | trazas | coloca la picada de esa fase en el overlay local |
-| clic derecho (armado) | trazas | quita la picada manual de esa fase |
+| clic izq. (armado) | trazas | coloca la picada de esa fase en el overlay local y **desarma el modo** (puntero por defecto: el siguiente clic es zoom) |
+| clic derecho (armado) | trazas | quita la picada manual de esa fase; **no** desarma (para quitar tras picar hay que volver a armar con `P`/`S`) |
 | **dos clics izq.** | trazas | el 1.º deja un **ancla** (línea discontinua azul); el 2.º **a la derecha acerca** al intervalo y **a la izquierda restituye la vista original** |
 | arrastre izq. | trazas | paneo temporal (`bpq_traces_pan`) |
 | rueda | trazas | zoom temporal anclado al cursor (`bpq_traces_zoom_at`, 1 s…1 h) |
@@ -273,6 +275,9 @@ Qué hace cada gesto, y dónde vive el estado:
   puro del módulo GTK, con `set` semántico: recolocar reemplaza la de esa fase y deja intacta la
   otra) y se ve **al instante**: la marca de la traza se mueve y la fila de la tabla pasa a origen
   `M` (ranking `M > A > Teo`). Recién al **Confirmar** se publican a `PICK_RING` y viajan en el ARC.
+  El modo picada es **de un solo tiro**: al colocar la picada `m_pickArmed` vuelve a 0,
+  `updatePickCursor()` restaura el puntero y se limpia el ancla de zoom; si el clic cae en la
+  cuneta o el overlay falla, sigue armado para reintentar.
   Así el operador ajusta sin que `csnloc` asocie picadas a medio hacer — que es exactamente el
   defecto que tenía la versión anterior, donde el clic sólo escribía al anillo y la pantalla no
   cambiaba.
@@ -417,17 +422,29 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   área con escala automática y encima pinta la **franja** de la ventana (`anchor+t0 .. anchor+t1`),
   sus bordes y la línea del ancla. El arrastre solo se agarra desde el **handle** de arriba
   (`CSNHYPODBP_MAG_HANDLE_H`), igual que la GTK: el resto del canvas queda para el zoom.
+- **P teórica**: `TauModel` (default `iasp91`) se carga al arrancar con `bpq_init_tt` →
+  `csnhypodbp_tt_init`; sin tablas en el cwd se avisa por stderr y la GUI sigue. Con el modelo
+  listo, toda estación sin P `M/A` recibe una P **`T`** (`M > A > Teo`) con el SCNL del catálogo:
+  la tabla de *Ondas* muestra `stat=Teo`, el canvas la marca con `pColorTheo` y la de magnitudes
+  obtiene **ancla y ventana** (`win_src='T'`) sin inventar nada. `bpq_stations_build_resid` ya
+  hacía el cálculo; lo que faltaba era inicializar el modelo.
+- **Checks propios de magnitudes**: la barra tiene `A/M/Teo` (`mag_chk_auto/manual/theo`), los tres
+  marcados por defecto; son independientes de los del picking (que solo filtran el localizador) y
+  gobiernan `eligible/used`, el contador “en uso” y el envío del cálculo. `BPQ_MAG_ORIGINS` los fija
+  en los tests.
 - `calculate` = `csnmags` sobre la **candidata** con las ventanas ajustadas (`WindowOverridesFile`
   equivalente: `csnhypodbp_mag_ovr_build_anchors` → `CsnhypodbpMagOvrRow[]`, t0/t1 absolutos) en el
   hilo del localizador; al volver refresca el preview y la tabla. `calculate all` = las cuatro
-  magnitudes, `calculate` = solo la del radio activo (`kind_mask`).
+  magnitudes, `calculate` = solo la del radio activo (`kind_mask`). Antes mandaba `base = m_cand`
+  tal cual y `hypos_write` solo iteraba sus P del ARC: las manuales nuevas y las teóricas **no
+  llegaban** a `csnmags`. `bpq_magpanel_calc_solution` reconstruye `base.picks` desde `m_staRows`
+  con el ranking y los checks de magnitudes, y es lo que recibe `runMagJob`.
 - La puerta de distancia son dos cajas de texto (`GtkEntry`-like: se aplican al confirmar el campo y
   **solo si las dos valen**; `csnhypodbp_mag_ov_parse` devuelve 0 en éxito) y `reset default` vuelve
   a las del `.d`. Es la misma puerta que ve `csnmags`.
 - **Desviaciones**: (1) el canvas dibuja la estación **actual del picking** — es la única con ondas en
   memoria; la tabla sí lista todas (137 en el evento de prueba) y marca `in_use` = las que entrarán a
-  `csnmags`; (2) los checks **A/M/Teo** son los mismos de la barra del picking (no hay una copia
-  propia); (3) no hay cajas de profundidad (solo distancia): el override de profundidad queda en el
+  `csnmags`; (2) no hay cajas de profundidad (solo distancia): el override de profundidad queda en el
   `.d`. La tabla del GTK es un `GtkColumnView` con un canvas **por fila**; aquí es tabla + un canvas
   (un solo `GtkColumnView`-equivalente sería mucho más caro en Qt sin aportar al prototipo).
 

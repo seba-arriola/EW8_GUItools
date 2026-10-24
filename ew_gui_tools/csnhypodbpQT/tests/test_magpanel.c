@@ -112,6 +112,67 @@ int main(void)
         CK(n == 2);
     }
 
+    /* Ancla TEORICA: la ventana del .d existe y la fila entra si Teo esta on. */
+    {
+        CsnhypodbpStaRow th[1];
+        CsnhypodbpMagRow tr;
+        CsnhypodbpMagOvrRow tovr[8];
+
+        sta_set(&th[0], "PB03", 1700000030.0, 4.0, 400.0);
+        th[0].p.origin = 'T';
+        n = bpq_magpanel_rows(p, th, 1, NULL, 0, NAN, &tr, 1);
+        CK(n == 1);
+        CK(tr.anchor == 'T');
+        CK(tr.win_src == 'T');
+        CK(isfinite(tr.t0) && isfinite(tr.t1) && tr.t1 > tr.t0);
+        CK(tr.used == 1 && tr.eligible == 1);
+        CK(bpq_magpanel_ovr(p, th, 1, 0u, tovr, 8) >= 1);
+        CK(strcmp(tovr[0].sta, "PB03") == 0);
+        /* Teo apagado: la fila se sigue viendo, pero no entra al calculo. */
+        bpq_magpanel_set_masks(p, 1, 1, 0);
+        n = bpq_magpanel_rows(p, th, 1, NULL, 0, NAN, &tr, 1);
+        CK(n == 1);
+        CK(tr.used == 0 && tr.eligible == 0);
+        bpq_magpanel_set_masks(p, 1, 1, 1);
+    }
+
+    /* `calculate`: copia la candidata y reemplaza sus picks por las P
+     * efectivas de la tabla (M/A/Teo). Sin esto csnmags no las ve. */
+    {
+        CsnhypodbpSolution base, out;
+        CsnhypodbpStaRow cr[3];
+
+        memset(&base, 0, sizeof(base));
+        base.otime = 1700000000.0;
+        base.lat = -30.0;
+        base.lon = -70.0;
+        base.npicks = 1;
+        snprintf(base.picks[0].sta, sizeof(base.picks[0].sta), "PB01");
+        base.picks[0].phase = 'P';
+        base.picks[0].t_pick = 1700000010.0;
+        base.picks[0].manual = 1;
+
+        sta_set(&cr[0], "PB01", 1700000010.0, 3.0, 300.0);   /* M */
+        sta_set(&cr[1], "PB02", 1700000020.0, 4.0, 400.0);
+        cr[1].p.origin = 'A';
+        sta_set(&cr[2], "PB03", 1700000030.0, 5.0, 500.0);
+        cr[2].p.origin = 'T';
+
+        CK(bpq_magpanel_calc_solution(cr, 3, 1, 1, 1, &base, &out) == 3);
+        CK(fabs(out.otime - base.otime) < 1e-9);
+        CK(out.npicks == 3 && out.nph == 3);
+        CK(out.picks[0].phase == 'P' && out.picks[1].phase == 'P' &&
+           out.picks[2].phase == 'P');
+        CK(bpq_magpanel_calc_solution(cr, 3, 1, 0, 0, &base, &out) == 1);
+        CK(out.npicks == 1 && strcmp(out.picks[0].sta, "PB02") == 0);
+        CK(bpq_magpanel_calc_solution(cr, 3, 0, 0, 1, &base, &out) == 1);
+        CK(out.npicks == 1 && strcmp(out.picks[0].sta, "PB03") == 0);
+        CK(bpq_magpanel_calc_solution(cr, 3, 0, 0, 0, &base, &out) == 0);
+        CK(bpq_magpanel_calc_solution(NULL, 3, 1, 1, 1, &base, &out) == -1);
+        CK(bpq_magpanel_calc_solution(cr, 0, 1, 1, 1, &base, &out) == -1);
+        CK(bpq_magpanel_calc_solution(cr, 3, 1, 1, 1, NULL, &out) == -1);
+    }
+
     /* Textos de celda: la magnitud no se inventa si no hay valor. */
     {
         char txt[32];

@@ -95,6 +95,15 @@ static int run_gui(QApplication &app, const QStringList &args)
         std::fprintf(stderr, "csnhypodbpQT: %s\n", err);
         return 1;
     }
+    /* P teorica: sin el modelo cargado no hay ancla para las estaciones sin
+     * picada M/A y la tabla de magnitudes se queda sin ventanas. Se avisa y
+     * se sigue (la GUI no muere por un recurso opcional). */
+    {
+        char terr[256] = "";
+
+        if (!bpq_init_tt(cfg, terr, sizeof(terr)) && terr[0])
+            std::fprintf(stderr, "csnhypodbpQT: %s\n", terr);
+    }
 
     BpqMainWindow win(cfg);
     win.show();

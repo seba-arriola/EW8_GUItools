@@ -128,6 +128,8 @@ static void test_tolerated_line(void)
     CHECK(c != NULL);
     if (c) {
         CHECK_DBL(c->map_split_frac, 0.7, 1e-9);
+        /* Sin TauModel en el .d: default de fabrica (la P teorica no se apaga). */
+        CHECK_STR(c->tau_model, "iasp91");
         bpq_config_free(c);
     }
     remove(path);

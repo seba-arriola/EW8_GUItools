@@ -194,6 +194,11 @@ BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
                            char *err, size_t errn);
 void       bpq_config_free(BpqConfig *c);
 
+/* Carga el modelo de tiempos de viaje (`TauModel`, default `iasp91`) que
+ * alimenta la P teorica. 1 = cargado; 0 = sin tablas en el cwd (motivo en
+ * `err`); nunca aborta. */
+int        bpq_init_tt(const BpqConfig *c, char *err, size_t errn);
+
 /* Vuelca la config efectiva (port de maps_print_config). 0 = OK. */
 int        bpq_config_print(const BpqConfig *c, FILE *out);
 
@@ -645,6 +650,14 @@ int  bpq_magpanel_ovr(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                       unsigned kind_mask, CsnhypodbpMagOvrRow *out, int max);
 int  bpq_magpanel_ovr_write(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                             int n, const char *path);
+
+/* Solucion para `calculate`: copia `base` y reemplaza sus picadas por las P/S
+ * efectivas permitidas por (auto, manual, theo). Devuelve el numero de
+ * picadas; -1 si los argumentos no valen. */
+int  bpq_magpanel_calc_solution(const CsnhypodbpStaRow *stas, int n,
+                                int auto_on, int manual_on, int theo_on,
+                                const CsnhypodbpSolution *base,
+                                CsnhypodbpSolution *out);
 
 /* Cajas de la puerta de distancia de la magnitud activa ("%.1f" o "" sin
  * override) y aplicacion de lo tecleado (rango de `csnhypodbp_mag_ov_parse`). */
