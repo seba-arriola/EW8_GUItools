@@ -118,15 +118,18 @@ hace **`csnloc`** localmente.
     conservando la hora, o `00:00:00` si el campo no la traía. Los **residuales** de la solución
     elegida se ven en la tabla de *Ondas* sin pulsar `locate` (`EventSol.picks` +
     `csnhypodbp_resid_source`), y se persisten en `pick.uncertainty`.
-    El resultado del `locate` y la solución elegida se ven en un **cuadro de dos mitades** al tope de
+    El resultado del `locate` y la solución elegida se ven en un **panel superior** al tope de
     *Procesar* (compartido por `picking` y `magnitudes`; lógica pura en `csnhypodbp_preview.{h,c}` y
     **un solo** render, `csnhypodbp_preview_update()`, para que estado, valores, color y botones no se
-    desincronicen): a la izquierda título, `Origin time` y `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la
-    derecha `Magnitude` (`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con sus radios compactos (`.preview-radio`) en una
-    grilla única de 4 filas separada por una línea vertical: **fondo rojo muy leve** (`.preview-box.candidate`)
-    cuando es la candidata del `locate`, ámbar suave cuando es la elegida y guiones si no hay
-    selección; `Confirm`/`Discard` a la derecha, sensibles **solo** con candidata (`Discard` vuelve a
-    mostrar la elegida, ya no oculta la tablita). Mientras corre, a la derecha del `Origin time` va
+    desincronicen). En el GTK es un cuadro de dos mitades: a la izquierda título, `Origin time` y
+    `Lat`/`Lon`/`Depth[km]`/`Nph`/`RMS[s]`; a la derecha `Magnitude` (`ML`/`Mwp`/`Mb`/`Ms`/`Mww`) con
+    sus radios compactos (`.preview-radio`) en una grilla única de 4 filas separada por una línea
+    vertical, con **fondo rojo muy leve** (`.preview-box.candidate`) para la candidata del `locate` y
+    ámbar suave para la elegida. En `csnhypodbpQT` el mismo panel es una **tabla de 2 filas**
+    (encabezados y valores, con los radios de magnitud en su celda) **sin relleno de fondo**: el
+    estado se distingue por el color del título. En ambos, `Confirm`/`Discard` van a la derecha,
+    sensibles **solo** con candidata (`Discard` vuelve a mostrar la elegida, ya no oculta la
+    tablita). Mientras corre, a la derecha del `Origin time` va
     un spinner con `calculando <localizador>… N s` (timer de 1 s) para **todos** los localizadores;
     `LocatorTimeoutSec` (600 s) acota el refinador y el error real (`timeout`/`ref.err`/ARC inválido)
     se ve en ese mismo renglón. El `.d` temporal del refinador usa un `WorkDir` propio y, con `Fix`,

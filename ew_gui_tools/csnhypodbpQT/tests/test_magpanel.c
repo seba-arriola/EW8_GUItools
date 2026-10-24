@@ -72,7 +72,7 @@ int main(void)
 
     /* --- 3. filas: ancla, ventana, puerta y elegibilidad ------------------ */
     sta_set(&stas[0], "PB01", 1700000010.0, 3.0, 300.0);
-    sta_set(&stas[1], "PB02", 1700000020.0, 200.0, 15000.0);
+    sta_set(&stas[1], "PB02", 1700000020.0, 20.0, 500.0);
 
     /* Sin override manda la puerta del .d; con override, la del usuario. */
     CK(bpq_magpanel_gate_set(p, "0.0", "10.0") == 1);
@@ -90,6 +90,27 @@ int main(void)
     CK(rows[1].eligible == 0);
     CK(rows[1].used == 0);
     CK(rows[1].win_src == 'A');                       /* la del .d con P */
+
+    /* La tabla solo lista lo que pasa la puerta; el resto queda para picking. */
+    {
+        CsnhypodbpMagRow filt[4];
+
+        CK(bpq_magrows_filter_in_range(rows, 2, filt, 4) == 1);
+        CK(strcmp(filt[0].sta, "PB01") == 0);
+        CK(bpq_magrows_filter_in_range(rows, 2, filt, 1) == 1);  /* tope */
+        CK(bpq_magrows_filter_in_range(NULL, 2, filt, 4) == 0);
+        CK(bpq_magrows_filter_in_range(rows, 2, NULL, 4) == 0);
+        CK(bpq_magrows_filter_in_range(rows, 0, filt, 4) == 0);
+
+        /* Si el usuario amplia la puerta, la fila oculta reaparece. */
+        CK(bpq_magpanel_gate_set(p, "0.0", "30.0") == 1);
+        n = bpq_magpanel_rows(p, stas, 2, NULL, 0, NAN, rows, 16);
+        CK(n == 2);
+        CK(bpq_magrows_filter_in_range(rows, n, filt, 4) == 2);
+        CK(bpq_magpanel_gate_set(p, "0.0", "10.0") == 1);
+        n = bpq_magpanel_rows(p, stas, 2, NULL, 0, NAN, rows, 16);
+        CK(n == 2);
+    }
 
     /* Textos de celda: la magnitud no se inventa si no hay valor. */
     {
@@ -146,6 +167,20 @@ int main(void)
         mts[0].tr = tr; mts[0].chan = "HHZ"; mts[0].dist_km = 32.0;
         mts[1].tr = tr; mts[1].chan = "HHN"; mts[1].dist_km = 32.0;
         mts[2].tr = tr; mts[2].chan = "HHE"; mts[2].dist_km = 32.0;
+        {
+            char lbl[16];
+
+            CK(bpq_mag_band_label(&mc, 0, lbl, sizeof(lbl)) == 0);
+            mc.trs = mts;
+            mc.ntr = 3;
+            CK(bpq_mag_band_label(&mc, 0, lbl, sizeof(lbl)) == 1);
+            CK(strcmp(lbl, "HHZ") == 0);
+            CK(bpq_mag_band_label(&mc, 2, lbl, sizeof(lbl)) == 1);
+            CK(strcmp(lbl, "HHE") == 0);
+            CK(bpq_mag_band_label(&mc, 3, lbl, sizeof(lbl)) == 0);
+            CK(bpq_mag_band_label(NULL, 0, lbl, sizeof(lbl)) == 0);
+            CK(fabs(bpq_mag_left_margin(1.0) - 72.0) < 1e-9);
+        }
         mc.trs = mts;
         mc.ntr = 3;
         mc.magcfg = &def;
@@ -179,7 +214,7 @@ int main(void)
 
             for (b = 0; b < 3; b++)
                 for (y = ya[b]; y <= yb[b]; y++)
-                    for (x = 58; x < 400; x++) {
+                    for (x = 72; x < 400; x++) {
                         const unsigned char *q = buf + ((size_t)y * 400 + x) * 4;
 
                         if (q[0] < 70 && q[1] < 70 && q[2] < 70) dark[b]++;
@@ -224,7 +259,7 @@ int main(void)
             cairo_surface_destroy(sf);
             for (b = 0; b < 3; b++)
                 for (y = ya[b]; y <= yb[b]; y++)
-                    for (x = 58; x < 400; x++) {
+                    for (x = 72; x < 400; x++) {
                         const unsigned char *q = buf + ((size_t)y * 400 + x) * 4;
 
                         if (q[0] < 70 && q[1] < 70 && q[2] < 70) dark[b]++;

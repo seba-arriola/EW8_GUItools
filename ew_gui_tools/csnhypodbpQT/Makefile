@@ -50,7 +50,7 @@ QT_HAVE := $(shell test -n "$(QT_INC)" && test -d "$(QT_INC)/QtWidgets" && test 
 C_SRC := bpq_config.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
          bpq_map.c bpq_profile.c bpq_wave.c bpq_sds_globals.c bpq_stations.c \
          bpq_traces.c bpq_db.c bpq_locate.c bpq_manual.c bpq_mag.c \
-         bpq_magpanel.c bpq_draw_mag.c bpq_mww.c bpq_draw_ball.c bpq_pin.c
+         bpq_magpanel.c bpq_draw_mag.c bpq_axis.c bpq_mww.c bpq_draw_ball.c bpq_pin.c
 
 # Nucleos PUROS de csnhypodbp que se compilan in situ (sin GTK; ver plan §4.1).
 # Excluidos a proposito: row/staitem/magitem/master (GObject) y
@@ -184,7 +184,7 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 # ---------------------------------------------------------------------------
 TEST_C   := test_capi_config test_canvas test_rings test_events test_draw_map test_wave \
             test_stations test_traces test_db test_locate test_preview test_manual \
-            test_magpanel test_mww test_pin
+            test_magpanel test_axis test_mww test_pin
 TEST_CXX :=
 PROBE_SRC := tests/probe_capi.cxx
 
@@ -207,7 +207,8 @@ test_capi_config: tests/test_capi_config.c $(BUILDDIR)/c_bpq_config.o \
 # arrastran la capa de ondas (EwGuiTrace) y los colores de picada (bp_trace).
 CANVAS_DEPS = $(BUILDDIR)/c_bpq_canvas.o $(BUILDDIR)/c_bpq_map.o \
                $(BUILDDIR)/c_bpq_profile.o $(BUILDDIR)/c_bpq_traces.o \
-               $(BUILDDIR)/c_bpq_draw_mag.o $(BUILDDIR)/c_bpq_wave.o \
+               $(BUILDDIR)/c_bpq_draw_mag.o $(BUILDDIR)/c_bpq_axis.o \
+               $(BUILDDIR)/c_bpq_wave.o \
                $(BUILDDIR)/c_bpq_sds_globals.o \
                $(BUILDDIR)/bp_mapview.o $(BUILDDIR)/bp_profile.o \
                $(BUILDDIR)/bp_view.o $(BUILDDIR)/bp_trace.o \
@@ -333,6 +334,7 @@ test_traces: tests/test_traces.c $(CANVAS_DEPS) $(EWLIBS)
 # Sub-pestana magnitudes (6.1): ventanas (magmarks), filas (magrow), puerta
 # (magcfg), overrides y lienzo de la traza procesada (magview) + franja.
 MAG_DEPS := $(BUILDDIR)/c_bpq_magpanel.o $(BUILDDIR)/c_bpq_draw_mag.o \
+            $(BUILDDIR)/c_bpq_axis.o \
             $(BUILDDIR)/c_bpq_wave.o $(BUILDDIR)/c_bpq_sds_globals.o \
             $(BUILDDIR)/bp_magmarks.o $(BUILDDIR)/bp_magcfg.o \
             $(BUILDDIR)/bp_magrow.o $(BUILDDIR)/bp_magview.o $(BUILDDIR)/bp_sds.o \
@@ -342,6 +344,13 @@ MAG_DEPS := $(BUILDDIR)/c_bpq_magpanel.o $(BUILDDIR)/c_bpq_draw_mag.o \
 test_magpanel: tests/test_magpanel.c $(MAG_DEPS) $(EWLIBS)
 	rm -f $@
 	$(CC) $(CFLAGS) -Itests -o $@ tests/test_magpanel.c $(MAG_DEPS) \
+	    $(EWLIBS) $(PQLIBS) $(CAIRO) -lm
+	@chmod +x $@
+
+# Eje de tiempo comun: estilo, paso 1-2-5, banda de arrastre y gesto de release.
+test_axis: tests/test_axis.c $(CANVAS_DEPS) $(EWLIBS)
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_axis.c $(CANVAS_DEPS) \
 	    $(EWLIBS) $(PQLIBS) $(CAIRO) -lm
 	@chmod +x $@
 
@@ -412,6 +421,7 @@ check-c: $(TEST_C)
 	@$(THIS_DIR)/test_preview
 	@$(THIS_DIR)/test_manual
 	@$(THIS_DIR)/test_magpanel
+	@$(THIS_DIR)/test_axis
 	@$(THIS_DIR)/test_mww
 	@$(THIS_DIR)/test_pin
 
@@ -430,6 +440,7 @@ check: qt_check $(TEST_C)
 	@$(THIS_DIR)/test_preview
 	@$(THIS_DIR)/test_manual
 	@$(THIS_DIR)/test_magpanel
+	@$(THIS_DIR)/test_axis
 	@$(THIS_DIR)/test_mww
 	@$(THIS_DIR)/test_pin
 	@$(MAKE) --no-print-directory probe

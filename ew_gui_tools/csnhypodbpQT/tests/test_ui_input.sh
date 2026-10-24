@@ -9,7 +9,12 @@
 #   - P con foco en la tabla arma el picado (no hace type-ahead);
 #   - Down con foco en la tabla mueve el canal visible;
 #   - P con foco en una caja de texto NO arma el picado;
-#   - la pestana magnitudes llena una banda por canal (ntr=3) y tiene ancla.
+#   - la pestana magnitudes llena una banda por canal (ntr=3) y tiene ancla;
+#   - el eje: banda gris, izq->der acerca y der->izq restituye;
+#   - dos clics a la izquierda del ancla restituyen la vista (sin undo);
+#   - la tabla de magnitudes oculta las estaciones fuera de la puerta;
+#   - el preview es una tabla 2x10 sin fondo amarillo;
+#   - seleccion cruzada picking <-> magnitudes y created por solucion.
 #
 # Uso: sh tests/test_ui_input.sh
 
@@ -45,6 +50,18 @@ run_dump() {  # <tab>
         BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_dump_kind() {  # <kind>  (fixture + magnitud activa, para el filtro)
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
+        BPQ_MAG_KIND="$1" BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$bin" csnhypodbpqt.d 2>/dev/null )
+}
+run_dump_cand() {  # candidata del locate (color del titulo)
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_TEST_CAND=1 BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 run_input() {  # <pares VAR=valor...>
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
         BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
@@ -57,12 +74,24 @@ run_sort() {  # <pares VAR=valor...>
         BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_axis() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_INPUT_TARGET=axis BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
+run_clicks() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_INPUT_TARGET=waves BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 ck() {  # <descripcion> <regex ERE>
     if printf '%s\n' "$out" | grep -qE "$2"; then
         ok "$1"
     else
         bad "$1"
-        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|origins|stations) ' | sed 's/^/       /'
+        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|origins|stations|preview) ' | sed 's/^/       /'
     fi
 }
 
@@ -70,6 +99,12 @@ ck() {  # <descripcion> <regex ERE>
 run_dump picking
 ck "3 filas por canal, 1 visible"     '^traces rows=3 with=[0-9]+ first=0 nvis=1 scroll=0 per=1 '
 ck "hay un canal por componente"      '^stations rows=[0-9]+ picked=[1-9]'
+
+# --- 1a. preview: tabla de 2 filas, sin fondo amarillo -------------------
+run_dump picking
+ck "preview: tabla 2x10 sin fondo"     '^preview grid rows=2 cols=10 headers=Lat,Lon,Depth.km.,Nph,RMS.s.,ML,Mwp,Mb,Ms,Mww values=.* bg=none title_color=#8a5a00$'
+run_dump_cand
+ck "preview: candidata en rojo"        '^preview grid .* bg=none title_color=#a02020$'
 
 # --- 1b. Created propio de cada solucion (no el time(NULL) de la carga) ---
 run_dump picking
@@ -145,6 +180,53 @@ run_input BPQ_INPUT_TARGET=mag BPQ_INPUT_SELECT=PB02 BPQ_INPUT_REFRESH=1
 ck "mag: el refresh conserva PB02"     '^input select=PB02 .*mag_sel=PB02 traces_sta=PB02'
 run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_SELECT=PB01
 ck "sta: seleccion PB01 vuelve a mag"  '^input select=PB01 .*mag_sel=PB01 traces_sta=PB01'
+
+# --- 9. arrastre sobre el eje: banda, zoom y reset total -------------------
+run_axis BPQ_INPUT_AXIS=0.2,0.7
+ck "eje: gesto termina sin banda"      '^input axis gestures=1 .* rubber=0$'
+w=$(printf '%s\n' "$out" | sed -n 's/^input axis .* win=\([0-9.]*\) .*/\1/p')
+if [ -n "$w" ] && [ "$(LC_ALL=C awk -v w="$w" 'BEGIN{print (w < 119.0) ? 1 : 0}')" = 1 ]; then
+    ok "eje: izq->der hace zoom (win=$w)"
+else
+    bad "eje: izq->der no hizo zoom <$w>"
+fi
+run_axis BPQ_INPUT_AXIS='0.2,0.7;0.8,0.2'
+ck "eje: der->izq restituye la vista"  '^input axis gestures=2 win=120.0 t0=1767323040.00 rubber=0$'
+
+# --- 10. dos clics: derecha acerca, izquierda restituye (sin undo) --------
+run_clicks BPQ_INPUT_CLICKS='0.3,0.3;0.7,0.3'
+w=$(printf '%s\n' "$out" | sed -n 's/^input clicks=.* win=\([0-9.]*\) .*/\1/p')
+if [ -n "$w" ] && [ "$(LC_ALL=C awk -v w="$w" 'BEGIN{print (w < 119.0) ? 1 : 0}')" = 1 ]; then
+    ok "clics: derecha acerca (win=$w)"
+else
+    bad "clics: derecha no hizo zoom <$w>"
+fi
+run_clicks BPQ_INPUT_CLICKS='0.3,0.3;0.7,0.3;0.7,0.3;0.3,0.3'
+ck "clics: izquierda vuelve al inicio" '^input clicks=4 win=120.0 t0=1767323040.00 anchor=0.0$'
+
+# --- 11. la tabla de magnitudes solo lista lo que pasa la puerta ----------
+run_dump magnitudes
+ck "ML: la tabla muestra PB01 (1.1 grados)" '^mag .* sta=PB01 sel=PB01 '
+ml_rows=$(printf '%s\n' "$out" | sed -n 's/^mag .* rows=\([0-9]*\) all=.*/\1/p')
+ml_all=$(printf '%s\n' "$out" | sed -n 's/^mag .* all=\([0-9]*\) .*/\1/p')
+if [ -n "$ml_rows" ] && [ -n "$ml_all" ] && [ "$ml_rows" -lt "$ml_all" ]; then
+    ok "ML: oculta las de >8 grados ($ml_rows/$ml_all)"
+else
+    bad "ML: no filtro la tabla <rows=$ml_rows all=$ml_all>"
+fi
+
+run_dump_kind Mwp
+ck "Mwp: oculta PB01 (<3 grados) de la tabla" '^mag .* sta=PB01 sel=- '
+ck "Mwp: PB01 sigue en picking"       '^stations rows=[0-9]+ picked=[1-9]+ sel=PB01$'
+ck "Mwp: PB01 sigue en el canvas"     '^traces .* sta=PB01 '
+mwp_rows=$(printf '%s\n' "$out" | sed -n 's/^mag .* rows=\([0-9]*\) all=.*/\1/p')
+mwp_all=$(printf '%s\n' "$out" | sed -n 's/^mag .* all=\([0-9]*\) .*/\1/p')
+if [ -n "$mwp_rows" ] && [ -n "$mwp_all" ] &&
+   [ "$mwp_rows" -ne "$ml_rows" ] && [ "$mwp_rows" -lt "$mwp_all" ]; then
+    ok "Mwp: tabla distinta y filtrada ($mwp_rows != $ml_rows, < $mwp_all)"
+else
+    bad "Mwp: no filtro la tabla <mwp=$mwp_rows ml=$ml_rows all=$mwp_all>"
+fi
 
 echo "----"
 echo "== ui input checks=$((pass + fail)) fallas=$fail =="

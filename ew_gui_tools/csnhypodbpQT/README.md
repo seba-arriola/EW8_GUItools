@@ -36,12 +36,13 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
 == wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
 == stations checks=34 fallas=0 ==  # catalogo (StaFile), distancia/orden y regla M > A > Teo
-== traces checks=61 fallas=0 ==    # canvas: envolvente, polilinea, escala por ventana, gaps, marcas, clic y scroll
+== traces checks=70 fallas=0 ==    # canvas: etiquetas de canal, envolvente, escala, gaps, marcas, clic y scroll
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
 == locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
-== magpanel checks=53 fallas=0 ==   # ventanas, filas, puerta, overrides y canvas multibanda (3 canales)
+== magpanel checks=72 fallas=0 ==   # ventanas, filas, puerta, filtro de tabla, etiquetas y canvas multibanda
+== axis checks=38 fallas=0 ==       # eje comun: fondo/filete/ticks, paso 1-2-5, banda gris y gesto release
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
 OK: sin libgtk/libadwaita/libgobject/libgio
@@ -50,14 +51,14 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
 == traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
-== table ui invariants checks=15 fallas=0 == # 4 proxies, Created de BD, anchos exactos y fit_columns
-== ui input checks=27 fallas=0 ==  # scroll/rueda, teclado, orden de 4 tablas, anchos y seleccion mag
+== table ui invariants checks=28 fallas=0 == # 4 proxies, Created, eje, filtro de mags, preview y fit_columns
+== ui input checks=40 fallas=0 ==  # scroll, teclado, orden, eje/banda, reset de zoom, filtro, anchos y preview
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1204 checks** (1063 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
-teclado + 15 de tablas + 27 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
+Total: **1296 checks** (1129 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
+teclado + 28 de tablas/preview + 40 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
 
 ### Created real, ordenación y anchos (2026-10-24)
 
@@ -80,14 +81,37 @@ teclado + 15 de tablas + 27 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
   `selectStation` actualiza `m_selSta`, sincroniza ambas tablas y pide las ondas una sola vez;
   `BpqMagModel::setRows` no resetea si las filas no cambiaron, así la selección sobrevive a
   `traceReady` y al arrastre de la franja.
-- Tests: `events` 89, `table ui invariants` 15, `ui input` 27; `test_pin.sh` 45 sigue verde.
+- Tests: `events` 89, `table ui invariants` 28, `ui input` 40; `test_pin.sh` 45 sigue verde.
+
+### Eje, etiquetas, filtro y preview (2026-10-24)
+
+- **Un solo eje de tiempo** (`c/bpq_axis.c`, `bpq_axis_paint`): picking y magnitudes comparten fondo
+  neutro, filete superior, ticks cortos de 4 px, etiquetas `HH:MM:SS` de 9 px negras y paso 1-2-5 en
+  múltiplos redondos. Se acabó la rejilla de altura completa del picking.
+- **Banda de arrastre**: mientras se mantiene pulsado el eje se pinta el intervalo en gris
+  (`rgba(0.5,0.5,0.5,0.35)`); al soltar, izq→der hace zoom al rango y der→izq restituye la vista del
+  evento. El gesto puro es `bpq_traces_axis_release`; el mismo `resetTimeView` que usa el segundo
+  clic a la izquierda del ancla. No hay pila de undo.
+- **Etiquetas de traza**: solo el canal (`HHZ`, `HHN`, `HHE`, `HNZ`...), en `sans` bold de 27 px
+  negro, centrado en la banda. La cuneta pasa a 72 px (`bpq_traces_left_margin`/`bpq_mag_left_margin`,
+  compartido con hit-test, zoom y eje); la estación y la distancia quedan en la tabla.
+- **Filtro de la tabla de magnitudes**: solo se listan las filas `in_range` de la magnitud activa
+  (ML 0–8°, Mwp 3–90°, Mb 5–105°, Ms 20–160°, con el override del usuario). Las ocultas siguen en
+  picking y en el canvas (`m_magRows`); la tabla usa `m_magTableRows` y
+  `bpq_magrows_filter_in_range`. `BPQ_MAG_KIND` permite fijar la magnitud en los tests.
+- **Preview en tabla de 2 filas**: encabezados (`Lat/Lon/Depth[km]/Nph/RMS[s]/ML/Mwp/Mb/Ms/Mww`) y
+  una fila de valores; los radios de magnitud van en su celda con el valor como texto. Sin fondo
+  amarillo/rojo: el estado (candidata/elegida) va en el color del título. `BpqPreviewPanel::dump()`
+  publica `rows/cols/headers/values/bg/title_color` para los tests headless.
+- Tests: `axis` 38, `traces` 70, `magpanel` 72, `table ui invariants` 28 y `ui input` 40 (incluye
+  `preview grid` y `BPQ_MAG_KIND=Mwp`).
 
 ### Origen fijado (pin)
 
 En la pestaña *Eventos*, un **doble clic** en una fila de *Origins* fija esa solución y
 lleva a *Procesar → picking*. Mientras hay un origen fijado:
 
-- *Selected solution* (mitad izquierda) y *Magnitude* (mitad derecha) muestran **solo**
+- la tabla superior (título *Selected solution* y columnas de magnitud) muestra **solo**
   las celdas de esa solución (magnitudes por origen, no el agregado del evento ni la
   preferida);
 - la tabla de estaciones/residuales, la pestaña *magnitudes*, la semilla de `Mww` y las
@@ -240,10 +264,10 @@ Qué hace cada gesto, y dónde vive el estado:
 | **`P` / `S`** | trazas | **arma el modo picada**: el cursor pasa a ser un **círculo del color de la fase con la letra** (`pColor`/`sColor`); `Esc` lo desarma |
 | clic izq. (armado) | trazas | coloca la picada de esa fase en el overlay local |
 | clic derecho (armado) | trazas | quita la picada manual de esa fase |
-| **dos clics izq.** | trazas | el 1.º deja un **ancla** (línea discontinua azul); el 2.º **a la derecha acerca** al intervalo y **a la izquierda deshace** el último zoom |
+| **dos clics izq.** | trazas | el 1.º deja un **ancla** (línea discontinua azul); el 2.º **a la derecha acerca** al intervalo y **a la izquierda restituye la vista original** |
 | arrastre izq. | trazas | paneo temporal (`bpq_traces_pan`) |
 | rueda | trazas | zoom temporal anclado al cursor (`bpq_traces_zoom_at`, 1 s…1 h) |
-| **arrastre en el eje** | barra inferior | **izquierda→derecha acerca**, **derecha→izquierda aleja** (factor exponencial: 100 px ≈ ×2.7) |
+| **arrastre en el eje** | barra inferior | marca el intervalo en **gris**; **izquierda→derecha acerca** al rango y **derecha→izquierda restituye** la vista del evento |
 
 - **El clic NO publica al anillo.** La picada va a un **overlay local** (el `csnhypodbp_manual.c`
   puro del módulo GTK, con `set` semántico: recolocar reemplaza la de esa fase y deja intacta la
@@ -258,11 +282,16 @@ Qué hace cada gesto, y dónde vive el estado:
   picada manual de esa fase (los dos actúan sólo sobre el overlay).
 - **Zoom por dos clics**: el primero deja un **ancla visible** (`zoom_anchor_t` del contexto, línea
   discontinua); el segundo clic a la derecha acerca al intervalo (`bpq_traces_zoom_range`), y a la
-  izquierda **deshace** el último zoom (pila de ventanas previas). Sin ancla, un clic no cambia nada.
-- **Arrastre en el eje**: la barra inferior de tiempos es un canvas propio; arrastrar a la derecha
-  acerca (`factor = exp(dx/100)`) y a la izquierda aleja, con el ancla en el centro del eje.
+  izquierda **restituye la vista original** (`resetTimeView`: `m_defT0`/`m_defWin`), en una sola
+  acción y sin pila de undo. Sin ancla, un clic no cambia nada.
+- **Arrastre en el eje**: la barra inferior de tiempos es un canvas propio. Mientras se arrastra
+  pinta una **banda gris** (`rgba(0.5,0.5,0.5,0.35)`, el mismo gris de la GTK); al soltar,
+  izquierda→derecha hace zoom al intervalo y derecha→izquierda vuelve a la vista del evento. El
+  cálculo puro vive en `bpq_traces_axis_release` (2 px / 0.1 s de umbral).
+- **El eje es el mismo en picking y magnitudes** (`c/bpq_axis.c`): fondo neutro, filete superior,
+  ticks cortos de 4 px, etiquetas `HH:MM:SS` de 9 px negras y paso 1-2-5 en múltiplos redondos.
 - La ventana de las trazas vive en `m_winT0`/`m_winLen` (los dos canvas la comparten y el eje la
-  sigue). Se reinicia al cambiar de evento, junto con el ancla y la pila de deshacer.
+  sigue). Se reinicia al cambiar de evento, junto con el ancla.
 - El overlay **persiste** en `<ManualStateFile>.picks` (formato propio; el `.events` de la GTK no se
   toca), con la **clave del evento** en el encabezado: al cambiar de evento se ignora el de otro, y
   al volver se recupera. Se crean los directorios padre al guardar (el runtime de un binario que no
@@ -284,14 +313,14 @@ mouse right_click manual=0
 mouse pick_again manual=1
 mouse esc armed=0
 mouse zoom2 win 100.0 -> 45.8
-mouse zoom2_undo win -> 100.0
+mouse zoom2_reset win -> 100.0
 mouse axis_drag+ win 100.0 -> 44.9
-mouse axis_drag- win -> 100.0
+mouse axis_reset win -> 100.0
 mouse pick save_reload=1/1 key=933600041:164:1
 ```
 
 (Incluye el `QKeyEvent` de `P`/`Esc`, el clic y el clic derecho sobre la traza, los dos clics de
-zoom con su inverso y el arrastre en el eje en los dos sentidos.)
+zoom con el reset total y el arrastre en el eje en los dos sentidos.)
 
 ### Componentes de la estación actual y atajos (fase 4)
 
@@ -315,14 +344,15 @@ zoom con su inverso y el arrastre en el eje en los dos sentidos.)
 
 ### Preview, `Confirm`/`Discard` y export (fase 5)
 
-- `ui/bpq_preview_panel` es el cuadro de dos mitades al tope de *Procesar*: izquierda título +
-  `Origin time` (+ el `calculando <loc>… N s` al lado) + `Lat/Lon/Depth/Nph/RMS`; derecha
-  `Magnitude` con los radios `ML/Mwp/Mb/Ms/Mww`. **Un solo `render()`** alimenta estado, valores,
-  color y botones: con dos renders parciales el estado y los valores se desincronizan (lección del
-  módulo GTK). Los valores los formatea el núcleo puro `csnhypodbp_preview_*` (no se reimplementan).
-- Fondo: **rojo muy leve** para la candidata, **ámbar suave** para la elegida y sin fondo (guiones)
-  sin selección. Los radios solo son sensibles para magnitudes con valor, y `Confirm`/`Discard` solo
-  con candidata.
+- `ui/bpq_preview_panel` es el panel compacto al tope de *Procesar*: arriba título + `Origin time`
+  (+ el `calculando <loc>… N s`); debajo una **tabla de 2 filas** con encabezados
+  (`Lat/Lon/Depth[km]/Nph/RMS[s]/ML/Mwp/Mb/Ms/Mww`) y una fila de valores; los radios de magnitud
+  van en su celda con el valor como texto. **Un solo `render()`** alimenta estado, valores, color y
+  botones: con dos renders parciales el estado y los valores se desincronizan (lección del módulo
+  GTK). Los valores los formatea el núcleo puro `csnhypodbp_preview_*` (no se reimplementan).
+- Sin relleno de fondo: la candidata y la elegida se distinguen por el **color del título** (rojo
+  `#a02020` / ámbar `#8a5a00`). Los radios solo son sensibles para magnitudes con valor, y
+  `Confirm`/`Discard` solo con candidata.
 - `Confirm` construye el ARC con `csnhypodbp_confirmation_arc` — la **misma** función pura que usa
   el módulo GTK, así que sale byte a byte el de `csnhypodbp_confirm_manual` (verificado: byte 174 =
   `M`) —, lo publica en `ConfRing` con `bpq_emit_confirm`, y además lo mete en el store local como

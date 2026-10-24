@@ -151,6 +151,19 @@ int bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
     return nr;
 }
 
+int bpq_magrows_filter_in_range(const CsnhypodbpMagRow *in, int n,
+                                CsnhypodbpMagRow *out, int max)
+{
+    int i, nout = 0;
+
+    if (!in || !out || n <= 0 || max <= 0) return 0;
+    for (i = 0; i < n && nout < max; i++) {
+        if (!in[i].in_range) continue;   /* fuera de la puerta: solo en picking */
+        out[nout++] = in[i];
+    }
+    return nout;
+}
+
 int bpq_magpanel_ovr(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                      unsigned kind_mask, CsnhypodbpMagOvrRow *out, int max)
 {

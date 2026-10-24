@@ -380,7 +380,20 @@ void BpqMainWindow::openData()
      * leido, porque sus ventanas por defecto salen del .d de csnmags. */
     m_magPanel = bpq_magpanel_new(m_cfg);
     if (m_magPanel) {
+        /* Hook de test: la tabla se filtra por la puerta de la magnitud activa;
+         * con esto se comprueba ML (0-8) frente a Mwp (3-90) sin tocar el .d. */
+        if (!qgetenv("BPQ_TEST_FIXTURE").isEmpty()) {
+            const QByteArray mk = qgetenv("BPQ_MAG_KIND").toUpper();
+
+            if (mk == QByteArray("ML")) m_magKind = 0;
+            else if (mk == QByteArray("MWP")) m_magKind = 1;
+            else if (mk == QByteArray("MB")) m_magKind = 2;
+            else if (mk == QByteArray("MS")) m_magKind = 3;
+        }
         bpq_magpanel_set_kind(m_magPanel, m_magKind);
+        if (m_magKind >= 0 && m_magKind < m_magRadios.size() &&
+            m_magRadios.at(m_magKind))
+            m_magRadios.at(m_magKind)->setChecked(true);
         renderMagnitudes();
     }
 
@@ -573,8 +586,8 @@ void BpqMainWindow::openData()
     });
 
     /* Trazas: rueda = zoom temporal alrededor del cursor, arrastre = paneo,
-     * dos clics = zoom al intervalo (el inverso deshace) y arrastre en el eje =
-     * zoom in de izquierda a derecha / out al reves. La ventana vive en
+     * dos clics = zoom al intervalo (izquierda = vista original) y arrastre en
+     * el eje = zoom con banda gris (der->izq = reset). La ventana vive en
      * m_winT0/m_winLen (los DOS canvas la comparten). */
     if (m_waves) {
         connect(m_waves, &BpqCanvasWidget::zoomed, this,
@@ -592,19 +605,15 @@ void BpqMainWindow::openData()
         });
     }
     if (m_axis) {
-        const auto axisZoom = [this](double dx) {
-            const double d = m_axis->devicePixelRatioF();
-            const int wpx = int(m_axis->width() * d);
-            /* A la derecha acerca, a la izquierda aleja (factor exponencial:
-             * 100 px ~ x2.7). El ancla es el centro del eje. */
-            const double factor = std::exp(dx * 0.01);
-
-            bpq_traces_zoom_at(&m_tracesCtx, wpx, wpx * 0.5, factor);
-            applyTracesWindow();
-        };
-
+        /* Arrastre sobre el eje: se marca el intervalo en gris y al soltar se
+         * aplica. Izq->der = zoom al rango; der->izq = reset total (misma
+         * semantica que la GTK, sin pasos intermedios). */
+        connect(m_axis, &BpqCanvasWidget::pressed, this,
+                [this](double x, double) { axisPress(x); });
         connect(m_axis, &BpqCanvasWidget::dragged, this,
-                [axisZoom](double dx, double) { axisZoom(dx); });
+                [this](double dx, double) { axisDrag(dx); });
+        connect(m_axis, &BpqCanvasWidget::released, this,
+                &BpqMainWindow::axisRelease);
         connect(m_axis, &BpqCanvasWidget::zoomed, this,
                 [this](double factor, double x, double) {
             const double d = m_axis->devicePixelRatioF();
@@ -919,12 +928,13 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     m_winLen = 120.0;
     m_defT0 = m_winT0;           /* Shift+0 vuelve aca */
     m_defWin = m_winLen;
-    /* Evento nuevo: la ventana vuelve al default y el zoom por dos clics se
-     * limpia (su ancla y su historial son de la ventana anterior). */
+    /* Evento nuevo: la ventana vuelve al default y el ancla del zoom por dos
+     * clics se limpia (era de la ventana anterior). */
     m_zoomAnchorX = -1.0;
     m_zoomAnchorT = 0.0;
-    m_zoomUndo.clear();
     m_tracesCtx.zoom_anchor_t = 0.0;
+    m_tracesCtx.rubber_active = 0;
+    m_axisDragging = false;
     m_tracesCtx.use_filtered = 1;   /* al llegar, cada traza se demeana/filtra */
 
     /* La vista muestra SOLO las componentes de la estacion actual, en el orden
@@ -1128,8 +1138,8 @@ void BpqMainWindow::syncStationViews()
         }
     }
 
-    for (int i = 0; i < m_magRows.size(); i++) {
-        if (m_selSta == QString::fromUtf8(m_magRows.at(i).sta)) {
+    for (int i = 0; i < m_magTableRows.size(); i++) {
+        if (m_selSta == QString::fromUtf8(m_magTableRows.at(i).sta)) {
             mi = i;
             break;
         }
@@ -1418,6 +1428,11 @@ bool BpqMainWindow::handlePickingKey(QKeyEvent *ke)
         m_tracesCtx.y_gain = 1.0;
         m_tracesCtx.t0 = m_defT0;
         m_tracesCtx.window = m_defWin;
+        m_tracesCtx.zoom_anchor_t = 0.0;
+        m_tracesCtx.rubber_active = 0;
+        m_axisDragging = false;
+        m_zoomAnchorX = -1.0;
+        m_zoomAnchorT = 0.0;
         applyTracesWindow();
         statusBar()->showMessage(QStringLiteral("vista reseteada"), 2000);
         return true;
@@ -1466,6 +1481,8 @@ bool BpqMainWindow::handlePickingKey(QKeyEvent *ke)
         m_zoomAnchorX = -1.0;
         m_zoomAnchorT = 0.0;
         m_tracesCtx.zoom_anchor_t = 0.0;
+        m_tracesCtx.rubber_active = 0;
+        m_axisDragging = false;
         updatePickCursor();
         if (m_waves) m_waves->requestRepaint();
         statusBar()->showMessage(QStringLiteral("modo picada: off"), 2000);
@@ -1575,9 +1592,23 @@ void BpqMainWindow::applyTracesWindow()
     if (m_axis) m_axis->requestRepaint();
 }
 
+/* Vista original del evento: la comparten el clic a la izquierda del ancla y
+ * el arrastre der->izq sobre el eje. No toca `y_gain` (eso es Shift+0). */
+void BpqMainWindow::resetTimeView()
+{
+    m_tracesCtx.t0 = m_defT0;
+    m_tracesCtx.window = (m_defWin > 0.0) ? m_defWin : 120.0;
+    m_tracesCtx.zoom_anchor_t = 0.0;
+    m_tracesCtx.rubber_active = 0;
+    m_axisDragging = false;
+    m_zoomAnchorX = -1.0;
+    m_zoomAnchorT = 0.0;
+    applyTracesWindow();
+}
+
 /* Dos clics: el primero deja un ancla (linea discontinua) y el segundo, a la
- * DERECHA, acerca al intervalo; a la IZQUIERDA deshace el ultimo zoom. Es el
- * gesto de la GTK, con el ancla visible para no adivinar. */
+ * DERECHA, acerca al intervalo; a la IZQUIERDA restituye la vista original en
+ * UNA sola accion (sin pila de undo, igual que la GTK). */
 void BpqMainWindow::zoomClickAt(double x, double y)
 {
     const double d = m_waves ? m_waves->devicePixelRatioF() : 1.0;
@@ -1593,7 +1624,7 @@ void BpqMainWindow::zoomClickAt(double x, double y)
         m_waves->requestRepaint();
         if (m_axis) m_axis->requestRepaint();
         statusBar()->showMessage(
-            QStringLiteral("zoom: segundo clic a la derecha acerca; a la izquierda deshace"),
+            QStringLiteral("zoom: segundo clic a la derecha acerca; a la izquierda vuelve al inicio"),
             5000);
         return;
     }
@@ -1607,32 +1638,88 @@ void BpqMainWindow::zoomClickAt(double x, double y)
         m_tracesCtx.zoom_anchor_t = 0.0;
 
         if (x1 > x0) {
-            const double t0 = m_tracesCtx.t0;
-            const double win = m_tracesCtx.window;
-
             if (bpq_traces_zoom_range(&m_tracesCtx, wpx, x0, x1) == 1) {
-                m_zoomUndo.append(QPointF(t0, win));
                 applyTracesWindow();
                 statusBar()->showMessage(
                     QStringLiteral("zoom: ventana %1 s").arg(m_tracesCtx.window, 0, 'f', 1),
                     3000);
             } else {
                 applyTracesWindow();   /* dos clics en el mismo pixel */
+                statusBar()->showMessage(
+                    QStringLiteral("zoom: rango demasiado corto"), 3000);
             }
-        } else if (!m_zoomUndo.isEmpty()) {
-            const QPointF prev = m_zoomUndo.takeLast();
-
-            m_tracesCtx.t0 = prev.x();
-            m_tracesCtx.window = prev.y();
-            applyTracesWindow();
-            statusBar()->showMessage(
-                QStringLiteral("zoom deshecho: ventana %1 s").arg(m_tracesCtx.window, 0, 'f', 1),
-                3000);
         } else {
-            applyTracesWindow();
+            resetTimeView();
             statusBar()->showMessage(
-                QStringLiteral("zoom: no hay zoom que deshacer"), 3000);
+                QStringLiteral("vista reseteada: ventana %1 s")
+                    .arg(m_tracesCtx.window, 0, 'f', 1),
+                3000);
         }
+    }
+}
+
+/* --- arrastre sobre el eje de tiempo -------------------------------------- */
+
+void BpqMainWindow::axisPress(double x)
+{
+    double d, left, right, xpx;
+
+    if (!m_axis || m_axis->width() <= 0) return;
+    d = m_axis->devicePixelRatioF();
+    left = bpq_traces_left_margin(d);
+    right = m_axis->width() * d - 6.0 * d;
+    xpx = x * d;
+    if (xpx < left || xpx > right) return;   /* press en la cuneta: no arma */
+
+    m_axisDragging = true;
+    m_axisDragX0 = m_axisDragX1 = xpx;
+    m_tracesCtx.rubber_active = 1;
+    m_tracesCtx.rubber_x0 = xpx;
+    m_tracesCtx.rubber_x1 = xpx;
+    m_axis->requestRepaint();
+}
+
+void BpqMainWindow::axisDrag(double dx)
+{
+    double d, wpx;
+
+    if (!m_axisDragging || !m_axis) return;
+    d = m_axis->devicePixelRatioF();
+    wpx = m_axis->width() * d;
+    m_axisDragX1 += dx * d;
+    if (m_axisDragX1 < 0.0) m_axisDragX1 = 0.0;
+    if (m_axisDragX1 > wpx) m_axisDragX1 = wpx;
+    m_tracesCtx.rubber_x0 = m_axisDragX0;
+    m_tracesCtx.rubber_x1 = m_axisDragX1;
+    m_axis->requestRepaint();
+}
+
+void BpqMainWindow::axisRelease()
+{
+    double d;
+    int wpx, act;
+
+    if (!m_axisDragging || !m_axis) return;
+    m_axisDragging = false;
+    d = m_axis->devicePixelRatioF();
+    wpx = int(m_axis->width() * d);
+    act = bpq_traces_axis_release(&m_tracesCtx, wpx, m_axisDragX0,
+                                  m_axisDragX1, m_defT0, m_defWin);
+    if (act == BPQ_AXIS_RESET) {
+        resetTimeView();
+        statusBar()->showMessage(
+            QStringLiteral("vista reseteada: ventana %1 s")
+                .arg(m_tracesCtx.window, 0, 'f', 1),
+            3000);
+    } else if (act == BPQ_AXIS_ZOOM) {
+        m_zoomAnchorX = -1.0;
+        m_zoomAnchorT = 0.0;
+        applyTracesWindow();
+        statusBar()->showMessage(
+            QStringLiteral("zoom: ventana %1 s").arg(m_tracesCtx.window, 0, 'f', 1),
+            3000);
+    } else {
+        m_axis->requestRepaint();
     }
 }
 
@@ -2321,10 +2408,21 @@ void BpqMainWindow::renderMagnitudes()
                               m_magRows.size());
     }
     m_magRows.resize(n);
+    /* La TABLA oculta las estaciones fuera de la puerta de la magnitud activa
+     * (las de >8 grados para ML, <3 para Mwp, ...). Siguen en picking y en el
+     * canvas: `m_magRows` (todas) es la fuente para ellos. */
+    m_magTableRows.resize(n);
+    {
+        const int nf = bpq_magrows_filter_in_range(
+            m_magRows.constData(), n, m_magTableRows.data(),
+            m_magTableRows.size());
+
+        m_magTableRows.resize(nf);
+    }
     /* Durante el arrastre de la franja no se resetea la tabla: el modelo
      * cambiaria t0/t1 en cada movimiento y perderia la seleccion. Al soltar,
      * m_magDragGrab vuelve a 0 y este mismo camino refresca las celdas. */
-    if (m_magDragGrab == 0 && m_magModel->setRows(m_magRows)) {
+    if (m_magDragGrab == 0 && m_magModel->setRows(m_magTableRows)) {
         reapplySort(m_magProxy);
         fitProcesarTable(m_magView, m_splitMag);
         /* El reset del modelo pierde la fila seleccionada: se restaura por
@@ -2917,8 +3015,8 @@ bool BpqMainWindow::runMagCalcForTest()
     if (!runLocateForTest()) return false;
 
     /* Ajusta una ventana a mano para que el override viaje de verdad. */
-    if (m_magPanel && !m_magRows.isEmpty()) {
-        const CsnhypodbpMagRow *r0 = &m_magRows.first();
+    if (m_magPanel && !m_magTableRows.isEmpty()) {
+        const CsnhypodbpMagRow *r0 = &m_magTableRows.first();
         double t0 = r0->t0, t1 = r0->t1;
 
         if (std::isfinite(t0) && std::isfinite(t1) && t1 > t0 + 2.0) {
@@ -3131,7 +3229,7 @@ bool BpqMainWindow::runMouseForTest()
         sendKey(m_waves, Qt::Key_Escape);
         std::printf("mouse esc armed=%d\n", m_pickArmed ? 1 : 0);
 
-        /* Dos clics: izquierda->derecha acerca; al reves deshace. */
+        /* Dos clics: izquierda->derecha acerca; al reves vuelve al inicio. */
         {
             const double w0 = m_winLen;
 
@@ -3140,16 +3238,16 @@ bool BpqMainWindow::runMouseForTest()
             std::printf("mouse zoom2 win %.1f -> %.1f\n", w0, m_winLen);
             sendClick(m_waves, 0.70, 0.30);
             sendClick(m_waves, 0.30, 0.30);
-            std::printf("mouse zoom2_undo win -> %.1f\n", m_winLen);
+            std::printf("mouse zoom2_reset win -> %.1f\n", m_winLen);
         }
-        /* Arrastre en el eje: derecha acerca, izquierda aleja. */
+        /* Arrastre en el eje: derecha acerca, izquierda restituye. */
         if (m_axis) {
             const double w0 = m_winLen;
 
             sendDrag(m_axis, 80);
             std::printf("mouse axis_drag+ win %.1f -> %.1f\n", w0, m_winLen);
             sendDrag(m_axis, -80);
-            std::printf("mouse axis_drag- win -> %.1f\n", m_winLen);
+            std::printf("mouse axis_reset win -> %.1f\n", m_winLen);
         }
         /* Shift+flechas (exageracion vertical y span) y flecha sola (canal). */
         {
@@ -3213,6 +3311,7 @@ bool BpqMainWindow::runInputForTest()
     else if (target == QByteArray("waves")) w = m_waves;
     else if (target == QByteArray("mag")) w = m_magCanvas;
     else if (target == QByteArray("text")) w = m_editFix;
+    else if (target == QByteArray("axis")) w = m_axis;
     if (!w) {
         std::fprintf(stderr, "csnhypodbpQT: BPQ_INPUT_TARGET desconocido\n");
         return false;
@@ -3224,6 +3323,100 @@ bool BpqMainWindow::runInputForTest()
     if (target == QByteArray("text") && m_editFix) m_editFix->setEnabled(true);
     if (target == QByteArray("text")) QApplication::setActiveWindow(this);
     w->setFocus(Qt::OtherFocusReason);
+
+    /* Arrastres REALES sobre el eje de tiempo: "f0,f1;f0,f1..." en fracciones
+     * del ancho. Cada par es press+mover+release y pasa por los mismos slots que
+     * el raton (incluida la banda gris). */
+    {
+        const QByteArray axis = qgetenv("BPQ_INPUT_AXIS");
+
+        if (!axis.isEmpty()) {
+            const QList<QByteArray> pairs = axis.split(';');
+
+            if (target != QByteArray("axis")) {
+                std::fprintf(stderr, "csnhypodbpQT: AXIS solo con target=axis\n");
+                return false;
+            }
+            for (const QByteArray &pair : pairs) {
+                const QList<QByteArray> ab = pair.split(',');
+
+                if (ab.size() != 2) {
+                    std::fprintf(stderr, "csnhypodbpQT: par AXIS invalido <%s>\n",
+                                 pair.constData());
+                    return false;
+                }
+                {
+                    const double f0 = ab.at(0).toDouble();
+                    const double f1 = ab.at(1).toDouble();
+                    const QPointF p0(w->width() * f0, w->height() / 2.0);
+                    const QPointF p1(w->width() * f1, w->height() / 2.0);
+                    QMouseEvent press(QEvent::MouseButtonPress, p0,
+                                      w->mapToGlobal(p0.toPoint()),
+                                      Qt::LeftButton, Qt::LeftButton,
+                                      Qt::NoModifier);
+                    QMouseEvent move(QEvent::MouseMove, p1,
+                                     w->mapToGlobal(p1.toPoint()), Qt::NoButton,
+                                     Qt::LeftButton, Qt::NoModifier);
+                    QMouseEvent rel(QEvent::MouseButtonRelease, p1,
+                                    w->mapToGlobal(p1.toPoint()), Qt::LeftButton,
+                                    Qt::NoButton, Qt::NoModifier);
+
+                    QCoreApplication::sendEvent(w, &press);
+                    QCoreApplication::sendEvent(w, &move);
+                    QCoreApplication::sendEvent(w, &rel);
+                }
+            }
+            std::printf("input axis gestures=%d win=%.1f t0=%.2f rubber=%d\n",
+                        int(pairs.size()), m_winLen, m_winT0,
+                        m_tracesCtx.rubber_active);
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
+    /* Clics REALES sobre las trazas: "x,y;x,y..." en fracciones del canvas.
+     * Sirve para fijar la semantica de dos clics (derecha acerca, izquierda
+     * vuelve a la vista original) sin depender de una sesion grafica. */
+    {
+        const QByteArray clicks = qgetenv("BPQ_INPUT_CLICKS");
+
+        if (!clicks.isEmpty()) {
+            const QList<QByteArray> pairs = clicks.split(';');
+
+            if (target != QByteArray("waves")) {
+                std::fprintf(stderr, "csnhypodbpQT: CLICKS solo con target=waves\n");
+                return false;
+            }
+            for (const QByteArray &pair : pairs) {
+                const QList<QByteArray> ab = pair.split(',');
+
+                if (ab.size() != 2) {
+                    std::fprintf(stderr, "csnhypodbpQT: par CLICKS invalido <%s>\n",
+                                 pair.constData());
+                    return false;
+                }
+                {
+                    const QPointF p(w->width() * ab.at(0).toDouble(),
+                                    w->height() * ab.at(1).toDouble());
+                    QMouseEvent press(QEvent::MouseButtonPress, p,
+                                      w->mapToGlobal(p.toPoint()),
+                                      Qt::LeftButton, Qt::LeftButton,
+                                      Qt::NoModifier);
+                    QMouseEvent rel(QEvent::MouseButtonRelease, p,
+                                    w->mapToGlobal(p.toPoint()), Qt::LeftButton,
+                                    Qt::NoButton, Qt::NoModifier);
+
+                    QCoreApplication::sendEvent(w, &press);
+                    QCoreApplication::sendEvent(w, &rel);
+                }
+            }
+            std::printf("input clicks=%d win=%.1f t0=%.2f anchor=%.1f\n",
+                        int(pairs.size()), m_winLen, m_winT0,
+                        m_tracesCtx.zoom_anchor_t);
+            std::fflush(stdout);
+            return true;
+        }
+    }
 
     /* Seleccion programatica de una estacion (misma que un clic): dispara el
      * slot de la vista, no solo pinta la fila. `BPQ_INPUT_REFRESH=1` fuerza
@@ -3244,8 +3437,8 @@ bool BpqMainWindow::runInputForTest()
                 }
                 tv = m_staView;
             } else if (target == QByteArray("mag")) {
-                for (int i = 0; i < m_magRows.size(); i++) {
-                    if (sel == m_magRows.at(i).sta) {
+                for (int i = 0; i < m_magTableRows.size(); i++) {
+                    if (sel == m_magTableRows.at(i).sta) {
                         vr = viewRowForSource(m_magProxy, i);
                         break;
                     }
@@ -4271,6 +4464,7 @@ QString BpqMainWindow::dumpTree() const
                .arg(QString::fromUtf8(m_previewVals.val[7]))
                .arg(QString::fromUtf8(m_previewVals.val[8]))
                .arg(QString::fromUtf8(m_previewVals.val[9]));
+    if (m_preview) out += m_preview->dump();
     out += QStringLiteral("db avail=%1 search=%2\n")
                .arg((m_db && bpq_db_available(m_db)) ? 1 : 0)
                .arg(m_searchMode ? 1 : 0);
@@ -4308,8 +4502,9 @@ QString BpqMainWindow::dumpTree() const
      * cuantas ventanas ajusto el usuario. */
     {
         int in_use = 0;
-        const CsnhypodbpMagRow *first = m_magRows.isEmpty() ? nullptr
-                                                           : &m_magRows.first();
+        const CsnhypodbpMagRow *first = m_magTableRows.isEmpty()
+                                            ? nullptr
+                                            : &m_magTableRows.first();
 
         for (const CsnhypodbpMagRow &r : m_magRows)
             if (r.used) in_use++;
@@ -4321,10 +4516,11 @@ QString BpqMainWindow::dumpTree() const
 
             if (sr) msel = QString::fromUtf8(sr->sta);
         }
-        out += QStringLiteral("mag kind=%1 rows=%2 in_use=%3 touched=%4 "
-                              "ntr=%5 anchor=%6 magcfg=%7 sta=%8 sel=%9 "
-                              "first=[%10 t0=%11 t1=%12]")
+        out += QStringLiteral("mag kind=%1 rows=%2 all=%3 in_use=%4 touched=%5 "
+                              "ntr=%6 anchor=%7 magcfg=%8 sta=%9 sel=%10 "
+                              "first=[%11 t0=%12 t1=%13]")
                    .arg(m_magKind)
+                   .arg(m_magTableRows.size())
                    .arg(m_magRows.size())
                    .arg(in_use)
                    .arg(m_magPanel ? bpq_magpanel_touched_count(m_magPanel) : 0)

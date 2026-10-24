@@ -60,7 +60,9 @@ static int count_px(const Frame *f, int what)
             case 0: if (r > 245 && g > 245 && b > 245) continue; n++; break; /* no-blanco */
             case 1: if (r < 70 && g < 70 && b < 70) n++; break;               /* negro */
             case 2: if (r > 150 && g < 90 && b < 90) n++; break;              /* rojo */
-            case 3: if (b > 150 && r < 120 && g < 120) n++; break;            /* azul */
+            /* Azul dominante: la marca automatica se aclara al 40% y el
+             * antialias puede subir R/G; el canal B sigue muy por encima. */
+            case 3: if (b > 150 && b > r + 40 && b > g + 40) n++; break;
             }
         }
     }
@@ -169,11 +171,17 @@ int main(void)
 
     frame_alloc(&fr);
     memset(&c, 0, sizeof(c));
+    {
+        static const char *chans[2] = { "HHZ", "HHN" };
+
+        c.chan = chans;
+    }
     c.rows = rows;
     c.n = 2;
     c.tr = tr;
     c.t0 = 1000.0;
     c.window = 30.0;
+    c.per_screen = 2;                   /* las DOS filas (P y S) visibles */
     c.selected = 0;
     c.show_p = 1;
     c.show_s = 1;
@@ -186,6 +194,35 @@ int main(void)
     CK(count_px(&fr, 1) > 100);         /* traza negra */
     CK(count_px(&fr, 2) > 5);           /* marca P manual en rojo */
     CK(count_px(&fr, 3) > 5);           /* marca S automatica en azul */
+
+    /* La cuneta es SOLO el canal, en negrita grande: bbox alto y ancho. */
+    {
+        char lbl[16];
+        int minx = W, maxx = -1, miny = H, maxy = -1, x, y;
+
+        CK(bpq_traces_band_label(&c, 0, lbl, sizeof(lbl)) == 1);
+        CK(strcmp(lbl, "HHZ") == 0);
+        CK(bpq_traces_band_label(&c, 1, lbl, sizeof(lbl)) == 1);
+        CK(strcmp(lbl, "HHN") == 0);
+        CK(bpq_traces_band_label(&c, 2, lbl, sizeof(lbl)) == 0);
+        CK(bpq_traces_band_label(NULL, 0, lbl, sizeof(lbl)) == 0);
+        CK(fabs(bpq_traces_left_margin(1.0) - 72.0) < 1e-9);
+
+        for (y = 0; y < H; y++)
+            for (x = 0; x < 72; x++) {
+                const unsigned char *p = fr.buf + (size_t)y * fr.stride +
+                                         (size_t)x * 4;
+
+                if (p[0] < 70 && p[1] < 70 && p[2] < 70) {
+                    if (x < minx) minx = x;
+                    if (x > maxx) maxx = x;
+                    if (y < miny) miny = y;
+                    if (y > maxy) maxy = y;
+                }
+            }
+        CK(maxx - minx + 1 >= 40);      /* 27 px bold, no 9 px */
+        CK(maxy - miny + 1 >= 18);      /* altura de las mayusculas */
+    }
 
     /* --- 3. eje de tiempos --- */
     {
@@ -229,7 +266,7 @@ int main(void)
 
     /* --- 5. clic sobre la traza: fila e instante --- */
     {
-        const double x0 = 58.0, pw = W - x0 - 6.0;
+        const double x0 = 72.0, pw = W - x0 - 6.0;
         int row = -1;
         double t = 0.0;
 
@@ -263,7 +300,7 @@ int main(void)
         BpqTracesCtx z;
         int32_t *zs;
         const int N = 3000;
-        const int mx = 58;               /* left_margin con dpr = 1 */
+        const int mx = 72;               /* left_margin con dpr = 1 */
         const int pw = W - mx - 6;
         int band, i;
 

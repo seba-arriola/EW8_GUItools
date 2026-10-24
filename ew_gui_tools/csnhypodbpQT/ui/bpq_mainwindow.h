@@ -110,7 +110,11 @@ private:
     void emitManualPick(int row, double t);  /* clic en la traza -> overlay local */
     void refreshAfterManual();               /* tabla + trazas + persistencia */
     void updatePickCursor();                 /* circulo de la fase bajo el cursor */
-    void zoomClickAt(double x, double y);    /* dos clics: acerca / deshace */
+    void zoomClickAt(double x, double y);    /* dos clics: acerca / resetea */
+    void resetTimeView();                    /* vuelve a m_defT0/m_defWin */
+    void axisPress(double x);                /* arrastre sobre el eje: inicio */
+    void axisDrag(double dx);                /* ... y avance (dx incremental) */
+    void axisRelease();                      /* ... y fin: zoom o reset */
     void applyTracesWindow();                /* ctx -> ventana + repaint */
     void applyFilter(int idx);               /* filtro de vista (idx < 0 = raw) */
     void openFilters();                      /* ventana Filters… (tecla del .d) */
@@ -213,11 +217,13 @@ private:
     bool             m_searchMode = false;
     char             m_pickPhase = 'P';  /* fase que se pica con el clic */
     bool             m_pickArmed = false; /* P/S: modo picada activo (circulo) */
-    /* Zoom por dos clics en las trazas: ancla en px de dispositivo y ventanas
-     * previas para deshacer con el gesto inverso. */
+    /* Zoom por dos clics en las trazas: ancla en px de dispositivo. El gesto
+     * inverso restituye m_defT0/m_defWin (sin pila de undo). */
     double           m_zoomAnchorX = -1.0;
     double           m_zoomAnchorT = 0.0;
-    QVector<QPointF> m_zoomUndo;
+    bool             m_axisDragging = false;
+    double           m_axisDragX0 = 0.0;  /* px de dispositivo */
+    double           m_axisDragX1 = 0.0;
     int              m_filterIdx = -1;   /* preset activo (-1 = Raw) */
     bool             m_phaseZero = true; /* FilterPhase del .d (editable en Filters…) */
     bool             m_staltaOn = false;
@@ -295,7 +301,8 @@ private:
     /* --- magnitudes (fase 6.1) --- */
     BpqMagModel              *m_magModel = nullptr;
     BpqMagPanel              *m_magPanel = nullptr;
-    QVector<CsnhypodbpMagRow> m_magRows;
+    QVector<CsnhypodbpMagRow> m_magRows;       /* todas: canvas, estado, ancla */
+    QVector<CsnhypodbpMagRow> m_magTableRows;  /* solo in_range: la tabla */
     QVector<BpqMagTrace>      m_magTrs;      /* una banda por canal */
     QByteArray                m_magStaLabel; /* `sta` estable para el canvas */
     BpqMagCtx                 m_magCtx{};

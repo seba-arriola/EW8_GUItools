@@ -172,8 +172,8 @@ int main(void)
         CK(fabs(c.window - win0 / 2.0) < 1e-6);
 
         /* El instante del cursor no se mueve con el zoom. */
-        t_before = 1700000000.0 + ((500.0 - 58.0) / (w - 58.0 - 6.0)) * 120.0;
-        t_after = c.t0 + ((500.0 - 58.0) / (w - 58.0 - 6.0)) * c.window;
+        t_before = 1700000000.0 + ((500.0 - 72.0) / (w - 72.0 - 6.0)) * 120.0;
+        t_after = c.t0 + ((500.0 - 72.0) / (w - 72.0 - 6.0)) * c.window;
         CK(fabs(t_after - t_before) < 0.6);   /* < 1 pixel de ventana */
 
         /* Paneo: arrastrar 100 px a la derecha va al pasado. */
@@ -182,7 +182,7 @@ int main(void)
 
             bpq_traces_pan(&c, w, 100.0);
             CK(c.t0 < t0);
-            CK(fabs((t0 - c.t0) - (100.0 / (w - 58.0 - 6.0)) * c.window) < 1e-6);
+            CK(fabs((t0 - c.t0) - (100.0 / (w - 72.0 - 6.0)) * c.window) < 1e-6);
         }
 
         /* Limites: la ventana no baja de 1 s ni pasa de 1 h. */
@@ -209,7 +209,7 @@ int main(void)
     {
         BpqTracesCtx c;
         const int w = 1000;
-        const double x0 = 58.0, pw = w - 58.0 - 6.0;
+        const double x0 = 72.0, pw = w - 72.0 - 6.0;
 
         memset(&c, 0, sizeof(c));
         c.t0 = 1700000000.0;
@@ -217,8 +217,8 @@ int main(void)
         c.dpr = 1.0;
 
         /* El borde izquierdo de la pista es exactamente t0. */
-        CK(fabs(bpq_traces_time_at(&c, w, 58.0) - 1700000000.0) < 1e-6);
-        CK(fabs(bpq_traces_time_at(&c, w, 58.0 + pw) - 1700000100.0) < 1e-6);
+        CK(fabs(bpq_traces_time_at(&c, w, 72.0) - 1700000000.0) < 1e-6);
+        CK(fabs(bpq_traces_time_at(&c, w, 72.0 + pw) - 1700000100.0) < 1e-6);
         CK(bpq_traces_time_at(&c, 0, 10.0) == 0.0);
         CK(bpq_traces_time_at(NULL, w, 10.0) == 0.0);
 

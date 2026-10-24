@@ -21,7 +21,7 @@
 
 #include "bpq_internal.h"
 
-#define MAG_LEFT   58.0
+#define MAG_LEFT   72.0
 #define MAG_RIGHT  10.0
 #define MAG_TITLE  20.0
 #define MAG_BOTTOM  8.0
@@ -33,18 +33,6 @@ struct mag_geo {
     double xa, xb;        /* franja de la ventana (px) */
     int    ok;
 };
-
-static void hhmmss(double epoch, char *out, size_t n)
-{
-    time_t t = (time_t)floor(epoch);
-    struct tm tm;
-
-    if (!gmtime_r(&t, &tm)) {
-        snprintf(out, n, "--:--:--");
-        return;
-    }
-    snprintf(out, n, "%02d:%02d:%02d", tm.tm_hour, tm.tm_min, tm.tm_sec);
-}
 
 static double time_at(const struct mag_geo *g, double x)
 {
@@ -69,7 +57,7 @@ static void mag_geo(const BpqMagCtx *c, int w, int h, struct mag_geo *g)
     double m = 0.0, a0, a1;
 
     memset(g, 0, sizeof(*g));
-    g->l = MAG_LEFT * dpr;
+    g->l = bpq_mag_left_margin(dpr);
     g->r = (double)w - MAG_RIGHT * dpr;
     g->t = (MAG_TITLE + MAG_HANDLE) * dpr;
     g->b = (double)h - MAG_BOTTOM * dpr;
@@ -99,6 +87,21 @@ static void label(cairo_t *cr, double x, double y, const char *txt, double size)
     cairo_set_font_size(cr, size);
     cairo_move_to(cr, x, y);
     cairo_show_text(cr, txt);
+}
+
+double bpq_mag_left_margin(double dpr) { return MAG_LEFT * dpr; }
+
+int bpq_mag_band_label(const BpqMagCtx *c, int i, char *out, size_t n)
+{
+    const char *ch;
+
+    if (!out || n == 0) return 0;
+    out[0] = '\0';
+    if (!c || !c->trs || i < 0 || i >= c->ntr) return 0;
+    ch = c->trs[i].chan;
+    if (!ch || !ch[0]) return 0;
+    snprintf(out, n, "%s", ch);
+    return 1;
 }
 
 static void plot_trace(cairo_t *cr, const struct mag_geo *g,
@@ -291,14 +294,22 @@ void bpq_mag_draw(cairo_t *cr, int w, int h, const BpqMagCtx *c)
                 cairo_stroke(cr);
             }
 
-            /* Rotulo en el margen izquierdo: canal y distancia. */
-            cairo_set_source_rgb(cr, 0.10, 0.10, 0.12);
-            label(cr, 2.0 * dpr, yc + 3.0 * dpr,
-                  (mt && mt->chan && mt->chan[0]) ? mt->chan : "-", 10.0 * dpr);
-            if (mt && isfinite(mt->dist_km)) {
-                snprintf(txt, sizeof(txt), "%.0f km", mt->dist_km);
-                cairo_set_source_rgb(cr, 0.45, 0.45, 0.48);
-                label(cr, 2.0 * dpr, yc + 14.0 * dpr, txt, 8.5 * dpr);
+            /* Rotulo en el margen: SOLO el canal, negro, negrita y 27 px. */
+            {
+                char ch[16];
+
+                if (bpq_mag_band_label(c, i, ch, sizeof(ch))) {
+                    cairo_text_extents_t ext;
+
+                    cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
+                                           CAIRO_FONT_WEIGHT_BOLD);
+                    cairo_set_font_size(cr, 27.0 * dpr);
+                    cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+                    cairo_text_extents(cr, ch, &ext);
+                    cairo_move_to(cr, 3.0 * dpr,
+                                  yc - (ext.y_bearing + ext.height / 2.0));
+                    cairo_show_text(cr, ch);
+                }
             }
 
             tr = (EwGuiTrace *)bpq_trace_ew(mt ? mt->tr : NULL);
@@ -324,45 +335,28 @@ void bpq_mag_draw(cairo_t *cr, int w, int h, const BpqMagCtx *c)
 
 void bpq_mag_draw_axis(cairo_t *cr, int w, int h, const BpqMagCtx *c)
 {
+    BpqAxisPaint p;
     const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
     struct mag_geo g;
-    double step, t;
-    char txt[32];
 
     if (!cr || w <= 0 || h <= 0) return;
+    memset(&p, 0, sizeof(p));
+    p.dpr = dpr;
+    p.left = bpq_mag_left_margin(dpr);
+    p.right = (double)w - MAG_RIGHT * dpr;
 
-    cairo_set_source_rgb(cr, 0.90, 0.90, 0.90);
-    cairo_paint(cr);
-    cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.55);
-    cairo_set_line_width(cr, 1.0 * dpr);
-    cairo_move_to(cr, 0.0, 0.5);
-    cairo_line_to(cr, (double)w, 0.5);
-    cairo_stroke(cr);
-
-    if (!c || !(c->anchor > 0.0)) return;
-    mag_geo(c, w, h * 4, &g);   /* misma escala horizontal que el canvas */
-    if (!g.ok) return;
-
-    step = g.span * 80.0 * dpr / (g.r - g.l);
-    if (!(step > 0.0)) return;
-    /* Paso "bonito" (1-2-5) en segundos. */
-    {
-        const double p = pow(10.0, floor(log10(step)));
-        const double f = step / p;
-
-        step = (f <= 1.5 ? 1.0 : (f <= 3.5 ? 2.0 : (f <= 7.5 ? 5.0 : 10.0))) * p;
+    if (c && c->anchor > 0.0) {
+        /* `h*4` solo mantiene el area vertical positiva; la escala horizontal
+         * sale de `w` (el margen izquierdo es el mismo del canvas). */
+        mag_geo(c, w, h * 4, &g);
+        if (g.ok) {
+            p.t0 = g.a;
+            p.span = g.span;
+            p.left = g.l;
+            p.right = g.r;
+        }
     }
-    cairo_set_font_size(cr, 9.0 * dpr);
-    for (t = ceil(g.a / step) * step; t <= g.a + g.span; t += step) {
-        const double x = x_at(&g, t);
-
-        cairo_move_to(cr, x, 0.0);
-        cairo_line_to(cr, x, 4.0 * dpr);
-        cairo_stroke(cr);
-        hhmmss(t, txt, sizeof(txt));
-        cairo_move_to(cr, x + 2.0 * dpr, h - 4.0 * dpr);
-        cairo_show_text(cr, txt);
-    }
+    bpq_axis_paint(cr, w, h, &p);
 }
 
 int bpq_mag_hit(const BpqMagCtx *c, int w, int h, double mx, double my,

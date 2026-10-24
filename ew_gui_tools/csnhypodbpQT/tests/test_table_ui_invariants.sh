@@ -1,5 +1,5 @@
 #!/bin/sh
-# test_table_ui_invariants.sh - Invariantes de fuente de las tablas.
+# test_table_ui_invariants.sh - Invariantes de fuente de tablas, ejes, filtro y preview.
 #
 # Trampas que se pagaron:
 #   - make_view activaba setSortingEnabled(true) pero ningun modelo implementa
@@ -18,13 +18,17 @@ ui=$here/../ui/bpq_mainwindow.cxx
 db=$here/../c/bpq_db.c
 ev=$here/../c/bpq_events.c
 table=$here/../../commonqt/src/table.cxx
+axis=$here/../c/bpq_axis.c
+traces=$here/../c/bpq_traces.c
+mag=$here/../c/bpq_draw_mag.c
+panel=$here/../ui/bpq_preview_panel.cxx
 
 pass=0
 fail=0
 ok()  { pass=$((pass + 1)); echo "ok   $*"; }
 bad() { fail=$((fail + 1)); echo "FALLA $*"; }
 
-for f in "$ui" "$db" "$ev" "$table"; do
+for f in "$ui" "$db" "$ev" "$table" "$axis" "$traces" "$mag" "$panel"; do
     if [ -f "$f" ]; then ok "existe $(basename "$f")"; else bad "falta $f"; fi
 done
 
@@ -79,6 +83,59 @@ if grep -q 'setStretchLastSection(false)' "$table"; then
     ok "fit_columns desactiva el stretch de la ultima"
 else
     bad "fit_columns no desactiva stretchLastSection"
+fi
+
+# 5) Eje unico y reset de zoom sin pila.
+if grep -q 'bpq_axis_paint' "$traces" && grep -q 'bpq_axis_paint' "$mag"; then
+    ok "los dos ejes usan bpq_axis_paint"
+else
+    bad "un eje no delega en bpq_axis_paint"
+fi
+if grep -q 'rubber_active' "$traces" && grep -q 'bpq_traces_axis_release' "$traces"; then
+    ok "banda de arrastre + gesto de release en el eje"
+else
+    bad "falta la banda o el gesto del eje"
+fi
+if grep -q 'm_zoomUndo\|takeLast' "$ui"; then
+    bad "quedo la pila de undo del zoom"
+else
+    ok "sin pila de undo (reset total)"
+fi
+if grep -q 'resetTimeView' "$ui" && grep -q 'bpq_traces_axis_release' "$ui"; then
+    ok "clic izquierda y eje comparten resetTimeView"
+else
+    bad "reset del clic/eje no comparten helper"
+fi
+
+# 6) La tabla de magnitudes filtra por in_range; el canvas conserva TODAS.
+if grep -q 'bpq_magrows_filter_in_range' "$ui" &&
+   grep -q 'setRows(m_magTableRows)' "$ui"; then
+    ok "la tabla de magnitudes usa las filas filtradas"
+else
+    bad "la tabla de magnitudes no filtra por in_range"
+fi
+if grep -q 'fillMagCtx' "$ui" && grep -q 'm_magRows' "$ui"; then
+    ok "el canvas/estado siguen leyendo m_magRows (todas)"
+else
+    bad "el canvas perdio la lista completa"
+fi
+
+# 7) Preview: tabla de 2 filas y SIN relleno amarillo/rojo.
+if grep -q 'QString BpqPreviewPanel::dump' "$panel" &&
+   grep -q 'rows=2' "$panel"; then
+    ok "preview expone su estructura 2xN"
+else
+    bad "preview sin dump de la tabla"
+fi
+if grep -q 'setBg\|kCandidateBg\|kSelectedBg\|fdeceb\|fdf3dc' "$panel"; then
+    bad "preview conserva el fondo amarillo/rojo"
+else
+    ok "preview sin relleno de fondo"
+fi
+if grep -q 'm_preview->dump()' "$ui"; then
+    ok "el dump incluye la estructura del preview"
+else
+    bad "el dump no incluye el preview"
 fi
 
 echo "----"

@@ -11,6 +11,19 @@
 
 #include "bpq_capi.h"
 
+/* Pintor COMUN de los ejes de tiempo (bpq_axis.c): el de picking y el de
+ * magnitudes comparten estilo para que no vuelvan a divergir. */
+typedef struct {
+    double t0, span;
+    double left, right;   /* area de dibujo, px de dispositivo */
+    double dpr;
+    int    band;          /* 1 = banda de arrastre visible */
+    double band_x0, band_x1;
+} BpqAxisPaint;
+
+double bpq_axis_step(double span, double plot_px, double dpr);
+void   bpq_axis_paint(cairo_t *cr, int w, int h, const BpqAxisPaint *p);
+
 /* Escenas reales (bpq_map.c / bpq_profile.c). */
 void bpq_map_draw(cairo_t *cr, int w, int h, const BpqMapCtx *c, const BpqMap *m);
 void bpq_profile_draw(cairo_t *cr, int w, int h, const BpqProfileCtx *c);

@@ -392,6 +392,10 @@ typedef struct {
     /* Etiqueta de canal por fila ("HHZ"...), opcional: la vista de picking
      * muestra las componentes de UNA estacion, no una fila por estacion. */
     const char *const *chan;
+    /* Banda de arrastre sobre el eje de tiempo (px de dispositivo). La pinta
+     * bpq_traces_draw_axis mientras el usuario mantiene pulsado el eje. */
+    int       rubber_active;
+    double    rubber_x0, rubber_x1;
 } BpqTracesCtx;
 
 /* Clic sobre el canvas de trazas: fila (indice en `rows`) e instante. 0 OK,
@@ -491,6 +495,25 @@ int  bpq_traces_zoom_range(BpqTracesCtx *c, int w, double x0, double x1);
  * 0 si no se puede calcular (asi 0 sirve de "sin ancla": los epochs son ~1.7e9). */
 double bpq_traces_time_at(const BpqTracesCtx *c, int w, double mx);
 
+/* Fin del arrastre sobre el eje de tiempo. x0/x1 en px de dispositivo y
+ * def_t0/def_win = vista original del evento (Shift+0). Devuelve:
+ *   BPQ_AXIS_ZOOM  = izq->der, ventana = intervalo marcado;
+ *   BPQ_AXIS_RESET = der->izq, ventana = def_t0/def_win;
+ *   BPQ_AXIS_NONE  = gesto demasiado corto o sin evento.
+ * Siempre apaga `rubber_active`; en RESET limpia tambien el ancla de dos clics. */
+#define BPQ_AXIS_NONE  0
+#define BPQ_AXIS_ZOOM  1
+#define BPQ_AXIS_RESET 2
+int bpq_traces_axis_release(BpqTracesCtx *c, int w, double x0, double x1,
+                            double def_t0, double def_win);
+
+/* Margen izquierdo de la cuneta de etiquetas, en px de dispositivo. Lo usan el
+ * dibujo, el hit-test, el zoom y el gesto del eje: NO puede haber dos valores. */
+double bpq_traces_left_margin(double dpr);
+
+/* Etiqueta de cada banda del picking: SOLO el canal ("HHZ"...). */
+int bpq_traces_band_label(const BpqTracesCtx *c, int i, char *out, size_t n);
+
 /* Zoom temporal CENTRADO (Shift+Left/Right de la GTK): `dir` < 0 contrae el
  * span /1.5, > 0 lo expande *1.5, 0 no toca. Se acota a 0.1..86400 s. */
 void bpq_traces_zoom_span(double *t0, double *window, int dir);
@@ -581,6 +604,10 @@ typedef struct {
     int     touched;                 /* 1 = ventana ajustada a mano */
 } BpqMagCtx;
 
+double bpq_mag_left_margin(double dpr);
+/* Etiqueta de cada banda de magnitudes: SOLO el canal ("HHZ"...). */
+int    bpq_mag_band_label(const BpqMagCtx *c, int i, char *out, size_t n);
+
 BpqMagPanel *bpq_magpanel_new(const BpqConfig *cfg);
 void         bpq_magpanel_free(BpqMagPanel *p);
 
@@ -605,6 +632,12 @@ int  bpq_magpanel_touched_count(const BpqMagPanel *p);
 int  bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                        const CsnhypodbpMagIn *vals, int nval, double red,
                        CsnhypodbpMagRow *out, int max);
+
+/* Subconjunto para la TABLA: solo `in_range != 0` (fuera de la puerta de la
+ * magnitud activa se ocultan; siguen en picking y en el canvas). Conserva el
+ * orden y no reserva memoria. Devuelve las copiadas (<= max). */
+int  bpq_magrows_filter_in_range(const CsnhypodbpMagRow *in, int n,
+                                 CsnhypodbpMagRow *out, int max);
 
 /* Overrides para `calculate`: ventanas ajustadas llevadas a t0/t1 ABSOLUTOS por
  * (ancla, magnitud), que es el formato de `WindowOverridesFile`. */

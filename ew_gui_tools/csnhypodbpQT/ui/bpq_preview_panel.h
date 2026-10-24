@@ -1,17 +1,16 @@
 /*
  * bpq_preview_panel.h - Cuadro de dos mitades al tope de *Procesar*.
  *
- * Paridad con csnhypodbp_preview.c (GTK): a la izquierda titulo, Origin time
- * (con el "calculando <loc>... N s" al lado mientras corre) y Lat/Lon/Depth/Nph/
- * RMS; a la derecha la magnitud ML/Mwp/Mb/Ms/Mww con sus radios compactos.
+ * Una sola tabla de DOS filas: encabezados (Lat/Lon/Depth/Nph/RMS + ML/Mwp/Mb/
+ * Ms/Mww) y valores, con los radios de magnitud en su celda. Arriba, el titulo,
+ * `Origin time` y el "calculando <loc>... N s"; abajo, el error real.
  *
  * `render()` es el UNICO camino de pintado (estado, valores, color y botones se
  * actualizan juntos): con dos renders parciales el estado y los valores se
  * desincronizan -- es la leccion que dejo el modulo GTK.
  *
- * Colores del fondo: candidata del `locate` = rojo muy leve; solucion elegida =
- * ambar suave; sin seleccion = sin fondo y todo en guiones. `Confirm`/`Discard`
- * solo son sensibles con candidata.
+ * Sin relleno de fondo: el estado se ve por el color del titulo (candidata rojo,
+ * elegida ambar) y `Confirm`/`Discard` solo son sensibles con candidata.
  */
 #ifndef BPQ_PREVIEW_PANEL_H
 #define BPQ_PREVIEW_PANEL_H
@@ -20,6 +19,7 @@
 
 #include "bpq_capi.h"
 
+class QGridLayout;
 class QLabel;
 class QPushButton;
 class QRadioButton;
@@ -37,24 +37,25 @@ public:
     int  prefMag() const;
     void setPrefMag(int kind);
 
+    /* Estructura para los tests headless: filas/columnas, encabezados, valores
+     * de la fila y si hay fondo. */
+    QString dump() const;
+
 signals:
     void confirmRequested();
     void discardRequested();
     void prefMagChanged(int kind);
 
 private:
-    void setBg(QWidget *w, const char *hexOrNull);
-
     QLabel       *m_title = nullptr;
     QLabel       *m_otime = nullptr;
     QLabel       *m_busy = nullptr;
     QLabel       *m_err = nullptr;
-    QLabel       *m_val[CSNHYPODBP_PREVIEW_NVALS]{};   /* 5 params + 5 mags */
+    QGridLayout  *m_grid = nullptr;                    /* 2 filas x 10 columnas */
+    QLabel       *m_val[CSNHYPODBP_PREVIEW_NVALS]{};   /* 5 params; mags = radio */
     QRadioButton *m_radio[CSNHYPODBP_PREVIEW_MAGS]{};
     QPushButton  *m_confirm = nullptr;
     QPushButton  *m_discard = nullptr;
-    QWidget      *m_left = nullptr;
-    QWidget      *m_right = nullptr;
     bool          m_updating = false;   /* evita re-emitir al sincronizar radios */
 };
 

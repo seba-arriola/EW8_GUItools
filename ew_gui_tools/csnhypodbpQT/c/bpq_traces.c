@@ -21,8 +21,12 @@
 
 #include "csnhypodbp_trace.h"
 
-/* Margen izquierdo reservado a las etiquetas de estacion. */
-static double left_margin(double dpr) { return 58.0 * dpr; }
+/* Margen izquierdo reservado al canal en 27 px bold. */
+static double left_margin(double dpr) { return 72.0 * dpr; }
+
+/* Version publica para la UI y los tests: el gesto del eje tiene que usar la
+ * MISMA geometria que el dibujo. */
+double bpq_traces_left_margin(double dpr) { return left_margin(dpr); }
 
 /* Alto de banda con `tracesPerScreen`: el nucleo puro decide cuantas bandas
  * caben en el viewport (y con que suelo), asi per_screen=1 da una traza a todo
@@ -102,31 +106,6 @@ int bpq_traces_scroll_to(BpqTracesCtx *c, int h, int row)
     if (row > max) row = max;
     c->scroll_row = row;
     return row;
-}
-
-/* Paso "bonito" del eje de tiempos, en segundos. */
-static double time_step(double window, double plot_w)
-{
-    static const double nice[] = { 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800 };
-    double want = window * 70.0 / (plot_w > 1.0 ? plot_w : 1.0);
-    size_t i;
-
-    for (i = 0; i < sizeof(nice) / sizeof(nice[0]); i++)
-        if (nice[i] >= want) return nice[i];
-    return 3600.0;
-}
-
-static void hhmmss(double epoch, char *out, size_t n)
-{
-    time_t t = (time_t)floor(epoch + 0.5);
-    struct tm g;
-
-    memset(&g, 0, sizeof(g));
-    if (!gmtime_r(&t, &g)) {
-        snprintf(out, n, "%.0f", epoch);
-        return;
-    }
-    snprintf(out, n, "%02d:%02d:%02d", g.tm_hour, g.tm_min, g.tm_sec);
 }
 
 /* Muestra ausente (el store rellena con INT_MAX). */
@@ -387,21 +366,24 @@ void bpq_traces_draw(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
         cairo_line_to(cr, (double)w, ytop + rowh - 0.5 * dpr);
         cairo_stroke(cr);
 
-        /* Etiqueta: estacion y, debajo, canal + distancia (la vista muestra las
-         * componentes de UNA estacion, no una fila por estacion). */
-        cairo_set_source_rgb(cr, 0.10, 0.10, 0.12);
-        cairo_move_to(cr, 3.0 * dpr, yc - 2.0 * dpr);
-        cairo_show_text(cr, r->sta);
+        /* Etiqueta: SOLO el canal, en negro, negrita y 3x el tamano anterior.
+         * La estacion ya la elige la tabla; la distancia vive en la tabla de
+         * estaciones, no en el lienzo. */
         {
-            char d[40];
+            char lbl[16];
 
-            if (c->chan && c->chan[first + i])
-                snprintf(d, sizeof(d), "%s %.0fkm", c->chan[first + i], r->dist_km);
-            else
-                snprintf(d, sizeof(d), "%.0f km", r->dist_km);
-            cairo_set_source_rgb(cr, 0.45, 0.45, 0.48);
-            cairo_move_to(cr, 3.0 * dpr, yc + 9.0 * dpr);
-            cairo_show_text(cr, d);
+            if (bpq_traces_band_label(c, first + i, lbl, sizeof(lbl))) {
+                cairo_text_extents_t ext;
+
+                cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
+                                       CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, 27.0 * dpr);
+                cairo_set_source_rgb(cr, 0.0, 0.0, 0.0);
+                cairo_text_extents(cr, lbl, &ext);
+                cairo_move_to(cr, 3.0 * dpr,
+                              yc - (ext.y_bearing + ext.height / 2.0));
+                cairo_show_text(cr, lbl);
+            }
         }
 
         /* Traza (si ese canal tiene datos) y su STA/LTA, recortados a la banda
@@ -550,6 +532,59 @@ int bpq_traces_zoom_range(BpqTracesCtx *c, int w, double x0, double x1)
     return 1;
 }
 
+/* Fin del arrastre sobre el eje: izq->der = zoom al intervalo; der->izq =
+ * reset a la vista original del evento. El umbral de 2 px evita que un clic
+ * tembloroso cambie la ventana; el de 0.1 s es el mismo de la GTK. */
+int bpq_traces_axis_release(BpqTracesCtx *c, int w, double x0, double x1,
+                            double def_t0, double def_win)
+{
+    const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
+    double left, right, ta, tb;
+    int action = BPQ_AXIS_NONE;
+
+    if (!c || w <= 0) return BPQ_AXIS_NONE;
+    c->rubber_active = 0;
+
+    left = left_margin(dpr);
+    right = (double)w - 6.0 * dpr;
+    if (right - left < 20.0) return BPQ_AXIS_NONE;
+    if (x0 < left) x0 = left;
+    if (x1 < left) x1 = left;
+    if (x0 > right) x0 = right;
+    if (x1 > right) x1 = right;
+    if (fabs(x1 - x0) < 2.0 * dpr) return BPQ_AXIS_NONE;
+
+    ta = bpq_traces_time_at(c, w, x0);
+    tb = bpq_traces_time_at(c, w, x1);
+    if (ta <= 0.0 || tb <= 0.0 || fabs(tb - ta) < 0.1) return BPQ_AXIS_NONE;
+
+    if (x1 > x0) {
+        if (bpq_traces_zoom_range(c, w, x0, x1) == 1) {
+            c->zoom_anchor_t = 0.0;
+            action = BPQ_AXIS_ZOOM;
+        }
+    } else if (def_win > 0.0) {
+        c->t0 = def_t0;
+        c->window = def_win;
+        c->zoom_anchor_t = 0.0;
+        action = BPQ_AXIS_RESET;
+    }
+    return action;
+}
+
+int bpq_traces_band_label(const BpqTracesCtx *c, int i, char *out, size_t n)
+{
+    const char *ch;
+
+    if (!out || n == 0) return 0;
+    out[0] = '\0';
+    if (!c || i < 0 || i >= c->n || !c->chan) return 0;
+    ch = c->chan[i];
+    if (!ch || !ch[0]) return 0;
+    snprintf(out, n, "%s", ch);
+    return 1;
+}
+
 int bpq_traces_hit(const BpqTracesCtx *c, int w, int h, double mx, double my,
                    int *row, double *t)
 {
@@ -582,42 +617,21 @@ int bpq_traces_hit(const BpqTracesCtx *c, int w, int h, double mx, double my,
 }
 
 void bpq_traces_draw_axis(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
-{    const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
-    double mx, pw, step, t;
-    int k;
+{
+    BpqAxisPaint p;
+    const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
 
     if (!cr) return;
-    cairo_set_source_rgb(cr, 0.90, 0.90, 0.92);
-    cairo_paint(cr);
-    if (!c || w <= 0 || h <= 0 || !(c->window > 0.0)) return;
-
-    mx = left_margin(dpr);
-    pw = w - mx - 6.0 * dpr;
-    if (pw < 20.0) return;
-
-    step = time_step(c->window, pw);
-
-    cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
-                           CAIRO_FONT_WEIGHT_NORMAL);
-    cairo_set_font_size(cr, 8.5 * dpr);
-
-    for (k = 0;; k++) {
-        char lbl[16];
-        double xs;
-
-        t = c->t0 + k * step;
-        if (t > c->t0 + c->window + 1e-9) break;
-        xs = mx + ((t - c->t0) / c->window) * pw;
-
-        cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.35);
-        cairo_set_line_width(cr, 0.8 * dpr);
-        cairo_move_to(cr, xs + 0.5, 0.0);
-        cairo_line_to(cr, xs + 0.5, (double)h);
-        cairo_stroke(cr);
-
-        hhmmss(t, lbl, sizeof(lbl));
-        cairo_set_source_rgb(cr, 0.15, 0.15, 0.18);
-        cairo_move_to(cr, xs + 2.0 * dpr, h - 5.0 * dpr);
-        cairo_show_text(cr, lbl);
+    memset(&p, 0, sizeof(p));
+    p.dpr = dpr;
+    p.left = left_margin(dpr);
+    p.right = (double)w - 6.0 * dpr;
+    if (c) {
+        p.t0 = c->t0;
+        p.span = c->window;
+        p.band = c->rubber_active;
+        p.band_x0 = c->rubber_x0;
+        p.band_x1 = c->rubber_x1;
     }
+    bpq_axis_paint(cr, w, h, &p);
 }
