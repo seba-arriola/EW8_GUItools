@@ -185,6 +185,83 @@ else
     bad "falta bpq_magpanel_calc_solution"
 fi
 
+# 11) Cache de ondas: consulta antes del fetch, prefetch opcional y cancelable.
+worker=$here/../ui/bpq_wave_worker.cxx
+workerh=$here/../ui/bpq_wave_worker.h
+wcache=$here/../c/bpq_wavecache.c
+for f in "$worker" "$workerh" "$wcache"; do
+    [ -f "$f" ] && ok "existe $(basename "$f")" || bad "falta $(basename "$f")"
+done
+if grep -A20 'BpqTrace \*BpqWaveWorker::serve' "$worker" | grep -q 'bpq_wavecache_get'; then
+    ok "el worker consulta la cache antes de ir al store/SDS"
+else
+    bad "el worker no consulta la cache"
+fi
+if grep -q 'runPrefetch' "$workerh" && grep -q 'gen->load() != jobId' "$worker"; then
+    ok "el prefetch se aborta al cambiar de generacion"
+else
+    bad "el prefetch no se cancela"
+fi
+if grep -q 'if (queued >= m_prefetchN) break;' "$ui"; then
+    ok "PrefetchNeighbors acota las estaciones precargadas"
+else
+    bad "el prefetch no respeta PrefetchNeighbors"
+fi
+if grep -q 'if (m_prefetchTimer && m_prefetchN > 0)' "$ui"; then
+    ok "prefetch 0 no arranca el timer"
+else
+    bad "el prefetch no se puede apagar"
+fi
+if grep -q 'wavecache hit=' "$ui"; then
+    ok "el dump publica la cache (--dump)"
+else
+    bad "el dump no publica wavecache"
+fi
+if grep -q 'c->wave_cache_mb' "$cfg" && grep -q '"WaveCacheMB"' "$cfg"; then
+    ok "WaveCacheMB tiene default y parser"
+else
+    bad "config no conoce WaveCacheMB"
+fi
+if grep -q 'max_bytes == 0' "$wcache" && grep -q 'bpq_trace_clone' "$wcache"; then
+    ok "0 MB deshabilita la cache y el hit es una copia"
+else
+    bad "la cache no se deshabilita o no copia"
+fi
+
+# 12) P teorica en capas (hyp2000): sale del .hyp del localizador, acotada al
+#     dominio regional y con respaldo IASP91 por fila.
+tt1d=$here/../c/bpq_tt1d.c
+sta=$here/../c/bpq_stations.c
+for f in "$tt1d" "$here/../c/bpq_tt1d.h"; do
+    [ -f "$f" ] && ok "existe $(basename "$f")" || bad "falta $(basename "$f")"
+done
+if grep -q 'CommandFile' "$tt" && grep -q 'bpq_tt1d_hyp_load' "$tt"; then
+    ok "la P teorica sale del .hyp del localizador (CommandFile)"
+else
+    bad "no se localiza el .hyp del refinador"
+fi
+if grep -q 'NOD' "$tt1d" && grep -q 'BPQ_TT1D_DEG2KM' "$tt1d"; then
+    ok "bandas por nodo con la metrica de hytra (111.195 km/deg)"
+else
+    bad "falta la seleccion de banda por epicentro"
+fi
+if grep -q 'km > g_max_km' "$tt"; then
+    ok "el modelo de capas se acota al dominio regional"
+else
+    bad "sin tope de distancia para la P teorica"
+fi
+if grep -q 'bpq_tt_theo_p(&theo' "$sta" && \
+   grep -q 'csnhypodbp_tt_p(si.dist_deg' "$sta"; then
+    ok "stations usa las capas y cae a IASP91 por fila"
+else
+    bad "stations no usa el modelo de capas"
+fi
+if grep -q 'theo_max_delta_km' "$cfg" && grep -q 'TheoModel' "$cfg"; then
+    ok "TheoModel / TheoMaxDeltaKm tienen default y parser"
+else
+    bad "config no conoce las claves de la P teorica"
+fi
+
 echo "----"
 echo "== table ui invariants checks=$((pass + fail)) fallas=$fail =="
 [ "$fail" -eq 0 ] || exit 1

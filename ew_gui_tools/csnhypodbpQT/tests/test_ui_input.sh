@@ -96,6 +96,13 @@ run_pick() {  # <x,y> [fase]
         BPQ_INPUT_PHASE="${2:-P}" BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_dump_wc() {  # <pares VAR=valor...>: cache/precarga con ondas sinteticas
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_WAVE_FAKE=1 BPQ_WAVE_REFETCH=1 BPQ_WAVE_WAIT_PREFETCH=1 \
+        BPQ_WAVE_WAIT_MS=1200 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 run_dump_magopt() {  # <pares VAR=valor...>
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
         BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
@@ -261,6 +268,32 @@ run_pick 0.01,0.50
 ck "clic en la cuneta no desarma"      '^input pick phase=P placed=0 armed=1 manual=[0-9]+'
 run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_KEY=P,Esc
 ck "Esc desarma la picada"             '^input keyseq=P,Esc target=waves armed=0'
+
+# --- 13. cache de ondas y prefetch de vecinas -----------------------------
+run_dump_wc
+ck "prefetch: llena 2 estaciones vecinas"              '^wavecache .* prefetch=2 fail=0 '
+ck "prefetch: entran a la cache (9 canales)"           '^wavecache .* entries=9 '
+sel=$(printf '%s\n' "$out" | sed -n 's/^stations .* sel=\([A-Z0-9]*\)$/\1/p' | head -n 1)
+first=$(printf '%s\n' "$out" | sed -n 's/^wavecache .* order=\([A-Z0-9]*\).*/\1/p' | head -n 1)
+if [ -n "$sel" ] && [ "$sel" = "$first" ]; then
+    ok "prefetch: la estacion pedida se entrega primero ($sel)"
+else
+    bad "prefetch: orden de entrega <sel=$sel first=$first>"
+fi
+run_dump_wc BPQ_PREFETCH=0
+ck "cache: el refetch es hit (sin volver al store/SDS)" '^wavecache hit=3 miss=3 '
+ck "prefetch off: no encola vecinas"                   '^wavecache .* prefetch=0 fail=0 '
+ck "prefetch off: solo la estacion actual"             '^wavecache .* entries=3 '
+
+# --- 14. P teorica con el modelo de capas de hyp2000 ----------------------
+run_dump picking
+ck "tt: modelo de capas del .hyp del localizador" '^tt model=CHILE_POTIN_N.* max_km=500 d_km=[0-9]'
+ck "tt: corrimiento publicado (s)"                 '^tt .* shift=-?[0-9]+\.[0-9][0-9]$'
+out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+    BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=picking BPQ_THEO=iasp91 \
+    BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+    "$bin" csnhypodbpqt.d 2>/dev/null )
+ck "tt off: vuelve a IASP91 sin corrimiento" '^tt model=iasp91 max_km=500 d_km=0.0 shift=0.00$'
 
 echo "----"
 echo "== ui input checks=$((pass + fail)) fallas=$fail =="

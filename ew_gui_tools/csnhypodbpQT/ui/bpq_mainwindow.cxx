@@ -169,6 +169,11 @@ BpqMainWindow::~BpqMainWindow()
         delete m_waveThread;
         m_waveThread = nullptr;
     }
+    /* La cache la toca el worker: se libera con el hilo ya parado. */
+    if (m_waveCache) {
+        bpq_wavecache_free(m_waveCache);
+        m_waveCache = nullptr;
+    }
     /* Si hay un locate en curso se pide aborto: la cadena lo ve en el proximo
      * paso y el hilo termina sin dejar el refinador huerfano. */
     if (m_locThread) {
@@ -320,10 +325,15 @@ void BpqMainWindow::openData()
         if (werr[0])
             statusBar()->showMessage(QStringLiteral("ondas: %1").arg(QString::fromUtf8(werr)), 0);
     }
+    /* Cache de trazas (LRU por bytes). 0 MB la deshabilita y todo pasa por el
+     * fetch, como antes. */
+    if (m_cfg && m_cfg->wave_cache_mb > 0)
+        m_waveCache = bpq_wavecache_new((size_t)m_cfg->wave_cache_mb * 1024u * 1024u,
+                                        2048);
     /* El fetch corre en su propio hilo: el store/SDS puede tardar y el picking
      * (fase 4) repica mientras se descargan las trazas. */
     m_waveThread = new QThread(this);
-    m_waveWorker = new BpqWaveWorker(m_wave, m_cfg);
+    m_waveWorker = new BpqWaveWorker(m_wave, m_cfg, m_waveCache);
     m_waveWorker->moveToThread(m_waveThread);
     connect(m_waveThread, &QThread::finished, m_waveWorker, &QObject::deleteLater);
     connect(m_waveWorker, &BpqWaveWorker::traceReady, this,
@@ -337,6 +347,13 @@ void BpqMainWindow::openData()
         m_traces[row] = tr;
         if (tr) {
             m_waveWith++;
+            /* Orden real de entrega (--dump): prueba que el pedido del usuario
+             * va antes que el prefetch. */
+            if (m_traceOrder.size() < 8 && row < m_traceRows.size()) {
+                const QString sta = QString::fromUtf8(m_traceRows.at(row).sta);
+
+                if (!m_traceOrder.contains(sta)) m_traceOrder.append(sta);
+            }
             filterOne(tr);        /* la vista filtra al llegar, no al dibujar */
         }
         if (m_waves) m_waves->requestRepaint();
@@ -349,8 +366,36 @@ void BpqMainWindow::openData()
         rebuildStalta();          /* ya estan todas las trazas del pedido */
         statusBar()->showMessage(QStringLiteral("ondas: %1/%2 estaciones")
                                      .arg(withData).arg(requested), 5000);
+        /* Hook de test: repetir el MISMO pedido demuestra que la cache evita
+         * volver al store/SDS (--dump: hit sube y miss no). */
+        if (!qgetenv("BPQ_WAVE_REFETCH").isEmpty() && !m_refetched) {
+            m_refetched = true;
+            fetchTraces(currentSolution());
+        }
+    });
+    connect(m_waveWorker, &BpqWaveWorker::prefetched, this,
+            [this](quint64 job, const QString &sta, int withData) {
+        if (job != m_waveJob) return;
+        if (!withData) {
+            m_prefetchFail++;
+            return;
+        }
+        /* Una estacion tiene varios canales: el contador es por ESTACION. */
+        if (m_prefetchOrder.contains(sta)) return;
+        m_prefetchOk++;
+        if (m_prefetchOrder.size() < 8) m_prefetchOrder.append(sta);
     });
     m_waveThread->start();
+
+    /* Prefetch de estaciones vecinas: se dispara 250 ms despues del pedido
+     * visible (si el usuario sigue cambiando de estacion, el timer se reinicia
+     * y no se encola basura). */
+    m_prefetchN = m_cfg ? m_cfg->prefetch_neighbors : 0;
+    if (qEnvironmentVariableIsSet("BPQ_PREFETCH"))
+        m_prefetchN = qgetenv("BPQ_PREFETCH").toInt();
+    m_prefetchTimer = new QTimer(this);
+    m_prefetchTimer->setSingleShot(true);
+    connect(m_prefetchTimer, &QTimer::timeout, this, &BpqMainWindow::startPrefetch);
 
     /* Catalogo de estaciones del .d (StaFile), una sola lectura. */
     {
@@ -919,7 +964,11 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     const CsnhypodbpStaRow *base = nullptr;
 
     ++m_waveJob;                 /* invalida cualquier resultado en vuelo */
+    m_waveGen.store(m_waveJob);  /* el prefetch tambien se aborta */
     m_waveWith = 0;
+    m_traceOrder.clear();
+    m_prefetchOrder.clear();
+    m_prefetchOk = m_prefetchFail = 0;
     m_curSolKey.clear();         /* se fija solo si el pedido sale */
     for (BpqTrace *t : m_traces) bpq_trace_free(t);
     m_traces.clear();
@@ -995,8 +1044,11 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     syncStationViews();
 
     /* Fixture determinista: las filas ya estan armadas, pero no se pide onda al
-     * store/SDS (el test no depende de datos ni del I/O de la capa SDS). */
-    if (!qgetenv("BPQ_TEST_FIXTURE").isEmpty()) {
+     * store/SDS (el test no depende de datos ni del I/O de la capa SDS). Con
+     * BPQ_WAVE_FAKE el worker sintetiza trazas y el camino cache/prefetch SI se
+     * ejecuta. */
+    if (!qgetenv("BPQ_TEST_FIXTURE").isEmpty() &&
+        qgetenv("BPQ_WAVE_FAKE").isEmpty()) {
         m_waveDone = m_waveJob;
         return;
     }
@@ -1011,6 +1063,9 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     QMetaObject::invokeMethod(w, [w, id, req, t0, len]() {
         w->runJob(id, req, t0, len);
     }, Qt::QueuedConnection);
+
+    /* Las vecinas se piden cuando el pedido visible ya esta en cola. */
+    if (m_prefetchTimer && m_prefetchN > 0) m_prefetchTimer->start(250);
 }
 
 /* Filas del canvas para UNA estacion: sus canales en el orden del .d, con las
@@ -1034,6 +1089,70 @@ void BpqMainWindow::buildTraceRows(const CsnhypodbpStaRow *base)
     }
     for (const QByteArray &b : m_chanLabels) m_chanPtr.append(b.constData());
     m_tracesCtx.chan = m_chanPtr.isEmpty() ? nullptr : m_chanPtr.constData();
+}
+
+/* SCNL de los canales de UNA estacion, en el orden del .d. Mismo criterio que
+ * buildTraceRows, pero sin tocar el estado del canvas: lo usa el prefetch. */
+static QVector<BpqFetchReq> traceReqsFor(const BpqStations *cat,
+                                         const BpqConfig *cfg,
+                                         const CsnhypodbpStaRow &base)
+{
+    QVector<BpqFetchReq> out;
+    CsnhypodbpStaRow rows[16];
+    char chans[16][8];
+    int n, i;
+
+    if (!cat || !cfg) return out;
+    n = bpq_stations_chan_rows(cat, base.sta, cfg->channels_order,
+                               cfg->components_order, &base, rows, chans, 16);
+    for (i = 0; i < n; i++) {
+        const char *sta = nullptr, *net = nullptr, *chan = nullptr, *loc = nullptr;
+
+        if (!bpq_stations_scnl(cat, rows[i].idx, &sta, &net, &chan, &loc))
+            continue;
+        out.append(BpqFetchReq{ QString::fromUtf8(sta), QString::fromUtf8(net),
+                                QString::fromUtf8(chans[i]),
+                                QString::fromUtf8(loc) });
+    }
+    return out;
+}
+
+/* Precarga en segundo plano las estaciones mas cercanas con picada. Se encola
+ * una invocacion POR ESTACION para que el clic del usuario se intercale entre
+ * dos estaciones como mucho; si cambia de evento, la generacion aborta el
+ * resto dentro del worker. */
+void BpqMainWindow::startPrefetch()
+{
+    const quint64 id = m_waveJob;
+    int queued = 0;
+
+    if (!m_waveWorker || !m_staCat || !m_cfg || m_prefetchN <= 0) return;
+    if (id != m_waveGen.load()) return;      /* el usuario ya pidio otra cosa */
+    if (!qgetenv("BPQ_TEST_FIXTURE").isEmpty() &&
+        qgetenv("BPQ_WAVE_FAKE").isEmpty())
+        return;                              /* fixture sin ondas: no hay worker */
+
+    for (const CsnhypodbpStaRow &r : m_staRows) {
+        QVector<BpqFetchReq> reqs;
+        BpqWaveWorker *w;
+        std::atomic<quint64> *gen;
+        double t0, len;
+
+        if (queued >= m_prefetchN) break;
+        if (!r.p.present && !r.s.present) continue;
+        if (QString::fromUtf8(r.sta) == m_selSta) continue;
+        reqs = traceReqsFor(m_staCat, m_cfg, r);
+        if (reqs.isEmpty()) continue;
+
+        w = m_waveWorker;
+        gen = &m_waveGen;
+        t0 = m_winT0;
+        len = m_winLen;
+        QMetaObject::invokeMethod(w, [w, id, reqs, t0, len, gen]() {
+            w->runPrefetch(id, reqs, t0, len, gen);
+        }, Qt::QueuedConnection);
+        queued++;
+    }
 }
 
 /* Estacion por defecto: la primera de la tabla (ordenada por distancia) que tenga
@@ -1327,10 +1446,17 @@ void BpqMainWindow::syncTracesScroll()
 bool BpqMainWindow::waitForWaves(int ms)
 {
     QElapsedTimer t;
+    const bool wait_pf = !qgetenv("BPQ_WAVE_WAIT_PREFETCH").isEmpty();
 
     t.start();
     while (m_waveDone != m_waveJob && t.elapsed() < ms)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    /* El prefetch arranca 250 ms despues y NO forma parte del pedido visible:
+     * solo lo esperan los tests que miden la cache. */
+    if (wait_pf && m_prefetchN > 0) {
+        while (m_prefetchOk + m_prefetchFail < m_prefetchN && t.elapsed() < ms)
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    }
     return m_waveDone == m_waveJob;
 }
 
@@ -4724,6 +4850,62 @@ QString BpqMainWindow::dumpTree() const
                        .arg(t.view->viewport()->width())
                        .arg(t.view->horizontalScrollBar()->isVisible() ? 1 : 0);
         }
+    }
+
+    /* Cache de ondas: hit/miss, tope y precarga. `order` es el orden real de
+     * entrega del pedido del usuario (debe empezar por la estacion pedida). */
+    {
+        BpqWaveCacheStats wc{};
+
+        if (m_waveCache) bpq_wavecache_stats(m_waveCache, &wc);
+        out += QStringLiteral("wavecache hit=%1 miss=%2 entries=%3 bytes=%4 "
+                              "mb=%5 evict=%6 toobig=%7 prefetch=%8 fail=%9 "
+                              "order=%10 prefetch_order=%11\n")
+                   .arg(wc.hits)
+                   .arg(wc.misses)
+                   .arg(wc.entries)
+                   .arg(wc.bytes)
+                   .arg((double)wc.bytes / (1024.0 * 1024.0), 0, 'f', 2)
+                   .arg(wc.evictions)
+                   .arg(wc.toobig)
+                   .arg(m_prefetchOk)
+                   .arg(m_prefetchFail)
+                   .arg(m_traceOrder.isEmpty() ? QStringLiteral("-")
+                                               : m_traceOrder.join(QLatin1Char(',')))
+                   .arg(m_prefetchOrder.isEmpty() ? QStringLiteral("-")
+                                                  : m_prefetchOrder.join(QLatin1Char(',')));
+    }
+
+    /* P teorica: modelo de capas de hyp2000 (bandas Potin) o IASP91, y cuanto
+     * mueve el ancla del primer Teo de la tabla. `shift` prueba que el modelo
+     * entra de verdad en el numero que ve el usuario. */
+    {
+        const CsnhypodbpSolution *sol = currentSolution();
+        BpqTtTheo tt{};
+        const char *name = "iasp91";
+        double shift = 0.0, dist = 0.0;
+
+        if (sol && bpq_tt_theo_prepare(&tt, sol->lat, sol->lon, sol->depth)) {
+            const char *n = bpq_tt_theo_model(&tt);
+
+            if (n) name = n;
+            for (const CsnhypodbpStaRow &r : m_staRows) {
+                double ti;
+
+                if (!r.p.present || r.p.origin != 'T') continue;
+                ti = bpq_tt_iasp_p(r.dist_deg, sol->depth);
+                if (ti > 0.0) {
+                    shift = r.p.t - (sol->otime + ti);
+                    dist = r.dist_deg;
+                }
+                break;
+            }
+        }
+        out += QStringLiteral("tt model=%1 max_km=%2 d_km=%3 shift=%4\n")
+                   .arg(QString::fromUtf8(name))
+                   .arg(bpq_tt_theo_max_km(), 0, 'f', 0)
+                   .arg(dist * 111.195, 0, 'f', 1)
+                   .arg(shift, 0, 'f', 2);
     }
 
     /* Diagnostico de la capa de ondas (fase 3):

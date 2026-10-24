@@ -175,6 +175,83 @@ int main(void)
         bpq_stations_close(k);
     }
 
+    /* --- P teorica con el modelo de capas de hyp2000 ---------------------- */
+    {
+        BpqTtTheo tt;
+        CsnhypodbpStaRow lay[16], off[16];
+        int nl, no, i;
+
+        /* El .hyp del localizador (cwd = params) y su cadena de CRH. */
+        CK(setenv("BPQ_THEO_HYP", "hyp2000_ring.hyp", 1) == 0);
+        cfg.theo_model = 1;
+        cfg.theo_max_delta_km = 500.0;
+        CK(bpq_tt_theo_init(&cfg, err, sizeof(err)) == 1);
+        CK(err[0] == '\0');
+        CK(bpq_tt_theo_max_km() > 499.0);
+
+        nl = bpq_stations_build(cat, &sol, lay, 16);
+        CK(nl == 3);
+        CK(bpq_tt_theo_prepare(&tt, sol.lat, sol.lon, sol.depth) == 1);
+        CK(bpq_tt_theo_model(&tt) != NULL);
+        {
+            int moved = 0, teo = 0;
+
+            for (i = 0; i < nl; i++) {
+                const double t_model = bpq_tt_theo_p(&tt, lay[i].dist_deg,
+                                                     sol.depth);
+                const double t_iasp = bpq_tt_iasp_p(lay[i].dist_deg, sol.depth);
+
+                /* S2 tiene picada manual: su P no es teorica. */
+                if (lay[i].p.origin != 'T') continue;
+                teo++;
+                CK(lay[i].p.present == 1);
+                CK(fabs(lay[i].p.t - (sol.otime + t_model)) < 1e-9);
+                if (fabs(t_model - t_iasp) > 0.1) moved++;
+            }
+            CK(teo >= 2);              /* S1 (dist 0) y S3 (2 grados) */
+            /* Al menos la estacion lejana se mueve: el modelo entra de verdad. */
+            CK(moved >= 1);
+        }
+
+        /* Dominio: con el umbral por debajo de la distancia, vuelve IASP91. */
+        cfg.theo_max_delta_km = 0.5;      /* solo la estacion en el epicentro */
+        CK(bpq_tt_theo_init(&cfg, err, sizeof(err)) == 1);
+        no = bpq_stations_build(cat, &sol, off, 16);
+        CK(no == 3);
+        for (i = 0; i < no; i++) {
+            const double t_iasp = bpq_tt_iasp_p(off[i].dist_deg, sol.depth);
+
+            if (off[i].p.origin != 'T') continue;
+            if (off[i].dist_deg * 111.195 <= 0.5) continue;
+            CK(fabs(off[i].p.t - (sol.otime + t_iasp)) < 1e-9);
+        }
+
+        /* Apagado: identico a IASP91 en todas. */
+        cfg.theo_max_delta_km = 500.0;
+        CK(setenv("BPQ_THEO", "off", 1) == 0);
+        CK(bpq_tt_theo_init(&cfg, err, sizeof(err)) == 1);
+        no = bpq_stations_build(cat, &sol, off, 16);
+        for (i = 0; i < no; i++) {
+            if (off[i].p.origin != 'T') continue;
+            CK(fabs(off[i].p.t -
+                    (sol.otime + bpq_tt_iasp_p(off[i].dist_deg, sol.depth))) < 1e-9);
+        }
+        unsetenv("BPQ_THEO");
+
+        /* .hyp ausente: aviso y respaldo silencioso a IASP91. */
+        CK(setenv("BPQ_THEO_HYP", "/tmp/bpq_no_existe.hyp", 1) == 0);
+        CK(bpq_tt_theo_init(&cfg, err, sizeof(err)) == 0);
+        CK(err[0] != '\0');
+        no = bpq_stations_build(cat, &sol, off, 16);
+        for (i = 0; i < no; i++) {
+            if (off[i].p.origin != 'T') continue;
+            CK(fabs(off[i].p.t -
+                    (sol.otime + bpq_tt_iasp_p(off[i].dist_deg, sol.depth))) < 1e-9);
+        }
+        unsetenv("BPQ_THEO_HYP");
+        CK(bpq_tt_theo_prepare(&tt, sol.lat, sol.lon, sol.depth) == 0);
+    }
+
     bpq_stations_close(cat);
     remove(path);
     printf("== stations checks=%d fallas=%d ==\n", g_checks, g_fail);

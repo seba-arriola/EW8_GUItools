@@ -146,8 +146,13 @@ int bpq_stations_build_resid(const BpqStations *c, const CsnhypodbpSolution *sol
                              CsnhypodbpStaRow *out, int max)
 {
     int i, n = 0;
+    BpqTtTheo theo;
 
     if (!c || !c->v || !out || max <= 0) return 0;
+
+    /* La banda Potin del evento se elige UNA vez, fuera del bucle. */
+    memset(&theo, 0, sizeof(theo));
+    if (sol) bpq_tt_theo_prepare(&theo, sol->lat, sol->lon, sol->depth);
 
     for (i = 0; i < c->n && n < max; i++) {
         CsnhypodbpStaInput si;
@@ -169,8 +174,13 @@ int bpq_stations_build_resid(const BpqStations *c, const CsnhypodbpSolution *sol
         si.sol = sol ? sol->picks : NULL;
         si.nsol = sol ? sol->npicks : 0;
         si.theo_p = 0.0;
-        if (sol && csnhypodbp_tt_ready()) {
-            const double tp = csnhypodbp_tt_p(si.dist_deg, sol->depth);
+        if (sol) {
+            /* Modelo de capas de hyp2000 dentro del dominio regional; fuera de
+             * el (o si no cargo) sigue mandando IASP91. */
+            double tp = bpq_tt_theo_p(&theo, si.dist_deg, sol->depth);
+
+            if (!(tp > 0.0) && csnhypodbp_tt_ready())
+                tp = csnhypodbp_tt_p(si.dist_deg, sol->depth);
             if (tp > 0.0) si.theo_p = sol->otime + tp;
         }
 

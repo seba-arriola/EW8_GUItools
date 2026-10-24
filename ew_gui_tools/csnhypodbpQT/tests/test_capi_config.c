@@ -187,6 +187,9 @@ int main(int argc, char **argv)
     CHECK_DBL(c->mag_fetch_s, 700.0, 1e-9);
     CHECK(c->locator_timeout_s == 600);
     CHECK(c->prefetch_neighbors == 2);
+    CHECK(c->wave_cache_mb == 64);
+    CHECK(c->theo_model == 1);
+    CHECK_DBL(c->theo_max_delta_km, 500.0, 1e-9);
     CHECK_STR(c->manual_state_file, "../csnhypodbp/csnhypodbp_manual.events");
 
     /* agrupamiento */

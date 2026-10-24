@@ -38,6 +38,7 @@ extern "C" {
 #include "csnhypodbp_trace.h"     /* CsnhypodbpColorSet / color_* / PickOrigin */
 #include "csnhypodbp_traces.h"    /* traces_per_screen_norm */
 #include "csnhypodbp_view.h"      /* CsnhypodbpView / ticks / parse_color */
+#include "bpq_tt1d.h"             /* BpqTt1dSel: bandas de la P teorica */
 #include "csnhypodbp_mapview.h"   /* CsnhypodbpMapPt / Frame / constants */
 #include "csnhypodbp_profile.h"   /* CsnhypodbpProfiles / ProfileLine */
 #include "csnhypodbp_magcfg.h"    /* CsnhypodbpMagCfg */
@@ -108,6 +109,9 @@ typedef struct {
     int    locate_keep_tmp;          /* LocateKeepTmp */
     int    locator_timeout_s;        /* LocatorTimeoutSec */
     int    prefetch_neighbors;       /* PrefetchNeighbors */
+    int    wave_cache_mb;            /* WaveCacheMB (0 = sin cache) */
+    int    theo_model;               /* TheoModel: 1 = capas hyp2000, 0 = iasp91 */
+    double theo_max_delta_km;        /* TheoMaxDeltaKm (dominio regional) */
     int    fix_depth_on;             /* Fix (estado inicial de la GUI) */
     double fix_depth_km;             /* FixedDepthKm */
 
@@ -198,6 +202,31 @@ void       bpq_config_free(BpqConfig *c);
  * alimenta la P teorica. 1 = cargado; 0 = sin tablas en el cwd (motivo en
  * `err`); nunca aborta. */
 int        bpq_init_tt(const BpqConfig *c, char *err, size_t errn);
+
+/* P teorica con el modelo de capas de hyp2000 (el `.crh` del `.hyp` que usa el
+ * localizador), para no contradecir la solucion que se esta mostrando. 1 =
+ * cargado; 0 = se queda IASP91 (motivo en `err`); nunca aborta.
+ * `TheoMaxDeltaKm` acota el dominio: el modelo es plano, sin curvatura. */
+int        bpq_tt_theo_init(const BpqConfig *c, char *err, size_t errn);
+
+/* Seleccion de bandas por epicentro: UNA vez por solucion, fuera del bucle de
+ * estaciones. 1 = lista para usarse. */
+typedef struct {
+    int        ready;
+    BpqTt1dSel sel;
+} BpqTtTheo;
+
+int        bpq_tt_theo_prepare(BpqTtTheo *t, double ev_lat, double ev_lon,
+                               double depth_km);
+/* T de la P teorica (s) o NAN si la estacion queda fuera del dominio (el
+ * llamador cae a `csnhypodbp_tt_p`). */
+double     bpq_tt_theo_p(const BpqTtTheo *t, double dist_deg, double depth_km);
+/* Nombre de la banda dominante de la seleccion (NULL si no aplica). */
+const char *bpq_tt_theo_model(const BpqTtTheo *t);
+/* TheoMaxDeltaKm efectivo (para el volcado). */
+double     bpq_tt_theo_max_km(void);
+/* T de la P teorica con la tabla IASP91 (NAN si no hay tablas). */
+double     bpq_tt_iasp_p(double dist_deg, double depth_km);
 
 /* Vuelca la config efectiva (port de maps_print_config). 0 = OK. */
 int        bpq_config_print(const BpqConfig *c, FILE *out);
@@ -343,6 +372,13 @@ int       bpq_trace_range(const BpqTrace *t, double *lo, double *hi);
 /* Traza a partir de muestras int32 (decode y tests). NULL si no hay memoria. */
 BpqTrace *bpq_trace_new(double t0, double rate, const int32_t *samples, long n);
 
+/* Copia independiente (cache -> UI). 1 OK. La `filt` del clon nace vacia: el
+ * llamador aplica su filtro de vista al recibirla. */
+int       bpq_trace_clone(const BpqTrace *src, BpqTrace **out);
+
+/* Memoria que ocupa la traza (struct + raw + filt), para el tope de la cache. */
+size_t    bpq_trace_bytes(const BpqTrace *t);
+
 /* Acceso directo al buffer crudo (para dibujar sin copiar). 1 OK. */
 int       bpq_trace_data(const BpqTrace *t, const int32_t **samples, long *n,
                          double *t0, double *rate);
@@ -360,6 +396,34 @@ const int32_t *bpq_trace_filtered(const BpqTrace *t, long *n);
  * lleva la correccion estatica (`corr_s`, en el .d suele ser -sta/2). */
 
 typedef struct BpqStaLta BpqStaLta;
+
+/* --- cache de trazas (LRU por bytes) ------------------------------------- *
+ * La usa SOLO el hilo del worker: el mapa no es thread-safe. Los contadores
+ * son atomicos para que `--dump` los lea desde el hilo de la UI. */
+typedef struct BpqWaveCache BpqWaveCache;
+
+typedef struct {
+    long      hits, misses, inserts, evictions, toobig;
+    long      entries;
+    long long bytes;
+} BpqWaveCacheStats;
+
+/* max_bytes == 0 o max_entries <= 0 => NULL (cache deshabilitada). */
+BpqWaveCache *bpq_wavecache_new(size_t max_bytes, int max_entries);
+void          bpq_wavecache_free(BpqWaveCache *c);
+
+/* Clave canonica SCNL + t0 (1 ms) + span. 0 si la peticion no es valida. */
+int           bpq_wavecache_key(char *out, size_t n, const char *sta,
+                                const char *net, const char *chan,
+                                const char *loc, double t0, double span);
+
+/* 1 = hit: devuelve una COPIA que el llamante libera con bpq_trace_free. */
+int           bpq_wavecache_get(BpqWaveCache *c, const char *key, BpqTrace **out);
+int           bpq_wavecache_put(BpqWaveCache *c, const char *key,
+                                const BpqTrace *tr);
+int           bpq_wavecache_has(const BpqWaveCache *c, const char *key);
+void          bpq_wavecache_clear(BpqWaveCache *c);
+void          bpq_wavecache_stats(const BpqWaveCache *c, BpqWaveCacheStats *st);
 
 BpqStaLta   *bpq_stalta_new(const BpqTrace *t, double sta_s, double lta_s,
                             double on_thr, double off_thr, double corr_s);

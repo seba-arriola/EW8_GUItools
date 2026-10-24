@@ -47,8 +47,8 @@ QT_HAVE := $(shell test -n "$(QT_INC)" && test -d "$(QT_INC)/QtWidgets" && test 
 # Fuentes
 # ---------------------------------------------------------------------------
 # Capa C propia (fontaneria: config, anillos, BD, ondas, emision, lienzos).
-C_SRC := bpq_config.c bpq_tt.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
-         bpq_map.c bpq_profile.c bpq_wave.c bpq_sds_globals.c bpq_stations.c \
+C_SRC := bpq_config.c bpq_tt.c bpq_tt1d.c bpq_canvas.c bpq_rings.c bpq_emit.c bpq_magmsg.c bpq_events.c \
+         bpq_map.c bpq_profile.c bpq_wave.c bpq_wavecache.c bpq_sds_globals.c bpq_stations.c \
          bpq_traces.c bpq_db.c bpq_locate.c bpq_manual.c bpq_mag.c \
          bpq_magpanel.c bpq_draw_mag.c bpq_axis.c bpq_mww.c bpq_draw_ball.c bpq_pin.c
 
@@ -183,8 +183,8 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 # Tests
 # ---------------------------------------------------------------------------
 TEST_C   := test_capi_config test_canvas test_rings test_events test_draw_map test_wave \
-            test_stations test_traces test_db test_locate test_preview test_manual \
-            test_magpanel test_axis test_mww test_pin
+            test_wavecache test_tt1d test_tt1d_hyp test_stations test_traces test_db \
+            test_locate test_preview test_manual test_magpanel test_axis test_mww test_pin
 TEST_CXX :=
 PROBE_SRC := tests/probe_capi.cxx
 
@@ -276,8 +276,31 @@ test_wave: tests/test_wave.c $(WAVE_DEPS) $(EWLIBS)
 	    $(CAIRO) -lm
 	@chmod +x $@
 
+# Cache de trazas (LRU por bytes): trazas sinteticas, sin store ni SDS.
+test_wavecache: tests/test_wavecache.c $(WAVE_DEPS) \
+                $(BUILDDIR)/c_bpq_wavecache.o $(EWLIBS)
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_wavecache.c $(WAVE_DEPS) \
+	    $(BUILDDIR)/c_bpq_wavecache.o $(EWLIBS) $(CAIRO) -lm
+	@chmod +x $@
+
+# Tiempos de viaje P en capas (.crh): formulas cerradas, sin store ni SDS.
+test_tt1d: tests/test_tt1d.c $(BUILDDIR)/c_bpq_tt1d.o
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_tt1d.c \
+	    $(BUILDDIR)/c_bpq_tt1d.o -lm
+	@chmod +x $@
+
+# Bandas de un .hyp (CRH/NOD/MUL): fixtures en /tmp + el .hyp real (cwd=params).
+test_tt1d_hyp: tests/test_tt1d_hyp.c $(BUILDDIR)/c_bpq_tt1d.o
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_tt1d_hyp.c \
+	    $(BUILDDIR)/c_bpq_tt1d.o -lm
+	@chmod +x $@
+
 # Catalogo de estaciones + tabla de picadas (statable es el nucleo puro).
 STA_DEPS := $(BUILDDIR)/c_bpq_stations.o $(BUILDDIR)/c_bpq_tt.o \
+            $(BUILDDIR)/c_bpq_tt1d.o \
             $(BUILDDIR)/bp_statable.o \
             $(BUILDDIR)/bp_station.o $(BUILDDIR)/bp_tt.o
 
@@ -289,6 +312,7 @@ test_stations: tests/test_stations.c $(STA_DEPS) $(EWLIBS)
 
 # Picadas efectivas del `locate` (M > A > Teo + MaxDistKm + SCNL del catalogo).
 LOCATE_DEPS := $(BUILDDIR)/c_bpq_locate.o $(BUILDDIR)/c_bpq_stations.o \
+               $(BUILDDIR)/c_bpq_tt.o $(BUILDDIR)/c_bpq_tt1d.o \
                $(BUILDDIR)/c_bpq_sds_globals.o $(BUILDDIR)/c_bpq_mag.o \
                $(BUILDDIR)/bp_locate.o $(BUILDDIR)/bp_locator.o \
                $(BUILDDIR)/bp_statable.o $(BUILDDIR)/bp_group.o \
@@ -316,7 +340,9 @@ test_preview: tests/test_preview.c $(PREVIEW_DEPS)
 
 # Overlay de picadas manuales: set por fase, borrado y persistencia.
 MANUAL_DEPS := $(BUILDDIR)/c_bpq_manual.o $(BUILDDIR)/bp_manual.o \
-               $(BUILDDIR)/c_bpq_stations.o $(BUILDDIR)/bp_station.o \
+               $(BUILDDIR)/c_bpq_stations.o $(BUILDDIR)/c_bpq_tt.o \
+               $(BUILDDIR)/c_bpq_tt1d.o \
+               $(BUILDDIR)/bp_station.o \
                $(BUILDDIR)/bp_statable.o $(BUILDDIR)/bp_tt.o
 
 test_manual: tests/test_manual.c $(MANUAL_DEPS) $(CANVAS_DEPS) $(EWLIBS)
@@ -416,6 +442,9 @@ check-c: $(TEST_C)
 	@$(THIS_DIR)/test_events
 	@$(THIS_DIR)/test_draw_map
 	@$(THIS_DIR)/test_wave
+	@$(THIS_DIR)/test_wavecache
+	@$(THIS_DIR)/test_tt1d
+	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_tt1d_hyp
 	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_stations
 	@$(THIS_DIR)/test_traces
 	@$(THIS_DIR)/test_db
@@ -435,6 +464,9 @@ check: qt_check $(TEST_C)
 	@$(THIS_DIR)/test_events
 	@$(THIS_DIR)/test_draw_map
 	@$(THIS_DIR)/test_wave
+	@$(THIS_DIR)/test_wavecache
+	@$(THIS_DIR)/test_tt1d
+	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_tt1d_hyp
 	@cd $(PARAMS_DIR) && $(THIS_DIR)/test_stations
 	@$(THIS_DIR)/test_traces
 	@$(THIS_DIR)/test_db

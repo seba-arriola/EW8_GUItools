@@ -104,6 +104,15 @@ static int run_gui(QApplication &app, const QStringList &args)
         if (!bpq_init_tt(cfg, terr, sizeof(terr)) && terr[0])
             std::fprintf(stderr, "csnhypodbpQT: %s\n", terr);
     }
+    /* P teorica en el dominio regional con el MISMO modelo de capas con el que
+     * hyp2000 localiza (bandas Potin del .hyp del localizador). Sin el, la P
+     * teorica se queda en IASP91 como antes. */
+    {
+        char terr[256] = "";
+
+        if (!bpq_tt_theo_init(cfg, terr, sizeof(terr)) && terr[0])
+            std::fprintf(stderr, "csnhypodbpQT: %s\n", terr);
+    }
 
     BpqMainWindow win(cfg);
     win.show();

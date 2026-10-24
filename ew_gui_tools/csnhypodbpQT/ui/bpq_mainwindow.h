@@ -15,9 +15,12 @@
 
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 #include <QImage>
 #include <QElapsedTimer>
 #include <QPointF>
+
+#include <atomic>
 
 #include "bpq_capi.h"
 #include "bpq_pin.h"
@@ -124,6 +127,7 @@ private:
     bool focusIsTextInput() const;           /* no consumir teclas al escribir */
     void rebuildStalta();                    /* curva CF por traza */
     void filterOne(BpqTrace *t);             /* demean + filtro del .d */
+    void startPrefetch();                    /* llena la cache de vecinas */
     void selectProfileFor(double lat, double lon);
 
     /* --- locate (fase 4) --- */
@@ -247,6 +251,17 @@ private:
     quint64                    m_waveJob = 0;
     quint64                    m_waveDone = 0;
     int                        m_waveWith = 0;
+    /* Cache LRU de trazas: la consulta/llena el worker; aqui solo se crea, se
+     * libera al cerrar y se leen sus stats atomicas para --dump. */
+    BpqWaveCache              *m_waveCache = nullptr;
+    std::atomic<quint64>       m_waveGen{0};
+    QTimer                    *m_prefetchTimer = nullptr;
+    QStringList                m_traceOrder;     /* entrega del pedido del usuario */
+    QStringList                m_prefetchOrder;  /* estaciones precargadas */
+    int                        m_prefetchOk = 0;
+    int                        m_prefetchFail = 0;
+    int                        m_prefetchN = 0;  /* copia de PrefetchNeighbors */
+    bool                       m_refetched = false;  /* hook BPQ_WAVE_REFETCH */
 
     /* `locate` en su propio hilo: csnloc + refinador tardan segundos. */
     QThread          *m_locThread = nullptr;

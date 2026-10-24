@@ -29,13 +29,16 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 ### Verificación actual (`make check`)
 
 ```
-== checks=98 fallas=0 ==            # config contra csnhypodbp.d real
+== checks=101 fallas=0 ==           # config contra csnhypodbp.d real
 == canvas checks=72 fallas=0 ==     # cairo -> buffer, 7 escenas, export
 == rings checks=44 fallas=0 ==      # formato byte a byte del pick, rd_mag seguro, errores de apertura
 == events checks=89 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden y Created
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
 == wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
-== stations checks=45 fallas=0 ==  # catalogo, distancia/orden, M > A > Teo y P teorica IASP91
+== wavecache checks=61 fallas=0 == # LRU por bytes, copia en hit, claves por ventana y tope
+== tt1d checks=33 fallas=0 ==      # capas .crh: semiespacio, vertical, refractada, interfaz, coste
+== tt1d_hyp checks=47 fallas=0 ==  # CRH/NOD/MUL reales y fixture: RAD1, taper, oeste-positivo, mezcla
+== stations checks=71 fallas=0 ==  # catalogo, distancia/orden, M > A > Teo y P teorica (capas + IASP91)
 == traces checks=70 fallas=0 ==    # canvas: etiquetas de canal, envolvente, escala, gaps, marcas, clic y scroll
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
 == locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
@@ -51,16 +54,69 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
 == traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
-== table ui invariants checks=39 fallas=0 == # proxies, Created, eje, filtro, preview, Teo, checks y calculate
-== ui input checks=48 fallas=0 ==  # scroll, teclado, orden, eje, reset, filtro, Teo, picada/desarme y preview
+== table ui invariants checks=56 fallas=0 == # proxies, Created, eje, filtro, preview, Teo, checks, cache, tt y calculate
+== ui input checks=57 fallas=0 ==  # scroll, teclado, orden, eje, reset, filtro, Teo, picada/desarme, cache, tt y preview
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1348 checks** (1162 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
-teclado + 39 de tablas/preview + 48 de input/scroll + 45 e2e + 11 del mapa), 0 fallas. El lector SDS
+Total: **1544 checks** (1332 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
+teclado + 56 de tablas/preview + 57 de input/scroll + 45 e2e + 11 del mapa), 0 fallas. El lector SDS
 compartido suma **26** en `make -C ew_gui_tools/csnhypodbp test_sds_read` (incluye el registro que
 cruza `t1` y el arranque en fracción de segundo).
+
+### Caché de ondas y precarga de vecinas (2026-10-24)
+
+Antes cada cambio de estación o de evento liberaba **todas** las trazas y volvía a pedirlas al
+store/SDS; `wstore_get` abre y cierra el `.idx`/`.tank` por llamada y el SDS el miniSEED del día.
+`PrefetchNeighbors` llevaba tiempo en el `.d` pero **nadie lo consumía** (ni aquí ni en el GTK).
+
+- **`c/bpq_wavecache.c`** (C puro): LRU por bytes y por entradas. La clave es
+  `SCNL|t0(1 ms)|span`, así que el zoom no invalida nada y una ventana de magnitud de 700 s es otra
+  entrada. `get` devuelve una **copia** (`bpq_trace_clone`): el hilo de la UI nunca comparte memoria
+  mutable con el worker. El mapa lo toca solo el worker; los contadores son atómicos para `--dump`.
+- **`WaveCacheMB`** (default **64**; `0` deshabilita la caché y deja el comportamiento anterior).
+  Con 120 s a 100 Hz entran ~450 canales: el evento completo (137 estaciones × 3) cabe. No se publica
+  en `--print-config` para no romper la paridad con el GTK (igual que `PrefetchNeighbors`).
+- **`PrefetchNeighbors`** (default 2) ahora sí precarga: 250 ms después del pedido visible se
+  encolan las primeras N filas con picada, **una invocación por estación**, con la misma ventana. El
+  worker aborta el resto si cambió la generación (`m_waveGen`), de modo que un clic nuevo se
+  intercala como mucho una estación. No repinta: solo llena la caché.
+- `--dump` publica:
+  `wavecache hit=3 miss=9 entries=9 mb=0.41 prefetch=2 fail=0 order=PB01 prefetch_order=TA02,HMBCX`.
+  `order` es el orden real de entrega del pedido del usuario (debe empezar por la estación pedida);
+  `prefetch_order` son las vecinas, donde la pedida nunca aparece.
+- Hooks de test (solo con `BPQ_TEST_FIXTURE`): `BPQ_WAVE_FAKE=1` sintetiza trazas en el worker (sin
+  store ni SDS), `BPQ_WAVE_REFETCH=1` repite el mismo pedido al terminar para demostrar el hit,
+  `BPQ_WAVE_WAIT_PREFETCH=1` espera la precarga y `BPQ_PREFETCH=0` la apaga sin tocar el `.d`.
+
+### P teórica en el dominio regional: bandas de hyp2000 (2026-10-24)
+
+La `Teo` de toda estación sin picada M/A salía de IASP91 aunque la solución que se está mirando la
+hubiera refinado `hyp2000_ring` con **otras** velocidades. En un evento típico
+(`stations rows=274 picked=137 sta_teo=135`) esas 135 filas son la mayoría de la tabla y son también
+las que `calculate` manda a `csnmags` como ancla de la ventana.
+
+- **`c/bpq_tt1d.{h,c}`** (C puro): lee el `.crh` (pares `Vp profundidad`; la última capa es
+  semiespacio) y resuelve el tiempo de viaje con la misma matemática que `TRVCON`: rayo directo
+  (bisección en el parámetro de rayo) + una refractada por cada interfaz bajo la fuente, y el mínimo
+  de las ramas. Sin tabla ni I/O: **512 estaciones en 2 ms**.
+- **Bandas**: `bpq_tt1d_hyp_load` sigue la cadena del localizador (`locator` → su `.d` →
+  `CommandFile`) y lee `CRH`, `NOD` y `MUL`. La elección por epicentro replica `hytra.for`: dentro de
+  `RAD1` manda ese modelo; en el anillo `RAD1..RAD1+DRAD` se mezcla con taper coseno y, si falta
+  peso, entra el modelo por defecto. Ojo con la **longitud oeste-positivo** del `.hyp`.
+- **Umbral**: `TheoMaxDeltaKm` (500 km, el mismo `MaxDistKm` del `locate`) y `TheoModel`
+  (`potin` default; `iasp91` apaga). Ninguna se imprime en `--print-config` (paridad con el GTK)
+  ni se añade al `.d` versionado. Hooks: `BPQ_THEO=off|iasp91|potin`, `BPQ_THEO_MAX_KM`,
+  `BPQ_THEO_HYP`.
+- `--dump` publica `tt model=<banda> max_km=500 d_km=<...> shift=<s>`, donde `shift` es cuánto se
+  movió el ancla del primer `Teo` respecto de IASP91 (prueba de que el modelo entra en el número).
+
+### P teórica: por qué 1D y no grillas 3D
+
+Se descarta el uso de grillas 3D para los tiempos teóricos porque tardan mucho en generar el
+cálculo. Se opta por el modelo 1D de capas del `.hyp` como referencia de picado, que permite
+integrar más estaciones al cálculo de magnitud.
 
 ### Created real, ordenación y anchos (2026-10-24)
 

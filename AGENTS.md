@@ -112,7 +112,19 @@ hace **`csnloc`** localmente.
     P `M/A`, de modo que la tabla de magnitudes siempre tiene ancla/ventana `Teo`; sus checks
     `A/M/Teo` de magnitudes son **propios** (los del picking siguen siendo solo del localizador) y
     `calculate` reconstruye las P efectivas (M/A/Teo) antes de llamar a `csnmags`. En el port, el
-    modo picada se **desarma al colocar la picada**. Ver `docs/MAGNITUDES.md`. La pestaña
+    modo picada se **desarma al colocar la picada**. La P teórica usa el **modelo de capas del propio
+    `hyp2000_ring`** (bandas Potin del `.crh` que referencia su `.hyp`, elegidas por epicentro con la
+    regla `NOD`/`RAD1`/`DRAD`) dentro de `TheoMaxDeltaKm` (500 km, el mismo `MaxDistKm` del `locate`)
+    y IASP91 fuera, de modo que el ancla coincide con las picadas de la solución que se está
+    mostrando; `TheoModel iasp91` lo apaga y ninguna de las dos claves se imprime (`--print-config`
+    sigue idéntico al GTK). El uso de grillas 3D para los tiempos teóricos se **descartó**: tardan
+    mucho en generar el cálculo, así que se optó por el modelo 1D de capas como referencia de picado
+    que permite integrar más estaciones al cálculo de magnitud. Además `csnhypodbpQT` cachea las
+    trazas en memoria (LRU por bytes,
+    `WaveCacheMB` default 64; 0 la deshabilita) y precarga las `PrefetchNeighbors` estaciones más
+    cercanas 250 ms después del pedido visible, una invocación por estación y cancelable por
+    generación; antes cada cambio de estación liberaba todas las trazas y volvía al store/SDS. Ver
+    `docs/MAGNITUDES.md`. La pestaña
     *magnitudes* tiene además un panel **`Mww`**
     (inversión de fase W on-demand, ver `csnwphase/` y `docs/WPHASE.md`): el área central
     es una pila `Estaciones` | `Mww` y sus claves son `MwwConfigFile` (default

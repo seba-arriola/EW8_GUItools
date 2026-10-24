@@ -57,6 +57,7 @@ static const char *const kKeys[] = {
     "StoreRoot", "FetchThreads", "ModuleLabel", "channelsOrder",
     "componentsOrder", "tracesPerScreen", "locator", "ManualStateFile",
     "LocatorTimeoutSec", "PrefetchNeighbors", "HideStationsWithoutData",
+    "WaveCacheMB", "TheoModel", "TheoMaxDeltaKm",
     "SearchMaxEvents", "SdsEnabled", "SdsRoot", "SdsFallbackHours",
     "pColor", "sColor", "pColorAuto", "pColorTheo", "sColorAuto", "sColorTheo",
     "MapImageFile", "MapMinSpanDeg", "MapZoom", "MapSplit", "OverlayFile",
@@ -140,6 +141,11 @@ static void config_defaults(BpqConfig *c)
     c->mag_fetch_s             = 700.0;   /* Ms necesita ~400 s de ventana */
     c->locator_timeout_s       = 600;
     c->prefetch_neighbors      = 2;
+    c->wave_cache_mb           = 64;   /* ~450 canales de 120 s a 100 Hz */
+    c->theo_model              = 1;    /* capas de hyp2000 (dominio regional) */
+    /* 500 km = el MaxDistKm del `locate`: el dominio en que la solucion se
+     * refina con este mismo modelo de capas. Mas alla manda IASP91. */
+    c->theo_max_delta_km       = 500.0;
     c->hide_sta_without_data   = 0;
     c->fetch_threads           = 4;
 
@@ -310,6 +316,21 @@ BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
         }
         else if (k_its("LocatorTimeoutSec"))  { c->locator_timeout_s = k_int(); }
         else if (k_its("PrefetchNeighbors"))  { c->prefetch_neighbors = k_int(); }
+        else if (k_its("WaveCacheMB")) {
+            c->wave_cache_mb = k_int();
+            if (c->wave_cache_mb < 0) c->wave_cache_mb = 0;
+            if (c->wave_cache_mb > 4096) c->wave_cache_mb = 4096;
+        }
+        else if (k_its("TheoModel")) {
+            char *v = k_str();
+
+            if (v) c->theo_model = (strcmp(v, "iasp91") == 0) ? 0 : 1;
+        }
+        else if (k_its("TheoMaxDeltaKm")) {
+            double v = k_val();
+
+            if (v > 0.0) c->theo_max_delta_km = v;
+        }
         else if (k_its("HideStationsWithoutData")) { c->hide_sta_without_data = k_int() ? 1 : 0; }
         else if (k_its("SearchMaxEvents")) {
             c->search_max_events = k_int();

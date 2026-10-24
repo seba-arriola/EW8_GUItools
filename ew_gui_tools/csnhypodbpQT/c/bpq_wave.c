@@ -213,6 +213,56 @@ void bpq_trace_free(BpqTrace *t)
     free(t);
 }
 
+int bpq_trace_clone(const BpqTrace *src, BpqTrace **out)
+{
+    BpqTrace *dst;
+    EwGuiTrace *tr;
+    const int32_t *raw;
+    int32_t *dstp;
+    long cap, n;
+
+    if (out) *out = NULL;
+    if (!src || !src->tr || !out) return 0;
+    cap = ewgui_trace_capacity(src->tr);
+    n = ewgui_trace_length(src->tr);
+    raw = ewgui_trace_raw(src->tr);      /* el getter no es const */
+    if (cap <= 0 || n <= 0 || !raw) return 0;
+
+    tr = ewgui_trace_new(cap);
+    if (!tr) return 0;
+    dstp = ewgui_trace_raw(tr);
+    if (!dstp) {
+        ewgui_trace_free(tr);
+        return 0;
+    }
+    memcpy(dstp, raw, (size_t)n * sizeof(int32_t));
+    /* `filt` nace vacio (ewgui_trace_new lo llena de INT_MAX): el que dibuja
+     * aplica su filtro de vista al recibir la copia. */
+    ewgui_trace_set_span(tr, ewgui_trace_oldest(src->tr),
+                         ewgui_trace_rate(src->tr), n);
+
+    dst = (BpqTrace *)calloc(1, sizeof(*dst));
+    if (!dst) {
+        ewgui_trace_free(tr);
+        return 0;
+    }
+    dst->tr = tr;
+    *out = dst;
+    return 1;
+}
+
+size_t bpq_trace_bytes(const BpqTrace *t)
+{
+    long cap;
+
+    if (!t || !t->tr) return 0;
+    cap = ewgui_trace_capacity(t->tr);
+    if (cap < 0) cap = 0;
+    /* raw + filt (lo que asigna ewgui_trace_new, ewgui_wave.c:21) mas una
+     * holgura fija por el struct EwGuiTrace, que es OPACO fuera de common. */
+    return (size_t)cap * 2u * sizeof(int32_t) + 64u;
+}
+
 long bpq_trace_n(const BpqTrace *t)
 {
     return (t && t->tr) ? ewgui_trace_length(t->tr) : 0;
