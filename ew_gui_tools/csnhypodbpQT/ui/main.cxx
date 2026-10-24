@@ -149,6 +149,12 @@ static int run_gui(QApplication &app, const QStringList &args)
             } else if (std::strcmp(mode, "--mouse") == 0) {
                 /* Eventos REALES de raton sobre los canvas (zoom/paneo/pick). */
                 rc = win.runMouseForTest() ? 0 : 1;
+            } else if (std::strcmp(mode, "--input") == 0) {
+                /* Una tecla/rueda a un widget concreto + volcado del estado. */
+                if (!win.runInputForTest())
+                    rc = 1;
+                else
+                    std::fputs(win.dumpTree().toUtf8().constData(), stdout);
             } else {
                 std::fprintf(stderr, "csnhypodbpQT: BPQ_MODE desconocido <%s>\n", mode);
                 rc = 1;

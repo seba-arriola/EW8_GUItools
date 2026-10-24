@@ -36,12 +36,12 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
 == wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
 == stations checks=34 fallas=0 ==  # catalogo (StaFile), distancia/orden y regla M > A > Teo
-== traces checks=47 fallas=0 ==    # canvas: envolvente, polilinea a zoom alto, escala por ventana, gaps, marcas y clic
+== traces checks=61 fallas=0 ==    # canvas: envolvente, polilinea, escala por ventana, gaps, marcas, clic y scroll
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
 == locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
-== magpanel checks=49 fallas=0 ==   # ventanas a mano, filas, puerta, overrides y canvas de magnitudes
+== magpanel checks=53 fallas=0 ==   # ventanas, filas, puerta, overrides y canvas multibanda (3 canales)
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
 OK: sin libgtk/libadwaita/libgobject/libgio
@@ -49,13 +49,14 @@ OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
 == pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
-== traces invariants checks=7 fallas=0 == # grosor xdpr, polilinea, escala por ventana, STA/LTA filtrado
+== traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
+== ui input checks=11 fallas=0 ==  # scroll/rueda, P/Down con foco en la tabla, texto y 3 bandas mag
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
 
-Total: **1121 checks** (1030 en C + 16 de integración + 12 de invariantes del pin + 7 del render de
-trazas + 45 e2e + 11 del mapa), 0 fallas.
+Total: **1158 checks** (1048 en C + 16 de integración + 12 de invariantes del pin + 15 del render y
+teclado + 11 de input/scroll + 45 e2e + 11 del mapa), 0 fallas.
 
 ### Origen fijado (pin)
 
@@ -537,6 +538,27 @@ wave AC01.HHE.C1.-- n=30579 rate=100.00 t0=1792685409.730 rango=[-4960,6835]
 - Invariantes: `tests/test_traces.c` (escala por ventana, polilínea, gaps), `tests/test_wave.c`
   (impulso que no se desplaza a fase cero y CF filtrada) y `tests/test_traces_invariants.sh`
   (grosor ×dpr, ramas del render, sin barrido global, STA/LTA filtrado).
+
+### Scroll, teclado y magnitudes multicanal (2026-10-23)
+
+- **Una fila por canal**. La estación actual aporta `channelsOrder × componentsOrder` (p. ej.
+  `HHZ,HHN,HHE`), filtradas por las bandas presentes en `StaFile`; `tracesPerScreen` decide cuántas
+  caben a la vez. Antes se veía una sola porque no había barra y la rueda hacía zoom.
+- **Scroll visible**: `QScrollBar` vertical en el panel de picking, rango `0..n-nvis` y
+  `pageStep=nvis`, sincronizada con `bpq_traces_scroll_to`. Rueda sin modificador = mover filas;
+  `Ctrl+rueda` = zoom temporal (paridad GTK: la rueda no cambia el span). Flechas, `PageUp/Down` y
+  `Home/End` también mueven la banda visible; `Shift+flechas` siguen siendo ganancia/zoom.
+- **Teclado en la ventana, no en el canvas**: un filtro de aplicación resuelve P/S, Esc, flechas y
+  filtros aunque el foco esté en la tabla de estaciones. La tabla no hace búsqueda incremental
+  (`setFocusPolicy(NoFocus)`) y las cajas de texto conservan sus teclas. `applyFilterKey` devuelve
+  si consumió la tecla, así una letra sin binding no se traga.
+- **Magnitudes por canal**: `BpqMagCtx` lleva `trs/ntr` y `bpq_mag_draw` dibuja una banda por canal,
+  con su propio `csnhypodbp_magview_build`, en el mismo orden que el picking. Si no hay P efectiva
+  muestra `sin P (ni observada ni teorica): no hay ancla`; si un canal no tiene traza, solo su banda
+  dice `sin traza`. Antes el canvas usaba únicamente la primera traza terminada en `Z`.
+- Invariantes: `tests/test_traces.c` (scroll acotado), `tests/test_magpanel.c` (3 bandas, sin ancla,
+  canal nulo), `tests/test_traces_invariants.sh` y `tests/test_ui_input.sh` (rueda/teclado/`ntr` con
+  el binario real offscreen).
 
 ### Marco, ejes e idioma (2026-10-22)
 

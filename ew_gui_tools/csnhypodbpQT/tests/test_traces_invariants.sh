@@ -15,13 +15,15 @@ set -u
 here=$(cd "$(dirname "$0")" && pwd)
 traces=$here/../c/bpq_traces.c
 wave=$here/../c/bpq_wave.c
+mag=$here/../c/bpq_draw_mag.c
+ui=$here/../ui/bpq_mainwindow.cxx
 
 pass=0
 fail=0
 ok()  { pass=$((pass + 1)); echo "ok   $*"; }
 bad() { fail=$((fail + 1)); echo "FALLA $*"; }
 
-for f in "$traces" "$wave"; do
+for f in "$traces" "$wave" "$mag" "$ui"; do
     if [ -f "$f" ]; then ok "existe $(basename "$f")"; else bad "falta $f"; fi
 done
 
@@ -58,6 +60,47 @@ if grep -q 'bpq_trace_filtered' "$wave"; then
     ok "STA/LTA lee el buffer filtrado"
 else
     bad "bpq_stalta_new no usa bpq_trace_filtered"
+fi
+
+# Scroll de filas: barra vertical + helper del nucleo, y la rueda sin Ctrl no
+# cambia la ventana temporal.
+if grep -q 'QScrollBar' "$ui" && grep -q 'bpq_traces_scroll_to' "$ui" &&
+   grep -q 'syncTracesScroll' "$ui"; then
+    ok "scroll: QScrollBar + bpq_traces_scroll_to"
+else
+    bad "falta la barra o el scroll acotado del canvas"
+fi
+if grep -q 'm_tracesCtx.scroll_row - steps' "$ui"; then
+    ok "rueda sin Ctrl desplaza filas"
+else
+    bad "la rueda no desplaza filas"
+fi
+
+# Teclado: filtro de aplicacion + tabla sin type-ahead.
+if grep -q 'qApp->installEventFilter' "$ui" &&
+   grep -q 'handlePickingKey' "$ui"; then
+    ok "teclas del picking en la ventana (cualquier foco)"
+else
+    bad "las teclas siguen dependiendo del foco del canvas"
+fi
+if grep -q 'setFocusPolicy(Qt::NoFocus)' "$ui" &&
+   ! grep -q 'keyboardSearch' "$ui"; then
+    ok "tabla de estaciones sin type-ahead"
+else
+    bad "la tabla puede robar las teclas"
+fi
+
+# Magnitudes: una banda por canal, no una sola traza Z.
+if grep -q 'BpqMagTrace' "$mag" && grep -q 'c->trs' "$mag" &&
+   grep -q 'c->ntr' "$mag"; then
+    ok "canvas de magnitudes multicanal (trs/ntr)"
+else
+    bad "el canvas de magnitudes sigue limitado a una traza"
+fi
+if grep -q 'fillMagCtx' "$ui" && grep -q 'm_magTrs' "$ui"; then
+    ok "UI llena todas las bandas de la estacion"
+else
+    bad "renderMagnitudes no llena el contexto multicanal"
 fi
 
 echo "----"

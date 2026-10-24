@@ -340,6 +340,44 @@ int main(void)
         }
     }
 
+    /* --- 7. scroll: la barra y las flechas comparten la misma cuenta ----- */
+    {
+        CsnhypodbpStaRow srow[3];
+        BpqTrace *trs[3] = { NULL, NULL, NULL };
+        BpqTracesCtx c3;
+        int nvis = 0;
+
+        memset(srow, 0, sizeof(srow));
+        memset(&c3, 0, sizeof(c3));
+        c3.rows = srow;
+        c3.tr = trs;
+        c3.n = 3;
+        c3.per_screen = 1;
+        c3.dpr = 1.0;
+
+        CK(bpq_traces_page_rows(&c3, H) == 1);
+        CK(bpq_traces_scroll_max(&c3, H) == 2);
+        CK(bpq_traces_scroll_to(&c3, H, 0) == 0);
+        CK(bpq_traces_visible(&c3, H, &nvis) == 0 && nvis == 1);
+        CK(bpq_traces_scroll_to(&c3, H, 1) == 1);
+        CK(bpq_traces_visible(&c3, H, &nvis) == 1 && nvis == 1);
+        CK(bpq_traces_scroll_to(&c3, H, 99) == 2);
+        CK(bpq_traces_scroll_to(&c3, H, -5) == 0);
+
+        /* Si todo cabe, no hay scroll (rango 0). Hace falta un viewport que
+         * quepa tres bandas: con H=140 el suelo de banda solo deja una. */
+        c3.per_screen = 3;
+        CK(bpq_traces_page_rows(&c3, 3 * H) == 3);
+        CK(bpq_traces_scroll_max(&c3, 3 * H) == 0);
+        CK(bpq_traces_scroll_to(&c3, 3 * H, 7) == 0);
+
+        /* Sin filas: todo a 0, sin divisiones raras. */
+        c3.n = 0;
+        CK(bpq_traces_page_rows(&c3, H) == 0);
+        CK(bpq_traces_scroll_max(&c3, H) == 0);
+        CK(bpq_traces_scroll_to(&c3, H, 3) == 0);
+    }
+
     frame_free(&fr);
     bpq_trace_free(tr[0]);
     bpq_trace_free(tr[1]);

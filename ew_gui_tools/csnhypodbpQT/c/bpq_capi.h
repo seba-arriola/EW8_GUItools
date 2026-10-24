@@ -366,7 +366,7 @@ double       bpq_stalta_peak(const BpqStaLta *s);
 /* --- canvas de trazas (panel de picking) --------------------------------- */
 
 typedef struct {
-    const CsnhypodbpStaRow *rows;   /* una fila por estacion */
+    const CsnhypodbpStaRow *rows;   /* una fila por CANAL (misma estacion) */
     int       n;
     BpqTrace *const *tr;            /* trazas alineadas con rows; NULL = sin datos */
     double    t0, window;           /* ventana de dibujo: epoch y segundos */
@@ -499,6 +499,15 @@ void bpq_traces_zoom_span(double *t0, double *window, int dir);
  * el dibujo, el hit-test y el desplazamiento con las flechas. */
 int bpq_traces_visible(const BpqTracesCtx *c, int h, int *nvis_out);
 
+/* Filas que caben de verdad en el viewport (misma cuenta que el dibujo). */
+int bpq_traces_page_rows(const BpqTracesCtx *c, int h);
+
+/* Ultima `first` valida: n - nvis (0 si todo cabe). */
+int bpq_traces_scroll_max(const BpqTracesCtx *c, int h);
+
+/* Fija `scroll_row` acotado a [0, scroll_max] y devuelve la fila aplicada. */
+int bpq_traces_scroll_to(BpqTracesCtx *c, int h, int row);
+
 /* Alto de banda en pixeles de dispositivo: (viewport - margen)/tracesPerScreen
  * con el suelo CSNHYPODBP_TRACES_BAND_MIN. */
 int bpq_traces_band_h(const BpqTracesCtx *c, int h);
@@ -547,10 +556,20 @@ int bpq_mag_result_ok(const CsnhypodbpMagOut *mag);
 
 typedef struct BpqMagPanel BpqMagPanel;
 
-/* Contexto del canvas de magnitudes: la traza procesada de UNA estacion y la
- * franja de su ventana. Todo puro (epoch/segundos/pixeles); cairo no aparece. */
+/* Una banda del canvas de magnitudes: la traza de UN canal de la estacion. */
+#define BPQ_MAG_MAX_TRACES 16   /* = filas maximas de bpq_stations_chan_rows */
+
 typedef struct {
-    const BpqTrace         *tr;      /* traza de la estacion (cruda) */
+    const BpqTrace *tr;        /* NULL = sin datos para este canal */
+    const char     *chan;      /* "HHZ", "HHN", ... */
+    double          dist_km;
+} BpqMagTrace;
+
+/* Contexto del canvas de magnitudes: una banda por canal de la estacion (en el
+ * orden del .d) y la franja de su ventana. Todo puro; cairo no aparece. */
+typedef struct {
+    const BpqMagTrace      *trs;     /* ntr bandas, en orden channels x comps */
+    int                     ntr;
     const CsnhypodbpMagCfg *magcfg;  /* ventanas/bandas del .d de csnmags */
     int     kind;                    /* 0=ML 1=Mwp 2=Mb 3=Ms */
     double  anchor;                  /* epoch de la P: ancla de la ventana */

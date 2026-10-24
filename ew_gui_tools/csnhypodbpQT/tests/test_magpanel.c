@@ -118,20 +118,22 @@ int main(void)
     /* La mascara 0 = las cuatro: una fila por magnitud y ancla. */
     CK(bpq_magpanel_ovr(p, stas, 2, 0u, ovr, 8) == 8);
 
-    /* --- 5. lienzo: traza procesada + franja y hit-test del handle -------- */
+    /* --- 5. lienzo: una banda por canal + franja y hit-test ---------------- */
     {
         int32_t *s = (int32_t *)malloc(400 * sizeof(int32_t));
         BpqTrace *tr;
         CsnhypodbpMagCfg def;
         BpqMagCtx mc;
+        BpqMagTrace mts[3];
         unsigned char *buf = (unsigned char *)calloc(400 * 220, 4);
+        unsigned char *buf2 = (unsigned char *)calloc(400 * 220, 4);
         cairo_surface_t *sf;
         cairo_t *cr;
-        int hits = 0, x, negras = 0;
+        int hits = 0, x, y, negras = 0;
         int grab = 0;
         double t_at = 0.0;
 
-        CK(s != NULL && buf != NULL);
+        CK(s != NULL && buf != NULL && buf2 != NULL);
         for (long k = 0; s && k < 400; k++)
             s[k] = (int32_t)(8000.0 * sin(2.0 * M_PI * 5.0 * (double)k / 100.0));
         tr = s ? bpq_trace_new(1700000000.0, 100.0, s, 400) : NULL;
@@ -140,7 +142,12 @@ int main(void)
 
         csnhypodbp_magcfg_defaults(&def);
         memset(&mc, 0, sizeof(mc));
-        mc.tr = tr;
+        memset(mts, 0, sizeof(mts));
+        mts[0].tr = tr; mts[0].chan = "HHZ"; mts[0].dist_km = 32.0;
+        mts[1].tr = tr; mts[1].chan = "HHN"; mts[1].dist_km = 32.0;
+        mts[2].tr = tr; mts[2].chan = "HHE"; mts[2].dist_km = 32.0;
+        mc.trs = mts;
+        mc.ntr = 3;
         mc.magcfg = &def;
         mc.kind = 0;
         mc.anchor = 1700000000.0;
@@ -164,6 +171,68 @@ int main(void)
         }
         CK(negras > 200);                 /* dibujo real, no un lienzo vacio */
 
+        /* Tinta OSCURA (la traza) en cada banda: las tres se pintan. */
+        {
+            const int ya[3] = { 36, 95, 154 };
+            const int yb[3] = { 94, 152, 211 };
+            int dark[3] = { 0, 0, 0 }, b;
+
+            for (b = 0; b < 3; b++)
+                for (y = ya[b]; y <= yb[b]; y++)
+                    for (x = 58; x < 400; x++) {
+                        const unsigned char *q = buf + ((size_t)y * 400 + x) * 4;
+
+                        if (q[0] < 70 && q[1] < 70 && q[2] < 70) dark[b]++;
+                    }
+            CK(dark[0] > 20 && dark[1] > 20 && dark[2] > 20);
+        }
+
+        /* Sin ancla no hay traza: solo el mensaje (gris, no tinta oscura). */
+        {
+            BpqMagCtx ma = mc;
+            int dark = 0;
+
+            ma.anchor = 0.0;
+            sf = cairo_image_surface_create_for_data(buf2, CAIRO_FORMAT_ARGB32,
+                                                     400, 220, 400 * 4);
+            cr = cairo_create(sf);
+            bpq_mag_draw(cr, 400, 220, &ma);
+            cairo_destroy(cr);
+            cairo_surface_destroy(sf);
+            for (x = 0; x < 400 * 220; x++) {
+                const unsigned char *q = buf2 + x * 4;
+
+                if (q[0] < 70 && q[1] < 70 && q[2] < 70) dark++;
+            }
+            CK(dark == 0);
+            CK(bpq_mag_hit(&ma, 400, 220, 200.0, 8.0, &grab, &t_at) == 0);
+        }
+
+        /* Un canal sin traza deja su banda sin tinta, sin afectar a las otras. */
+        {
+            const int ya[3] = { 36, 95, 154 };
+            const int yb[3] = { 94, 152, 211 };
+            int dark[3] = { 0, 0, 0 }, b;
+
+            mts[1].tr = NULL;
+            memset(buf, 0, 400 * 220 * 4);
+            sf = cairo_image_surface_create_for_data(buf, CAIRO_FORMAT_ARGB32,
+                                                     400, 220, 400 * 4);
+            cr = cairo_create(sf);
+            bpq_mag_draw(cr, 400, 220, &mc);
+            cairo_destroy(cr);
+            cairo_surface_destroy(sf);
+            for (b = 0; b < 3; b++)
+                for (y = ya[b]; y <= yb[b]; y++)
+                    for (x = 58; x < 400; x++) {
+                        const unsigned char *q = buf + ((size_t)y * 400 + x) * 4;
+
+                        if (q[0] < 70 && q[1] < 70 && q[2] < 70) dark[b]++;
+                    }
+            CK(dark[0] > 20 && dark[1] == 0 && dark[2] > 20);
+            mts[1].tr = tr;
+        }
+
         /* El handle de la franja se agarra arriba; abajo el canvas es del zoom. */
         for (x = 0; x < 400; x++) {
             int g2 = 0;
@@ -184,6 +253,7 @@ int main(void)
         bpq_trace_free(tr);
         free(s);
         free(buf);
+        free(buf2);
     }
 
     /* --- 6. linea de estado ----------------------------------------------- */

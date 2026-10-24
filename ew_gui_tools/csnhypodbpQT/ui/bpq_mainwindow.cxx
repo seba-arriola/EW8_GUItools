@@ -22,6 +22,7 @@
 #include "bpq_wave_worker.h"
 
 #include <QAction>
+#include <QAbstractItemView>
 #include <QAbstractSpinBox>
 #include <QApplication>
 #include <QCheckBox>
@@ -51,6 +52,8 @@
 #include <QCoreApplication>
 #include <QEventLoop>
 #include <QRadioButton>
+#include <QScrollBar>
+#include <QSignalBlocker>
 #include <QTextEdit>
 #include <QSplitter>
 #include <QStandardItemModel>
@@ -127,12 +130,19 @@ BpqMainWindow::BpqMainWindow(const BpqConfig *cfg, QWidget *parent)
     /* FilterPhase del .d: el dialogo Filters… lo puede cambiar en memoria. */
     m_phaseZero = cfg && cfg->filtercfg.phase_zero != 0;
     buildUi();
+    /* Las teclas del picking se resuelven en la VENTANA, no en el widget con
+     * foco: la tabla de estaciones no debe hacer type-ahead ni robar P/S. */
+    qApp->installEventFilter(this);
     buildMenuBar();
     openData();
 }
 
 BpqMainWindow::~BpqMainWindow()
 {
+    /* El filtro de aplicacion se retira ANTES de soltar los widgets: si no, un
+     * evento tardio durante el cierre llegaria a una ventana a medio destruir. */
+    if (QCoreApplication *app = QCoreApplication::instance())
+        app->removeEventFilter(this);
     if (m_worker) { m_worker->stop(); delete m_worker; m_worker = nullptr; }
     if (m_rings)  { bpq_rings_close(m_rings); m_rings = nullptr; }
     if (m_events) { bpq_events_free(m_events); m_events = nullptr; }
@@ -293,7 +303,7 @@ void BpqMainWindow::openData()
             filterOne(tr);        /* la vista filtra al llegar, no al dibujar */
         }
         if (m_waves) m_waves->requestRepaint();
-        if (m_magDragGrab == 0) renderMagnitudes();   /* el canvas de mags usa la Z */
+        if (m_magDragGrab == 0) renderMagnitudes();   /* bandas de la estacion actual */
     });
     connect(m_waveWorker, &BpqWaveWorker::jobFinished, this,
             [this](quint64 job, int requested, int withData) {
@@ -841,6 +851,7 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
 
     if (!sol || !m_staCat) {
         updateTracesContext();
+        renderMagnitudes();
         return;
     }
     /* La solucion ya tiene su vista de trazas preparada (aunque no haya
@@ -878,6 +889,7 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     }
     if (!base) {
         updateTracesContext();
+        renderMagnitudes();
         return;
     }
 
@@ -899,6 +911,14 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
                                 QString::fromUtf8(ch), QString::fromUtf8(loc) });
     }
     updateTracesContext();
+    renderMagnitudes();      /* el canvas de mags sigue a la estacion actual */
+
+    /* Fixture determinista: las filas ya estan armadas, pero no se pide onda al
+     * store/SDS (el test no depende de datos ni del I/O de la capa SDS). */
+    if (!qgetenv("BPQ_TEST_FIXTURE").isEmpty()) {
+        m_waveDone = m_waveJob;
+        return;
+    }
 
     if (req.isEmpty() || !m_waveWorker)
         return;
@@ -1042,6 +1062,39 @@ void BpqMainWindow::updateTracesContext()
         m_tracesCtx.dpr = m_axis->devicePixelRatioF();
         m_axis->setContext(&m_tracesCtx);
     }
+    syncTracesScroll();
+    if (m_waves) m_waves->requestRepaint();
+    if (m_axis) m_axis->requestRepaint();
+}
+
+/* La barra es la unica fuente visible del scroll: rango = filas que quedan
+ * fuera, pageStep = bandas que caben. Se actualiza tras cada cambio de filas,
+ * de tracesPerScreen o de tamano del canvas. */
+void BpqMainWindow::syncTracesScroll()
+{
+    int hpx = 1, nvis = 1, max = 0;
+
+    if (!m_tracesScroll) return;
+    if (m_waves) {
+        const double d = m_waves->devicePixelRatioF();
+
+        hpx = int(m_waves->height() * d);
+    }
+    if (hpx < 1) hpx = 1;
+    nvis = bpq_traces_page_rows(&m_tracesCtx, hpx);
+    if (nvis < 1) nvis = 1;
+    max = bpq_traces_scroll_max(&m_tracesCtx, hpx);
+    if (max < 0) max = 0;
+    {
+        const QSignalBlocker b(m_tracesScroll);
+
+        m_tracesScroll->setRange(0, max);
+        m_tracesScroll->setPageStep(nvis);
+        m_tracesScroll->setSingleStep(1);
+        m_tracesScroll->setValue(qBound(0, m_tracesCtx.scroll_row, max));
+        m_tracesScroll->setEnabled(max > 0);
+    }
+    m_tracesCtx.scroll_row = m_tracesScroll->value();
 }
 
 bool BpqMainWindow::waitForWaves(int ms)
@@ -1054,96 +1107,185 @@ bool BpqMainWindow::waitForWaves(int ms)
     return m_waveDone == m_waveJob;
 }
 
+static bool isTextInputWidget(const QWidget *w)
+{
+    if (!w) return false;
+    if (qobject_cast<const QLineEdit *>(w) ||
+        qobject_cast<const QTextEdit *>(w) ||
+        qobject_cast<const QPlainTextEdit *>(w) ||
+        qobject_cast<const QAbstractSpinBox *>(w))
+        return true;
+    {
+        const QComboBox *cb = qobject_cast<const QComboBox *>(w);
+
+        if (cb && cb->isEditable()) return true;
+    }
+    return false;
+}
+
 bool BpqMainWindow::eventFilter(QObject *obj, QEvent *ev)
 {
-    if (ev->type() == QEvent::Resize && (obj == m_mapPlan || obj == m_mapProf))
-        refreshPanels();
+    if (ev->type() == QEvent::Resize) {
+        if (obj == m_mapPlan || obj == m_mapProf)
+            refreshPanels();
+        else if (obj == m_waves)
+            syncTracesScroll();
+    }
 
-    /* Teclas del picking: p / s arman la fase (y el cursor pasa a ser el circulo
-     * de color); Esc desarma. Con una fase armada el clic pica; sin ella, el clic
-     * es el primero del zoom por dos clics. */
-    if (obj == m_waves && ev->type() == QEvent::KeyPress) {
-        const QKeyEvent *ke = static_cast<QKeyEvent *>(ev);
-        const int k = ke->key();
-        const bool shift = (ke->modifiers() & Qt::ShiftModifier) != 0;
+    /* Rueda sobre las trazas: sin Ctrl desplaza filas (lo que espera el
+     * operador); Ctrl la deja pasar al canvas para el zoom temporal. Asi la
+     * rueda no compite con el zoom de Shift+Left/Right. */
+    if (obj == m_waves && ev->type() == QEvent::Wheel) {
+        QWheelEvent *we = static_cast<QWheelEvent *>(ev);
 
-        /* Shift+flechas (paridad GTK): arriba/abajo exageran la amplitud
-         * vertical (x1.5 / /1.5, tope 0.1..50) y derecha/izquierda expanden o
-         * contraen la ventana temporal (x1.5 / /1.5, centrada). Shift+0 vuelve
-         * a la ventana y a la exageracion del evento. */
-        if (shift && (k == Qt::Key_Up || k == Qt::Key_Down)) {
-            double g = (m_tracesCtx.y_gain > 0.0) ? m_tracesCtx.y_gain : 1.0;
+        if (!(we->modifiers() & Qt::ControlModifier)) {
+            const int dy = we->angleDelta().y();
 
-            g = (k == Qt::Key_Up) ? g * 1.5 : g / 1.5;
-            if (g < 0.1) g = 0.1;
-            if (g > 50.0) g = 50.0;
-            m_tracesCtx.y_gain = g;
-            if (m_waves) m_waves->requestRepaint();
-            statusBar()->showMessage(
-                QStringLiteral("exageracion vertical x%1").arg(g, 0, 'f', 2), 2000);
-            return true;
-        }
-        if (shift && (k == Qt::Key_Left || k == Qt::Key_Right)) {
-            bpq_traces_zoom_span(&m_tracesCtx.t0, &m_tracesCtx.window,
-                                 (k == Qt::Key_Right) ? 1 : -1);
-            applyTracesWindow();
-            statusBar()->showMessage(
-                QStringLiteral("ventana %1 s").arg(m_winLen, 0, 'f', 1), 2000);
-            return true;
-        }
-        if (shift && k == Qt::Key_0) {
-            m_tracesCtx.y_gain = 1.0;
-            m_tracesCtx.t0 = m_defT0;
-            m_tracesCtx.window = m_defWin;
-            applyTracesWindow();
-            statusBar()->showMessage(QStringLiteral("vista reseteada"), 2000);
-            return true;
-        }
-        /* Flechas sin Shift: desplazan la banda visible cuando la estacion tiene
-         * mas componentes que las que caben en pantalla (tracesPerScreen). */
-        if (!shift && (k == Qt::Key_Up || k == Qt::Key_Down)) {
-            const double d = m_waves->devicePixelRatioF();
-            int vis = 1;
-            const int first = bpq_traces_visible(
-                &m_tracesCtx, int(m_waves->height() * d), &vis);
-            const int n = m_traceRows.size();
-            int first2 = first + ((k == Qt::Key_Down) ? 1 : -1);
+            if (dy != 0) {
+                const double d = m_waves->devicePixelRatioF();
+                const int hpx = int(m_waves->height() * d);
+                int steps = dy / 120;
 
-            (void)first;
-            if (first2 < 0) first2 = 0;
-            if (first2 > n - vis) first2 = n - vis;
-            if (first2 < 0) first2 = 0;
-            m_tracesCtx.scroll_row = first2;
-            updateTracesContext();
-            if (m_waves) m_waves->requestRepaint();
-            if (m_axis) m_axis->requestRepaint();
-            statusBar()->showMessage(
-                QStringLiteral("canal %1/%2").arg(first2 + 1).arg(n), 2000);
-            return true;
+                if (steps == 0) steps = (dy > 0) ? 1 : -1;
+                bpq_traces_scroll_to(&m_tracesCtx, hpx,
+                                     m_tracesCtx.scroll_row - steps);
+                syncTracesScroll();
+                if (m_waves) m_waves->requestRepaint();
+                if (m_axis) m_axis->requestRepaint();
+                we->accept();
+                return true;
+            }
         }
+    }
 
-        if (k == Qt::Key_P || k == Qt::Key_S) {
-            m_pickPhase = (k == Qt::Key_P) ? 'P' : 'S';
-            m_pickArmed = true;
-            updatePickCursor();
-            statusBar()->showMessage(
-                QStringLiteral("modo picada: %1 (clic izquierdo pica, derecho "
-                               "quita, Esc sale)")
-                    .arg(QLatin1Char(m_pickPhase)), 4000);
-            return true;
-        }
-        if (k == Qt::Key_Escape) {
-            m_pickArmed = false;
-            m_zoomAnchorX = -1.0;
-            m_zoomAnchorT = 0.0;
-            m_tracesCtx.zoom_anchor_t = 0.0;
-            updatePickCursor();
-            if (m_waves) m_waves->requestRepaint();
-            statusBar()->showMessage(QStringLiteral("modo picada: off"), 2000);
-            return true;
+    /* Teclas del picking: se resuelven en la ventana, sin depender del widget
+     * con foco. La tabla de estaciones no hace busqueda incremental. */
+    if (ev->type() == QEvent::KeyPress) {
+        QWidget *w = qobject_cast<QWidget *>(obj);
+
+        if (w && w->window() == this && !isTextInputWidget(w) &&
+            !QApplication::activeModalWidget()) {
+            if (handlePickingKey(static_cast<QKeyEvent *>(ev)))
+                return true;
+            if (m_staView && (w == m_staView || m_staView->isAncestorOf(w))) {
+                const int k = static_cast<QKeyEvent *>(ev)->key();
+
+                if ((k >= Qt::Key_A && k <= Qt::Key_Z) ||
+                    (k >= Qt::Key_0 && k <= Qt::Key_9))
+                    return true;
+            }
         }
     }
     return QMainWindow::eventFilter(obj, ev);
+}
+
+/* Teclas del picking. true = consumida. Se llama desde el filtro de la ventana
+ * (cualquier foco) y desde keyPressEvent, asi que la tabla no puede quedarse
+ * con P/S ni con las flechas. */
+bool BpqMainWindow::handlePickingKey(QKeyEvent *ke)
+{
+    if (!ke) return false;
+    if (!m_subtabs || m_subtabs->currentIndex() != 0) return false;
+    if (focusIsTextInput() || QApplication::activeModalWidget()) return false;
+
+    const int k = ke->key();
+    const bool shift = (ke->modifiers() & Qt::ShiftModifier) != 0;
+    const bool blocked =
+        (ke->modifiers() & (Qt::ControlModifier | Qt::AltModifier)) != 0;
+
+    /* Shift+flechas (paridad GTK): arriba/abajo exageran la amplitud vertical
+     * (x1.5 / /1.5, tope 0.1..50) y derecha/izquierda expanden o contraen la
+     * ventana temporal (x1.5 / /1.5, centrada). Shift+0 vuelve a la ventana y
+     * a la exageracion del evento. */
+    if (!blocked && shift && (k == Qt::Key_Up || k == Qt::Key_Down)) {
+        double g = (m_tracesCtx.y_gain > 0.0) ? m_tracesCtx.y_gain : 1.0;
+
+        g = (k == Qt::Key_Up) ? g * 1.5 : g / 1.5;
+        if (g < 0.1) g = 0.1;
+        if (g > 50.0) g = 50.0;
+        m_tracesCtx.y_gain = g;
+        if (m_waves) m_waves->requestRepaint();
+        statusBar()->showMessage(
+            QStringLiteral("exageracion vertical x%1").arg(g, 0, 'f', 2), 2000);
+        return true;
+    }
+    if (!blocked && shift && (k == Qt::Key_Left || k == Qt::Key_Right)) {
+        bpq_traces_zoom_span(&m_tracesCtx.t0, &m_tracesCtx.window,
+                             (k == Qt::Key_Right) ? 1 : -1);
+        applyTracesWindow();
+        statusBar()->showMessage(
+            QStringLiteral("ventana %1 s").arg(m_winLen, 0, 'f', 1), 2000);
+        return true;
+    }
+    if (!blocked && shift && k == Qt::Key_0) {
+        m_tracesCtx.y_gain = 1.0;
+        m_tracesCtx.t0 = m_defT0;
+        m_tracesCtx.window = m_defWin;
+        applyTracesWindow();
+        statusBar()->showMessage(QStringLiteral("vista reseteada"), 2000);
+        return true;
+    }
+    /* Flechas/Page/Home/End: desplazan la banda visible cuando la estacion
+     * tiene mas componentes que las que caben (tracesPerScreen). */
+    if (!blocked && !shift && (k == Qt::Key_Up || k == Qt::Key_Down ||
+                               k == Qt::Key_PageUp || k == Qt::Key_PageDown ||
+                               k == Qt::Key_Home || k == Qt::Key_End)) {
+        const double d = (m_waves ? m_waves->devicePixelRatioF() : 1.0);
+        const int hpx = m_waves ? int(m_waves->height() * d) : 1;
+        const int vis = bpq_traces_page_rows(&m_tracesCtx, hpx);
+        int row = m_tracesCtx.scroll_row;
+
+        if (k == Qt::Key_Up) row--;
+        else if (k == Qt::Key_Down) row++;
+        else if (k == Qt::Key_PageUp) row -= (vis > 0 ? vis : 1);
+        else if (k == Qt::Key_PageDown) row += (vis > 0 ? vis : 1);
+        else if (k == Qt::Key_Home) row = 0;
+        else if (k == Qt::Key_End)
+            row = bpq_traces_scroll_max(&m_tracesCtx, hpx);
+        bpq_traces_scroll_to(&m_tracesCtx, hpx, row);
+        syncTracesScroll();
+        if (m_waves) m_waves->requestRepaint();
+        if (m_axis) m_axis->requestRepaint();
+        statusBar()->showMessage(
+            QStringLiteral("canal %1/%2")
+                .arg(m_tracesCtx.scroll_row + 1)
+                .arg(m_traceRows.size()),
+            2000);
+        return true;
+    }
+
+    if (!blocked && (k == Qt::Key_P || k == Qt::Key_S)) {
+        m_pickPhase = (k == Qt::Key_P) ? 'P' : 'S';
+        m_pickArmed = true;
+        updatePickCursor();
+        statusBar()->showMessage(
+            QStringLiteral("modo picada: %1 (clic izquierdo pica, derecho "
+                           "quita, Esc sale)")
+                .arg(QLatin1Char(m_pickPhase)), 4000);
+        return true;
+    }
+    if (k == Qt::Key_Escape) {
+        m_pickArmed = false;
+        m_zoomAnchorX = -1.0;
+        m_zoomAnchorT = 0.0;
+        m_tracesCtx.zoom_anchor_t = 0.0;
+        updatePickCursor();
+        if (m_waves) m_waves->requestRepaint();
+        statusBar()->showMessage(QStringLiteral("modo picada: off"), 2000);
+        return true;
+    }
+
+    /* Filtros/STA-LTA del .d: solo se consumen si la tecla tiene binding. */
+    if (!blocked && !shift) {
+        char key = 0;
+
+        if (k >= Qt::Key_A && k <= Qt::Key_Z)
+            key = char('a' + (k - Qt::Key_A));
+        else if (k >= Qt::Key_0 && k <= Qt::Key_9)
+            key = char('0' + (k - Qt::Key_0));
+        if (key && applyFilterKey(key)) return true;
+    }
+    return false;
 }
 
 /* Clic sobre una traza: coloca la picada de la fase activa en el OVERLAY local
@@ -1357,23 +1499,18 @@ void BpqMainWindow::applyFilter(int idx){
  * atajos del picking no se consumen. */
 bool BpqMainWindow::focusIsTextInput() const
 {
-    const QWidget *w = QApplication::focusWidget();
-
-    return w && (qobject_cast<const QLineEdit *>(w) ||
-                 qobject_cast<const QTextEdit *>(w) ||
-                 qobject_cast<const QPlainTextEdit *>(w) ||
-                 qobject_cast<const QAbstractSpinBox *>(w));
+    return isTextInputWidget(QApplication::focusWidget());
 }
 
 /* Atajo de filtro del .d; la logica -- incluido "la tecla del filtro activo lo
  * apaga" -- es del nucleo puro csnhypodbp_filtercfg_key_action. */
-void BpqMainWindow::applyFilterKey(int key)
+bool BpqMainWindow::applyFilterKey(int key)
 {
     char k = char(key);
     char sk;
     int act;
 
-    if (!m_cfg) return;
+    if (!m_cfg) return false;
 
     /* STA/LTA tiene su propia tecla, no es un preset. */
     sk = m_cfg->filtercfg.stalta_key;
@@ -1387,16 +1524,17 @@ void BpqMainWindow::applyFilterKey(int key)
             QStringLiteral("STA/LTA %1").arg(m_staltaOn ? QStringLiteral("on")
                                                         : QStringLiteral("off")),
             2000);
-        return;
+        return true;
     }
 
     act = csnhypodbp_filtercfg_key_action(&m_cfg->filtercfg, m_filterIdx, k);
-    if (act == CSNHYPODBP_FILTER_KEY_NONE) return;
+    if (act == CSNHYPODBP_FILTER_KEY_NONE) return false;
     if (act == CSNHYPODBP_FILTER_KEY_MENU) {
         openFilters();
-        return;
+        return true;
     }
     applyFilter(act);       /* RAW (-1) o el preset elegido */
+    return true;
 }
 
 void BpqMainWindow::openFilters()
@@ -1410,24 +1548,13 @@ void BpqMainWindow::openFilters()
 }
 
 /* Atajos SOLO en la sub-pestana `picking` y nunca con el foco en una caja de
- * texto: aca llegan las teclas que el widget con foco no consumio. */
+ * texto. El filtro de aplicación ya los intercepta antes del widget con foco;
+ * esto es el camino de respaldo cuando el evento llega a la ventana. */
 void BpqMainWindow::keyPressEvent(QKeyEvent *ev)
 {
-    const bool picking = m_subtabs && m_subtabs->currentIndex() == 0;
-    const bool plain = !(ev->modifiers() &
-                         (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier));
-
-    if (picking && plain && !focusIsTextInput()) {
-        const int k = ev->key();
-        char key = 0;
-
-        if (k >= Qt::Key_A && k <= Qt::Key_Z) key = char('a' + (k - Qt::Key_A));
-        else if (k >= Qt::Key_0 && k <= Qt::Key_9) key = char('0' + (k - Qt::Key_0));
-        if (key) {
-            applyFilterKey(key);
-            ev->accept();
-            return;
-        }
+    if (handlePickingKey(ev)) {
+        ev->accept();
+        return;
     }
     QMainWindow::keyPressEvent(ev);
 }
@@ -1967,9 +2094,7 @@ void BpqMainWindow::discardCandidate()
  * del panel), canvas de la estacion actual y linea de estado. */
 void BpqMainWindow::renderMagnitudes()
 {
-    const CsnhypodbpMagRow *row = nullptr;
-    BpqTrace *tr = nullptr;
-    int n = 0, rowIdx = -1, i;
+    int n = 0;
 
     if (!m_magModel) return;
     if (m_magPanel)
@@ -2001,52 +2126,7 @@ void BpqMainWindow::renderMagnitudes()
     m_magRows.resize(n);
     m_magModel->setRows(m_magRows);
 
-    /* Canvas: la unica estacion con ondas en memoria es la actual del picking. */
-    std::memset(&m_magCtx, 0, sizeof(m_magCtx));
-    for (i = 0; i < m_magRows.size(); i++) {
-        if (QString::fromUtf8(m_magRows.at(i).sta) == m_selSta) {
-            rowIdx = i;
-            break;
-        }
-    }
-    if (rowIdx >= 0) row = &m_magRows.at(rowIdx);
-    if (row && m_cfg) {
-        for (i = 0; i < m_traces.size(); i++) {
-            const QByteArray ch = (i < m_chanLabels.size()) ? m_chanLabels.at(i)
-                                                            : QByteArray();
-
-            if (!m_traces.at(i)) continue;
-            if (ch.endsWith('Z')) { tr = m_traces.at(i); break; }
-            if (!tr) tr = m_traces.at(i);
-        }
-        m_magCtx.tr = tr;
-        m_magCtx.magcfg = &m_cfg->magcfg;
-        m_magCtx.kind = m_magKind;
-        m_magCtx.anchor = row->anchor_t;
-        m_magCtx.t0 = row->t0;
-        m_magCtx.t1 = row->t1;
-        m_magCtx.dpr = m_magCanvas ? m_magCanvas->devicePixelRatioF() : 1.0;
-        m_magCtx.y_gain = 1.0;
-        m_magCtx.sta = m_magRows.at(rowIdx).sta;
-        m_magCtx.touched = m_magPanel
-                               ? bpq_magpanel_touched(m_magPanel, row->sta,
-                                                      m_magKind)
-                               : 0;
-    }
-    /* Durante el arrastre el encuadre queda CONGELADO: si se recalculara solo,
-     * la escala cambiaria bajo el puntero y el arrastre no seria lineal. */
-    if (m_magDragGrab) {
-        m_magCtx.view_t0 = m_magViewT0;
-        m_magCtx.view_span = m_magViewSpan;
-    }
-    if (m_magCanvas) {
-        m_magCanvas->setContext(&m_magCtx);
-        m_magCanvas->requestRepaint();
-    }
-    if (m_magAxis) {
-        m_magAxis->setContext(&m_magCtx);
-        m_magAxis->requestRepaint();
-    }
+    fillMagCtx();
     if (m_magBar) {
         char st[200] = "";
 
@@ -2067,6 +2147,67 @@ void BpqMainWindow::renderMagnitudes()
     /* Semilla del panel Mww con la misma solucion (nunca mientras el motor
      * corre: el objeto lo esta usando el hilo de la inversion). */
     if (!m_mwwBusy) seedMww();
+}
+
+/* El canvas de magnitudes sigue a la estacion actual del picking y muestra
+ * TODAS sus componentes en el orden del .d, no solo la Z. */
+void BpqMainWindow::fillMagCtx()
+{
+    const CsnhypodbpMagRow *row = nullptr;
+    const int nrows = int(qMax(m_traces.size(), m_traceRows.size()));
+    int rowIdx = -1, i;
+
+    std::memset(&m_magCtx, 0, sizeof(m_magCtx));
+    m_magCtx.magcfg = m_cfg ? &m_cfg->magcfg : nullptr;
+    m_magCtx.kind = m_magKind;
+    m_magCtx.dpr = m_magCanvas ? m_magCanvas->devicePixelRatioF() : 1.0;
+    m_magCtx.y_gain = 1.0;
+    m_magStaLabel = m_selSta.toUtf8();
+    m_magCtx.sta = m_magStaLabel.isEmpty() ? nullptr : m_magStaLabel.constData();
+
+    for (i = 0; i < m_magRows.size(); i++) {
+        if (QString::fromUtf8(m_magRows.at(i).sta) == m_selSta) {
+            rowIdx = i;
+            break;
+        }
+    }
+    if (rowIdx >= 0) row = &m_magRows.at(rowIdx);
+    if (row) {
+        m_magCtx.anchor = row->anchor_t;
+        m_magCtx.t0 = row->t0;
+        m_magCtx.t1 = row->t1;
+        m_magCtx.touched = m_magPanel
+                               ? bpq_magpanel_touched(m_magPanel, row->sta,
+                                                      m_magKind)
+                               : 0;
+    }
+
+    m_magTrs.clear();
+    for (i = 0; i < nrows && i < BPQ_MAG_MAX_TRACES; i++) {
+        BpqMagTrace mt;
+
+        mt.tr = (i < m_traces.size()) ? m_traces.at(i) : nullptr;
+        mt.chan = (i < m_chanPtr.size()) ? m_chanPtr.at(i) : "";
+        mt.dist_km = (i < m_traceRows.size()) ? m_traceRows.at(i).dist_km : NAN;
+        m_magTrs.append(mt);
+    }
+    m_magCtx.trs = m_magTrs.isEmpty() ? nullptr : m_magTrs.constData();
+    m_magCtx.ntr = int(m_magTrs.size());
+
+    /* Durante el arrastre el encuadre queda CONGELADO: si se recalculara solo,
+     * la escala cambiaria bajo el puntero y el arrastre no seria lineal. */
+    if (m_magDragGrab) {
+        m_magCtx.view_t0 = m_magViewT0;
+        m_magCtx.view_span = m_magViewSpan;
+    }
+    if (m_magCanvas) {
+        m_magCanvas->setContext(&m_magCtx);
+        m_magCanvas->requestRepaint();
+    }
+    if (m_magAxis) {
+        m_magAxis->setContext(&m_magCtx);
+        m_magAxis->requestRepaint();
+    }
 }
 
 void BpqMainWindow::setMagKind(int kind)
@@ -2851,6 +2992,103 @@ bool BpqMainWindow::runMouseForTest()
     return npicked > 0;
 }
 
+/* Hook headless (BPQ_MODE=--input): manda UNA tecla o una rueda a un widget
+ * concreto. Sirve para probar el enrutado de teclado con el foco en la tabla,
+ * sin xdotool. */
+bool BpqMainWindow::runInputForTest()
+{
+    const QByteArray target = qgetenv("BPQ_INPUT_TARGET").toLower();
+    const QByteArray mods = qgetenv("BPQ_INPUT_MODS").toLower();
+    Qt::KeyboardModifiers km = Qt::NoModifier;
+    QWidget *w = nullptr;
+
+    if (target == QByteArray("sta")) w = m_staView;
+    else if (target == QByteArray("waves")) w = m_waves;
+    else if (target == QByteArray("mag")) w = m_magCanvas;
+    else if (target == QByteArray("text")) w = m_editFix;
+    if (!w) {
+        std::fprintf(stderr, "csnhypodbpQT: BPQ_INPUT_TARGET desconocido\n");
+        return false;
+    }
+    if (mods.contains("shift")) km |= Qt::ShiftModifier;
+    if (mods.contains("ctrl")) km |= Qt::ControlModifier;
+    /* La caja de profundidad fija nace deshabilitada si Fix esta apagado; para
+     * probar el guardia de "foco en texto" hace falta que acepte la tecla. */
+    if (target == QByteArray("text") && m_editFix) m_editFix->setEnabled(true);
+    if (target == QByteArray("text")) QApplication::setActiveWindow(this);
+    w->setFocus(Qt::OtherFocusReason);
+
+    {
+        const QByteArray wheel = qgetenv("BPQ_INPUT_WHEEL");
+
+        if (!wheel.isEmpty()) {
+            int dy = 0;
+
+            if (wheel == QByteArray("up")) dy = 120;
+            else if (wheel == QByteArray("down")) dy = -120;
+            else dy = wheel.toInt();
+            {
+                const QPointF pos(w->width() / 2.0, w->height() / 2.0);
+                QWheelEvent ev(pos, w->mapToGlobal(pos.toPoint()), QPoint(),
+                               QPoint(0, dy), Qt::NoButton, km,
+                               Qt::NoScrollPhase, false);
+
+                QCoreApplication::sendEvent(w, &ev);
+            }
+            std::printf("input wheel=%d target=%s scroll=%d win=%.1f\n", dy,
+                        target.constData(), m_tracesCtx.scroll_row, m_winLen);
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
+    {
+        const QByteArray key = qgetenv("BPQ_INPUT_KEY").toLower();
+        int k = 0;
+
+        if (key.isEmpty()) {
+            std::fprintf(stderr, "csnhypodbpQT: falta BPQ_INPUT_KEY/WHEEL\n");
+            return false;
+        }
+        if (key.size() == 1) {
+            const char c = key.at(0);
+
+            if (c >= 'a' && c <= 'z') k = Qt::Key_A + (c - 'a');
+            else if (c >= 'A' && c <= 'Z') k = Qt::Key_A + (c - 'A');
+            else if (c >= '0' && c <= '9') k = Qt::Key_0 + (c - '0');
+        } else if (key == QByteArray("escape") || key == QByteArray("esc")) {
+            k = Qt::Key_Escape;
+        } else if (key == QByteArray("up")) {
+            k = Qt::Key_Up;
+        } else if (key == QByteArray("down")) {
+            k = Qt::Key_Down;
+        } else if (key == QByteArray("pageup")) {
+            k = Qt::Key_PageUp;
+        } else if (key == QByteArray("pagedown")) {
+            k = Qt::Key_PageDown;
+        } else if (key == QByteArray("home")) {
+            k = Qt::Key_Home;
+        } else if (key == QByteArray("end")) {
+            k = Qt::Key_End;
+        }
+        if (!k) {
+            std::fprintf(stderr, "csnhypodbpQT: BPQ_INPUT_KEY desconocida <%s>\n",
+                         key.constData());
+            return false;
+        }
+        {
+            QKeyEvent ev(QEvent::KeyPress, k, km);
+
+            QCoreApplication::sendEvent(w, &ev);
+        }
+        std::printf("input key=%s target=%s armed=%d phase=%c scroll=%d win=%.1f\n",
+                    key.constData(), target.constData(), m_pickArmed ? 1 : 0,
+                    m_pickPhase, m_tracesCtx.scroll_row, m_winLen);
+        std::fflush(stdout);
+        return true;
+    }
+}
+
 void BpqMainWindow::searchEvents()
 {    if (!m_db || !bpq_db_available(m_db)) {
         QMessageBox::information(this, QStringLiteral("Search events"),
@@ -3026,11 +3264,13 @@ void BpqMainWindow::loadPinFixture()
     const double t1 = t0 - 86400.0;   /* evento B: un dia antes */
 
     if (!m_events) return;
-    fillTestSol(&s, 100, 162, 1, t0, -20.100, -70.100, 10.0, 12, 0.20, 0, "PST");
+    /* Estacion del catalogo (StaFile): el fixture tambien ejercita el canvas de
+     * trazas con sus tres componentes HHZ/HHN/HHE. */
+    fillTestSol(&s, 100, 162, 1, t0, -20.100, -70.100, 10.0, 12, 0.20, 0, "PB01");
     bpq_events_feed_arc(m_events, &s);
-    fillTestSol(&s, 100, 163, 2, t0 + 10.0, -20.900, -70.900, 33.0, 8, 0.50, 0, "PST");
+    fillTestSol(&s, 100, 163, 2, t0 + 10.0, -20.900, -70.900, 33.0, 8, 0.50, 0, "PB01");
     bpq_events_feed_arc(m_events, &s);
-    fillTestSol(&s, 200, 162, 1, t1, -30.000, -71.000, 20.0, 6, 0.40, 0, "PST");
+    fillTestSol(&s, 200, 162, 1, t1, -30.000, -71.000, 20.0, 6, 0.40, 0, "PB01");
     bpq_events_feed_arc(m_events, &s);
 
     feedTestMag(m_events, 100, 162, "ML", 4.1, 8);
@@ -3201,19 +3441,35 @@ void BpqMainWindow::buildProcesarTab()
         m_staView = make_table(kStaHeaders, 5, "sta-table");
         m_staModel = new BpqStationsModel(this);
         m_staView->setModel(m_staModel);
+        m_staView->setFocusPolicy(Qt::NoFocus);
+        m_staView->setEditTriggers(QAbstractItemView::NoEditTriggers);
         sh->addWidget(m_staView);
 
         QWidget *right = new QWidget;
         QVBoxLayout *v = new QVBoxLayout(right);
         v->setContentsMargins(0, 0, 0, 0);
         v->setSpacing(2);
-        m_waves = new BpqCanvasWidget(BPQ_SCENE_TRACES, right);
+        QWidget *traceWrap = new QWidget(right);
+        QHBoxLayout *th = new QHBoxLayout(traceWrap);
+        th->setContentsMargins(0, 0, 0, 0);
+        th->setSpacing(0);
+        m_waves = new BpqCanvasWidget(BPQ_SCENE_TRACES, traceWrap);
         m_waves->setObjectName("canvas_traces");
+        m_tracesScroll = new QScrollBar(Qt::Vertical, traceWrap);
+        m_tracesScroll->setObjectName("traces-scroll");
+        th->addWidget(m_waves, 1);
+        th->addWidget(m_tracesScroll, 0);
         m_axis  = new BpqCanvasWidget(BPQ_SCENE_TRACE_AXIS, right);
         m_axis->setObjectName("canvas_axis");
         m_axis->setFixedHeight(20);
-        v->addWidget(m_waves, 1);
+        v->addWidget(traceWrap, 1);
         v->addWidget(m_axis, 0);
+        connect(m_tracesScroll, &QScrollBar::valueChanged, this,
+                [this](int val) {
+            m_tracesCtx.scroll_row = val;
+            if (m_waves) m_waves->requestRepaint();
+            if (m_axis) m_axis->requestRepaint();
+        });
         sh->addWidget(right);
         sh->setStretchFactor(0, 0);
         sh->setStretchFactor(1, 1);
@@ -3578,16 +3834,32 @@ QString BpqMainWindow::dumpTree() const
                .arg((m_db && bpq_db_available(m_db)) ? 1 : 0)
                .arg(m_searchMode ? 1 : 0);
     {
-        int with = 0;
+        int with = 0, nvis = 1, first = 0;
         const CsnhypodbpSolution *cs = currentSolution();
+
         for (BpqTrace *t : m_traces)
             if (t) with++;
-        out += QStringLiteral("traces rows=%1 with=%2 win=[%3,+%4] sol=%5\n")
+        if (m_waves) {
+            const double d = m_waves->devicePixelRatioF();
+
+            first = bpq_traces_visible(&m_tracesCtx,
+                                       int(m_waves->height() * d), &nvis);
+        }
+        out += QStringLiteral("traces rows=%1 with=%2 first=%3 nvis=%4 "
+                              "scroll=%5 per=%6 win=[%7,+%8] sol=%9\n")
                    .arg(m_traceRows.size())
                    .arg(with)
+                   .arg(first)
+                   .arg(nvis)
+                   .arg(m_tracesCtx.scroll_row)
+                   .arg(m_tracesCtx.per_screen)
                    .arg(m_winT0, 0, 'f', 2)
                    .arg(m_winLen, 0, 'f', 0)
                    .arg(cs ? solKey(cs) : QStringLiteral("-"));
+        out += QStringLiteral("pick armed=%1 phase=%2\n")
+                   .arg(m_pickArmed ? 1 : 0)
+                   .arg(m_pickArmed ? QString(QLatin1Char(m_pickPhase))
+                                    : QStringLiteral("-"));
     }
 
     /* Sub-pestana magnitudes (fase 6.1): filas, cuantas entran al calculo y
@@ -3600,11 +3872,15 @@ QString BpqMainWindow::dumpTree() const
         for (const CsnhypodbpMagRow &r : m_magRows)
             if (r.used) in_use++;
         out += QStringLiteral("mag kind=%1 rows=%2 in_use=%3 touched=%4 "
-                              "first=[%5 t0=%6 t1=%7]")
+                              "ntr=%5 anchor=%6 magcfg=%7 "
+                              "first=[%8 t0=%9 t1=%10]")
                    .arg(m_magKind)
                    .arg(m_magRows.size())
                    .arg(in_use)
                    .arg(m_magPanel ? bpq_magpanel_touched_count(m_magPanel) : 0)
+                   .arg(m_magCtx.ntr)
+                   .arg(m_magCtx.anchor, 0, 'f', 1)
+                   .arg(m_magCtx.magcfg ? 1 : 0)
                    .arg(first ? QString::fromUtf8(first->sta) : QStringLiteral("-"))
                    .arg(first ? first->t0 : 0.0, 0, 'f', 0)
                    .arg(first ? first->t1 : 0.0, 0, 'f', 0)

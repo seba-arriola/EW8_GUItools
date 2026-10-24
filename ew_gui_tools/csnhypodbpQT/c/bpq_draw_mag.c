@@ -102,10 +102,10 @@ static void label(cairo_t *cr, double x, double y, const char *txt, double size)
 }
 
 static void plot_trace(cairo_t *cr, const struct mag_geo *g,
-                       const BpqMagCtx *c, const CsnhypodbpMagView *v)
+                       const BpqMagCtx *c, const CsnhypodbpMagView *v,
+                       double top, double bot)
 {
     const double dpr = (c->dpr > 0.0) ? c->dpr : 1.0;
-    const double top = g->t, bot = g->b;
     const double mid = (top + bot) * 0.5, half = (bot - top) * 0.5;
     long i, n = v->n;
     double maxv = 0.0, gain = (c->y_gain > 0.0) ? c->y_gain : 1.0;
@@ -216,19 +216,28 @@ void bpq_mag_draw(cairo_t *cr, int w, int h, const BpqMagCtx *c)
 {
     const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
     struct mag_geo g;
-    CsnhypodbpMagView v;
-    EwGuiTrace *tr;
     char txt[128];
+    int ntr, i;
 
     if (!cr || w <= 0 || h <= 0) return;
 
     cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
     cairo_paint(cr);
 
+    /* Sin P efectiva no hay ancla: una ventana desde epoch 0 solo produciria
+     * "sin traza" y ocultaria el motivo real (paridad GTK). */
+    if (!c || !(c->anchor > 0.0)) {
+        cairo_set_source_rgb(cr, 0.96, 0.96, 0.96);
+        cairo_paint(cr);
+        cairo_set_source_rgb(cr, 0.45, 0.45, 0.45);
+        label(cr, 8.0 * dpr, h * 0.5,
+              "sin P (ni observada ni teorica): no hay ancla", 11.0 * dpr);
+        return;
+    }
+
     mag_geo(c, w, h, &g);
     if (!g.ok) {
-        /* Sin geometria (sin ventana o sin traza): fondo neutro, sin inventar
-         * datos (no se llama al placeholder del canvas: este .c no lo enlaza). */
+        /* Sin geometria (sin ventana): fondo neutro, sin inventar datos. */
         cairo_set_source_rgb(cr, 0.96, 0.96, 0.96);
         cairo_paint(cr);
         return;
@@ -251,20 +260,65 @@ void bpq_mag_draw(cairo_t *cr, int w, int h, const BpqMagCtx *c)
         label(cr, 4.0 * dpr, 13.0 * dpr, txt, 11.0 * dpr);
     }
 
-    tr = (EwGuiTrace *)bpq_trace_ew(c->tr);
-    csnhypodbp_magview_init(&v);
-    if (!tr || csnhypodbp_magview_build(&v, tr, c->kind, c->magcfg,
-                                        g.a, g.a + g.span) != 0) {
+    ntr = c->trs ? c->ntr : 0;
+    if (ntr < 0) ntr = 0;
+    if (ntr > BPQ_MAG_MAX_TRACES) ntr = BPQ_MAG_MAX_TRACES;
+    if (ntr <= 0) {
         cairo_set_source_rgb(cr, 0.45, 0.45, 0.45);
-        label(cr, g.l + 8.0 * dpr, (g.t + g.b) * 0.5, "sin traza para esta magnitud",
-              11.0 * dpr);
-        csnhypodbp_magview_free(&v);
+        label(cr, g.l + 8.0 * dpr, (g.t + g.b) * 0.5,
+              "sin canales para esa estacion (revisa StaFile)", 11.0 * dpr);
         draw_strip(cr, &g, c);
         return;
     }
 
-    plot_trace(cr, &g, c, &v);
-    csnhypodbp_magview_free(&v);
+    /* Una banda por canal, en el orden de las filas del picking. */
+    {
+        const double row_h = (g.b - g.t) / (double)ntr;
+
+        for (i = 0; i < ntr; i++) {
+            const BpqMagTrace *mt = &c->trs[i];
+            const double top = g.t + i * row_h;
+            const double bot = top + row_h;
+            const double yc = (top + bot) * 0.5;
+            CsnhypodbpMagView v;
+            EwGuiTrace *tr;
+
+            if (i > 0) {
+                cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.12);
+                cairo_set_line_width(cr, 1.0 * dpr);
+                cairo_move_to(cr, g.l, top);
+                cairo_line_to(cr, g.r, top);
+                cairo_stroke(cr);
+            }
+
+            /* Rotulo en el margen izquierdo: canal y distancia. */
+            cairo_set_source_rgb(cr, 0.10, 0.10, 0.12);
+            label(cr, 2.0 * dpr, yc + 3.0 * dpr,
+                  (mt && mt->chan && mt->chan[0]) ? mt->chan : "-", 10.0 * dpr);
+            if (mt && isfinite(mt->dist_km)) {
+                snprintf(txt, sizeof(txt), "%.0f km", mt->dist_km);
+                cairo_set_source_rgb(cr, 0.45, 0.45, 0.48);
+                label(cr, 2.0 * dpr, yc + 14.0 * dpr, txt, 8.5 * dpr);
+            }
+
+            tr = (EwGuiTrace *)bpq_trace_ew(mt ? mt->tr : NULL);
+            csnhypodbp_magview_init(&v);
+            if (!tr || csnhypodbp_magview_build(&v, tr, c->kind, c->magcfg,
+                                                g.a, g.a + g.span) != 0) {
+                cairo_set_source_rgb(cr, 0.45, 0.45, 0.45);
+                label(cr, g.l + 8.0 * dpr, yc, "sin traza", 10.0 * dpr);
+                csnhypodbp_magview_free(&v);
+                continue;
+            }
+            cairo_save(cr);
+            cairo_rectangle(cr, g.l, top, g.r - g.l, row_h);
+            cairo_clip(cr);
+            plot_trace(cr, &g, c, &v, top, bot);
+            cairo_restore(cr);
+            csnhypodbp_magview_free(&v);
+        }
+    }
+
     draw_strip(cr, &g, c);
 }
 
@@ -285,6 +339,7 @@ void bpq_mag_draw_axis(cairo_t *cr, int w, int h, const BpqMagCtx *c)
     cairo_line_to(cr, (double)w, 0.5);
     cairo_stroke(cr);
 
+    if (!c || !(c->anchor > 0.0)) return;
     mag_geo(c, w, h * 4, &g);   /* misma escala horizontal que el canvas */
     if (!g.ok) return;
 
@@ -318,6 +373,7 @@ int bpq_mag_hit(const BpqMagCtx *c, int w, int h, double mx, double my,
 
     if (grab) *grab = 0;
     if (t_at) *t_at = 0.0;
+    if (!c || !(c->anchor > 0.0)) return 0;
     mag_geo(c, w, h, &g);
     if (!g.ok) return 0;
     /* Solo desde el handle de arriba (igual que la GTK). */
@@ -333,6 +389,7 @@ double bpq_mag_time_at(const BpqMagCtx *c, int w, int h, double mx)
 {
     struct mag_geo g;
 
+    if (!c || !(c->anchor > 0.0)) return 0.0;
     mag_geo(c, w, h, &g);
     if (!g.ok) return 0.0;
     return time_at(&g, mx);

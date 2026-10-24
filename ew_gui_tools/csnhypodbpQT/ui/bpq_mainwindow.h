@@ -35,6 +35,8 @@ class QTimer;
 class QLabel;
 class QLineEdit;
 class QRadioButton;
+class QScrollBar;
+class QKeyEvent;
 class BpqMagModel;
 class BpqMwwPanel;
 class BpqMwwWorker;
@@ -99,7 +101,9 @@ private:
     void applyTracesWindow();                /* ctx -> ventana + repaint */
     void applyFilter(int idx);               /* filtro de vista (idx < 0 = raw) */
     void openFilters();                      /* ventana Filters… (tecla del .d) */
-    void applyFilterKey(int key);            /* atajo del .d (solo en picking) */
+    bool applyFilterKey(int key);            /* atajo del .d; true = consumida */
+    bool handlePickingKey(QKeyEvent *ev);    /* teclas del picking (cualquier foco) */
+    void syncTracesScroll();                 /* barra vertical <- contexto */
     bool focusIsTextInput() const;           /* no consumir teclas al escribir */
     void rebuildStalta();                    /* curva CF por traza */
     void filterOne(BpqTrace *t);             /* demean + filtro del .d */
@@ -122,6 +126,7 @@ private:
     void syncTraceRows();                    /* fila nueva de la tabla -> traza */
     /* --- magnitudes (fase 6.1) --- */
     void renderMagnitudes();                 /* filas + canvas (UNICO camino) */
+    void fillMagCtx();                       /* estacion actual -> bandas del canvas */
     void calculateMagnitudes(bool allKinds); /* csnmags con las ventanas */
     void magFinished(quint64 job, bool ok, CsnhypodbpMagOut *out,
                      const QString &err, double secs);
@@ -142,6 +147,7 @@ public:
     bool runMagCalcForTest();                /* hook headless BPQ_MODE=--magcalc */
     bool runMwwForTest();                    /* hook headless BPQ_MODE=--mww */
     bool runMouseForTest();                  /* hook headless BPQ_MODE=--mouse */
+    bool runInputForTest();                  /* hook headless BPQ_MODE=--input */
     /* Hooks de la fase 7 (BPQ_TEST_FIXTURE/PIN/CLICK/...); sin efecto en
      * produccion salvo que las variables de entorno esten puestas. */
     void runTestHooks();
@@ -264,12 +270,15 @@ private:
     BpqCanvasWidget *m_mapProf = nullptr;
     BpqCanvasWidget *m_waves = nullptr;
     BpqCanvasWidget *m_axis = nullptr;
+    QScrollBar      *m_tracesScroll = nullptr;   /* canal visible (per_screen) */
     BpqCanvasWidget *m_magCanvas = nullptr;
     BpqCanvasWidget *m_magAxis = nullptr;
     /* --- magnitudes (fase 6.1) --- */
     BpqMagModel              *m_magModel = nullptr;
     BpqMagPanel              *m_magPanel = nullptr;
     QVector<CsnhypodbpMagRow> m_magRows;
+    QVector<BpqMagTrace>      m_magTrs;      /* una banda por canal */
+    QByteArray                m_magStaLabel; /* `sta` estable para el canvas */
     BpqMagCtx                 m_magCtx{};
     int                       m_magKind = 0;
     int                       m_magDragGrab = 0;

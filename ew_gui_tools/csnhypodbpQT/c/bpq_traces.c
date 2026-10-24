@@ -74,6 +74,36 @@ int bpq_traces_visible(const BpqTracesCtx *c, int h, int *nvis_out)
     return first;
 }
 
+/* Filas visibles: la UI las necesita para el pageStep de la barra. */
+int bpq_traces_page_rows(const BpqTracesCtx *c, int h)
+{
+    int nvis = 0;
+
+    (void)bpq_traces_visible(c, h, &nvis);
+    return nvis;
+}
+
+/* Ultima fila que puede ser la primera sin dejar huecos al final. */
+int bpq_traces_scroll_max(const BpqTracesCtx *c, int h)
+{
+    const int nvis = bpq_traces_page_rows(c, h);
+
+    if (!c || c->n <= 0 || nvis <= 0) return 0;
+    return (c->n > nvis) ? c->n - nvis : 0;
+}
+
+/* Scroll acotado; el llamador solo tiene que repintar. */
+int bpq_traces_scroll_to(BpqTracesCtx *c, int h, int row)
+{
+    const int max = bpq_traces_scroll_max(c, h);
+
+    if (!c) return 0;
+    if (row < 0) row = 0;
+    if (row > max) row = max;
+    c->scroll_row = row;
+    return row;
+}
+
 /* Paso "bonito" del eje de tiempos, en segundos. */
 static double time_step(double window, double plot_w)
 {
