@@ -173,6 +173,43 @@ int main(void)
         CK(bpq_magpanel_calc_solution(cr, 3, 1, 1, 1, NULL, &out) == -1);
     }
 
+    /* --- 3b. seleccion de estaciones que se piden al tanque --------------- */
+    {
+        BpqMagPanel *fp = bpq_magpanel_new(NULL);
+        CsnhypodbpStaRow fr[30];
+        int sel[64];
+        int i, ns;
+
+        CK(fp != NULL);
+        for (i = 0; i < 30; i++) {
+            char name[16];
+
+            snprintf(name, sizeof(name), "S%02d", i);
+            if (i < 24)
+                sta_set(&fr[i], name, 1700000000.0 + i, 20.0, 2200.0);
+            else
+                sta_set(&fr[i], name, 1700000000.0 + i, 2.0, 220.0);
+        }
+        /* ML (0-8 deg): solo las 6 de 2 grados, aunque las 24 primeras no
+         * entren. Esto es lo que evita pedir 24 estaciones inservibles. */
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 1u << 0, 30.0, 1, 1, 1,
+                                     sel, 64);
+        CK(ns == 6);
+        for (i = 0; i < ns; i++) CK(sel[i] >= 24);
+        /* Mwp (3-90 deg): las 24 de 20 grados. */
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 1u << 1, 30.0, 1, 1, 1,
+                                     sel, 64);
+        CK(ns == 24);
+        /* Las cuatro: union = 30. */
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 0u, 30.0, 1, 1, 1, sel, 64);
+        CK(ns == 30);
+        /* Ningun origen permitido: no se pide nada. */
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 1u << 0, 30.0, 0, 0, 0,
+                                     sel, 64);
+        CK(ns == 0);
+        bpq_magpanel_free(fp);
+    }
+
     /* Textos de celda: la magnitud no se inventa si no hay valor. */
     {
         char txt[32];

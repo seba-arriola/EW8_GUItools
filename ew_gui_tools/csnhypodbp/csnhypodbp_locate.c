@@ -1077,6 +1077,17 @@ static void arc_seed_base(char *arc, const CsnhypodbpSolution *base)
 /* ------------------------------------------------------------------ */
 /* Orquestador                                                         */
 /* ------------------------------------------------------------------ */
+void csnhypodbp_locate_identity(const CsnhypodbpSolution *base,
+                                const CsnhypodbpLocator *sel,
+                                CsnhypodbpSolution *out)
+{
+    if (!out) return;
+    out->mod = csnhypodbp_locator_mod(sel);
+    if (!base) return;
+    if (out->qid <= 0) out->qid = base->qid;
+    if (out->version == 0) out->version = base->version;
+}
+
 int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *selected,
                           const char *ew_params, const char *ew_home, const char *ew_version,
                           const char *tmp_root,
@@ -1212,7 +1223,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     /* Residuales de csnloc: solo su JSONL los trae (el ARC va en blanco). */
     csnhypodbp_sol_apply_jsonl(out, jsonl);
     /* El candidato sigue perteneciendo al evento elegido, no al qid local que
-       inventa csnloc offline al reasociar las picadas. */
+       inventa csnloc offline al reasociar las picadas. El `mod` viaja en el
+       logo del anillo, no en el ARC: se fija desde el localizador elegido. */
+    csnhypodbp_locate_identity(base, sel, out);
     if (base->qid > 0) {
         out->qid = base->qid;
         out->version = base->version;
@@ -1273,6 +1286,9 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
             }
             goto fail;
         }
+        /* El refinador puede devolver qid/version=0: la candidata sigue siendo
+         * del evento elegido. El mod es el del refinador (163/164). */
+        csnhypodbp_locate_identity(base, sel, out);
     }
 
     /* 5) magnitud offline (hypos + tank -> csnmags), con las ventanas ajustadas a

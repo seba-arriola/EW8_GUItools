@@ -20,4 +20,9 @@ int csnhypodbp_locator_resolve(const CsnhypodbpLocator *l,
                                const char *ew_params, char *bin_out, size_t bn,
                                char *cfg_out, size_t cn);
 
+/* Modulo EarthWorm del binario del localizador (162 csnloc, 163 hyp2000_ring,
+ * 164 nlloc_ring; 0 si no se reconoce). El ARC no lleva `mod`: viaja en el logo
+ * del anillo y, offline, hay que ponerlo desde el localizador elegido. */
+int csnhypodbp_locator_mod(const CsnhypodbpLocator *l);
+
 #endif /* CSNHYPODBP_LOCATOR_H */

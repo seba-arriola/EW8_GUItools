@@ -133,11 +133,17 @@ int csnhypodbp_cfg_with_refiner_opts(const char *src, const char *dst,
  * solucion base ya parseada. Corre en el hilo worker; el callback NO toca GTK. */
 typedef void (*CsnhypodbpLocateStageFn)(const CsnhypodbpSolution *base, void *ud);
 
+/* Fija la identidad offline de una solucion: `mod` del localizador elegido y,
+ * si el ARC no los trae, `qid`/`version` de la base. No toca lat/lon/otime ni
+ * las picadas. */
+void csnhypodbp_locate_identity(const CsnhypodbpSolution *base,
+                                const CsnhypodbpLocator *sel,
+                                CsnhypodbpSolution *out);
+
 /* Orquesta la cadena. Devuelve 0 si localiza; `out` = solucion, `mag` =
    magnitudes. `err` recibe el motivo si falla. `fix_depth_km` < 0 = profundidad
    libre; >= 0 = `FixedDepthKm` en la cfg temporal de csnloc y del refinador.
-   `timeout_sec` <= 0 = sin limite. `cancel` (opcional) aborta al ponerse a 1. */
-int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *selected,
+   `timeout_sec` <= 0 = sin limite. `cancel` (opcional) aborta al ponerse a 1. */int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *selected,
                           const char *ew_params, const char *ew_home, const char *ew_version,
                           const char *tmp_root,
                           const CsnhypodbpSolution *base,

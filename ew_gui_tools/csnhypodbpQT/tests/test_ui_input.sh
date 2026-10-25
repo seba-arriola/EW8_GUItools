@@ -96,6 +96,12 @@ run_pick() {  # <x,y> [fase]
         BPQ_INPUT_PHASE="${2:-P}" BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_locate() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--locate BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 run_dump_wc() {  # <pares VAR=valor...>: cache/precarga con ondas sinteticas
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
         BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
@@ -114,9 +120,10 @@ ck() {  # <descripcion> <regex ERE>
         ok "$1"
     else
         bad "$1"
-        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|origins|stations|preview) ' | sed 's/^/       /'
+        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|origins|stations|preview|checks|locate) ' | sed 's/^/       /'
     fi
 }
+checked_on() { printf '%s\n' "$out" | sed -n 's/^checks on=\([0-9]*\) total=.*/\1/p'; }
 
 # --- 1. filas por canal y tracesPerScreen --------------------------------
 run_dump picking
@@ -128,6 +135,24 @@ run_dump picking
 ck "preview: tabla 2x10 sin fondo"     '^preview grid rows=2 cols=10 headers=Lat,Lon,Depth.km.,Nph,RMS.s.,ML,Mwp,Mb,Ms,Mww values=.* bg=none title_color=#8a5a00$'
 run_dump_cand
 ck "preview: candidata en rojo"        '^preview grid .* bg=none title_color=#a02020$'
+run_locate BPQ_LOCATE_FAIL=1
+ck "locate: fallo visible, sin candidata vieja" '^locate=0 err="fallo simulado" cand=0$'
+
+# --- 1d. casillas por fila (P y S independientes) -------------------------
+run_dump picking
+on_before=$(checked_on)
+run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_UNCHECK=PB01,P
+ck "casilla: P de PB01 desmarcada"    '^input uncheck=PB01,P hits=1 '
+on_after=$(checked_on)
+if [ -n "$on_before" ] && [ -n "$on_after" ] && [ "$on_after" -lt "$on_before" ]; then
+    ok "casilla: checks on $on_before -> $on_after"
+else
+    bad "casilla: no cambio el estado <$on_before/$on_after>"
+fi
+run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_UNCHECK=PB01,S
+ck "casilla: S de PB01 independiente" '^input uncheck=PB01,S hits=1 '
+run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_TOGGLE=PB01,P
+ck "casilla: clic real la apaga"      '^input toggle=PB01,P .*checked=0 '
 
 # --- 1c. P teorica: estaciones sin M/A + ventana de magnitud -------------
 run_dump magnitudes
@@ -169,6 +194,24 @@ ck "rueda abajo no cambia la ventana" '^traces .* win=\[[0-9.]+,?\+120\] '
 
 run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_WHEEL=up BPQ_INPUT_MODS=ctrl
 ck "Ctrl+rueda hace zoom"             '^traces .* win=\[[0-9.]+,?\+100\] '
+
+# --- 4b. guia vertical: hover dentro/fuera y leave ------------------------
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_HOVER='0.5,0.5'
+ck "guia: hover dentro"               '^input hover=1 guide=1 '
+ck "guia: visible en el area"         '^hover guide=1 '
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_HOVER='0.01,0.5'
+ck "guia: margen de etiquetas oculta" '^input hover=1 guide=0 '
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_LEAVE=1
+ck "guia: leave oculta"               '^input hover=0 guide=0 '
+
+# --- 4c. Shift+rueda: tracesPerScreen 1..3 -------------------------------
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_WHEEL=up,up,up BPQ_INPUT_MODS=shift
+ck "Shift+rueda sube a 3"             '^traces .* per=3 '
+ck "Shift+rueda no mueve scroll"      '^traces .* first=0 .* scroll=0 per=3 '
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_WHEEL=up,up,up,up BPQ_INPUT_MODS=shift
+ck "Shift+rueda satura en 3"          '^traces .* per=3 '
+run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_WHEEL=down,down,down,down BPQ_INPUT_MODS=shift
+ck "Shift+rueda baja a 1"             '^traces .* per=1 '
 
 # --- 5. magnitudes: una banda por canal + ancla --------------------------
 run_dump magnitudes

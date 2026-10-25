@@ -156,6 +156,40 @@ int bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
     return nr;
 }
 
+int bpq_magpanel_fetch_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
+                            int n, unsigned kind_mask, double depth_km,
+                            int auto_on, int manual_on, int theo_on,
+                            int *out_rows, int max)
+{
+    int i, nout = 0;
+
+    if (!p || !stas || !out_rows || max <= 0) return 0;
+    for (i = 0; i < n && nout < max; i++) {
+        const CsnhypodbpStaPick *pk = &stas[i].p;
+        int ok = 0, k;
+
+        if (!pk->present) continue;
+        for (k = 0; k < BPQ_MAG_KINDS && !ok; k++) {
+            CsnhypodbpMagCfg eff;
+            int in_range = 1;
+
+            if (kind_mask && !(kind_mask & (1u << k))) continue;
+            eff_cfg(p, k, &eff);
+            csnhypodbp_magcfg_gate(&eff, k, stas[i].dist_deg, stas[i].dist_km,
+                                   &in_range);
+            if (!in_range) continue;
+            if (!csnhypodbp_magcfg_depth_ok(&eff, k, depth_km)) continue;
+            if (!csnhypodbp_magmarks_allowed(&p->marks, stas[i].sta, k,
+                                             pk->origin, auto_on, manual_on,
+                                             theo_on))
+                continue;
+            ok = 1;
+        }
+        if (ok) out_rows[nout++] = i;
+    }
+    return nout;
+}
+
 int bpq_magrows_filter_in_range(const CsnhypodbpMagRow *in, int n,
                                 CsnhypodbpMagRow *out, int max)
 {

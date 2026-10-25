@@ -46,6 +46,23 @@ int bpq_traces_band_h(const BpqTracesCtx *c, int h)
     return rowh;
 }
 
+/* Paso de `tracesPerScreen` con Shift+rueda (1..3). Un valor invalido del .d
+ * arranca en el minimo, igual que el parseo de la config. */
+int bpq_traces_per_screen_step(int current, int dir)
+{
+    int per = (current >= CSNHYPODBP_TRACES_PER_SCREEN_MIN &&
+               current <= CSNHYPODBP_TRACES_PER_SCREEN_MAX)
+                  ? current : CSNHYPODBP_TRACES_PER_SCREEN_MIN;
+
+    if (dir > 0) per++;
+    else if (dir < 0) per--;
+    if (per < CSNHYPODBP_TRACES_PER_SCREEN_MIN)
+        per = CSNHYPODBP_TRACES_PER_SCREEN_MIN;
+    if (per > CSNHYPODBP_TRACES_PER_SCREEN_MAX)
+        per = CSNHYPODBP_TRACES_PER_SCREEN_MAX;
+    return per;
+}
+
 /* Cuantas filas caben de verdad (por si el viewport es mas chico que el suelo). */
 static int rows_fit(const BpqTracesCtx *c, int h, int rowh, double dpr)
 {
@@ -328,7 +345,7 @@ void bpq_traces_draw(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
 {
     const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
     double mx, pw;
-    int rowh, nvis, i;
+    int rowh, nvis, i, first;
 
     if (!cr) return;
     cairo_set_source_rgb(cr, 1.0, 1.0, 1.0);
@@ -342,8 +359,8 @@ void bpq_traces_draw(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
     rowh = bpq_traces_band_h(c, h);
     if (rowh <= 0) return;
     nvis = rows_fit(c, h, rowh, dpr);
+    first = bpq_traces_visible(c, h, NULL);
     {
-        int first = bpq_traces_visible(c, h, NULL);
         cairo_select_font_face(cr, "sans", CAIRO_FONT_SLANT_NORMAL,
                                CAIRO_FONT_WEIGHT_NORMAL);
         cairo_set_font_size(cr, 9.0 * dpr);
@@ -352,7 +369,6 @@ void bpq_traces_draw(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
         const double ytop = 1.0 * dpr + i * rowh;
         const double yc = ytop + rowh / 2.0;
         const double half = (rowh - 6.0 * dpr) / 2.0;
-        const CsnhypodbpStaRow *r = &c->rows[first + i];
 
         /* Fila elegida y separador. */
         if (first + i == c->selected) {
@@ -398,11 +414,34 @@ void bpq_traces_draw(cairo_t *cr, int w, int h, const BpqTracesCtx *c)
                             yc, pw, half, dpr);
         }
         cairo_restore(cr);
+        }
+    }
 
-        /* Picadas. */
+    /* Guia vertical del puntero: despues de las trazas y antes de las picadas,
+     * para que las marcas P/S sigan encima. */
+    if (c->guide_valid) {
+        const double gx = c->guide_x * dpr;
+
+        if (gx >= mx && gx <= mx + pw && h > 2.0 * dpr) {
+            const double dash[2] = { 2.0 * dpr, 4.0 * dpr };
+
+            cairo_set_source_rgb(cr, 0.35, 0.35, 0.45);
+            cairo_set_line_width(cr, 1.0 * dpr);
+            cairo_set_dash(cr, dash, 2, 0.0);
+            cairo_move_to(cr, gx, dpr);
+            cairo_line_to(cr, gx, h - dpr);
+            cairo_stroke(cr);
+            cairo_set_dash(cr, NULL, 0, 0.0);
+        }
+    }
+
+    /* Picadas, encima de la guia. */
+    for (i = 0; i < nvis && first + i < c->n; i++) {
+        const double ytop = 1.0 * dpr + i * rowh;
+        const CsnhypodbpStaRow *r = &c->rows[first + i];
+
         if (c->show_p) draw_pick(cr, c, &r->p, 'P', mx, ytop, rowh, pw, dpr);
         if (c->show_s) draw_pick(cr, c, &r->s, 'S', mx, ytop, rowh, pw, dpr);
-        }
     }
 
     /* Ancla del zoom por dos clics: sin esto el segundo clic es a ciegas. */

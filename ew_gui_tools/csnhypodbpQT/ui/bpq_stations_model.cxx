@@ -103,6 +103,9 @@ QVariant BpqStationsModel::data(const QModelIndex &ix, int role) const
     const CsnhypodbpStaRow &r = m_rows.at(i);
     const CsnhypodbpStaPick &pk = (phase == 0) ? r.p : r.s;
 
+    if (role == Qt::CheckStateRole && ix.column() == ColStation)
+        return int(isChecked(ix.row()) ? Qt::Checked : Qt::Unchecked);
+
     if (role == Qt::DisplayRole) {
         switch (ix.column()) {
         case ColStation: return QString::fromUtf8(r.sta);
@@ -148,11 +151,101 @@ QVariant BpqStationsModel::headerData(int section, Qt::Orientation o, int role) 
     }
 }
 
+Qt::ItemFlags BpqStationsModel::flags(const QModelIndex &ix) const
+{
+    Qt::ItemFlags f = QAbstractTableModel::flags(ix);
+
+    if (ix.isValid() && ix.column() == ColStation)
+        f |= Qt::ItemIsUserCheckable;
+    return f;
+}
+
+bool BpqStationsModel::setData(const QModelIndex &ix, const QVariant &value,
+                               int role)
+{
+    if (role != Qt::CheckStateRole || !ix.isValid() ||
+        ix.column() != ColStation || ix.row() < 0 ||
+        ix.row() >= m_on.size())
+        return false;
+    {
+        const unsigned char on = (value.toInt() == Qt::Checked) ? 1 : 0;
+
+        if (m_on.at(ix.row()) == on) return true;
+        m_on[ix.row()] = on;
+    }
+    emit dataChanged(ix, ix, {Qt::CheckStateRole});
+    return true;
+}
+
+bool BpqStationsModel::isChecked(int row) const
+{
+    return row >= 0 && row < m_on.size() && m_on.at(row) != 0;
+}
+
+void BpqStationsModel::setChecked(int row, bool on)
+{
+    if (row < 0 || row >= m_on.size()) return;
+    {
+        const unsigned char v = on ? 1 : 0;
+
+        if (m_on.at(row) == v) return;
+        m_on[row] = v;
+    }
+    {
+        const QModelIndex ix = index(row, ColStation);
+
+        emit dataChanged(ix, ix, {Qt::CheckStateRole});
+    }
+}
+
+void BpqStationsModel::clearChecks()
+{
+    int i;
+
+    if (m_on.isEmpty()) return;
+    for (i = 0; i < m_on.size(); i++) m_on[i] = 1;
+    emit dataChanged(index(0, ColStation), index(m_on.size() - 1, ColStation),
+                     {Qt::CheckStateRole});
+}
+
+int BpqStationsModel::checkedCount() const
+{
+    int i, n = 0;
+
+    for (i = 0; i < m_on.size(); i++)
+        if (m_on.at(i)) n++;
+    return n;
+}
+
 void BpqStationsModel::setRows(const CsnhypodbpStaRow *rows, int n)
 {
+    const QVector<CsnhypodbpStaRow> oldRows = m_rows;
+    const QVector<unsigned char> oldOn = m_on;
+
     beginResetModel();
     m_rows.clear();
-    for (int i = 0; i < n; i++)
-        m_rows.append(rows[i]);
+    m_on.clear();
+    if (rows && n > 0) {
+        m_rows.reserve(n);
+        m_on.reserve(n * 2);
+        for (int i = 0; i < n; i++) {
+            m_rows.append(rows[i]);
+            for (int ph = 0; ph < 2; ph++) {
+                unsigned char on = 1;
+
+                /* El check sobrevive al rebuild de la tabla: se busca la misma
+                 * entrada del catalogo (`idx`, unico) y fase en las filas
+                 * anteriores. */
+                for (int j = 0; j < oldRows.size(); j++) {
+                    if (oldRows.at(j).idx != rows[i].idx)
+                        continue;
+                    if (j * 2 + ph < oldOn.size())
+                        on = oldOn.at(j * 2 + ph);
+                    break;
+                }
+                m_on.append(on);
+            }
+        }
+    }
     endResetModel();
 }

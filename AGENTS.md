@@ -153,7 +153,11 @@ hace **`csnloc`** localmente.
     un spinner con `calculando <localizador>… N s` (timer de 1 s) para **todos** los localizadores;
     `LocatorTimeoutSec` (600 s) acota el refinador y el error real (`timeout`/`ref.err`/ARC inválido)
     se ve en ese mismo renglón. El `.d` temporal del refinador usa un `WorkDir` propio y, con `Fix`,
-    `FixedDepthKm`; el ARC se siembra con la solución elegida (lat/lon/prof/qid).
+    `FixedDepthKm`; el ARC se siembra con la solución elegida (lat/lon/prof/qid). En `csnhypodbpQT`
+    la candidata se liga a la **solución de origen** (no al `mod`/qid que devuelva el ARC offline, que
+    llega con `mod=0`) y `Confirm` exige el `mod` real del localizador (162/163/164); la tabla de
+    picking tiene **casilla por (estación, fase)** y el canvas una **guía vertical** que sigue al
+    puntero; `Shift+rueda` cambia `tracesPerScreen` 1..3.
     La **columna derecha** (a nivel de ventana, compartida por las dos pestañas) tiene dos paneles:
     **planta** (imagen equirectangular + capas `.lines` con el mismo contrato que `csnrv`:
     `MapImageFile`/`OverlayFile`/`OverlayColor`/`OverlayWidth`, zoom con rueda y paneo con arrastre) y

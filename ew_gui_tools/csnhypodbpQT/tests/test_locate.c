@@ -18,6 +18,7 @@
 #include <string.h>
 
 #include "bpq_capi.h"
+#include "csnhypodbp_locate.h"
 
 static int g_fail = 0;
 static int g_checks = 0;
@@ -211,6 +212,45 @@ int main(void)
                        sizeof(merr)) == 0);
         CK(merr[0] != '\0');
         CK(bpq_mag_result_ok(&mo) == 0);
+        snprintf(mo.mwp, sizeof(mo.mwp), "4.8-6");
+        CK(bpq_mag_result_ok_mask(&mo, 1u << 1) == 1);
+        CK(bpq_mag_result_ok_mask(&mo, 1u << 0) == 0);
+        CK(bpq_mag_result_ok_mask(&mo, 0u) == 1);
+    }
+
+    /* --- 8. identidad offline: mod del localizador + qid/version de base --- */
+    {
+        CsnhypodbpLocator l;
+        CsnhypodbpSolution b, o;
+
+        memset(&l, 0, sizeof(l));
+        snprintf(l.name, sizeof(l.name), "%s", "csnloc");
+        snprintf(l.bin, sizeof(l.bin), "%s", "csnloc");
+        CK(csnhypodbp_locator_mod(&l) == 162);
+        snprintf(l.bin, sizeof(l.bin), "%s", "/opt/ew/bin/hyp2000_ring");
+        CK(csnhypodbp_locator_mod(&l) == 163);
+        snprintf(l.bin, sizeof(l.bin), "%s", "nlloc_ring");
+        CK(csnhypodbp_locator_mod(&l) == 164);
+        snprintf(l.bin, sizeof(l.bin), "%s", "otro");
+        CK(csnhypodbp_locator_mod(&l) == 0);
+
+        memset(&b, 0, sizeof(b));
+        b.qid = 42;
+        b.version = 7;
+        b.mod = 162;
+        memset(&o, 0, sizeof(o));
+        csnhypodbp_locate_identity(&b, &l, &o);   /* unknown: mod=0 */
+        CK(o.qid == 42 && o.version == 7 && o.mod == 0);
+
+        snprintf(l.bin, sizeof(l.bin), "%s", "csnloc");
+        csnhypodbp_locate_identity(&b, &l, &o);
+        CK(o.mod == 162);
+        o.qid = 99;
+        o.version = 3;
+        o.mod = 0;
+        snprintf(l.bin, sizeof(l.bin), "%s", "hyp2000_ring");
+        csnhypodbp_locate_identity(&b, &l, &o);
+        CK(o.mod == 163 && o.qid == 99 && o.version == 3);
     }
 
     bpq_stations_close(cat);

@@ -45,3 +45,16 @@ int csnhypodbp_locator_resolve(const CsnhypodbpLocator *l,
     }
     return 0;
 }
+
+int csnhypodbp_locator_mod(const CsnhypodbpLocator *l)
+{
+    const char *b;
+
+    if (!l || !l->bin[0]) return 0;
+    b = strrchr(l->bin, '/');
+    b = b ? b + 1 : l->bin;
+    if (strcmp(b, "csnloc") == 0) return 162;
+    if (strcmp(b, "hyp2000_ring") == 0) return 163;
+    if (strcmp(b, "nlloc_ring") == 0) return 164;
+    return 0;
+}

@@ -21,7 +21,9 @@ CanvasWidget::CanvasWidget(QWidget *parent) : QWidget(parent)
     setMinimumSize(m_minW, m_minH);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setFocusPolicy(Qt::StrongFocus);
-    setMouseTracking(false);
+    /* Sin boton tambien llegan los moves: la guia vertical del picking sigue
+     * al puntero. Los modulos que no conectan `hovered` no cambian. */
+    setMouseTracking(true);
 }
 
 CanvasWidget::~CanvasWidget() = default;
@@ -119,6 +121,7 @@ void CanvasWidget::mousePressEvent(QMouseEvent *ev)
 
 void CanvasWidget::mouseMoveEvent(QMouseEvent *ev)
 {
+    emit hovered(ev->position().x(), ev->position().y());
     if (m_pressed) {
         const QPoint p = ev->position().toPoint();
         const QPoint d = p - m_last;
@@ -154,6 +157,12 @@ void CanvasWidget::mouseReleaseEvent(QMouseEvent *ev)
         return;
     }
     QWidget::mouseReleaseEvent(ev);
+}
+
+void CanvasWidget::leaveEvent(QEvent *ev)
+{
+    emit left();
+    QWidget::leaveEvent(ev);
 }
 
 void CanvasWidget::wheelEvent(QWheelEvent *ev)

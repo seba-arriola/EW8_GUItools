@@ -283,6 +283,9 @@ int bpq_emit_confirm(BpqRings *r, const CsnhypodbpSolution *sol,
     if (!r || !sol || !arc || arcn == 0) return -1;
     /* Exige qid>0 y version 1..9999 (csnhypodbp_confirmation_arc). */
     if (csnhypodbp_confirmation_arc(sol, arc, arcn) != 0) return -1;
+    /* Sin mod no hay origin_id valido (<event>:<mod>:<version>): no publicar
+     * una solucion que hypodb no podra identificar. */
+    if (sol->mod <= 0) return -4;
     if (!r->have_conf) return -2;
 
     /* El `mod` del logo es el de LA SOLUCION (no el de la GUI): asi el

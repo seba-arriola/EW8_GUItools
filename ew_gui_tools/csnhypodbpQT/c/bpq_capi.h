@@ -458,6 +458,10 @@ typedef struct {
      * alcanza con `scroll_row`. <=0 => 1. */
     int       per_screen;
     int       scroll_row;
+    /* Guia vertical del puntero: x en px LOGICOS (el dibujo la pasa a
+     * dispositivo con dpr). guide_valid=0 la oculta. */
+    double    guide_x;
+    int       guide_valid;
     /* Etiqueta de canal por fila ("HHZ"...), opcional: la vista de picking
      * muestra las componentes de UNA estacion, no una fila por estacion. */
     const char *const *chan;
@@ -604,6 +608,10 @@ int bpq_traces_scroll_to(BpqTracesCtx *c, int h, int row);
  * con el suelo CSNHYPODBP_TRACES_BAND_MIN. */
 int bpq_traces_band_h(const BpqTracesCtx *c, int h);
 
+/* Paso de `tracesPerScreen` con Shift+rueda: normaliza 1..3, aplica `dir`
+ * (+1 arriba, -1 abajo) y vuelve a acotar. */
+int bpq_traces_per_screen_step(int current, int dir);
+
 /* SCNL del catalogo para el `idx` de una fila (el que devuelve statable). 1 OK. */
 int          bpq_stations_scnl(const BpqStations *c, int idx, const char **sta,
                                const char **net, const char **chan, const char **loc);
@@ -637,6 +645,9 @@ int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
 
 /* ¿Alguna de las 4 trae valor? (una corrida sin magnitudes no es resultado) */
 int bpq_mag_result_ok(const CsnhypodbpMagOut *mag);
+
+/* Igual pero limitado a la mascara pedida (bit 0=ML..3=Ms; 0 = las cuatro). */
+int bpq_mag_result_ok_mask(const CsnhypodbpMagOut *mag, unsigned kind_mask);
 
 /* --- pestana magnitudes (fase 6.1) --------------------------------------- *
  * Estado de la sub-pestana: ventanas ajustadas a mano por (estacion, magnitud)
@@ -701,6 +712,15 @@ int  bpq_magpanel_touched_count(const BpqMagPanel *p);
 int  bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                        const CsnhypodbpMagIn *vals, int nval, double red,
                        CsnhypodbpMagRow *out, int max);
+
+/* Filas que se piden al tanque para `calculate`/`locate`: P presente, origen
+ * permitido y puerta (distancia + profundidad) de ALGUNA magnitud de
+ * `kind_mask` (0 = las cuatro). Conserva el orden de `stas` (distancia) y
+ * devuelve los indices de fila; el llamador las traduce a SCNL. */
+int  bpq_magpanel_fetch_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
+                             int n, unsigned kind_mask, double depth_km,
+                             int auto_on, int manual_on, int theo_on,
+                             int *out_rows, int max);
 
 /* Subconjunto para la TABLA: solo `in_range != 0` (fuera de la puerta de la
  * magnitud activa se ocultan; siguen en picking y en el canvas). Conserva el

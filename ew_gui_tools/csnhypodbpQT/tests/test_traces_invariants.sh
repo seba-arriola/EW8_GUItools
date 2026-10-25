@@ -17,6 +17,7 @@ traces=$here/../c/bpq_traces.c
 wave=$here/../c/bpq_wave.c
 mag=$here/../c/bpq_draw_mag.c
 ui=$here/../ui/bpq_mainwindow.cxx
+canvas=$here/../../commonqt/src/canvas.cxx
 
 pass=0
 fail=0
@@ -74,6 +75,43 @@ if grep -q 'm_tracesCtx.scroll_row - steps' "$ui"; then
     ok "rueda sin Ctrl desplaza filas"
 else
     bad "la rueda no desplaza filas"
+fi
+
+# Guia vertical: hover sin boton en el canvas + dibujo condicionado al area.
+if grep -q 'setMouseTracking(true)' "$canvas" &&
+   grep -q 'CanvasWidget::hovered' "$ui" &&
+   grep -q 'guide_valid' "$traces"; then
+    ok "guia vertical: hover + guide_valid"
+else
+    bad "falta el hover o el dibujo de la guia"
+fi
+
+# Shift+rueda: helper del nucleo y rama propia en el filtro (no scroll).
+if grep -q 'bpq_traces_per_screen_step' "$ui" &&
+   grep -q 'ShiftModifier' "$ui" &&
+   grep -q 'm_perScreenWheelAccum' "$ui"; then
+    ok "Shift+rueda cambia tracesPerScreen"
+else
+    bad "Shift+rueda no tiene rama propia"
+fi
+
+# Casillas por fila: locateNow arma pick_on desde el modelo, por indice de
+# catalogo (rows[i].idx), no con todas marcadas.
+if grep -q 'm_staModel->isChecked' "$ui" &&
+   grep -q 'on.resize(nmax \* 2)' "$ui" &&
+   ! grep -q 'on.append(1)' "$ui"; then
+    ok "casillas por fila -> pick_on por indice de catalogo"
+else
+    bad "locateNow no lee las casillas por fila"
+fi
+
+# Magnitudes: la lista del tanque sale de la puerta de la magnitud pedida y no
+# se corta en 24 antes de saber si hay traza.
+if grep -q 'bpq_magpanel_fetch_rows' "$ui" &&
+   ! grep -q 'req.size() < 24' "$ui"; then
+    ok "magnitudes: peticion por puerta, sin tope previo de 24"
+else
+    bad "calculate sigue pidiendo las 24 primeras sin mirar la puerta"
 fi
 
 # Teclado: filtro de aplicacion + tabla sin type-ahead.

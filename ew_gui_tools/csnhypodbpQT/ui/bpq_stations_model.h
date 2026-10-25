@@ -26,10 +26,19 @@ public:
     int      columnCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &ix, int role) const override;
     QVariant headerData(int section, Qt::Orientation o, int role) const override;
+    Qt::ItemFlags flags(const QModelIndex &ix) const override;
+    bool     setData(const QModelIndex &ix, const QVariant &value,
+                     int role = Qt::EditRole) override;
 
-    /* Copia las filas (2 por estacion en la vista). */
+    /* Copia las filas (2 por estacion en la vista). El check P/S se conserva
+     * por (estacion, fase) entre rebuilds; `clearChecks` lo resetea al cambiar
+     * de evento. */
     void setRows(const CsnhypodbpStaRow *rows, int n);
     int  staCount() const { return m_rows.size(); }
+    bool isChecked(int row) const;
+    void setChecked(int row, bool on);
+    void clearChecks();
+    int  checkedCount() const;
     int  pickedCount() const;          /* filas con fase presente */
     int  residCount() const;           /* filas con residual del localizador */
     /* Indice de la fase de una fila de la vista: 0 = P, 1 = S, -1 invalido. */
@@ -42,6 +51,7 @@ private:
     const CsnhypodbpStaPick *pickAt(int row) const;
 
     QVector<CsnhypodbpStaRow> m_rows;
+    QVector<unsigned char>    m_on;   /* 2*n: [i*2]=P, [i*2+1]=S; 0 = vetada */
 };
 
 #endif /* BPQ_STATIONS_MODEL_H */

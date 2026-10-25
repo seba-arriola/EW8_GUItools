@@ -77,6 +77,7 @@ int main(int argc, char **argv)
 
     /* Senales de raton. */
     int clicked = 0, right = 0, dragged = 0, zoomed = 0, pressed = 0, released = 0;
+    int hovered = 0, left = 0;
     double lastFactor = 0;
     QObject::connect(&canvas, &ewguiqt::CanvasWidget::clicked, [&](double, double) { clicked++; });
     QObject::connect(&canvas, &ewguiqt::CanvasWidget::rightClicked, [&](double, double) { right++; });
@@ -85,6 +86,22 @@ int main(int argc, char **argv)
                      [&](double f, double, double) { zoomed++; lastFactor = f; });
     QObject::connect(&canvas, &ewguiqt::CanvasWidget::pressed, [&](double, double) { pressed++; });
     QObject::connect(&canvas, &ewguiqt::CanvasWidget::released, [&]() { released++; });
+    QObject::connect(&canvas, &ewguiqt::CanvasWidget::hovered,
+                     [&](double, double) { hovered++; });
+    QObject::connect(&canvas, &ewguiqt::CanvasWidget::left, [&]() { left++; });
+
+    /* Movimiento sin boton: la guia del picking necesita el hover. */
+    {
+        QMouseEvent move(QEvent::MouseMove, QPointF(40, 50), QPointF(40, 50),
+                         Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QApplication::sendEvent(&canvas, &move);
+    }
+    CHECK(hovered == 1, "un move sin boton debe emitir hovered");
+    {
+        QEvent leaveEv(QEvent::Leave);
+        QApplication::sendEvent(&canvas, &leaveEv);
+    }
+    CHECK(left == 1, "leaveEvent debe emitir left");
 
     {
         QMouseEvent press(QEvent::MouseButtonPress, QPointF(10, 10), QPointF(10, 10),

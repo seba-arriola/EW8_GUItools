@@ -108,6 +108,9 @@ private:
     void loadPinFixture();                   /* BPQ_TEST_FIXTURE=pins */
     void feedConfirmedAfter();               /* BPQ_TEST_FEED_AFTER=1 */
     void updateTracesContext();              /* punteros de los canvas de trazas */
+    void onWavesHovered(double x, double y); /* guia vertical del puntero */
+    void onWavesLeft();                      /* el puntero salio del canvas */
+    void setTracesPerScreen(int per);        /* 1..3 (Shift+rueda) */
     void searchEvents();                     /* dialogo + bpq_db_search */
     void clearSearch();                      /* vuelve a vivo + historial */
     void emitManualPick(int row, double t);  /* clic en la traza -> overlay local */
@@ -243,6 +246,8 @@ private:
     double                    m_defT0 = 0.0;  /* ventana default del evento */
     double                    m_defWin = 120.0;
     BpqTracesCtx              m_tracesCtx{};
+    int                       m_tracesPerScreen = 0;   /* 1..3; inicial del .d */
+    int                       m_perScreenWheelAccum = 0;
     double                    m_winT0 = 0.0;
     double                    m_winLen = 120.0;
     /* Fetch de ondas en su propio hilo (no congela la ventana). */
@@ -281,7 +286,7 @@ private:
     CsnhypodbpSolution m_cand{};
     CsnhypodbpMagOut   m_candMag{};
     bool               m_candValid = false;
-    QString            m_candKey;          /* <qid>:<mod>:<version> de la candidata */
+    QString            m_candKey;          /* clave de la solucion de ORIGEN */
     double             m_candSecs = 0.0;
     QString            m_candErr;
     const BpqEvent    *m_curEv = nullptr;   /* evento mostrado (para el locate) */
@@ -328,6 +333,7 @@ private:
     double                    m_magDragT0 = 0.0, m_magDragT1 = 0.0;
     quint64                   m_magJob = 0;
     bool                      m_magBusy = false;
+    unsigned                  m_magMask = 0;   /* mascara del calculate en vuelo */
     double                    m_magViewT0 = 0.0;      /* encuadre congelado del arrastre */
     double                    m_magViewSpan = 0.0;
     QLineEdit                *m_magGateLo = nullptr;

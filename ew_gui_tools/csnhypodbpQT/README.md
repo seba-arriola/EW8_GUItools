@@ -461,11 +461,13 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   contra la tabla nueva.
 - El mensaje de error es el real de la cadena (`timeout`, `ref.err`, ARC inválido) o, si no hay
   picadas, cuántas filas tienen picada, la distancia mínima y cuántas caen dentro de la puerta.
+- La tabla de estaciones tiene **casilla por (estación, fase)** en la columna `station`; el estado
+  se conserva por `(sta, fase)` entre rebuilds y se resetea al cambiar de evento. `locateNow` la
+  traduce a `pick_on` por `rows[i].idx` (posición en el catálogo).
 - Desviaciones conocidas del prototipo: (1) los re-picks no se guardan en un `ManualStateFile`
-  local — viajan por `PICK_RING` y vuelven a la tabla; (2) no hay casilla por picada en la tabla
-  (equivalente a "todas marcadas"); (3) el **tank** de ondas se baja por estación con picada P antes
-  de cada corrida (el tank del `locate` y el de `calculate` son independientes), así que una
-  `calculate` sin `locate` previo no tiene base.
+  local — viajan por `PICK_RING` y vuelven a la tabla; (2) el **tank** de ondas se baja por estación
+  con picada P antes de cada corrida (el tank del `locate` y el de `calculate` son independientes),
+  así que una `calculate` sin `locate` previo no tiene base.
 
 ### Magnitudes: tabla, traza procesada y ventanas (fase 6.1)
 
@@ -673,8 +675,12 @@ wave AC01.HHE.C1.-- n=30579 rate=100.00 t0=1792685409.730 rango=[-4960,6835]
   caben a la vez. Antes se veía una sola porque no había barra y la rueda hacía zoom.
 - **Scroll visible**: `QScrollBar` vertical en el panel de picking, rango `0..n-nvis` y
   `pageStep=nvis`, sincronizada con `bpq_traces_scroll_to`. Rueda sin modificador = mover filas;
-  `Ctrl+rueda` = zoom temporal (paridad GTK: la rueda no cambia el span). Flechas, `PageUp/Down` y
-  `Home/End` también mueven la banda visible; `Shift+flechas` siguen siendo ganancia/zoom.
+  `Ctrl+rueda` = zoom temporal; `Shift+rueda` = `tracesPerScreen` 1..3 (un paso por muesca; el `.d`
+  solo es el valor inicial y no se reescribe). Flechas, `PageUp/Down` y `Home/End` también mueven la
+  banda visible; `Shift+flechas` siguen siendo ganancia/zoom.
+- **Guía vertical del puntero**: al pasar el puntero por el área de trazas se dibuja una línea gris
+  segmentada (`guide_x`/`guide_valid` en `BpqTracesCtx`), después de las trazas y antes de las
+  picadas; se oculta en el margen de etiquetas y al salir (`CanvasWidget::hovered/left`).
 - **Teclado en la ventana, no en el canvas**: un filtro de aplicación resuelve P/S, Esc, flechas y
   filtros aunque el foco esté en la tabla de estaciones. La tabla no hace búsqueda incremental
   (`setFocusPolicy(NoFocus)`) y las cajas de texto conservan sus teclas. `applyFilterKey` devuelve

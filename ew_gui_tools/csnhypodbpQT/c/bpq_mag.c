@@ -48,5 +48,10 @@ int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
 
 int bpq_mag_result_ok(const CsnhypodbpMagOut *mag)
 {
-    return csnhypodbp_mag_result_ok(mag, 0u) ? 1 : 0;
+    return bpq_mag_result_ok_mask(mag, 0u);
+}
+
+int bpq_mag_result_ok_mask(const CsnhypodbpMagOut *mag, unsigned kind_mask)
+{
+    return csnhypodbp_mag_result_ok(mag, kind_mask) ? 1 : 0;
 }

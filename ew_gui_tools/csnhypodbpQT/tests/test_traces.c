@@ -63,8 +63,29 @@ static int count_px(const Frame *f, int what)
             /* Azul dominante: la marca automatica se aclara al 40% y el
              * antialias puede subir R/G; el canal B sigue muy por encima. */
             case 3: if (b > 150 && b > r + 40 && b > g + 40) n++; break;
+            /* Guia vertical: se cuenta SOLO en su columna (ver
+             * count_guide_col), no en todo el frame. */
             }
         }
+    }
+    return n;
+}
+
+/* Pixeles con tinte azul (la guia gris azulada) en UNA columna. El trazo de
+ * 1 px se antialiasa contra el blanco; se descarta el fondo resaltado de la fila
+ * elegida (muy claro) y las marcas S (azul puro) quedan fuera de esta columna. */
+static int count_guide_col(const Frame *f, int x)
+{
+    int y, n = 0;
+
+    if (x < 0 || x >= W) return 0;
+    for (y = 0; y < H; y++) {
+        const unsigned char *p = f->buf + (size_t)y * f->stride + (size_t)x * 4;
+        const int b = p[0], g = p[1], r = p[2];
+
+        if (r >= 60 && r <= 200 && g >= 60 && g <= 200 &&
+            b >= 90 && b <= 230 && b > r + 20 && b > g + 20)
+            n++;
     }
     return n;
 }
@@ -194,6 +215,32 @@ int main(void)
     CK(count_px(&fr, 1) > 100);         /* traza negra */
     CK(count_px(&fr, 2) > 5);           /* marca P manual en rojo */
     CK(count_px(&fr, 3) > 5);           /* marca S automatica en azul */
+
+    /* --- 2b. guia vertical del puntero (gris segmentada) --- */
+    {
+        const double old_dpr = c.dpr;
+
+        c.dpr = 2.0;                    /* trazo de 2 px: nucleo solido */
+        c.guide_valid = 1;
+        c.guide_x = 150.0;
+        memset(fr.buf, 0, (size_t)fr.stride * H);
+        CK(bpq_scene_paint(BPQ_SCENE_TRACES, &c, fr.buf, W, H, fr.stride) == 0);
+        CK(count_guide_col(&fr, 299) + count_guide_col(&fr, 300) +
+           count_guide_col(&fr, 301) > 20);  /* trazo visible dentro del area */
+
+        c.guide_x = 10.0;               /* margen de etiquetas: no se dibuja */
+        memset(fr.buf, 0, (size_t)fr.stride * H);
+        CK(bpq_scene_paint(BPQ_SCENE_TRACES, &c, fr.buf, W, H, fr.stride) == 0);
+        CK(count_guide_col(&fr, 19) + count_guide_col(&fr, 20) +
+           count_guide_col(&fr, 21) == 0);
+
+        c.guide_valid = 0;              /* sin hover: oculta */
+        memset(fr.buf, 0, (size_t)fr.stride * H);
+        CK(bpq_scene_paint(BPQ_SCENE_TRACES, &c, fr.buf, W, H, fr.stride) == 0);
+        CK(count_guide_col(&fr, 299) + count_guide_col(&fr, 300) +
+           count_guide_col(&fr, 301) == 0);
+        c.dpr = old_dpr;
+    }
 
     /* La cuneta es SOLO el canal, en negrita grande: bbox alto y ancho. */
     {
@@ -414,6 +461,16 @@ int main(void)
         CK(bpq_traces_scroll_max(&c3, H) == 0);
         CK(bpq_traces_scroll_to(&c3, H, 3) == 0);
     }
+
+    /* --- 8. Shift+rueda: paso de tracesPerScreen (1..3) ------------------- */
+    CK(bpq_traces_per_screen_step(1, 1) == 2);
+    CK(bpq_traces_per_screen_step(2, 1) == 3);
+    CK(bpq_traces_per_screen_step(3, 1) == 3);
+    CK(bpq_traces_per_screen_step(3, -1) == 2);
+    CK(bpq_traces_per_screen_step(2, -1) == 1);
+    CK(bpq_traces_per_screen_step(1, -1) == 1);
+    CK(bpq_traces_per_screen_step(0, 1) == 2);    /* invalido -> 1, luego +1 */
+    CK(bpq_traces_per_screen_step(99, -1) == 1);  /* invalido -> 1, luego -1 */
 
     frame_free(&fr);
     bpq_trace_free(tr[0]);

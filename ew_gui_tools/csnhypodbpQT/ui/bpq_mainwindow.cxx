@@ -274,6 +274,10 @@ void BpqMainWindow::openData()
      * zoom temporal. */
     if (m_waves) {
         m_waves->installEventFilter(this);
+        connect(m_waves, &ewguiqt::CanvasWidget::hovered, this,
+                [this](double x, double y) { onWavesHovered(x, y); });
+        connect(m_waves, &ewguiqt::CanvasWidget::left, this,
+                [this]() { onWavesLeft(); });
         connect(m_waves, &BpqCanvasWidget::clicked, this,
                 [this](double x, double y) {
             if (m_pickArmed) {
@@ -869,9 +873,14 @@ void BpqMainWindow::refreshPanels()
 
 void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
 {
+    const bool evChanged = (ev != m_curEv);
+
     if (!m_staModel) return;
     m_curEv = ev;
-    m_candErr.clear();          /* un error del locate no sobrevive al cambio */
+    if (evChanged) {
+        m_candErr.clear();      /* un error del locate es de otro evento */
+        m_staModel->clearChecks();
+    }
 
     /* El pin pertenece a UN evento: si el evento mostrado es otro, se suelta. */
     if (bpq_pin_active(&m_pin) && m_pinEvent != ev) {
@@ -921,6 +930,7 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
     if (m_candValid && m_candKey != solKey(sol)) {
         m_candValid = false;
         m_candKey.clear();
+        m_candErr.clear();
     }
 
     rebuildStaTable(sol);
@@ -1391,13 +1401,16 @@ void BpqMainWindow::updateTracesContext()
     m_tracesCtx.show_s = 1;
     m_tracesCtx.colors_p = m_cfg ? &m_cfg->colors_p : nullptr;
     m_tracesCtx.colors_s = m_cfg ? &m_cfg->colors_s : nullptr;
-    /* tracesPerScreen del .d (1..3; fuera de rango => 1) y etiquetas de canal. */
-    m_tracesCtx.per_screen = 1;
-    if (m_cfg) {
+    /* tracesPerScreen del .d (1..3; fuera de rango => 1) y etiquetas de canal.
+     * m_tracesPerScreen conserva el valor que fijo Shift+rueda: el .d solo es
+     * el valor de arranque. */
+    if (m_tracesPerScreen <= 0 && m_cfg) {
         const int per = csnhypodbp_traces_per_screen_norm(m_cfg->traces_per_screen);
 
-        if (per > 0) m_tracesCtx.per_screen = per;
+        m_tracesPerScreen = (per > 0) ? per : 1;
     }
+    if (m_tracesPerScreen <= 0) m_tracesPerScreen = 1;
+    m_tracesCtx.per_screen = m_tracesPerScreen;
     m_tracesCtx.chan = m_chanPtr.isEmpty() ? nullptr : m_chanPtr.constData();
 
     if (m_waves) {
@@ -1411,6 +1424,50 @@ void BpqMainWindow::updateTracesContext()
     syncTracesScroll();
     if (m_waves) m_waves->requestRepaint();
     if (m_axis) m_axis->requestRepaint();
+}
+
+/* Guia vertical del puntero: solo dentro del area de trazas. Se guarda en px
+ * logicos; bpq_traces_draw la pasa a dispositivo con dpr. */
+void BpqMainWindow::onWavesHovered(double x, double y)
+{
+    (void)y;
+    if (!m_waves) return;
+    {
+        const double dpr = m_waves->devicePixelRatioF();
+        const double mx = bpq_traces_left_margin(dpr);
+        const double right = m_waves->width() * dpr - 6.0 * dpr;
+        const bool inside = (x * dpr >= mx && x * dpr <= right);
+        const double gx = inside ? x : -1.0;
+
+        if (m_tracesCtx.guide_valid == (inside ? 1 : 0) &&
+            (!inside || qAbs(m_tracesCtx.guide_x - gx) < 0.5))
+            return;
+        m_tracesCtx.guide_valid = inside ? 1 : 0;
+        m_tracesCtx.guide_x = gx;
+    }
+    m_waves->requestRepaint();
+}
+
+void BpqMainWindow::onWavesLeft()
+{
+    if (!m_tracesCtx.guide_valid) return;
+    m_tracesCtx.guide_valid = 0;
+    m_tracesCtx.guide_x = -1.0;
+    if (m_waves) m_waves->requestRepaint();
+}
+
+void BpqMainWindow::setTracesPerScreen(int per)
+{
+    per = csnhypodbp_traces_per_screen_norm(per);
+    if (per <= 0) per = 1;
+    if (per == m_tracesPerScreen && per == m_tracesCtx.per_screen) return;
+    m_tracesPerScreen = per;
+    m_tracesCtx.per_screen = per;
+    syncTracesScroll();
+    if (m_waves) m_waves->requestRepaint();
+    if (m_axis) m_axis->requestRepaint();
+    statusBar()->showMessage(
+        QStringLiteral("trazas por pantalla: %1").arg(per), 2000);
 }
 
 /* La barra es la unica fuente visible del scroll: rango = filas que quedan
@@ -1486,14 +1543,37 @@ bool BpqMainWindow::eventFilter(QObject *obj, QEvent *ev)
     }
 
     /* Rueda sobre las trazas: sin Ctrl desplaza filas (lo que espera el
-     * operador); Ctrl la deja pasar al canvas para el zoom temporal. Asi la
-     * rueda no compite con el zoom de Shift+Left/Right. */
+     * operador); Ctrl la deja pasar al canvas para el zoom temporal. Shift sin
+     * Ctrl cambia tracesPerScreen (1..3) sin mover la ventana ni el scroll. */
     if (obj == m_waves && ev->type() == QEvent::Wheel) {
         QWheelEvent *we = static_cast<QWheelEvent *>(ev);
+        const int dy = we->angleDelta().y();
+        const Qt::KeyboardModifiers mods = we->modifiers();
 
-        if (!(we->modifiers() & Qt::ControlModifier)) {
-            const int dy = we->angleDelta().y();
+        if (dy != 0 && (mods & Qt::ShiftModifier) &&
+            !(mods & Qt::ControlModifier)) {
+            if ((m_perScreenWheelAccum > 0 && dy < 0) ||
+                (m_perScreenWheelAccum < 0 && dy > 0))
+                m_perScreenWheelAccum = 0;
+            m_perScreenWheelAccum += dy;
+            {
+                const int steps = m_perScreenWheelAccum / 120;
 
+                if (steps != 0) {
+                    int per = m_tracesCtx.per_screen;
+
+                    m_perScreenWheelAccum -= steps * 120;
+                    for (int i = 0; i < qAbs(steps); i++)
+                        per = bpq_traces_per_screen_step(per,
+                                                         steps > 0 ? 1 : -1);
+                    setTracesPerScreen(per);
+                }
+            }
+            we->accept();
+            return true;
+        }
+
+        if (!(mods & Qt::ControlModifier)) {
             if (dy != 0) {
                 const double d = m_waves->devicePixelRatioF();
                 const int hpx = int(m_waves->height() * d);
@@ -2129,10 +2209,19 @@ void BpqMainWindow::locateNow()
         m_candErr = QStringLiteral("sin solucion elegida");
     }
     if (!sol) {
+        m_candValid = false;
+        m_candKey.clear();
         statusBar()->showMessage(QStringLiteral("locate: %1").arg(m_candErr), 0);
         renderPreview();
         return;
     }
+
+    /* La candidata pertenece a la solucion de ORIGEN, no a la identidad que
+     * devuelva el localizador (mod=0 en el ARC offline). Se fija aqui y no se
+     * recalcula desde `m_cand` al terminar. */
+    m_candValid = false;
+    m_candKey = solKey(sol);
+    std::memset(&m_candMag, 0, sizeof(m_candMag));
 
     {
         QVector<CsnhypodbpStaRow> rows = m_staRows;
@@ -2150,36 +2239,52 @@ void BpqMainWindow::locateNow()
         BpqLocateWorker *w = m_locWorker;
 
         on.reserve(rows.size() * 2);
-        for (int i = 0; i < rows.size(); i++) {
-            on.append(1);
-            on.append(1);
-        }
-
-        /* Estaciones con P (segun los checks) de las que se baja onda para el
-         * TANK de csnmags: sin tank la candidata no trae magnitudes. */
         {
-            QVector<BpqFetchReq> mreq;
+            int nmax = 0;
 
-            if (m_staCat) {
-                for (int i = 0; i < rows.size() && mreq.size() < 24; i++) {
-                    const CsnhypodbpStaRow &r = rows.at(i);
-                    const char *sta = nullptr, *net = nullptr, *chan = nullptr,
-                               *loc = nullptr;
+            /* `pick_on` se indexa por el indice del CATALOGO (rows[i].idx), no
+             * por la fila de la vista: las filas van ordenadas por distancia. */
+            for (int i = 0; i < rows.size(); i++)
+                if (rows.at(i).idx + 1 > nmax) nmax = rows.at(i).idx + 1;
+            if (nmax <= 0) nmax = rows.size();
+            on.resize(nmax * 2);
+            for (int i = 0; i < rows.size(); i++) {
+                const int idx = rows.at(i).idx;
+                const bool have = m_staModel &&
+                                  (i * 2 + 1) < m_staModel->rowCount();
 
-                    if (!r.p.present) continue;
-                    if (r.p.origin == 'A' && !am) continue;
-                    if (r.p.origin == 'M' && !mm) continue;
-                    if (r.p.origin == 'T' && !tm) continue;
-                    if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan,
-                                           &loc)) continue;
-                    mreq.append(BpqFetchReq{ QString::fromUtf8(sta),
-                                             QString::fromUtf8(net),
-                                             QString::fromUtf8(chan),
-                                             QString::fromUtf8(loc) });
-                }
+                if (idx < 0 || idx >= nmax) continue;
+                on[idx * 2 + 0] =
+                    (!have || m_staModel->isChecked(i * 2 + 0)) ? 1 : 0;
+                on[idx * 2 + 1] =
+                    (!have || m_staModel->isChecked(i * 2 + 1)) ? 1 : 0;
             }
-            magReq = mreq;
         }
+
+    if (m_staCat) {
+        QVector<BpqFetchReq> mreq;
+
+        if (m_magPanel) {
+            int rb[512];
+            const int nf = bpq_magpanel_fetch_rows(
+                m_magPanel, rows.constData(), rows.size(), 0u, base.depth,
+                am, mm, tm, rb, 512);
+
+            for (int j = 0; j < nf; j++) {
+                const CsnhypodbpStaRow &r = rows.at(rb[j]);
+                const char *sta = nullptr, *net = nullptr, *chan = nullptr,
+                           *loc = nullptr;
+
+                if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc))
+                    continue;
+                mreq.append(BpqFetchReq{ QString::fromUtf8(sta),
+                                         QString::fromUtf8(net),
+                                         QString::fromUtf8(chan),
+                                         QString::fromUtf8(loc) });
+            }
+        }
+        magReq = mreq;
+    }
         /* Ventana de magnitudes: MagFetchSeconds del .d (Ms necesita su ventana). */
         magT0 = base.otime - 5.0;
         magWin = (m_cfg && m_cfg->mag_fetch_s > 0.0) ? m_cfg->mag_fetch_s : 700.0;
@@ -2250,7 +2355,14 @@ void BpqMainWindow::locateFinished(quint64 job, bool ok, BpqLocateOut *out,
         std::memcpy(&m_cand, &out->sol, sizeof(m_cand));
         std::memcpy(&m_candMag, &out->mag, sizeof(m_candMag));
         m_candValid = true;
-        m_candKey = solKey(&m_cand);
+        m_candErr.clear();
+        /* m_candKey se fijo al lanzar con la solucion de origen. Si no habia
+         * (hook), se toma la elegida actual. */
+        if (m_candKey.isEmpty()) {
+            const CsnhypodbpSolution *src = currentSolution();
+
+            if (src) m_candKey = solKey(src);
+        }
         {
             char buf[256];
             std::snprintf(buf, sizeof(buf),
@@ -2282,6 +2394,8 @@ void BpqMainWindow::locateFinished(quint64 job, bool ok, BpqLocateOut *out,
             }
         }
     } else {
+        m_candValid = false;
+        m_candKey.clear();
         m_candErr = err.isEmpty()
                         ? QStringLiteral("sin solucion nueva") : err;
         statusBar()->showMessage(QStringLiteral("locate: %1").arg(m_candErr), 0);
@@ -2326,15 +2440,15 @@ void BpqMainWindow::renderPreview()
     if (m_locBusy) {
         csnhypodbp_preview_set_busy(&v, loc.constData(),
                                     (long)(m_locTimer.elapsed() / 1000));
+    } else if (!m_candErr.isEmpty()) {
+        csnhypodbp_preview_set_error(&v, loc.constData(),
+                                     m_candErr.toUtf8().constData());
     } else if (cand) {
         csnhypodbp_preview_from_candidate(&v, m_cand.otime, loc.constData(),
                                           m_cand.lat, m_cand.lon, m_cand.depth,
                                           m_cand.nph, m_cand.rms,
                                           m_candMag.ml, m_candMag.mwp,
                                           m_candMag.mb, m_candMag.ms, "");
-    } else if (!m_candErr.isEmpty()) {
-        csnhypodbp_preview_set_error(&v, loc.constData(),
-                                     m_candErr.toUtf8().constData());
     } else if (m_curEv && pi >= 0 && pi < m_npts) {
         const int j = m_ptSol[pi];
         const CsnhypodbpSolution *sol = bpq_event_sol(m_curEv, j);
@@ -2386,6 +2500,13 @@ void BpqMainWindow::confirmCandidate()
     int magn = 0;
 
     if (!m_candValid || m_locBusy) return;
+    if (m_cand.mod <= 0) {
+        statusBar()->showMessage(
+            QStringLiteral("confirm: la solucion no tiene modulo de localizador "
+                           "(origin_id invalido)"),
+            0);
+        return;
+    }
     if (csnhypodbp_confirmation_arc(&m_cand, arc, sizeof(arc)) != 0) {
         statusBar()->showMessage(
             QStringLiteral("confirm: el ARC de confirmacion no se pudo construir"),
@@ -2393,6 +2514,13 @@ void BpqMainWindow::confirmCandidate()
         return;
     }
     if (m_rings) rc = bpq_emit_confirm(m_rings, &m_cand, arc, sizeof(arc));
+    if (rc == -4) {
+        statusBar()->showMessage(
+            QStringLiteral("confirm: la solucion no tiene modulo de localizador "
+                           "(origin_id invalido)"),
+            0);
+        return;
+    }
 
     /* Las picadas manuales se publican AHORA -- es el UNICO momento, igual que
      * la GTK: el ARC confirmado ya las lleva, y PICK_RING alimenta a csnloc y a
@@ -2740,16 +2868,39 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         return;
     }
 
-    if (m_staCat) {
-        for (i = 0; i < m_staRows.size() && req.size() < 24; i++) {
-            const CsnhypodbpStaRow &r = m_staRows.at(i);
+    if (m_staCat && m_magPanel) {
+        int rb[512];
+        const int nf = bpq_magpanel_fetch_rows(
+            m_magPanel, m_staRows.constData(), m_staRows.size(), kindMask,
+            m_cand.depth, magA, magM, magT, rb, 512);
+
+        if (nf <= 0) {
+            if (kindMask) {
+                char lo[32] = "", hi[32] = "";
+
+                bpq_magpanel_gate_texts(m_magPanel, m_magKind, lo, sizeof(lo),
+                                        hi, sizeof(hi));
+                statusBar()->showMessage(
+                    QStringLiteral("magnitudes: %1 sin estaciones en la puerta "
+                                   "(%2-%3 deg); usa calculate all o el override")
+                        .arg(QString::fromUtf8(
+                            csnhypodbp_magcfg_name(m_magKind)))
+                        .arg(QString::fromUtf8(lo))
+                        .arg(QString::fromUtf8(hi)),
+                    0);
+            } else {
+                statusBar()->showMessage(
+                    QStringLiteral("magnitudes: ninguna estacion entra en la "
+                                   "puerta de las cuatro magnitudes"),
+                    0);
+            }
+            return;
+        }
+        for (int j = 0; j < nf; j++) {
+            const CsnhypodbpStaRow &r = m_staRows.at(rb[j]);
             const char *sta = nullptr, *net = nullptr, *chan = nullptr,
                        *loc = nullptr;
 
-            if (!r.p.present) continue;
-            if (r.p.origin == 'A' && !magA) continue;
-            if (r.p.origin == 'M' && !magM) continue;
-            if (r.p.origin == 'T' && !magT) continue;
             if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc))
                 continue;
             req.append(BpqFetchReq{ QString::fromUtf8(sta),
@@ -2766,6 +2917,7 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     win = (m_cfg->mag_fetch_s > 0.0) ? m_cfg->mag_fetch_s : 700.0;
 
     m_magBusy = true;
+    m_magMask = kindMask;
     const quint64 id = ++m_magJob;
     if (m_magCalc) m_magCalc->setEnabled(false);
     statusBar()->showMessage(QStringLiteral("magnitudes: calculando…"), 0);
@@ -2787,7 +2939,7 @@ void BpqMainWindow::magFinished(quint64 job, bool ok, CsnhypodbpMagOut *out,
     m_magBusy = false;
     if (m_magCalc) m_magCalc->setEnabled(true);
 
-    if (ok && out && bpq_mag_result_ok(out)) {
+    if (ok && out && bpq_mag_result_ok_mask(out, m_magMask)) {
         std::memcpy(&m_candMag, out, sizeof(m_candMag));
         statusBar()->showMessage(
             QStringLiteral("magnitudes (%.1f s): ML %1 | Mwp %2 | Mb %3 | Ms %4")
@@ -3060,6 +3212,17 @@ bool BpqMainWindow::runLocateForTest()
         const int idx = m_locCombo->findText(QString::fromUtf8(l));
 
         if (idx >= 0) m_locCombo->setCurrentIndex(idx);
+    }
+
+    if (qgetenv("BPQ_LOCATE_FAIL") == QByteArray("1")) {
+        m_candValid = false;
+        m_candKey.clear();
+        m_candErr = QStringLiteral("fallo simulado");
+        renderPreview();
+        std::printf("locate=0 err=\"%s\" cand=0\n",
+                    m_candErr.toUtf8().constData());
+        std::fflush(stdout);
+        return false;
     }
 
     locateNow();
@@ -3500,6 +3663,101 @@ bool BpqMainWindow::runInputForTest()
     if (target == QByteArray("text")) QApplication::setActiveWindow(this);
     w->setFocus(Qt::OtherFocusReason);
 
+    /* Casilla por fila de la tabla de estaciones: "STA,P", "STA,S" o "STA".
+     * Es el mismo estado que usa `locateNow` para armar pick_on. */
+    {
+        const QByteArray un = qgetenv("BPQ_INPUT_UNCHECK");
+
+        if (!un.isEmpty()) {
+            const QList<QByteArray> ab = un.split(',');
+            const QByteArray sta = ab.value(0);
+            const QByteArray ph = ab.size() > 1 ? ab.value(1).toUpper()
+                                                : QByteArray();
+            int hits = 0;
+
+            if (target != QByteArray("sta") || !m_staModel) {
+                std::fprintf(stderr, "csnhypodbpQT: UNCHECK solo con target=sta\n");
+                return false;
+            }
+            for (int i = 0; i < m_staRows.size(); i++) {
+                if (sta != QByteArray(m_staRows.at(i).sta)) continue;
+                if (ph.isEmpty() || ph == QByteArray("P")) {
+                    m_staModel->setChecked(i * 2 + 0, false);
+                    hits++;
+                }
+                if (ph.isEmpty() || ph == QByteArray("S")) {
+                    m_staModel->setChecked(i * 2 + 1, false);
+                    hits++;
+                }
+            }
+            std::printf("input uncheck=%s hits=%d on=%d total=%d\n",
+                        un.constData(), hits, m_staModel->checkedCount(),
+                        m_staModel->rowCount());
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
+    /* Clic REAL sobre el indicador de la casilla de una fila (el delegate de
+     * Qt la alterna; no basta con setData). */
+    {
+        const QByteArray tog = qgetenv("BPQ_INPUT_TOGGLE");
+
+        if (!tog.isEmpty()) {
+            const QList<QByteArray> ab = tog.split(',');
+            const QByteArray sta = ab.value(0);
+            const QByteArray ph = ab.size() > 1 ? ab.value(1).toUpper()
+                                                : QByteArray("P");
+            const int phase = (ph == QByteArray("S")) ? 1 : 0;
+            int src = -1;
+
+            if (target != QByteArray("sta") || !m_staView || !m_staModel) {
+                std::fprintf(stderr, "csnhypodbpQT: TOGGLE solo con target=sta\n");
+                return false;
+            }
+            for (int i = 0; i < m_staRows.size(); i++) {
+                if (sta != QByteArray(m_staRows.at(i).sta)) continue;
+                src = i;
+                break;
+            }
+            if (src < 0) {
+                std::fprintf(stderr, "csnhypodbpQT: TOGGLE estacion <%s> no esta\n",
+                             sta.constData());
+                return false;
+            }
+            {
+                const int vr = viewRowForSource(m_staProxy, src * 2 + phase);
+                const QModelIndex ix = m_staView->model()->index(vr, 0);
+
+                m_staView->scrollTo(ix);
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                {
+                    const QRect r = m_staView->visualRect(ix);
+                    const QPoint p(r.left() + 8, r.center().y());
+                    QMouseEvent press(QEvent::MouseButtonPress, QPointF(p),
+                                      m_staView->viewport()->mapToGlobal(p),
+                                      Qt::LeftButton, Qt::LeftButton,
+                                      Qt::NoModifier);
+                    QMouseEvent rel(QEvent::MouseButtonRelease, QPointF(p),
+                                    m_staView->viewport()->mapToGlobal(p),
+                                    Qt::LeftButton, Qt::NoButton,
+                                    Qt::NoModifier);
+
+                    QCoreApplication::sendEvent(m_staView->viewport(), &press);
+                    QCoreApplication::sendEvent(m_staView->viewport(), &rel);
+                }
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                std::printf("input toggle=%s row=%d checked=%d on=%d total=%d\n",
+                            tog.constData(), vr,
+                            m_staModel->isChecked(src * 2 + phase) ? 1 : 0,
+                            m_staModel->checkedCount(),
+                            m_staModel->rowCount());
+            }
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
     /* Arrastres REALES sobre el eje de tiempo: "f0,f1;f0,f1..." en fracciones
      * del ancho. Cada par es press+mover+release y pasa por los mismos slots que
      * el raton (incluida la banda gris). */
@@ -3724,25 +3982,72 @@ bool BpqMainWindow::runInputForTest()
         }
     }
 
+    /* Hover/leave REALES: la guia vertical del picking sigue al puntero. */
+    {
+        const QByteArray hover = qgetenv("BPQ_INPUT_HOVER");
+        const QByteArray leave = qgetenv("BPQ_INPUT_LEAVE");
+
+        if (!hover.isEmpty() || leave == QByteArray("1")) {
+            if (target != QByteArray("waves")) {
+                std::fprintf(stderr, "csnhypodbpQT: HOVER/LEAVE solo con target=waves\n");
+                return false;
+            }
+            if (!hover.isEmpty()) {
+                const QList<QByteArray> ab = hover.split(',');
+
+                if (ab.size() != 2) {
+                    std::fprintf(stderr, "csnhypodbpQT: HOVER invalido <%s>\n",
+                                 hover.constData());
+                    return false;
+                }
+                {
+                    const QPointF p(w->width() * ab.at(0).toDouble(),
+                                    w->height() * ab.at(1).toDouble());
+                    QMouseEvent move(QEvent::MouseMove, p,
+                                     w->mapToGlobal(p.toPoint()), Qt::NoButton,
+                                     Qt::NoButton, Qt::NoModifier);
+
+                    QCoreApplication::sendEvent(w, &move);
+                }
+            } else {
+                QEvent ev(QEvent::Leave);
+
+                QCoreApplication::sendEvent(w, &ev);
+            }
+            std::printf("input hover=%d guide=%d x=%.1f\n",
+                        hover.isEmpty() ? 0 : 1, m_tracesCtx.guide_valid,
+                        m_tracesCtx.guide_x);
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
     {
         const QByteArray wheel = qgetenv("BPQ_INPUT_WHEEL");
 
         if (!wheel.isEmpty()) {
-            int dy = 0;
+            const QList<QByteArray> wheels = wheel.split(',');
+            int last = 0;
 
-            if (wheel == QByteArray("up")) dy = 120;
-            else if (wheel == QByteArray("down")) dy = -120;
-            else dy = wheel.toInt();
-            {
-                const QPointF pos(w->width() / 2.0, w->height() / 2.0);
-                QWheelEvent ev(pos, w->mapToGlobal(pos.toPoint()), QPoint(),
-                               QPoint(0, dy), Qt::NoButton, km,
-                               Qt::NoScrollPhase, false);
+            for (const QByteArray &wv : wheels) {
+                int dy = 0;
 
-                QCoreApplication::sendEvent(w, &ev);
+                if (wv == QByteArray("up")) dy = 120;
+                else if (wv == QByteArray("down")) dy = -120;
+                else dy = wv.toInt();
+                last = dy;
+                {
+                    const QPointF pos(w->width() / 2.0, w->height() / 2.0);
+                    QWheelEvent ev(pos, w->mapToGlobal(pos.toPoint()), QPoint(),
+                                   QPoint(0, dy), Qt::NoButton, km,
+                                   Qt::NoScrollPhase, false);
+
+                    QCoreApplication::sendEvent(w, &ev);
+                }
             }
-            std::printf("input wheel=%d target=%s scroll=%d win=%.1f\n", dy,
-                        target.constData(), m_tracesCtx.scroll_row, m_winLen);
+            std::printf("input wheel=%d steps=%d target=%s scroll=%d win=%.1f "
+                        "per=%d\n", last, int(wheels.size()), target.constData(),
+                        m_tracesCtx.scroll_row, m_winLen, m_tracesCtx.per_screen);
             std::fflush(stdout);
             return true;
         }
@@ -4150,7 +4455,13 @@ bool BpqMainWindow::runCandForTest(bool discard)
     m_cand = *sol;
     m_cand.depth += 5.0;
     m_cand.lat += 0.5;
-    m_candKey = solKey(&m_cand);
+    /* Prueba de regresion: la candidata puede perder su identidad (el ARC
+     * offline devuelve mod=0 y el refinador qid/version=0); el preview debe
+     * seguir mostrandola mientras la elegida no cambie. */
+    m_cand.qid = 0;
+    m_cand.version = 0;
+    m_cand.mod = 0;
+    m_candKey = solKey(sol);        /* clave de la solucion de ORIGEN */
     m_candValid = true;
     m_candErr.clear();
     renderPreview();
@@ -4710,6 +5021,9 @@ QString BpqMainWindow::dumpTree() const
                    .arg(m_staModel ? m_staModel->pickedCount() : 0)
                    .arg(sta_teo)
                    .arg(m_selSta.isEmpty() ? QStringLiteral("-") : m_selSta);
+        out += QStringLiteral("checks on=%1 total=%2\n")
+                   .arg(m_staModel ? m_staModel->checkedCount() : 0)
+                   .arg(m_staModel ? m_staModel->rowCount() : 0);
     }
     out += QStringLiteral("filter idx=%1 zero=%2 stalta=%3\n")
                .arg(m_filterIdx)
@@ -4773,6 +5087,9 @@ QString BpqMainWindow::dumpTree() const
                    .arg(m_winT0, 0, 'f', 2)
                    .arg(m_winLen, 0, 'f', 0)
                    .arg(cs ? solKey(cs) : QStringLiteral("-"));
+        out += QStringLiteral("hover guide=%1 x=%2\n")
+                   .arg(m_tracesCtx.guide_valid)
+                   .arg(m_tracesCtx.guide_x, 0, 'f', 1);
         out += QStringLiteral("pick armed=%1 phase=%2\n")
                    .arg(m_pickArmed ? 1 : 0)
                    .arg(m_pickArmed ? QString(QLatin1Char(m_pickPhase))

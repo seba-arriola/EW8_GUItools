@@ -51,6 +51,15 @@ else
     bad "queda m_candForSel o falta m_candKey"
 fi
 
+# La clave es la de la solucion de ORIGEN: el ARC offline devuelve mod=0 y el
+# refinador puede devolver qid/version=0. Recalcularla desde m_cand la oculta.
+if grep -q 'm_candKey = solKey(sol)' "$src" &&
+   ! grep -q 'm_candKey = solKey(&m_cand)' "$src"; then
+    ok "candidata: clave de la solucion de origen"
+else
+    bad "la clave de la candidata se recalcula desde m_cand"
+fi
+
 # Una sola definicion del formato de identidad.
 if grep -q 'bpq_origin_key' "$model" "$src"; then
     ok "la clave de origen sale de bpq_origin_key"

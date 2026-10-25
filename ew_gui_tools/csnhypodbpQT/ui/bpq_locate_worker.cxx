@@ -10,6 +10,7 @@
 
 #include <QElapsedTimer>
 
+#include <cstdio>
 #include <cstring>
 
 namespace {
@@ -119,6 +120,13 @@ void BpqLocateWorker::runMagJob(quint64 jobId, const CsnhypodbpSolution &base,
                      ovr.isEmpty() ? nullptr : ovr.constData(), ovr.size(),
                      kindMask < 0 ? 0u : (unsigned)kindMask,
                      out, err, sizeof(err)) == 1;
+    if (!ok) {
+        const size_t l = std::strlen(err);
+
+        if (l + 32 < sizeof(err))
+            std::snprintf(err + l, sizeof(err) - l, " [picks=%d trazas=%d]",
+                          base.npicks, ntank);
+    }
     release_traces(traces, ntank, 48);
 
     emit magFinished(jobId, ok, out, QString::fromUtf8(err),

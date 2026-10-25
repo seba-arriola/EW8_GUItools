@@ -52,6 +52,10 @@ signals:
     void zoomed(double factor, double atX, double atY);
     void pressed(double x, double y);
     void released();
+    /* Movimiento sin boton (mouse tracking) y salida del widget: los usa la
+     * guia vertical del picking. Coordenadas en px LOGICOS. */
+    void hovered(double x, double y);
+    void left();
 
 protected:
     void paintEvent(QPaintEvent *ev) override;
@@ -60,6 +64,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent *ev) override;
     void wheelEvent(QWheelEvent *ev) override;
     void resizeEvent(QResizeEvent *ev) override;
+    void leaveEvent(QEvent *ev) override;
 
 private:
     void ensureImage(const QSize &pixels);
