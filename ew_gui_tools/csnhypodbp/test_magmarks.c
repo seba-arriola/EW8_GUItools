@@ -261,19 +261,31 @@ static void test_winsrc(void)
     CHECK(csnhypodbp_magmarks_winsrc(&m, "GO01", CSNHYPODBP_MAG_ML, 'A') == 'A',
           "winsrc: otra magnitud sigue automatica");
 
-    /* Filtro: por defecto M y A si, Teo no. */
+    /* Filtro: por el ORIGEN DE LA PICADA, no por el de la ventana. */
     CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_ML, 'A', 1, 1, 0) == 1,
-          "allowed: automatica con A encendido");
+          "allowed: pick automatico con A encendido");
     CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_ML, 'A', 0, 1, 0) == 0,
-          "allowed: automatica con A apagado");
-    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_MS, 'A', 1, 1, 0) == 1,
-          "allowed: ajustada con M encendido");
-    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_MS, 'A', 1, 0, 0) == 0,
-          "allowed: ajustada con M apagado");
+          "allowed: pick automatico con A apagado");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_ML, 'A', 1, 0, 0) == 1,
+          "allowed: automatico entra con A aunque M este apagado");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO03", CSNHYPODBP_MAG_ML, 'M', 0, 1, 0) == 1,
+          "allowed: pick manual SIN ventana tocada entra con M");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO03", CSNHYPODBP_MAG_ML, 'M', 1, 0, 0) == 0,
+          "allowed: pick manual no entra con solo A");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_MS, 'A', 1, 0, 0) == 1,
+          "allowed: ventana tocada con pick A sigue categoria A");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_MS, 'A', 0, 1, 0) == 0,
+          "allowed: ventana tocada no la vuelve manual");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_MS, 'M', 0, 1, 0) == 1,
+          "allowed: ventana tocada con pick M entra con M");
     CHECK(csnhypodbp_magmarks_allowed(&m, "GO02", CSNHYPODBP_MAG_ML, 'T', 1, 1, 0) == 0,
           "allowed: teorica apagada por defecto");
     CHECK(csnhypodbp_magmarks_allowed(&m, "GO02", CSNHYPODBP_MAG_ML, 'T', 1, 1, 1) == 1,
           "allowed: teorica con Teo encendido");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO02", CSNHYPODBP_MAG_ML, '\0', 1, 1, 1) == 0,
+          "allowed: sin origen de picada no entra");
+    CHECK(csnhypodbp_magmarks_allowed(&m, "GO01", CSNHYPODBP_MAG_ML, 'm', 0, 1, 0) == 1,
+          "allowed: origen manual en minuscula");
 
     csnhypodbp_magmarks_free(&m);
 }

@@ -107,8 +107,8 @@ int csnhypodbp_magmarks_set_used(CsnhypodbpMagMarks *m, const char *sta, int kin
 /* Cuantas (estacion, magnitud) tienen ventana ajustada a mano. */
 int csnhypodbp_magmarks_touched_count(const CsnhypodbpMagMarks *m);
 
-/* Origen de la VENTANA de (sta, kind), que es lo que filtran los checkboxes
- * A/M/Teo de la barra inferior:
+/* Origen de la VENTANA de (sta, kind). Es solo la procedencia de la franja
+ * (columna/herramienta `vent`), NO la categoria de la estacion:
  *   'M' = la ajusto el usuario a mano (arrastrando la franja)
  *   'T' = ancla teorica (la estacion no tiene P observada)
  *   'A' = ventana default del .d con ancla P observada
@@ -116,9 +116,13 @@ int csnhypodbp_magmarks_touched_count(const CsnhypodbpMagMarks *m);
 char csnhypodbp_magmarks_winsrc(const CsnhypodbpMagMarks *m, const char *sta,
                                 int kind, char anchor);
 
-/* 1 si (sta, kind) entra al forzado con el filtro A/M/Teo dado. */
+/* 1 si (sta, kind) entra al forzado con el filtro A/M/Teo dado, que se aplica
+ * al ORIGEN DE LA PICADA (`pick_origin`: 'M' manual, 'A' automatica, 'T'
+ * teorica). Una ventana ajustada a mano con picada automatica sigue siendo
+ * categoria A. `m/sta/kind` se conservan por compatibilidad. */
 int csnhypodbp_magmarks_allowed(const CsnhypodbpMagMarks *m, const char *sta, int kind,
-                                char anchor, int auto_on, int manual_on, int theo_on);
+                                char pick_origin, int auto_on, int manual_on,
+                                int theo_on);
 
 /* Que agarra un clic en `x` (px) sobre la franja [x0, x1] (px), con tolerancia
  * `tol_px` en cada borde. Con la franja mas angosta que 2*tol agarra la franja

@@ -1897,6 +1897,7 @@ void BpqMainWindow::refreshAfterManual()
         ? bpq_event_sol(m_curEv, m_ptSol[pi]) : nullptr;
 
     if (sol) rebuildStaTable(sol);
+    renderMagnitudes();          /* ancla/ventana/categoria al dia sin esperar traza */
     syncTraceRows();
     updateTracesContext();
     if (m_waves) m_waves->requestRepaint();
@@ -2370,6 +2371,8 @@ void BpqMainWindow::locateNow()
         QByteArray loc = m_locCombo ? m_locCombo->currentText().toUtf8()
                                     : QByteArray();
         QVector<BpqFetchReq> magReq;
+        QVector<CsnhypodbpMagOvrRow> magOvr;
+        CsnhypodbpMagOvrRow obuf[600];
         quint64 id;
         BpqLocateWorker *w = m_locWorker;
 
@@ -2423,9 +2426,13 @@ void BpqMainWindow::locateNow()
         const int nf = bpq_magpanel_fetch_rows(
             m_magPanel, rows.constData(), rows.size(), 0u, base.depth,
             am, mm, tm, rb, 512);
+        const int novr = bpq_magpanel_ovr(m_magPanel, rows.constData(),
+                                          rows.size(), 0u, obuf, 600);
 
+        for (int j = 0; j < novr; j++) magOvr.append(obuf[j]);
         buildMagReqs(m_staCat, m_cfg, m_magPanel, rows.constData(), rows.size(),
-                     rb, nf, nullptr, 0, 0u, &magReq, BPQ_TRACE_MAX);
+                     rb, nf, magOvr.constData(), magOvr.size(), 0u, &magReq,
+                     BPQ_TRACE_MAX);
     }
 
         if (!w) {
@@ -2445,8 +2452,9 @@ void BpqMainWindow::locateNow()
         tickLocate();
 
         QMetaObject::invokeMethod(w, [w, id, base, rows, on, am, mm, tm, fix, loc,
-                                      magReq]() {
-            w->runJob(id, base, rows, on, am, mm, tm, fix, loc, magReq);
+                                      magReq, magOvr]() {
+            w->runJob(id, base, rows, on, am, mm, tm, fix, loc, magReq, magOvr,
+                      0u);
         }, Qt::QueuedConnection);
     }
 }
@@ -3151,6 +3159,36 @@ void BpqMainWindow::magRelease()
     m_magViewT0 = 0.0;
     m_magViewSpan = 0.0;
     renderMagnitudes();
+}
+
+/* Cursor de la franja: flechas horizontales en los bordes (redimensionar) y
+ * cuatro direcciones en la banda superior (mover), como la GTK. */
+void BpqMainWindow::magHovered(double x, double y)
+{
+    if (!m_magCanvas || m_magDragGrab != 0) return;
+
+    const qreal dpr = m_magCanvas->devicePixelRatioF();
+    const int hov = bpq_mag_hover(&m_magCtx,
+                                  int(m_magCanvas->width() * dpr),
+                                  int(m_magCanvas->height() * dpr),
+                                  x * dpr, y * dpr);
+
+    switch (hov) {
+    case BPQ_MAG_HOVER_HANDLE:
+        m_magCanvas->setCursor(Qt::SizeAllCursor);
+        break;
+    case BPQ_MAG_HOVER_EDGE:
+        m_magCanvas->setCursor(Qt::SizeHorCursor);
+        break;
+    default:
+        m_magCanvas->unsetCursor();
+        break;
+    }
+}
+
+void BpqMainWindow::magLeft()
+{
+    if (m_magCanvas && m_magDragGrab == 0) m_magCanvas->unsetCursor();
 }
 
 /* --- panel Mww (fase 6.3) ------------------------------------------------ */
@@ -4831,6 +4869,10 @@ void BpqMainWindow::buildProcesarTab()
                 &BpqMainWindow::magDragMove);
         connect(m_magCanvas, &BpqCanvasWidget::released, this,
                 &BpqMainWindow::magRelease);
+        connect(m_magCanvas, &ewguiqt::CanvasWidget::hovered, this,
+                [this](double x, double y) { magHovered(x, y); });
+        connect(m_magCanvas, &ewguiqt::CanvasWidget::left, this,
+                [this]() { magLeft(); });
 
         QVBoxLayout *lay = new QVBoxLayout(mg);
         lay->setContentsMargins(2, 2, 2, 2);

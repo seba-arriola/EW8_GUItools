@@ -76,12 +76,15 @@ una estación concreta.
 
 ## 3. Barra inferior de `magnitudes`
 
-- **`ventanas: A M Teo`** — qué ventanas entran al forzado, por su **origen**:
-  - **M** = la ajustó el usuario a mano (arrastrando la franja sobre la traza),
-  - **A** = ventana por defecto del `.d` con ancla P observada,
-  - **Teo** = ancla teórica (la estación no tiene P observada).
-  Por defecto **A y M encendidos, Teo apagado**. La misma idea que los
-  checkboxes A/M/Teo de `picking` (allí filtran qué picadas van al localizador).
+- **`picadas: A M Teo`** — qué **picadas P** entran al forzado, por su **origen**:
+  - **M** = picada manual,
+  - **A** = picada automática,
+  - **Teo** = P teórica (la estación no tiene P observada).
+  Por defecto **A y M encendidos, Teo apagado**. Ajustar la franja de una
+  magnitud **no** cambia la categoría: una picada automática con ventana tocada
+  sigue entrando con `A`; la ventana tocada solo cambia los offsets de esa
+  magnitud. Son el mismo concepto que los checkboxes A/M/Teo de `picking` (allí
+  filtran qué picadas van al localizador).
   Ojo: el `locate` **no** usa estos checks del panel. Usa las casillas por fila y
   los A/M/Teo de `picking` (una P efectiva `M>A>Teo` por estación), calcula las
   cuatro magnitudes (ML/Mwp/Mb/Ms; Mww no se recalcula) y ancla cada ventana en el

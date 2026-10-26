@@ -91,7 +91,7 @@ hace **`csnloc`** localmente.
     estación con `dist[km]`, el ancla de la ventana (`M`/`A`/`Teo`), `t0`/`t1`, la
     magnitud y su residual, el canvas de la traza procesada por magnitud con la
     franja de la ventana arrastrable, y una barra inferior con los checkboxes
-    `A`/`M`/`Teo` —origen de la ventana— y el override de la puerta de distancia de
+    `A`/`M`/`Teo` —origen de la picada, no de la ventana— y el override de la puerta de distancia de
     la magnitud activa, en cajas de **texto** (`GtkEntry`, sin los `+/-` del spin y
     acotadas con `max-width-chars` = valor canónico + 2, porque GTK4 da 150 px de
     ancho natural a todo `GtkEntry`): el valor se aplica al confirmar el campo
@@ -107,7 +107,8 @@ hace **`csnloc`** localmente.
     `csnmags` recibe las **cuatro** magnitudes y las **mismas P efectivas** (`M>A>Teo`) que el
     localizador (casillas por fila + filtros A/M/Teo del picking); las S no generan magnitud. La
     ventana de cada magnitud se ancla en el `t_pick` de esa P y usa la franja ajustada del panel si
-    existe (si no, la del `.d`), con override para las 4; no se recalcula Mww. El port
+    existe (si no, la del `.d`), con override para las 4; `locate` y `calculate` comparten esas
+    franjas. Ajustar una franja no cambia la categoría A/M/Teo de la picada. No se recalcula Mww. El port
     `csnhypodbpQT` añade la **P teórica** IASP91 (`TauModel`, default `iasp91`) a toda estación sin
     P `M/A`, de modo que la tabla de magnitudes siempre tiene ancla/ventana `Teo`; sus checks
     `A/M/Teo` de magnitudes son **propios** (los del picking siguen siendo solo del localizador) y

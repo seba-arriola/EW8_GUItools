@@ -45,7 +45,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
 == manual_state checks=38 fallas=0 == # clave por evento, migracion, save sin clave, archivo vacio y ruta
-== magpanel checks=133 fallas=0 ==   # ventanas, Teo, filtro, traza M/A>Teo, overrides y canvas
+== magpanel checks=158 fallas=0 ==   # ventanas, Teo, filtro por picada, overrides, canvas y cursor
 == axis checks=38 fallas=0 ==       # eje comun: fondo/filete/ticks, paso 1-2-5, banda gris y gesto release
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
@@ -508,8 +508,12 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   hacía el cálculo; lo que faltaba era inicializar el modelo.
 - **Checks propios de magnitudes**: la barra tiene `A/M/Teo` (`mag_chk_auto/manual/theo`), los tres
   marcados por defecto; son independientes de los del picking (que solo filtran el localizador) y
-  gobiernan `eligible/used`, el contador “en uso” y el envío del cálculo. `BPQ_MAG_ORIGINS` los fija
-  en los tests.
+  gobiernan `eligible/used`, el contador “en uso” y el envío del cálculo. Son el **origen de la
+  picada P** (`M` manual, `A` automática, `Teo` teórica), no el de la ventana: ajustar una franja no
+  cambia la categoría de la estación. `BPQ_MAG_ORIGINS` los fija en los tests.
+- **Cursor de la franja**: `bpq_mag_hover` distingue el borde vertical (`t0`/`t1` → `SizeHorCursor`)
+  del handle superior (`SizeAllCursor`), y `magLeft` devuelve el cursor por defecto al salir. Es la
+  paridad del `ew-resize`/`move` de la GTK.
 - `calculate` = `csnmags` sobre la **candidata** con las ventanas ajustadas (`WindowOverridesFile`
   equivalente: `csnhypodbp_mag_ovr_build_anchors` → `CsnhypodbpMagOvrRow[]`, t0/t1 absolutos) en el
   hilo del localizador; al volver refresca el preview y la tabla. `calculate all` = las cuatro

@@ -792,6 +792,18 @@ void *bpq_trace_ew(const BpqTrace *t);
 int  bpq_mag_hit(const BpqMagCtx *c, int w, int h, double mx, double my,
                  int *grab, double *t_at);
 
+/* Zona de la franja bajo el puntero para el cursor del canvas de magnitudes:
+ *   NONE   = fuera de la franja (o sin ancla)
+ *   EDGE   = borde vertical (t0/t1): se redimensiona
+ *   HANDLE = banda superior: se mueve la franja
+ * `mx/my` en pixeles de dispositivo (la UI multiplica por dpr). */
+enum {
+    BPQ_MAG_HOVER_NONE   = 0,
+    BPQ_MAG_HOVER_EDGE   = 1,
+    BPQ_MAG_HOVER_HANDLE = 2
+};
+int  bpq_mag_hover(const BpqMagCtx *c, int w, int h, double mx, double my);
+
 /* Instante (epoch) bajo `mx` en el canvas de magnitudes: lo usa el arrastre de
  * la franja, que recibe deltas de pixel y necesita la escala real del dibujo. */
 double bpq_mag_time_at(const BpqMagCtx *c, int w, int h, double mx);
@@ -897,6 +909,7 @@ int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
                    int auto_on, int manual_on, int theo_on,
                    double fix_depth_km,
                    const CsnhypodbpTrace *trace, int ntr,
+                   const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                    BpqLocateOut *out, volatile int *cancel,
                    char *err, size_t errn);
 

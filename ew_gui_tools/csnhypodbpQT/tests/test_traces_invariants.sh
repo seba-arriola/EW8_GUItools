@@ -155,6 +155,36 @@ else
     bad "hypos_write vuelve a escribir net/loc en '--'"
 fi
 
+# locate y calculate comparten las ventanas ajustadas del panel de magnitudes.
+if grep -q 'magOvr.constData()' "$ui" &&
+   grep -q 'ovr.isEmpty() ? nullptr : ovr.constData()' "$worker" &&
+   grep -q 'const CsnhypodbpMagOvrRow \*ovr, int novr, unsigned kind_mask' "$locate"; then
+    ok "locate: mismas ventanas ajustadas que calculate"
+else
+    bad "locate ignora las ventanas ajustadas del panel"
+fi
+
+# Repick manual: la tabla de magnitudes (ancla/ventana/categoria) se refresca
+# sin esperar a que llegue una traza.
+if sed -n '/void BpqMainWindow::refreshAfterManual()/,/^}/p' "$ui" |
+   grep -q 'renderMagnitudes'; then
+    ok "repick manual: magnitudes refrescadas al instante"
+else
+    bad "refreshAfterManual no refresca las magnitudes"
+fi
+
+# Cursor de la franja de magnitud: bordes -> SizeHor, handle -> SizeAll,
+# salir del canvas -> cursor por defecto.
+if grep -q 'bpq_mag_hover' "$ui" &&
+   grep -q 'Qt::SizeHorCursor' "$ui" &&
+   grep -q 'Qt::SizeAllCursor' "$ui" &&
+   grep -q 'magHovered(x, y)' "$ui" &&
+   sed -n '/void BpqMainWindow::magLeft()/,/^}/p' "$ui" | grep -q 'unsetCursor'; then
+    ok "magnitudes: cursor de borde/handle y reset al salir"
+else
+    bad "el canvas de magnitudes no cambia el cursor en los bordes"
+fi
+
 # Teclado: filtro de aplicacion + tabla sin type-ahead.
 if grep -q 'qApp->installEventFilter' "$ui" &&
    grep -q 'handlePickingKey' "$ui"; then

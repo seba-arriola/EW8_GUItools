@@ -216,7 +216,8 @@ int main(void)
 
         memset(&lo, 0xAA, sizeof(lo));
         CK(bpq_locate_run(&cfg, cat, &sol, NULL, NULL, 0, NULL, 1, 1, 1, -1.0,
-                          NULL, 0, &lo, NULL, err, sizeof(err)) == 0);
+                          NULL, 0, NULL, 0, 0u,
+                          &lo, NULL, err, sizeof(err)) == 0);
         CK(err[0] != '\0');
         CK(lo.sol.npicks == 0);
     }

@@ -148,12 +148,20 @@ char csnhypodbp_magmarks_winsrc(const CsnhypodbpMagMarks *m, const char *sta,
 }
 
 int csnhypodbp_magmarks_allowed(const CsnhypodbpMagMarks *m, const char *sta, int kind,
-                                char anchor, int auto_on, int manual_on, int theo_on)
+                                char pick_origin, int auto_on, int manual_on,
+                                int theo_on)
 {
-    switch (csnhypodbp_magmarks_winsrc(m, sta, kind, anchor)) {
-        case 'M': return manual_on ? 1 : 0;
-        case 'T': return theo_on ? 1 : 0;
-        default:  return auto_on ? 1 : 0;
+    /* A/M/Teo son el ORIGEN DE LA PICADA, no el de la ventana: ajustar la
+     * franja no cambia la categoria de la estacion. `m/sta/kind` se conservan
+     * por compatibilidad de la firma. */
+    (void)m;
+    (void)sta;
+    (void)kind;
+    switch (pick_origin) {
+        case 'M': case 'm': return manual_on ? 1 : 0;
+        case 'T': case 't': return theo_on ? 1 : 0;
+        case 'A': case 'a': return auto_on ? 1 : 0;
+        default:            return 0;
     }
 }
 

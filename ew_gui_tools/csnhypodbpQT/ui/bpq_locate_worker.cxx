@@ -72,7 +72,9 @@ void BpqLocateWorker::runJob(quint64 jobId, const CsnhypodbpSolution &base,
                              const QVector<int> &pickOn,
                              int autoOn, int manualOn, int theoOn,
                              double fixDepthKm, const QByteArray &locator,
-                             const QVector<BpqFetchReq> &req)
+                             const QVector<BpqFetchReq> &req,
+                             const QVector<CsnhypodbpMagOvrRow> &ovr,
+                             unsigned kindMask)
 {
     QElapsedTimer t;
     BpqLocateOut *out = new BpqLocateOut;
@@ -92,7 +94,9 @@ void BpqLocateWorker::runJob(quint64 jobId, const CsnhypodbpSolution &base,
     ok = bpq_locate_run(m_cfg, m_st, &base, locator.constData(),
                         rows.constData(), rows.size(),
                         (const int (*)[2])on, autoOn, manualOn, theoOn,
-                        fixDepthKm, trace, ntr, out, &m_cancel,
+                        fixDepthKm, trace, ntr,
+                        ovr.isEmpty() ? nullptr : ovr.constData(), ovr.size(),
+                        kindMask, out, &m_cancel,
                         err, sizeof(err)) == 1;
 
     release_traces(traces, ntr, BPQ_TRACE_MAX);

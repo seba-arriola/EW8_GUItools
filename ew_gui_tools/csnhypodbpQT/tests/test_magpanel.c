@@ -171,6 +171,64 @@ int main(void)
         bpq_magpanel_set_masks(p, 1, 1, 1);
     }
 
+    /* Categoria = origen de la PICADA: con solo M entran las manuales aunque
+     * su ventana sea la del .d, y tocar una ventana no reduce el conjunto a
+     * esa estacion (la ventana tocada de un pick A sigue siendo A). */
+    {
+        CsnhypodbpStaRow man[3];
+        int rb[8], nf;
+
+        sta_set(&man[0], "PM01", 1700000010.0, 3.0, 300.0);
+        sta_set(&man[1], "PM02", 1700000012.0, 4.0, 400.0);
+        sta_set(&man[2], "PM03", 1700000014.0, 5.0, 500.0);
+        CK(bpq_magpanel_gate_set(p, "0.0", "10.0") == 1);
+        bpq_magpanel_set_masks(p, 0, 1, 0);           /* solo M */
+        nf = bpq_magpanel_fetch_rows(p, man, 3, 0u, 10.0, 0, 1, 0, rb, 8);
+        CK(nf == 3);                                  /* ninguna ventana tocada */
+        CK(bpq_magpanel_set_window(p, "PM01", 0, 5.0, 25.0) == 1);
+        nf = bpq_magpanel_fetch_rows(p, man, 3, 0u, 10.0, 0, 1, 0, rb, 8);
+        CK(nf == 3);                                  /* tocar una no la vuelve la unica */
+        man[0].p.origin = 'A';                        /* la ventana sigue tocada */
+        nf = bpq_magpanel_fetch_rows(p, man, 3, 0u, 10.0, 1, 0, 0, rb, 8);
+        CK(nf == 1 && rb[0] == 0);                    /* solo A: PM01 */
+        nf = bpq_magpanel_fetch_rows(p, man, 3, 0u, 10.0, 0, 1, 0, rb, 8);
+        CK(nf == 2 && rb[0] == 1 && rb[1] == 2);      /* solo M: PM02 y PM03 */
+        bpq_magpanel_set_masks(p, 1, 1, 1);
+    }
+
+    /* La ventana es un offset del ancla: mover la picada la desplaza y un
+     * ajuste a mano conserva sus offsets (no se reescribe ni se pierde). */
+    {
+        CsnhypodbpStaRow mv = stas[0], md = stas[1];
+        CsnhypodbpMagOvrRow ov[8];
+        double wa0 = 0.0, wsec0 = 0.0, wa1 = 0.0, wsec1 = 0.0;
+        double d0 = 0.0, d1 = 0.0, e0 = 0.0, e1 = 0.0;
+        int no;
+
+        /* PB01/Mwp tiene ventana tocada (5..25). */
+        bpq_magpanel_window(p, "PB01", 1, &d0, &d1);
+        CK(fabs(d0 - 5.0) < 1e-9 && fabs(d1 - 25.0) < 1e-9);
+        CK(bpq_magpanel_req_window(p, &mv, 1, NULL, 0, &wa0, &wsec0) == 1);
+        no = bpq_magpanel_ovr(p, &mv, 1, 1u << 1, ov, 8);
+        CK(no == 1 && fabs(ov[0].t0 - (mv.p.t + 5.0)) < 1e-9);
+        mv.p.t += 10.0;
+        bpq_magpanel_window(p, "PB01", 1, &e0, &e1);
+        CK(fabs(e0 - d0) < 1e-9 && fabs(e1 - d1) < 1e-9);
+        CK(bpq_magpanel_req_window(p, &mv, 1, NULL, 0, &wa1, &wsec1) == 1);
+        CK(fabs(wa1 - (wa0 + 10.0)) < 1e-9 && fabs(wsec1 - wsec0) < 1e-9);
+        no = bpq_magpanel_ovr(p, &mv, 1, 1u << 1, ov, 8);
+        CK(no == 1 && fabs(ov[0].t0 - (mv.p.t + 5.0)) < 1e-9);
+
+        /* PB02/Mwp no tiene ajuste: la ventana del .d sigue al ancla. */
+        bpq_magpanel_window(p, "PB02", 1, &d0, &d1);
+        CK(bpq_magpanel_req_window(p, &md, 1, NULL, 0, &wa0, &wsec0) == 1);
+        md.p.t += 10.0;
+        bpq_magpanel_window(p, "PB02", 1, &e0, &e1);
+        CK(fabs(e0 - d0) < 1e-9 && fabs(e1 - d1) < 1e-9);
+        CK(bpq_magpanel_req_window(p, &md, 1, NULL, 0, &wa1, &wsec1) == 1);
+        CK(fabs(wa1 - (wa0 + 10.0)) < 1e-9 && fabs(wsec1 - wsec0) < 1e-9);
+    }
+
     /* `calculate`: copia la candidata y reemplaza sus picks por las P
      * efectivas de la tabla (M/A/Teo). Sin esto csnmags no las ve. */
     {
@@ -428,6 +486,42 @@ int main(void)
         /* Con ventana nula no hay franja: el hit-test no inventa geometria. */
         mc.t0 = mc.t1 = NAN;
         CK(bpq_mag_hit(&mc, 400, 220, 200.0, 8.0, &grab, &t_at) == 0);
+
+        /* Cursor: borde vertical -> EDGE, banda superior -> HANDLE y el resto
+         * del canvas sin cursor especial. */
+        {
+            int x0 = -1, x1 = -1;
+
+            mc.t0 = 1.0;                 /* el caso anterior dejo la franja NAN */
+            mc.t1 = 1.5;
+            for (x = 0; x < 400; x++) {
+                if (bpq_mag_hover(&mc, 400, 220, (double)x, 110.0) ==
+                    BPQ_MAG_HOVER_EDGE) {
+                    if (x0 < 0) x0 = x;
+                    x1 = x;
+                }
+            }
+            CK(x0 >= 0 && x1 > x0);
+            CK(bpq_mag_hover(&mc, 400, 220, (double)x0, 110.0) ==
+               BPQ_MAG_HOVER_EDGE);
+            CK(bpq_mag_hover(&mc, 400, 220, (double)x1, 110.0) ==
+               BPQ_MAG_HOVER_EDGE);
+            CK(bpq_mag_hover(&mc, 400, 220, (double)x0, 8.0) ==
+               BPQ_MAG_HOVER_HANDLE);
+            CK(bpq_mag_hover(&mc, 400, 220, (double)((x0 + x1) / 2), 110.0) ==
+               BPQ_MAG_HOVER_NONE);
+            CK(bpq_mag_hover(&mc, 400, 220, 2.0, 110.0) ==
+               BPQ_MAG_HOVER_NONE);
+            CK(bpq_mag_hover(NULL, 400, 220, 200.0, 8.0) ==
+               BPQ_MAG_HOVER_NONE);
+            {
+                BpqMagCtx mz = mc;
+
+                mz.anchor = 0.0;
+                CK(bpq_mag_hover(&mz, 400, 220, 200.0, 8.0) ==
+                   BPQ_MAG_HOVER_NONE);
+            }
+        }
 
         bpq_trace_free(tr);
         free(s);

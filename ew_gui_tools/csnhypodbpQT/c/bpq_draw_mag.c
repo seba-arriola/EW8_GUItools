@@ -379,6 +379,25 @@ int bpq_mag_hit(const BpqMagCtx *c, int w, int h, double mx, double my,
     return 1;
 }
 
+int bpq_mag_hover(const BpqMagCtx *c, int w, int h, double mx, double my)
+{
+    const double dpr = (c && c->dpr > 0.0) ? c->dpr : 1.0;
+    struct mag_geo g;
+    CsnhypodbpMagGrab gr;
+
+    if (!c || !(c->anchor > 0.0)) return BPQ_MAG_HOVER_NONE;
+    mag_geo(c, w, h, &g);
+    if (!g.ok) return BPQ_MAG_HOVER_NONE;
+    gr = csnhypodbp_magmarks_grab(mx, g.xa, g.xb, 5.0 * dpr);
+    if (gr == CSNHYPODBP_MAGG_NONE) return BPQ_MAG_HOVER_NONE;
+    /* El handle de arriba mueve la franja; los bordes verticales la redimensionan.
+     * Dentro de la franja y fuera del handle no hay accion: sin cursor especial. */
+    if (csnhypodbp_magmarks_handle_hit(my, 0.0)) return BPQ_MAG_HOVER_HANDLE;
+    if (gr == CSNHYPODBP_MAGG_T0 || gr == CSNHYPODBP_MAGG_T1)
+        return BPQ_MAG_HOVER_EDGE;
+    return BPQ_MAG_HOVER_NONE;
+}
+
 double bpq_mag_time_at(const BpqMagCtx *c, int w, int h, double mx)
 {
     struct mag_geo g;

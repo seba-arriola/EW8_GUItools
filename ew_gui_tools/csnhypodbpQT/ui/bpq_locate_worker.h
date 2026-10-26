@@ -41,7 +41,8 @@ public:
                 const QVector<CsnhypodbpStaRow> &rows, const QVector<int> &pickOn,
                 int autoOn, int manualOn, int theoOn,
                 double fixDepthKm, const QByteArray &locator,
-                const QVector<BpqFetchReq> &req);
+                const QVector<BpqFetchReq> &req,
+                const QVector<CsnhypodbpMagOvrRow> &ovr, unsigned kindMask);
 
     /* SOLO magnitudes (boton `calculate` de la sub-pestana): baja el mismo trace
      * y corre csnmags con las ventanas ajustadas (`ovr`), sin tocar la solucion.

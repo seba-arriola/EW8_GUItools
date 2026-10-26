@@ -156,6 +156,7 @@ int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
                    int auto_on, int manual_on, int theo_on,
                    double fix_depth_km,
                    const CsnhypodbpTrace *trace, int ntr,
+                   const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                    BpqLocateOut *out, volatile int *cancel,
                    char *err, size_t errn)
 {
@@ -230,7 +231,7 @@ int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
               : (cfg->fix_depth_on ? cfg->fix_depth_km : -1.0);
     rc = csnhypodbp_locate_run(cfg->locators, cfg->n_locators, sel,
                                ewp, ewh, ewv, NULL,
-                               &sol, NULL, 0, trace, ntr, NULL, 0, 0u,
+                               &sol, NULL, 0, trace, ntr, ovr, novr, kind_mask,
                                fix,
                                cfg->locator_timeout_s, NULL, NULL, cancel,
                                &out->sol, &out->mag, err, errn);

@@ -157,6 +157,8 @@ private:
     void magPress(double x, double y);       /* agarre de la franja */
     void magDragMove(double dx, double dy);
     void magRelease();
+    void magHovered(double x, double y);     /* cursor: borde/handle de la franja */
+    void magLeft();
     void applyMagGate();                     /* cajas de la puerta -> panel */
     void setMagKind(int kind);               /* radio ML/Mwp/Mb/Ms */
     /* --- panel Mww (fase 6.3) --- */
