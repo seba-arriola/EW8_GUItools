@@ -105,9 +105,9 @@ int main(void)
 
     /* --- recuperacion del indice (borrado) ------------------------------- */
     {
-        char tankp[1500], idxp[1500], *dot;
-        CHECK(wstore_segment_path(tankp, sizeof(tankp), root, "ABC", "CX", "--", "HHZ", t0) == 0);
-        snprintf(idxp, sizeof(idxp), "%s", tankp);
+        char segpath[1500], idxp[1500], *dot;
+        CHECK(wstore_segment_path(segpath, sizeof(segpath), root, "ABC", "CX", "--", "HHZ", t0) == 0);
+        snprintf(idxp, sizeof(idxp), "%s", segpath);
         dot = strrchr(idxp, '.');
         if (dot) strcpy(dot, ".idx");
         unlink(idxp);

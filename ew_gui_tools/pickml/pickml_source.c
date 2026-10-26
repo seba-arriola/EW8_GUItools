@@ -1,8 +1,8 @@
 /******************************************************************************
- * pickml_source.c — fuentes de trazas: un tank suelto o el store indexado.   *
+ * pickml_source.c — fuentes de trazas: un trace suelto o el store indexado.   *
  *                                                                            *
  * El store NO se modifica: se lee su formato documentado                     *
- *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank                          *
+ *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.trace                          *
  * con registros TRACE2_HEADER (64 B) + muestras int32. Se recorre por         *
  * estación y por día, con un lookahead por componente para entrelazar Z/N/E   *
  * por tiempo (sin eso, la ventana 3C nunca estaría completa).                *
@@ -22,7 +22,7 @@ struct PmSrc {
     int  kind;
     char err[PM_STR_LEN];
 
-    /* ---- tank ---- */
+    /* ---- trace ---- */
     FILE         *f;
     int32_t      *x;
     long          cap;
@@ -128,9 +128,9 @@ static int read_record(FILE *f, TRACE2_HEADER *hd, int32_t **buf, long *cap,
     return 1;
 }
 
-/* ============================ tank ======================================== */
+/* ============================ trace ======================================== */
 
-int pm_src_open_tank(PmSrc **out, const char *path)
+int pm_src_open_traces(PmSrc **out, const char *path)
 {
     PmSrc *s;
 
@@ -139,7 +139,7 @@ int pm_src_open_tank(PmSrc **out, const char *path)
 
     s = (PmSrc *)calloc(1, sizeof(*s));
     if (!s) return PM_ERR;
-    s->kind = PM_SRC_TANK;
+    s->kind = PM_SRC_TRACES;
 
     s->f = fopen(path, "rb");
     if (!s->f) {
@@ -178,7 +178,7 @@ static int store_open_day(PmSrc *s)
         const PmStation *st = &s->sta[s->si];
         const char *loc = st->loc[0] ? st->loc : "--";
 
-        snprintf(path, sizeof(path), "%s/%s.%s.%s.%s/%s.tank",
+        snprintf(path, sizeof(path), "%s/%s.%s.%s.%s/%s.trace",
                  s->root, st->net, st->sta, loc, st->chan[c], ymd);
         s->sf[c] = fopen(path, "rb");
         if (s->sf[c]) {
@@ -262,7 +262,7 @@ int pm_src_next(PmSrc *s, PmTrace *tr)
     if (s->kind == PM_SRC_SDS)
         return pmsds_next(s->sds, tr);
 
-    if (s->kind == PM_SRC_TANK) {
+    if (s->kind == PM_SRC_TRACES) {
         TRACE2_HEADER hd;
         int           rc;
 

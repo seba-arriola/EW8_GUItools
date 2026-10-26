@@ -20,6 +20,8 @@ ui=$here/../ui/bpq_mainwindow.cxx
 canvas=$here/../../commonqt/src/canvas.cxx
 locate=$here/../c/bpq_locate.c
 coreloc=$here/../../csnhypodbp/csnhypodbp_locate.c
+worker=$here/../ui/bpq_locate_worker.cxx
+capi=$here/../c/bpq_capi.h
 
 pass=0
 fail=0
@@ -134,12 +136,18 @@ else
     bad "el locate no muestra el conteo por origen"
 fi
 
-# Magnitudes: distancias desde la candidata y canal de la P efectiva en el
-# tanque; hypos_write conserva el SCNL de la picada (no lo degrada a "--").
-if grep -q 'bpq_stations_rebase' "$ui" && grep -q 'fetchReqForRow' "$ui"; then
-    ok "magnitudes: rebase a la candidata + canal de la P efectiva"
+# Magnitudes: distancias desde la candidata, peticion de trazas con BpqWave y
+# ventana propia por magnitud (vertical Z para Mwp/Mb/Ms, N/E para ML).
+if grep -q 'bpq_stations_rebase' "$ui" &&
+   grep -q 'buildMagReqs' "$ui" &&
+   grep -q 'bpq_magpanel_req_window' "$ui" &&
+   grep -qF "chans[k][l - 1] != 'Z'" "$ui" &&
+   grep -q 'BPQ_TRACE_MAX' "$capi" &&
+   grep -q 'req.at(i).t0' "$worker" &&
+   grep -q 'H=%d' "$worker"; then
+    ok "magnitudes: ventana por magnitud (Z/N/E) via BpqWave y H en el error"
 else
-    bad "la puerta usa la solucion elegida o el canal del catalogo"
+    bad "la peticion de trazas no usa la ventana/canal de cada magnitud"
 fi
 if grep -q 'El SCNL de la picada manda' "$coreloc"; then
     ok "hypos_write conserva el SCNL de la picada"

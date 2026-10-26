@@ -81,7 +81,7 @@ pickml_fetch.o: pickml_fetch.c pickml.h
 
 # ---------------------------------------------------------------- tests ------
 TESTS = test/test_buffer test/test_window test/test_post test/test_report \
-        test/test_config test/test_sta test/test_publish test/gen_tank test/gen_sds
+        test/test_config test/test_sta test/test_publish test/gen_traces test/gen_sds
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -99,7 +99,7 @@ check: $(TESTS) $(TARGET)
 # Modo offline determinista (sin anillos). Los tests usan el motor stub salvo
 # test_eqt_d.sh, que valida el .d de EQT contra el modelo real si esta presente
 # (y se SALTA si no: no rompe el build base).
-check-offline: $(TARGET) test/gen_tank test/gen_sds
+check-offline: $(TARGET) test/gen_traces test/gen_sds
 	sh ./test/test_offline.sh
 	sh ./test/test_sds.sh
 	sh ./test/test_publish_offline.sh
@@ -140,8 +140,8 @@ test/test_sta: test/test_sta.c pickml_sta.o pickml_config.o pickml_publish.o
 test/test_publish: test/test_publish.c pickml_publish.o
 	$(CC) $(CFLAGS) -o $@ test/test_publish.c pickml_publish.o $(LIBS)
 
-test/gen_tank: test/gen_tank.c
-	$(CC) $(CFLAGS) -o $@ test/gen_tank.c $(LIBS)
+test/gen_traces: test/gen_traces.c
+	$(CC) $(CFLAGS) -o $@ test/gen_traces.c $(LIBS)
 
 test/gen_sds: test/gen_sds.c ewgui_sds.o
 	$(CC) $(CFLAGS) -o $@ test/gen_sds.c ewgui_sds.o $(MSEED_LIB) $(LIBS)

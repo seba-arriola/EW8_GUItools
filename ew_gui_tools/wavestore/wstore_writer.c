@@ -14,10 +14,10 @@ struct WStoreWriter {
     char    root[1024];
     char    dir[1300];
     char    cur_day[16];
-    FILE   *tank;
+    FILE   *seg;
     int     idx_fd;
     int64_t count;
-    int64_t tank_size;
+    int64_t seg_size;
     int64_t flags;
     double  last_start;
 };
@@ -36,26 +36,26 @@ static int write_hdr(WStoreWriter *w)
 
 static int open_segment(WStoreWriter *w, const char *day)
 {
-    char         tankp[1500], idxp[1500];
+    char         segpath[1500], idxp[1500];
     WStoreIdxHdr h;
     int          need_rebuild = 0;
 
-    snprintf(tankp, sizeof(tankp), "%s/%s.tank", w->dir, day);
+    snprintf(segpath, sizeof(segpath), "%s/%s.ws", w->dir, day);
     snprintf(idxp, sizeof(idxp), "%s/%s.idx", w->dir, day);
 
-    w->tank = fopen(tankp, "r+b");
-    if (!w->tank) w->tank = fopen(tankp, "w+b");
-    if (!w->tank) return -1;
-    fseeko(w->tank, 0, SEEK_END);
-    w->tank_size = (int64_t)ftello(w->tank);
+    w->seg = fopen(segpath, "r+b");
+    if (!w->seg) w->seg = fopen(segpath, "w+b");
+    if (!w->seg) return -1;
+    fseeko(w->seg, 0, SEEK_END);
+    w->seg_size = (int64_t)ftello(w->seg);
 
     w->idx_fd = open(idxp, O_RDWR | O_CREAT, 0644);
-    if (w->idx_fd < 0) { fclose(w->tank); w->tank = NULL; return -1; }
+    if (w->idx_fd < 0) { fclose(w->seg); w->seg = NULL; return -1; }
 
     if (wstore_index_hdr_read(w->idx_fd, &h) != 0) {
         need_rebuild = 1;
-    } else if (h.count == 0 && w->tank_size > 0) {
-        need_rebuild = 1;   /* idx vacio pero tank con datos: inconsistente */
+    } else if (h.count == 0 && w->seg_size > 0) {
+        need_rebuild = 1;   /* idx vacio pero segment con datos: inconsistente */
     } else {
         w->count = h.count;
         w->flags = h.flags;
@@ -64,12 +64,12 @@ static int open_segment(WStoreWriter *w, const char *day)
     if (need_rebuild) {
         close(w->idx_fd);
         w->idx_fd = -1;
-        if (wstore_index_rebuild(tankp, idxp) != 0) { fclose(w->tank); w->tank = NULL; return -1; }
+        if (wstore_index_rebuild(segpath, idxp) != 0) { fclose(w->seg); w->seg = NULL; return -1; }
         w->idx_fd = open(idxp, O_RDWR);
         if (w->idx_fd < 0 || wstore_index_hdr_read(w->idx_fd, &h) != 0) {
             if (w->idx_fd >= 0) close(w->idx_fd);
-            fclose(w->tank);
-            w->tank = NULL;
+            fclose(w->seg);
+            w->seg = NULL;
             w->idx_fd = -1;
             return -1;
         }
@@ -119,8 +119,8 @@ int wstore_writer_append(WStoreWriter *w, const TRACE2_HEADER *h, const int32_t 
     if (!w || !h) return -1;
     if (wstore_day_of(h->starttime, day, sizeof(day)) != 0) return -1;
 
-    if (w->tank == NULL || strcmp(day, w->cur_day) != 0) {
-        if (w->tank) { wstore_writer_flush(w); fclose(w->tank); w->tank = NULL; }
+    if (w->seg == NULL || strcmp(day, w->cur_day) != 0) {
+        if (w->seg) { wstore_writer_flush(w); fclose(w->seg); w->seg = NULL; }
         if (w->idx_fd >= 0) { close(w->idx_fd); w->idx_fd = -1; }
         if (open_segment(w, day) != 0) return -1;
     }
@@ -132,12 +132,12 @@ int wstore_writer_append(WStoreWriter *w, const TRACE2_HEADER *h, const int32_t 
     if (hh.nsamp > 1 && hh.samprate > 0.0)
         hh.endtime = hh.starttime + (hh.nsamp - 1) / hh.samprate;
 
-    off = w->tank_size;
-    if (wstore_append_record(w->tank, off, &hh, samples, &nsz) != 0) return -1;
-    w->tank_size = nsz;
+    off = w->seg_size;
+    if (wstore_append_record(w->seg, off, &hh, samples, &nsz) != 0) return -1;
+    w->seg_size = nsz;
 
     /* I3: los datos deben ser visibles ANTES de publicar la entrada. */
-    if (fflush(w->tank) != 0) return -1;
+    if (fflush(w->seg) != 0) return -1;
 
     e.start = hh.starttime;
     e.end = hh.endtime;
@@ -155,16 +155,16 @@ int wstore_writer_append(WStoreWriter *w, const TRACE2_HEADER *h, const int32_t 
 
 int wstore_writer_flush(WStoreWriter *w)
 {
-    if (!w || !w->tank) return -1;
-    if (fflush(w->tank) != 0) return -1;
-    fdatasync(fileno(w->tank));
+    if (!w || !w->seg) return -1;
+    if (fflush(w->seg) != 0) return -1;
+    fdatasync(fileno(w->seg));
     return 0;
 }
 
 void wstore_writer_close(WStoreWriter *w)
 {
     if (!w) return;
-    if (w->tank) { wstore_writer_flush(w); fclose(w->tank); }
+    if (w->seg) { wstore_writer_flush(w); fclose(w->seg); }
     if (w->idx_fd >= 0) close(w->idx_fd);
     free(w);
 }

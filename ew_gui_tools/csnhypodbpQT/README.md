@@ -23,7 +23,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 | 3 | ondas (store→SDS), tabla de estaciones, búsqueda, historial de BD | **hecho**: ondas store→SDS en `QThread`, tabla de estaciones, canvas de trazas, **historial de BD** (24 h al arrancar) y **búsqueda por rango** (menú *Events*). Queda afinar el picking (fase 4) |
 | 4 | picking (trazas, filtros, STA/LTA, repick, **locate**) | **completa**: canvas, picking con el ratón (overlay local visible + persistencia), componentes por estación en el orden del `.d` + `tracesPerScreen`, Shift+flechas, filtros de vista (presets del `.d`, `Filters…`, fase cero) con sus atajos, STA/LTA y **`locate`** con el residual del localizador en la tabla |
 | 5 | preview, `locate`, Confirm/Discard, export | **hecho**: preview de dos mitades con un solo `render` (candidata/elegida/guiones y `Confirm`/`Discard`), spinner `calculando <loc>… N s` junto al `Origin time`, `Fix`/`FixedDepthKm` en la barra, `Confirm` que publica el ARC (byte 174 = `M`) en `ConfRing` y lo deja como origen confirmado en el store, y `Export view…` con el contexto real |
-| 6 | magnitudes, Mww, integración final | **fase 6 completa**: *magnitudes* con tabla de 8 columnas (`magrow`), traza procesada (`magview`) con **franja arrastrable** (`magmarks`), radios ML/Mwp/Mb/Ms, puerta de distancia y `calculate`/`calculate all` (tank + `csnmags` con overrides). Panel **`Mww`** (`csnwphase`) con 31 parámetros (11 editables), `Calculate`/`Cancel` en hilo, playera + resumen y salida completa. **6.4 hecho**: al confirmar se guardan Mww + tensor (WPHASE/WCMT) sobre el `origin` del pipeline y la solución queda preferida (evento reusado por qid + Δt ≤ 300 s, `mod` del localizador). **6.5 hecha**: módulo propio `MOD_CSNHYPODBPQT 172`, `.d` propio `csnhypodbpqt.d`, `Process` activo en `startstop_unix.d` (coexiste con el GTK 158), runtime `run_working_v8/csnhypodbpqt/` y tests de integración |
+| 6 | magnitudes, Mww, integración final | **fase 6 completa**: *magnitudes* con tabla de 8 columnas (`magrow`), traza procesada (`magview`) con **franja arrastrable** (`magmarks`), radios ML/Mwp/Mb/Ms, puerta de distancia y `calculate`/`calculate all` (traza + `csnmags` con overrides). Panel **`Mww`** (`csnwphase`) con 31 parámetros (11 editables), `Calculate`/`Cancel` en hilo, playera + resumen y salida completa. **6.4 hecho**: al confirmar se guardan Mww + tensor (WPHASE/WCMT) sobre el `origin` del pipeline y la solución queda preferida (evento reusado por qid + Δt ≤ 300 s, `mod` del localizador). **6.5 hecha**: módulo propio `MOD_CSNHYPODBPQT 172`, `.d` propio `csnhypodbpqt.d`, `Process` activo en `startstop_unix.d` (coexiste con el GTK 158), runtime `run_working_v8/csnhypodbpqt/` y tests de integración |
 | 7 | origen fijado (*pin*) | **hecho**: doble clic en una fila de *Origins* la fija y lleva a *Procesar → picking*. Mientras hay pin, *Selected solution*, *Magnitude*, la tabla de estaciones/residuales, *magnitudes* y las ondas muestran **solo** esa solución; el clic simple no lo mueve y el refresco del anillo no lo pisa. Sobrevive a que cambie la preferida (identidad estable de evento `qid` + 1.ª `otime`); se suelta al cambiar de evento o si la solución desaparece. `bpq_pin.{h,c}` + `tests/test_pin.c` (29 checks), `tests/test_pin.sh` (45 checks e2e offscreen) y `tests/test_pin_invariants.sh` (12 checks) |
 
 ### Verificación actual (`make check`)
@@ -34,7 +34,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == rings checks=44 fallas=0 ==      # formato byte a byte del pick, rd_mag seguro, errores de apertura
 == events checks=89 fallas=0 ==     # agrupacion, dedupe, preferida, magnitudes, celdas, orden y Created
 == draw_map checks=86 fallas=0 ==   # planta (fondo, ejes, marcadores, auto-encuadre, zoom/paneo/clic) y perfil
-== wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y tank
+== wave checks=82 fallas=0 ==      # decode TRACE2, fetch, filtro (fase cero), STA/LTA y traza
 == wavecache checks=61 fallas=0 == # LRU por bytes, copia en hit, claves por ventana y tope
 == tt1d checks=33 fallas=0 ==      # capas .crh: semiespacio, vertical, refractada, interfaz, coste
 == tt1d_hyp checks=47 fallas=0 ==  # CRH/NOD/MUL reales y fixture: RAD1, taper, oeste-positivo, mezcla
@@ -45,7 +45,7 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
 == manual_state checks=38 fallas=0 == # clave por evento, migracion, save sin clave, archivo vacio y ruta
-== magpanel checks=118 fallas=0 ==   # ventanas, Teo, filtro, tank M/A>Teo, overrides y canvas
+== magpanel checks=133 fallas=0 ==   # ventanas, Teo, filtro, traza M/A>Teo, overrides y canvas
 == axis checks=38 fallas=0 ==       # eje comun: fondo/filete/ticks, paso 1-2-5, banda gris y gesto release
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
@@ -69,7 +69,7 @@ cruza `t1` y el arranque en fracción de segundo).
 ### Caché de ondas y precarga de vecinas (2026-10-24)
 
 Antes cada cambio de estación o de evento liberaba **todas** las trazas y volvía a pedirlas al
-store/SDS; `wstore_get` abre y cierra el `.idx`/`.tank` por llamada y el SDS el miniSEED del día.
+store/SDS; `wstore_get` abre y cierra el `.idx`/`.ws` por llamada y el SDS el miniSEED del día.
 `PrefetchNeighbors` llevaba tiempo en el `.d` pero **nadie lo consumía** (ni aquí ni en el GTK).
 
 - **`c/bpq_wavecache.c`** (C puro): LRU por bytes y por entradas. La clave es
@@ -192,7 +192,7 @@ Tests: `make check` incluye el núcleo C (`tests/test_pin.c`), los invariantes d
 (`tests/test_pin_invariants.sh`) y el end-to-end offscreen (`tests/test_pin.sh`, usa
 `BPQ_TEST_FIXTURE=pins` + `BPQ_MODE=--dump`, sin DISPLAY, anillos ni BD).
 
-`calculate` de magnitudes (fase 6.1: tank real + `csnmags` con la ventana ajustada):
+`calculate` de magnitudes (fase 6.1: traza real + `csnmags` con la ventana ajustada):
 
 ```
 $ BPQ_MODE=--magcalc csnhypodbpQT csnhypodbp.d
@@ -202,7 +202,7 @@ magcalc busy=0 ml='' mwp='4.8-6' mb='' ms=''      # csnmags con el override
 mag kind=0 rows=137 in_use=15 touched=1 first=[AF01 t0=10 t1=44]
 ```
 
-Las magnitudes vacías son el resultado real de `csnmags` con las respuestas/calibración de este entorno; el camino completo (tank → overrides → `csnmags` → preview) sí corrió.
+Las magnitudes vacías son el resultado real de `csnmags` con las respuestas/calibración de este entorno; el camino completo (traza → overrides → `csnmags` → preview) sí corrió.
 
 `locate` de verdad (cadena completa, sin GUI; dura ~1.5 s):
 
@@ -474,8 +474,8 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   se conserva por `(sta, fase)` entre rebuilds y se resetea al cambiar de evento. `locateNow` la
   traduce a `pick_on` por `rows[i].idx` (posición en el catálogo).
 - Desviaciones conocidas del prototipo: (1) los re-picks viven en el overlay local y se publican a
-  `PICK_RING` al **Confirmar**, no en el `.events` de la GTK; (2) el **tank** de ondas se baja por
-  estación con picada P antes de cada corrida (el tank del `locate` y el de `calculate` son
+  `PICK_RING` al **Confirmar**, no en el `.events` de la GTK; (2) las **trazas** se bajan por
+  estación con picada P antes de cada corrida (las del `locate` y las de `calculate` son
   independientes), así que una `calculate` sin `locate` previo no tiene base.
 
 ### Magnitudes: tabla, traza procesada y ventanas (fase 6.1)
@@ -497,12 +497,13 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   completa `chan/net/loc` de las manuales con `set_scl` (el de la estación como respaldo).
 - **`calculate` sobre la candidata**: la copia de las filas se **rebasa** con
   `bpq_stations_rebase` a `m_cand.lat/lon` (la tabla visible conserva sus distancias), la puerta
-  se mide desde la candidata y el tank pide el **canal de la P efectiva** (`fetchReqForRow`), no el
-  del catálogo. `bpq_magpanel_fetch_rows` hace **dos pasadas** (M/A primero, Teo después) para que
-  el tope de 48 trazas no se llene de teóricas y deje fuera una P recién picada.
+  se mide desde la candidata y `buildMagReqs` pide **una traza por (estación, canal)** con la
+  ventana de cada magnitud (`bpq_magpanel_req_window`): vertical para Mwp/Mb/Ms y horizontales
+  para ML, hasta `BPQ_TRACE_MAX`. `bpq_magpanel_fetch_rows` hace **dos pasadas** (M/A primero,
+  Teo después) para que el tope no se llene de teóricas y deje fuera una P recién picada.
 - **`hypos.jsonl`**: `csnhypodbp_hypos_write` conserva el `net/chan/loc` de cada picada y usa el
-  tank solo para completar lo que falte (antes escribía `--` si la traza no estaba y `csnmags`
-  descartaba la estación). El error de una corrida sin resultado incluye `[picks=N trazas=M]` y la
+  traza solo para completar lo que falte (antes escribía `--` si la traza no estaba y `csnmags`
+  descartaba la estación). El error de una corrida sin resultado incluye `[picks=N trazas=M H=K]` y la
   primera línea de `mags.err`.
   hacía el cálculo; lo que faltaba era inicializar el modelo.
 - **Checks propios de magnitudes**: la barra tiene `A/M/Teo` (`mag_chk_auto/manual/theo`), los tres

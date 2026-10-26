@@ -305,7 +305,7 @@ prototipo; mala si algún día se quiere distinguir el origen de la confirmació
 ```
 :37 int csnhypodbp_picks_write(const char *path,int type,int mod,int inst,
                                const CsnhypodbpSolution *base,const CsnhypodbpManualPick *mp,int nmp);
-:54 int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n);
+:54 int csnhypodbp_trace_write(const char *path, const CsnhypodbpTrace *tr, int n);
 :62 int csnhypodbp_arc_build(const CsnhypodbpSolution *sol,int manual,char *out,size_t outn);  /* ARC Y2K 197+114*n */
 :68 int csnhypodbp_confirmation_arc(const CsnhypodbpSolution *sol,char *out,size_t outn);      /* exige ver 1..9999 y qid>0 */
 ```
@@ -455,7 +455,7 @@ csnhypodbp_view.h:20 CsnhypodbpView{def_span,t0,t1,active,have_anchor,anchor}
 csnhypodbp_view.h:48/133/138 rel_to_x|x_to_rel / sample_x / ticks|tick_step (1/2/5×10^k)
 csnhypodbp_search.h:35 CsnhypodbpSearch{time_min,time_max[32],have_lat/lon/depth/mag,*_min,*_max,limit}
 csnhypodbp_search.h:64 csnhypodbp_search_build(fields[10],max_events,out,err,errsz)
-csnhypodbp_locate.h:22 CsnhypodbpTankTrace{sta,net,chan,loc[16],rate,oldest,*samples,nsamp}
+csnhypodbp_locate.h:22 CsnhypodbpTrace{sta,net,chan,loc[16],rate,oldest,*samples,nsamp}
 csnhypodbp_locate.h:29 CsnhypodbpMagOut{ml,mwp,mb,ms[32]}
 csnhypodbp_station.h:32-52 DEV_STATION{szStation/Channel/NetID/Location,dLat,dLon,EwGuiTrace*,fetched,picks[],pickcap}
 csnhypodbp_trace.h:20-37 CsnhypodbpTracePick{sta,chan,phase,origin,t} + CsnhypodbpPickCap
@@ -939,7 +939,7 @@ BPQ_MAXIMIZE_MS=<n>             → n ciclos maximizar/des-maximizar y salir (te
 > Son **contratos**, no implementación. Los nombres de structs de datos reutilizados
 > (`CsnhypodbpSolution`, `CsnhypodbpStaRow`, `CsnhypodbpMagRow`, `CsnhypodbpPreviewVals`,
 > `CsnhypodbpMapPt`, `CsnhypodbpFrame`, `EwGuiTrace`, `EwGui*Row`, `EwGuiSearchFilter`,
-> `CsnhypodbpSearch`, `CsnhypodbpManualPick`, `CsnhypodbpTankTrace`, `CsnhypodbpMagOut`,
+> `CsnhypodbpSearch`, `CsnhypodbpManualPick`, `CsnhypodbpTrace`, `CsnhypodbpMagOut`,
 > `CsnhypodbpPickFilter`, `CsnhypodbpMagOvrRow`, `CsnhypodbpLocateStageFn`) son los **ya existentes** en
 > los headers de la lista blanca; el port no los redefine.
 
@@ -1086,7 +1086,7 @@ const char *bpq_scene_name(BpqScene s);
 typedef struct {
   CsnhypodbpSolution   base;
   CsnhypodbpManualPick mp[256];   int nmp;
-  CsnhypodbpTankTrace  tank[256]; int ntank;
+  CsnhypodbpTrace  trace[256]; int ntr;
   CsnhypodbpMagOvrRow  ovr[64];   int novr;
   unsigned kind_mask;  double fix_depth_km;  int timeout_s;
   char selected[32];   char tmp_root[256];   char ew_params[256], ew_home[128], ew_version[32];

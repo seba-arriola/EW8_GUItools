@@ -11,7 +11,7 @@ Qué garantiza el grafo exportado (contrato con pickml_engine_onnx.c):
     salida   : float32[B, 6000, 3]   (prob P, prob S, prob detección) por muestra
 
 La normalización (norm="std" de EQTransformer) viaja DENTRO del grafo: pickml
-pasa las muestras CRUDAS del tank/store y no filtra ni normaliza. El blinding,
+pasa las muestras CRUDAS del trace/store y no filtra ni normaliza. El blinding,
 el solape y los umbrales NO están en el grafo: los hace el C.
 
 Uso típico (entorno aparte, con torch + seisbench + onnx):
@@ -25,10 +25,10 @@ Uso típico (entorno aparte, con torch + seisbench + onnx):
 Y para dejar el fixture dorado del gate (una ventana real de 60 s):
 
     python3 tools/export_onnx.py --out /ruta/eqt.onnx \
-        --fixture-tank /ruta/dia.tank --fixture-t0 1700000000 \
+        --fixture-trace /ruta/dia.trace --fixture-t0 1700000000 \
         --fixture-dir test/fixtures
 
-`test/fixtures/win1.tank` + `win1.ref.p.f32` + `win1.ref.s.f32` permiten que
+`test/fixtures/win1.traces` + `win1.ref.p.f32` + `win1.ref.s.f32` permiten que
 `make check-engine` compare el C contra esta referencia.
 """
 
@@ -135,7 +135,7 @@ def export(model, out, opset, layout, arch, order=(1, 2, 0)):
         """Fija el contrato: [B,3,T] -> [B,T,3] = (P,S,detección).
 
         Aplica la normalización estándar de SeisBench (`annotate_batch_pre`).
-        Sin ella el modelo ve CUENTAS CRUDAS del tank/store y las curvas salen
+        Sin ella el modelo ve CUENTAS CRUDAS del trace/store y las curvas salen
         mal: medido en el sismo de CX.PB15, P=0.446 en vez de 0.924 y el arribo
         S etiquetado como P (P=0.339 sobre S=0.207).
         """
@@ -192,8 +192,8 @@ def verify(onnx_path, wrapper):
 
 # --------------------------------------------------------------------- fixture
 
-def read_tank(path):
-    """Itera (header, muestras) de un tank TRACE2_HEADER + int32."""
+def read_traces(path):
+    """Itera (header, muestras) de un trace TRACE2_HEADER + int32."""
     with open(path, "rb") as f:
         while True:
             raw = f.read(HEADER.size)
@@ -214,7 +214,7 @@ def read_tank(path):
             }
 
 
-def write_tank(path, recs):
+def write_traces(path, recs):
     with open(path, "wb") as f:
         for r in recs:
             n = len(r["x"])
@@ -227,7 +227,7 @@ def write_tank(path, recs):
             f.write(struct.pack(f"<{n}i", *r["x"]))
 
 
-def build_fixture(tank, t0, wrapper, outdir, prefix="win1"):
+def build_fixture(trace, t0, wrapper, outdir, prefix="win1"):
     """Extrae una ventana 3C completa y su referencia P/S de PyTorch.
 
     Alinea por TIEMPO, no por orden de lectura: en un stream real cada
@@ -240,7 +240,7 @@ def build_fixture(tank, t0, wrapper, outdir, prefix="win1"):
     grid = {c: [None] * WINDOW for c in "ZNE"}
     got = {c: 0 for c in "ZNE"}
 
-    for r in read_tank(tank):
+    for r in read_traces(trace):
         key = r["chan"][-1]
         if key not in grid:
             continue
@@ -255,7 +255,7 @@ def build_fixture(tank, t0, wrapper, outdir, prefix="win1"):
     if missing:
         raise RuntimeError(
             f"la ventana no cubre {WINDOW} muestras de {missing} "
-            f"(cobertura {got}) en {tank}")
+            f"(cobertura {got}) en {trace}")
 
     zne = np.stack([np.asarray(grid[c], dtype=np.float32) for c in "ZNE"])
     with torch.no_grad():
@@ -266,12 +266,12 @@ def build_fixture(tank, t0, wrapper, outdir, prefix="win1"):
     sta = "TEST"
     recs = [{"t0": t0, "sta": sta, "net": "XX", "loc": "--",
              "chan": "HH" + c, "x": grid[c]} for c in "ZNE"]
-    write_tank(os.path.join(outdir, prefix + ".tank"), recs)
+    write_traces(os.path.join(outdir, prefix + ".trace"), recs)
 
     # float32 por curva, sin cabecera: lo lee test/test_engine.sh
     ref[:, 0].astype("<f4").tofile(os.path.join(outdir, prefix + ".ref.p.f32"))
     ref[:, 1].astype("<f4").tofile(os.path.join(outdir, prefix + ".ref.s.f32"))
-    print(f"fixture: {outdir}/{prefix}.tank + {prefix}.ref.{{p,s}}.f32 "
+    print(f"fixture: {outdir}/{prefix}.trace + {prefix}.ref.{{p,s}}.f32 "
           f"(P max {ref[:,0].max():.3f} en {int(ref[:,0].argmax())}, "
           f"S max {ref[:,1].max():.3f} en {int(ref[:,1].argmax())})")
 
@@ -292,7 +292,7 @@ def main():
                     help="orden de clases de PhaseNet; auto lo detecta del modelo")
     ap.add_argument("--window", type=int, default=None,
                     help="muestras por ventana (default: la nativa del modelo)")
-    ap.add_argument("--fixture-tank", help="tank del que extraer la ventana dorada")
+    ap.add_argument("--fixture-trace", help="trace del que extraer la ventana dorada")
     ap.add_argument("--fixture-t0", type=float, help="epoch de inicio de la ventana")
     ap.add_argument("--fixture-dir", default="test/fixtures")
     ap.add_argument("--fixture-prefix", default=None)
@@ -360,11 +360,11 @@ def main():
     if diff is not None:
         print(f"max|onnx - torch| = {diff:.3e}")
 
-    if args.fixture_tank:
+    if args.fixture_trace:
         if args.fixture_t0 is None:
-            sys.exit("--fixture-tank requiere --fixture-t0")
+            sys.exit("--fixture-trace requiere --fixture-t0")
         prefix = args.fixture_prefix or ("win1" if args.arch == "eqt" else "pn1")
-        build_fixture(args.fixture_tank, args.fixture_t0, wrapper,
+        build_fixture(args.fixture_trace, args.fixture_t0, wrapper,
                       args.fixture_dir, prefix)
 
 

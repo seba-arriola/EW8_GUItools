@@ -37,7 +37,7 @@ $(TARGET): $(OBJS)
 
 TESTS = test/test_filter test/test_stalta test/test_aic \
         test/test_polarization test/test_quality test/test_ring3c \
-        test/test_report test/test_sta_list test/gen_tank
+        test/test_report test/test_sta_list test/gen_traces
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -77,11 +77,11 @@ test/test_report: test/test_report.c report.o picks_ref.o
 test/test_sta_list: test/test_sta_list.c sta_list.o
 	$(CC) $(CFLAGS) -o $@ test/test_sta_list.c sta_list.o $(LIBS)
 
-test/gen_tank: test/gen_tank.c
-	$(CC) $(CFLAGS) -o $@ test/gen_tank.c $(LIBS)
+test/gen_traces: test/gen_traces.c
+	$(CC) $(CFLAGS) -o $@ test/gen_traces.c $(LIBS)
 
 # Test integrado del modo offline (determinista, sin anillos ni Earthworm).
-check-offline: $(TARGET) test/gen_tank
+check-offline: $(TARGET) test/gen_traces
 	sh ./test/test_offline.sh
 
 clean:

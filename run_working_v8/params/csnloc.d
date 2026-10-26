@@ -59,7 +59,7 @@ PhaseWeightS      0.8
 
 # --- Cómputo ---
 NumThreads        8              # hilos de la retroproyeccion. Medido sobre 25
-                                 # tanks: 1->152s, 4->86s, 8->71s, 16->65s. El
+                                 # hilos: 1->152s, 4->86s, 8->71s, 16->65s. El
                                  # techo es 2.34x (RefineHypo y DBSCAN son
                                  # seriales), asi que 8 es el punto dulce.
 RefineIterations  3

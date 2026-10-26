@@ -51,7 +51,7 @@ int wstore_segment_path(char *buf, size_t n, const char *root, const char *sta,
     if (!buf) return -1;
     if (wstore_scnl_dir(dir, sizeof(dir), root, sta, net, loc, chan) != 0) return -1;
     if (wstore_day_of(t_epoch, day, sizeof(day)) != 0) return -1;
-    r = snprintf(buf, n, "%s/%s.tank", dir, day);
+    r = snprintf(buf, n, "%s/%s.ws", dir, day);
     return (r > 0 && (size_t)r < n) ? 0 : -1;
 }
 
@@ -65,7 +65,7 @@ void wstore_trace_free(WStoreTrace *t)
 
 typedef struct {
     WStoreIdxEnt e;
-    char         tank[1300];
+    char         path[1300];
 } WMatch;
 
 static int cmp_match(const void *a, const void *b)
@@ -94,19 +94,19 @@ int wstore_get(WStore *s, const char *sta, const char *net, const char *chan,
     if (!dp) return 1;   /* sin datos */
 
     while ((de = readdir(dp)) != NULL) {
-        char          tankp[1400], idxp[1400], *dot;
+        char          segpath[1400], idxp[1400], *dot;
         int           tfd, ifd;
         WStoreIdxHdr  h;
         int64_t       f = -1, l = -1, i;
 
         if (!wstore_seg_overlaps(de->d_name, t0, t1)) continue;
-        snprintf(tankp, sizeof(tankp), "%s/%s", dir, de->d_name);
+        snprintf(segpath, sizeof(segpath), "%s/%s", dir, de->d_name);
         snprintf(idxp, sizeof(idxp), "%s/%s", dir, de->d_name);
         dot = strrchr(idxp, '.');
         if (!dot) continue;
         strcpy(dot, ".idx");
 
-        tfd = open(tankp, O_RDONLY);
+        tfd = open(segpath, O_RDONLY);
         if (tfd < 0) continue;
         ifd = open(idxp, O_RDONLY);
         if (ifd < 0) { close(tfd); continue; }
@@ -128,7 +128,7 @@ int wstore_get(WStore *s, const char *sta, const char *net, const char *chan,
                 m = tmp;
             }
             m[nm].e = e;
-            snprintf(m[nm].tank, sizeof(m[nm].tank), "%s", tankp);
+            snprintf(m[nm].path, sizeof(m[nm].path), "%s", segpath);
             nm++;
         }
         close(tfd);
@@ -156,7 +156,7 @@ int wstore_get(WStore *s, const char *sta, const char *net, const char *chan,
         int           fd;
         TRACE2_HEADER hh;
         int32_t      *sm = NULL;
-        fd = open(m[k].tank, O_RDONLY);
+        fd = open(m[k].path, O_RDONLY);
         if (fd < 0) continue;
         if (wstore_read_record(fd, m[k].e.offset, &hh, &sm) == 0) {
             for (int j = 0; j < hh.nsamp; j++) {
@@ -248,11 +248,11 @@ int wstore_prune_ex(WStore *s, long keep_days, unsigned flags, WStorePruneStats 
             int        i, y, mo, d, ok = 1;
             struct tm  ft, chk;
             time_t     day;
-            /* Nombre EXACTO `YYYYMMDD.tank` con una fecha REAL. Un `sscanf` a
+            /* Nombre EXACTO `YYYYMMDD.ws` con una fecha REAL. Un `sscanf` a
              * secas daba 3 aciertos con cola (`20260101.txt`), con 7 digitos
-             * (`2026010.tank`), o con una fecha imposible (`20260100.tank`), y
+             * (`2026010.ws`), o con una fecha imposible (`20260100.ws`), y
              * `timegm` normaliza lo imposible, asi que los tres se borraban. */
-            if (strlen(nm) != 13 || strcmp(nm + 8, ".tank") != 0) continue;
+            if (strlen(nm) != 11 || strcmp(nm + 8, ".ws") != 0) continue;
             for (i = 0; i < 8; i++) if (nm[i] < '0' || nm[i] > '9') ok = 0;
             if (!ok) continue;
             if (sscanf(nm, "%4d%2d%2d", &y, &mo, &d) != 3) continue;
@@ -269,7 +269,7 @@ int wstore_prune_ex(WStore *s, long keep_days, unsigned flags, WStorePruneStats 
                 char p[1500], ip[1500];
                 snprintf(p, sizeof(p), "%s/%s", dir, fe->d_name);
                 snprintf(ip, sizeof(ip), "%s/%.8s.idx", dir, fe->d_name);
-                prune_one(p,  dry, &c.tanks_removed, &c.bytes_freed);
+                prune_one(p,  dry, &c.segments_removed, &c.bytes_freed);
                 prune_one(ip, dry, &c.idx_removed,   &c.bytes_freed);
             }
         }

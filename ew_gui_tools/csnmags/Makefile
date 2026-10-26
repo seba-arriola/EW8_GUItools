@@ -2,7 +2,7 @@
 #
 # Motor de magnitudes ML/Mwp/Mb/Ms. Módulo C nativo con dos modos (argv):
 #   csnmags <csnmags.d>                                   -> anillo
-#   csnmags <csnmags.d> <hypos.jsonl> <tank> [--out F]    -> offline
+#   csnmags <csnmags.d> <hypos.jsonl> <traces> [--out F]    -> offline
 #
 # Respuesta instrumental autocontenida (lector PZ + FFT propia): no enlaza
 # transfer.o. Enlaza contra libew_mt.a como el resto de los csn*.
@@ -54,7 +54,7 @@ ewgui_sds.o: ../common/src/ewgui_sds.c
 
 # ---- tests headless (sin anillos ni Earthworm en ejecución) ----
 TESTS = test/test_formula test/test_amp test/test_pz test/test_config \
-        test/test_event_key test/gen_tank test/gen_hypos
+        test/test_event_key test/gen_traces test/gen_hypos
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -83,13 +83,13 @@ test/test_config: test/test_config.c mag_config.o
 test/test_event_key: test/test_event_key.c mag_key.o
 	$(CC) $(CFLAGS) -o $@ test/test_event_key.c mag_key.o $(LIBS)
 
-test/gen_tank: test/gen_tank.c
-	$(CC) $(CFLAGS) -o $@ test/gen_tank.c $(LIBS)
+test/gen_traces: test/gen_traces.c
+	$(CC) $(CFLAGS) -o $@ test/gen_traces.c $(LIBS)
 
 test/gen_hypos: test/gen_hypos.c
 	$(CC) $(CFLAGS) -o $@ test/gen_hypos.c $(LIBS)
 
-check-offline: $(TARGET) test/gen_tank test/gen_hypos
+check-offline: $(TARGET) test/gen_traces test/gen_hypos
 	sh ./test/test_offline.sh
 
 clean:

@@ -86,7 +86,7 @@ int wstore_index_lookup(const WStoreIdxHdr *h, int fd, double t0, double t1,
     return 1;
 }
 
-int wstore_index_rebuild(const char *tank_path, const char *idx_path)
+int wstore_index_rebuild(const char *seg_path, const char *idx_path)
 {
     FILE       *tf;
     int         fd;
@@ -95,9 +95,9 @@ int wstore_index_rebuild(const char *tank_path, const char *idx_path)
     int64_t     off = 0;
     double      last_start = -1.0;
 
-    tf = fopen(tank_path, "rb");
+    tf = fopen(seg_path, "rb");
     if (!tf) return -1;
-    if (stat(tank_path, &st) != 0) { fclose(tf); return -1; }
+    if (stat(seg_path, &st) != 0) { fclose(tf); return -1; }
 
     fd = open(idx_path, O_RDWR | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) { fclose(tf); return -1; }

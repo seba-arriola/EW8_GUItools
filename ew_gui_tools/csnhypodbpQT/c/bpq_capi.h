@@ -48,7 +48,7 @@ extern "C" {
 #include "csnhypodbp_preview.h"   /* CsnhypodbpPreviewVals */
 #include "csnhypodbp_search.h"    /* CsnhypodbpSearch */
 #include "csnhypodbp_manual.h"    /* CsnhypodbpManualPick */
-#include "csnhypodbp_locate.h"    /* CsnhypodbpTankTrace / MagOut / locate_run */
+#include "csnhypodbp_locate.h"    /* CsnhypodbpTrace / MagOut / locate_run */
 #ifdef __cplusplus
 #  undef slots
 #  define slots Q_SLOTS            /* restaurar el macro de Qt */
@@ -648,17 +648,17 @@ typedef struct {
     CsnhypodbpMagOut   mag;
 } BpqLocateOut;
 
-/* Rellena un CsnhypodbpTankTrace con las muestras CRUDAS de la traza (el tank
+/* Rellena un CsnhypodbpTrace con las muestras CRUDAS de la traza (el trace
  * es lo que consume csnmags y el refinador: nada de filtros de vista). */
-int bpq_trace_tank(const BpqTrace *t, const char *sta, const char *net,
+int bpq_trace_copy(const BpqTrace *t, const char *sta, const char *net,
                    const char *chan, const char *loc,
-                   CsnhypodbpTankTrace *out);
+                   CsnhypodbpTrace *out);
 
 /* --- magnitudes (fase 6) -------------------------------------------------- *
- * La cadena es la del modulo: hypos.jsonl de magnitudes + tank + `csnmags --out`
+ * La cadena es la del modulo: hypos.jsonl de magnitudes + trace + `csnmags --out`
  * (csnhypodbp_mag_run), con las ventanas y puertas de MagConfigFile. */
 int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
-                const CsnhypodbpTankTrace *tank, int ntank,
+                const CsnhypodbpTrace *trace, int ntr,
                 const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                 CsnhypodbpMagOut *out, char *err, size_t errn);
 
@@ -680,6 +680,10 @@ typedef struct BpqMagPanel BpqMagPanel;
 
 /* Una banda del canvas de magnitudes: la traza de UN canal de la estacion. */
 #define BPQ_MAG_MAX_TRACES 16   /* = filas maximas de bpq_stations_chan_rows */
+
+/* Tope de trazas que se bajan para el trace de magnitudes/locate. Una por
+ * (estacion, canal): vertical para Mwp/Mb/Ms y horizontales para ML. */
+#define BPQ_TRACE_MAX 192
 
 typedef struct {
     const BpqTrace *tr;        /* NULL = sin datos para este canal */
@@ -751,6 +755,13 @@ int  bpq_magrows_filter_in_range(const CsnhypodbpMagRow *in, int n,
  * (ancla, magnitud), que es el formato de `WindowOverridesFile`. */
 int  bpq_magpanel_ovr(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
                       unsigned kind_mask, CsnhypodbpMagOvrRow *out, int max);
+
+/* Ventana de traza que hay que pedir para (estacion, magnitud): la del .d
+ * (csnhypodbp_magcfg_window) o la ajustada a mano en `ovr`, mas margen para
+ * cubrir el recorte de csnmags. `kind` es 0=ML..3=Ms. 1 OK, 0 sin P efectiva. */
+int  bpq_magpanel_req_window(const BpqMagPanel *p, const CsnhypodbpStaRow *row,
+                             int kind, const CsnhypodbpMagOvrRow *ovr, int novr,
+                             double *t0, double *seconds);
 int  bpq_magpanel_ovr_write(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                             int n, const char *path);
 
@@ -885,7 +896,7 @@ int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
                    const int (*pick_on)[2],
                    int auto_on, int manual_on, int theo_on,
                    double fix_depth_km,
-                   const CsnhypodbpTankTrace *tank, int ntank,
+                   const CsnhypodbpTrace *trace, int ntr,
                    BpqLocateOut *out, volatile int *cancel,
                    char *err, size_t errn);
 

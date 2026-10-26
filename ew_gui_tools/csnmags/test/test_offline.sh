@@ -1,6 +1,6 @@
 #!/bin/sh
 # test_offline.sh - test integrado determinista del modo offline de csnmags.
-# No arranca anillos ni Earthworm: genera un tank y un hypos.jsonl sintéticos.
+# No arranca anillos ni Earthworm: genera un trace y un hypos.jsonl sintéticos.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -12,11 +12,11 @@ for s in TST1 TST2; do
 done
 
 ./test/gen_hypos test/tmp/hypos.jsonl
-./test/gen_tank  test/tmp/test.tank
+./test/gen_traces  test/tmp/test.traces
 
-./csnmags test/csnmags_test.d test/tmp/hypos.jsonl test/tmp/test.tank \
+./csnmags test/csnmags_test.d test/tmp/hypos.jsonl test/tmp/test.traces \
     --out test/tmp/out1.jsonl > test/tmp/log1.txt
-./csnmags test/csnmags_test.d test/tmp/hypos.jsonl test/tmp/test.tank \
+./csnmags test/csnmags_test.d test/tmp/hypos.jsonl test/tmp/test.traces \
     --out test/tmp/out2.jsonl > test/tmp/log2.txt
 
 if ! diff -q test/tmp/out1.jsonl test/tmp/out2.jsonl >/dev/null; then

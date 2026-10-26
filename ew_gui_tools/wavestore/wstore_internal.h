@@ -27,7 +27,7 @@ typedef struct {
     double  start;         /* epoch de la primera muestra */
     double  end;           /* epoch de la ultima muestra  */
     double  rate;          /* Hz                          */
-    int64_t offset;        /* offset del registro en el .tank */
+    int64_t offset;        /* offset del registro en el .ws */
     int32_t nsamp;
     int32_t reserved;
 } WStoreIdxEnt;
@@ -40,8 +40,8 @@ int  wstore_index_ent_write(int fd, int64_t i, const WStoreIdxEnt *e);
 /* 1 = hay rango [*first,*last], 0 = sin datos, <0 error. */
 int  wstore_index_lookup(const WStoreIdxHdr *h, int fd, double t0, double t1,
                          int64_t *first, int64_t *last);
-/* Reescribe el .idx escaneando el .tank. 0 OK. */
-int  wstore_index_rebuild(const char *tank_path, const char *idx_path);
+/* Reescribe el .idx escaneando el .ws. 0 OK. */
+int  wstore_index_rebuild(const char *seg_path, const char *idx_path);
 
 /* --- I/O de registros y rutas (wstore_io.c) ----------------------------- */
 long wstore_record_size(int32_t nsamp);
@@ -49,7 +49,7 @@ int  wstore_read_record(int fd, int64_t offset, TRACE2_HEADER *h, int32_t **samp
 /* Normaliza las muestras crudas de un registro a int32.
  * 0 OK (*out malloc), 1 datatype no soportado, <0 error. */
 int  wstore_normalize_samples(const TRACE2_HEADER *h, const void *raw, int32_t **out);
-int  wstore_append_record(FILE *tank, int64_t at, const TRACE2_HEADER *h,
+int  wstore_append_record(FILE *seg, int64_t at, const TRACE2_HEADER *h,
                           const int32_t *samples, int64_t *new_size);
 int  wstore_scnl_dir(char *buf, size_t n, const char *root, const char *sta,
                      const char *net, const char *loc, const char *chan);

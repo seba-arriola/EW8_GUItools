@@ -15,7 +15,7 @@ static int failures = 0;
 static char g_root[64];
 
 /*
- * Contrato de `wstore_prune` (wstore.c): borra los segmentos `YYYYMMDD.tank`
+ * Contrato de `wstore_prune` (wstore.c): borra los segmentos `YYYYMMDD.ws`
  * (y su `.idx`) anteriores a la medianoche UTC de hoy menos `keep_days` dias.
  * El test calcula los dias con el MISMO reloj y la MISMA regla (UTC), nunca con
  * fechas fijas: tiene que valer cualquier dia del ano.
@@ -45,7 +45,7 @@ static void make_seg(const char *scnl, int days_ago)
     FILE *f;
 
     dayname(day, sizeof(day), days_ago);
-    snprintf(p, sizeof(p), "%s/%s/%s.tank", g_root, scnl, day);
+    snprintf(p, sizeof(p), "%s/%s/%s.ws", g_root, scnl, day);
     f = fopen(p, "w"); if (f) { fputs("wxyz", f); fclose(f); }
     snprintf(p, sizeof(p), "%s/%s/%s.idx", g_root, scnl, day);
     f = fopen(p, "w"); if (f) { fputs("wxyz", f); fclose(f); }
@@ -128,12 +128,12 @@ int main(void)
 
     /* El dia del corte (7 dias atras) NO se borra; del 8 en adelante, si. */
     for (k = 0; k <= 7; k++) {
-        CHECK(seg_exists(SCNL0, k, "tank"));
+        CHECK(seg_exists(SCNL0, k, "ws"));
         CHECK(seg_exists(SCNL0, k, "idx"));
     }
     for (k = 8; k <= 10; k++) {
-        CHECK(!seg_exists(SCNL0, k, "tank"));
-        CHECK(!seg_exists(SCNL0, k, "idx"));   /* CA3: el .idx se va con el .tank */
+        CHECK(!seg_exists(SCNL0, k, "ws"));
+        CHECK(!seg_exists(SCNL0, k, "idx"));   /* CA3: el .idx se va con el .ws */
     }
 
     /* CA5: un rango que cae entero en dias borrados = "sin datos" (1), no error. */
@@ -144,19 +144,19 @@ int main(void)
     if (tr.samples) wstore_trace_free(&tr);
     wstore_close(s);
 
-    /* --- CA4: nada que no sea exactamente `YYYYMMDD.tank` (fecha real) ---- */
+    /* --- CA4: nada que no sea exactamente `YYYYMMDD.ws` (fecha real) ---- */
     {
         char old[64];
         dayname(old, sizeof(old), 9);
-        touch_rel("CX.ST00.--.HHZ/notatank.tank");
+        touch_rel("CX.ST00.--.HHZ/notaseg.ws");
         touch_rel("CX.ST00.--.HHZ/20260101.txt");
         touch_rel("CX.ST00.--.HHZ/LEEME");
-        touch_rel("CX.ST00.--.HHZ/2026010.tank");        /* 7 digitos */
-        touch_rel("CX.ST00.--.HHZ/20260100.tank");       /* dia 00: timegm normaliza */
-        touch_rel("CX.ST00.--.HHZ/20260231.tank");       /* 31 de febrero */
-        touch_rel("CX.ST00.--.HHZ/20261301.tank");       /* mes 13 */
-        touch_rel("CX.ST00.--.HHZ/202610160.tank");      /* 9 digitos */
-        touch_rel("CX.ST00.--.HHZ/20261016.tank.bak");   /* respaldo, no segmento */
+        touch_rel("CX.ST00.--.HHZ/2026010.ws");        /* 7 digitos */
+        touch_rel("CX.ST00.--.HHZ/20260100.ws");       /* dia 00: timegm normaliza */
+        touch_rel("CX.ST00.--.HHZ/20260231.ws");       /* 31 de febrero */
+        touch_rel("CX.ST00.--.HHZ/20261301.ws");       /* mes 13 */
+        touch_rel("CX.ST00.--.HHZ/202610160.ws");      /* 9 digitos */
+        touch_rel("CX.ST00.--.HHZ/20261016.ws.bak");   /* respaldo, no segmento */
         char rel[256];
         snprintf(rel, sizeof(rel), "%s/%s.idx", SCNL0, old);   /* .idx huerfano */
         touch_rel(rel);
@@ -165,15 +165,15 @@ int main(void)
         CHECK(wstore_prune(s, 7) == 0);
         wstore_close(s);
 
-        CHECK(rel_exists("CX.ST00.--.HHZ/notatank.tank"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/notaseg.ws"));
         CHECK(rel_exists("CX.ST00.--.HHZ/20260101.txt"));
         CHECK(rel_exists("CX.ST00.--.HHZ/LEEME"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/2026010.tank"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/20260100.tank"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/20260231.tank"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/20261301.tank"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/202610160.tank"));
-        CHECK(rel_exists("CX.ST00.--.HHZ/20261016.tank.bak"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/2026010.ws"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/20260100.ws"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/20260231.ws"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/20261301.ws"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/202610160.ws"));
+        CHECK(rel_exists("CX.ST00.--.HHZ/20261016.ws.bak"));
         CHECK(rel_exists(rel));
     }
 
@@ -190,7 +190,7 @@ int main(void)
         wstore_close(s);
 
         for (k = 20; k <= 30; k++) {
-            CHECK(seg_exists(SCNL1, k, "tank"));
+            CHECK(seg_exists(SCNL1, k, "ws"));
             CHECK(seg_exists(SCNL1, k, "idx"));
         }
     }
@@ -211,30 +211,30 @@ int main(void)
 
         /* CA6: el dry-run cuenta lo mismo y NO borra nada */
         CHECK(wstore_prune_ex(s, 7, WSTORE_PRUNE_DRY_RUN, &dry) == 0);
-        CHECK(dry.tanks_removed == 6);
+        CHECK(dry.segments_removed == 6);
         CHECK(dry.idx_removed == 6);
         CHECK(dry.bytes_freed == 48);                        /* 6 x (4+4) bytes */
-        for (k = 0; k <= 5; k++) CHECK(seg_exists(SCNL0, k + 30, "tank"));
+        for (k = 0; k <= 5; k++) CHECK(seg_exists(SCNL0, k + 30, "ws"));
 
         /* CA3: la purga real da el MISMO conteo y ahora si borra */
         CHECK(wstore_prune_stats(s, 7, &st) == 0);
-        CHECK(st.tanks_removed == dry.tanks_removed);
+        CHECK(st.segments_removed == dry.segments_removed);
         CHECK(st.idx_removed == dry.idx_removed);
         CHECK(st.bytes_freed == dry.bytes_freed);
         for (k = 0; k <= 5; k++) {
-            CHECK(!seg_exists(SCNL0, k + 30, "tank"));
+            CHECK(!seg_exists(SCNL0, k + 30, "ws"));
             CHECK(!seg_exists(SCNL0, k + 30, "idx"));
         }
 
         /* Sin nada que borrar el conteo queda a cero */
         CHECK(wstore_prune_stats(s, 7, &st) == 0);
-        CHECK(st.tanks_removed == 0 && st.idx_removed == 0 && st.bytes_freed == 0);
+        CHECK(st.segments_removed == 0 && st.idx_removed == 0 && st.bytes_freed == 0);
 
         /* keep_days <= 0 no borra ni cuenta */
         make_seg(SCNL0, 40);
         CHECK(wstore_prune_stats(s, 0, &st) == 0);
-        CHECK(st.tanks_removed == 0 && st.idx_removed == 0);
-        CHECK(seg_exists(SCNL0, 40, "tank"));
+        CHECK(st.segments_removed == 0 && st.idx_removed == 0);
+        CHECK(seg_exists(SCNL0, 40, "ws"));
         wstore_close(s);
 
         rm_tree(r2);

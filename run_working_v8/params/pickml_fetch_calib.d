@@ -4,7 +4,7 @@
 #   cd run_working_v8/params
 #   pickml_fetch pickml_fetch_calib.d --event <event_id> --out ../pickml/calib/<event_id>
 #
-# Escribe en <out>: event.tank, picks_ref.csv, stations.sta, meta.json.
+# Escribe en <out>: event.traces, picks_ref.csv, stations.sta, meta.json.
 # `stations.sta` trae los canales EXACTOS del evento: usarlo como StaFile evita
 # el desajuste histórico de HHZ/BHZ.
 

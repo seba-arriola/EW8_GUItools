@@ -1,6 +1,6 @@
-/* gen_tank.c — genera un tank sintético 3C con un arribo S conocido.        *
+/* gen_traces.c — genera un trace sintético 3C con un arribo S conocido.        *
  *                                                                            *
- * Uso: gen_tank <out.tank> <STA> <NET> <LOC> <ChanE> <ChanN> <ChanZ>         */
+ * Uso: gen_traces <out.traces> <STA> <NET> <LOC> <ChanE> <ChanN> <ChanZ>         */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     int32_t *d;
 
     if (argc != 8) {
-        fprintf(stderr, "Uso: %s <out.tank> <STA> <NET> <LOC> <ChanE> <ChanN> <ChanZ>\n", argv[0]);
+        fprintf(stderr, "Uso: %s <out.traces> <STA> <NET> <LOC> <ChanE> <ChanN> <ChanZ>\n", argv[0]);
         return 1;
     }
     out = argv[1];

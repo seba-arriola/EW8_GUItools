@@ -88,3 +88,9 @@ NllMaxPending   64
 # la banda y, con un LOCGRID gigante (el modelo fusionado de todo Chile), el
 # octree NO converge. 0 = usar el LOCGRID de la plantilla tal cual.
 LocGridKm       600.0
+
+# Busqueda OCT. La plantilla 3D de /mnt/d trae 96x48x6 celdas iniciales,
+# min_node 0.05 km y stop=0: 27.648 nodos por fase (minutos con 9-20 fases).
+# 24x24x6 con min_node 1.5 km (la resolucion del grid 3D) y stop=1 baja a
+# decenas de segundos; el benchmark valida que la solucion no cambie.
+LocSearch       OCT 24 24 6 1.5 20000 1000 0 1

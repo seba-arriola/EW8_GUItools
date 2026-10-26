@@ -29,7 +29,7 @@ run_working_v8/csnhypodbp/
 run_working_v8/csnhypodbpqt/
 run_working_v8/csnwphase/
 run_working_v8/pickml_live/
-# Salidas y corpus de calibración de pickml (tanks + curvas volcadas, cientos de MB)
+# Salidas y corpus de calibración de pickml (traces + curvas volcadas, cientos de MB)
 run_working_v8/pickml/
 run_working_v8/params/db.env
 
@@ -86,8 +86,8 @@ run_working_v8/params/db.env
 /ew_8.0/bin/wstore_ingest
 /ew_8.0/bin/pickml
 /ew_8.0/bin/pickml_fetch
-/ew_8.0/bin/tank2store
-/ew_8.0/bin/store2tank
+/ew_8.0/bin/wstore_import
+/ew_8.0/bin/wstore_export
 /ew_8.0/bin/wstore_query
 /ew_8.0/bin/wstore_prune
 /ew_8.0/bin/csnhypodbpQT
@@ -121,14 +121,14 @@ run_working_v8/params/db.env
 /ew_gui_tools/common/build/
 /ew_gui_tools/pickS/pickS
 /ew_gui_tools/pickS/test/test_*
-/ew_gui_tools/pickS/test/gen_tank
+/ew_gui_tools/pickS/test/gen_traces
 !/ew_gui_tools/pickS/test/test_*.c
 !/ew_gui_tools/pickS/test/test_*.sh
 # pickml: binario, tests y el tmp del arnés offline (fixtures generadas)
 /ew_gui_tools/pickml/pickml
 /ew_gui_tools/pickml/pickml_fetch
 /ew_gui_tools/pickml/test/test_*
-/ew_gui_tools/pickml/test/gen_tank
+/ew_gui_tools/pickml/test/gen_traces
 /ew_gui_tools/pickml/test/tmp/
 /ew_gui_tools/pickml/test/tmp_sds/
 !/ew_gui_tools/pickml/test/test_*.c
@@ -199,5 +199,5 @@ tmp/
 /ew_gui_tools/csnmags/test/test_amp
 /ew_gui_tools/csnmags/test/test_pz
 /ew_gui_tools/csnmags/test/test_config
-/ew_gui_tools/csnmags/test/gen_tank
+/ew_gui_tools/csnmags/test/gen_traces
 /ew_gui_tools/csnmags/test/gen_hypos

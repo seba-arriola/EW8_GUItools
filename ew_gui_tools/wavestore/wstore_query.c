@@ -35,12 +35,12 @@ int main(int argc, char **argv)
         dp = opendir(dir);
         if (!dp) continue;
         while ((de = readdir(dp)) != NULL) {
-            char         idxp[1700], tankp[1700], *dot;
+            char         idxp[1700], segpath[1700], *dot;
             int          ifd;
             WStoreIdxHdr h;
-            if (strstr(de->d_name, ".tank") == NULL) continue;
+            if (strstr(de->d_name, ".ws") == NULL) continue;
             snprintf(idxp, sizeof(idxp), "%s/%s", dir, de->d_name);
-            snprintf(tankp, sizeof(tankp), "%s/%s", dir, de->d_name);
+            snprintf(segpath, sizeof(segpath), "%s/%s", dir, de->d_name);
             dot = strrchr(idxp, '.');
             if (!dot) continue;
             strcpy(dot, ".idx");
@@ -57,7 +57,7 @@ int main(int argc, char **argv)
                 }
             }
             close(ifd);
-            (void)tankp;
+            (void)segpath;
         }
         closedir(dp);
         printf("  %-24s records=%-8ld span=[%.3f, %.3f]\n", scnls[i], nrec, first, last);

@@ -2,7 +2,7 @@
 
 Estado: 2026-10-20. Módulo `ew_gui_tools/pickml/` (binario `pickml`, headless, C puro).
 
-Objetivo de esta etapa: **plomería**. Conectar la entrada (EarthWorm: tank/store) y la
+Objetivo de esta etapa: **plomería**. Conectar la entrada (EarthWorm: trazas/store) y la
 salida (P y S con sus parámetros) de dos modelos deep learning, con configuración
 estándar, para que la calibración se haga después con datos y sin tocar el pipeline.
 
@@ -22,14 +22,14 @@ migración y resultados medidos) está en **`docs/DLdetalles.md`**.
 
 | pieza | estado |
 |---|---|
-| EQTransformer 6000 (ONNX) | **operativo** offline (tank y store) |
-| PhaseNet 3001 (ONNX) | **operativo** offline (tank y store), mismo binario |
+| EQTransformer 6000 (ONNX) | **operativo** offline (trazas y store) |
+| PhaseNet 3001 (ONNX) | **operativo** offline (trazas y store), mismo binario |
 | Exportador (`tools/export_onnx.py --arch eqt\|phasenet`) | operativo |
 | `WindowSamples` configurable (ventana nativa por modelo) | operativo |
 | Salidas: JSONL, `TYPE_PICK_SCNL` texto, cabecera JSON | operativo |
 | Modo live desde anillo (`SLINK_RING`) | **operativo** (archivos + publicación en `PICK_RING`) |
-| Modo live siguiendo store/tank (`Follow`) | **no implementado** |
-| `pickml_fetch` (evento de la BD → tank + referencias) | **operativo** (BD + store + SDS, con decimación) |
+| Modo live siguiendo store/trazas (`Follow`) | **no implementado** |
+| `pickml_fetch` (evento de la BD → trazas + referencias) | **operativo** (BD + store + SDS, con decimación) |
 | `tools/eval_picks.py` (recall) | **operativo** |
 | Publicación en `PICK_RING` | **activa** (`PublishRing 1`; los viejos van a `LEGACY_PICK_RING`) |
 | Espectro / filtros / magnitudes | fuera de alcance (es un picker) |
@@ -155,9 +155,9 @@ Fichero de estaciones (idéntico a `pickS.sta`):
 
 ```sh
 # tanque (un registro TRACE2_HEADER + int32 por bloque)
-pickml pickml.d --tank evento.tank
+pickml pickml.d --traces evento.traces
 
-# store indexado <root>/NET.STA.LOC.CHAN/YYYYMMDD.tank
+# store indexado <root>/NET.STA.LOC.CHAN/YYYYMMDD.ws
 pickml pickml.d --store ../wstore --t0 1792473290 --t1 1792473375
 
 # SDS de SeisComP (histórico): YYYY/NET/STA/CHAN.D
@@ -170,13 +170,13 @@ pickml pickml.d
 
 Formatos de tiempo: `YYYY-MM-DD[T ]HH:MM:SS[.mmm]`, `YYYYMMDDhhmmss`, epoch.
 
-Un registro mayor que el buffer se trocea: un tank de 60 s con ventana de 30 s no pierde el
+Un registro mayor que el buffer se trocea: un archivo de trazas de 60 s con ventana de 30 s no pierde el
 prefijo (importante para no perder P tempranas).
 
 ### 4.2 Salidas a archivo
 
 ```sh
-pickml eqt.d --tank evento.tank \
+pickml eqt.d --traces evento.traces \
     --out       evento.eqt.jsonl \
     --picks-out evento.eqt.picks.txt \
     --meta      evento.eqt.meta.json
@@ -213,7 +213,7 @@ SCNL:
 | 0 | ok / help / print-config / check-model |
 | 2 | uso o configuración |
 | 3 | dependencia o modo no implementado |
-| 4 | datos (no abre tank/store, fuente abortada) |
+| 4 | datos (no abre trazas/store, fuente abortada) |
 
 ---
 
@@ -228,7 +228,7 @@ SCNL:
 
 ---
 
-## 6. `pickml_fetch` (BD + SDS → tank) — implementado
+## 6. `pickml_fetch` (BD + SDS → trazas) — implementado
 
 Objetivo: dado un evento histórico, dejar todo lo necesario para evaluar, usando **picadas
 manuales revisadas** como referencia y ondas del store o del SDS.
@@ -237,7 +237,7 @@ manuales revisadas** como referencia y ondas del store o del SDS.
 pickml_fetch fetch.d --event <event_id> --out /tmp/cal/<evento>
 ```
 
-Salidas: `event.tank` (3C), `picks_ref.csv`
+Salidas: `event.traces` (3C), `picks_ref.csv`
 (`net,sta,loc,chan,phase,t_ref,weight,pick_status,residual_s`), `meta.json`
 (origen, hora, lat/lon/prof, algoritmo, y `source: store|sds` por estación) y,
 opcionalmente, `stations.csv` con lat/lon.
@@ -251,7 +251,7 @@ Piezas ya existentes que se reutilizan:
 | origen → picadas | `ewguidb_query_picks(db, origin_id, …)` |
 | búsqueda por tiempo | `ewguidb_search_events` |
 | ruta SDS | `ewgui_sds_path` → `<root>/YYYY/NET/STA/CHAN.D/NET.STA.LOC.CHAN.D.YYYY.DDD` |
-| escritura tank | `TRACE2_HEADER` + `int32` (`wstore_io.c` es el precedente) |
+| escritura de trazas | `TRACE2_HEADER` + `int32` (`wstore_io.c` es el precedente) |
 
 - `pick.channel` es `NET.STA.LOC.CHAN`; `pick_status` distingue `manual`/`automatic`.
 - SDS verificado en `/mnt/sds/archive` (años 2010–2026).
@@ -272,7 +272,7 @@ Piezas ya existentes que se reutilizan:
 - **Decimación**: si la estación corre a 200/400 Hz, se filtra con un Butterworth de
   2.º orden (anti-alias a 0.35·Rate) y se diezma a `Rate`. Sin esto se perdían las
   estaciones densas (C21O, V08A…).
-- El tank se escribe **intercalado por tiempo en bloques de 1 s** (E,N,Z por bloque): un
+- El archivo de trazas se escribe **intercalado por tiempo en bloques de 1 s** (E,N,Z por bloque): un
   registro gigante por componente hacía que, al llegar la segunda, el buffer de la
   estación ya hubiera avanzado y todo se descartara como "tardío".
 - Genera además `stations.sta` en el formato de `pickml`, para usarlo tal cual.
@@ -290,7 +290,7 @@ Piezas ya existentes que se reutilizan:
 ### 6.3 Salida
 
 ```
-event.tank      TRACE2_HEADER + int32, 1 s por componente, 3C por estación
+event.traces    TRACE2_HEADER + int32, 1 s por componente, 3C por estación
 picks_ref.csv   net,sta,loc,chan,phase,t_ref,weight,pick_status,residual_s
 stations.sta    PickFlag Pin Sta Net Loc ChanE ChanN ChanZ (listo para pickml)
 meta.json       evento, origen, hora, lat/lon/prof, ventana, picks, estaciones escritas
@@ -379,7 +379,7 @@ haber recortado alguna S real cerca de un P espurio de baja probabilidad: el S d
   `--publish-dry-run` cuenta sin escribir.
 - Se purga el anillo al arrancar y se descartan las trazas más viejas que
   `LiveMaxAgeSec` (120 s): arrancamos en vivo, no re-procesando historial.
-- `--ring` es excluyente con `--tank` y `--store`; `Ctrl-C`/SIGTERM cierra ordenadamente y
+- `--ring` es excluyente con `--traces` y `--store`; `Ctrl-C`/SIGTERM cierra ordenadamente y
   reescribe `RunMetaFile` con los contadores finales.
 
 **Cómo se lanzan** (una terminal por modelo; `Ctrl-C` para parar):
@@ -500,7 +500,7 @@ Regenerar los grafos y el fixture:
 ```sh
 python3 ew_gui_tools/pickml/tools/export_onnx.py --arch eqt \
     --out /mnt/d/resources/pickml/eqt.onnx \
-    --fixture-tank ew_gui_tools/pickml/test/fixtures/win1.tank \
+    --fixture-trace ew_gui_tools/pickml/test/fixtures/win1.traces \
     --fixture-t0 1792473299.558 --fixture-dir ew_gui_tools/pickml/test/fixtures
 
 python3 ew_gui_tools/pickml/tools/export_onnx.py --arch phasenet \
@@ -513,9 +513,9 @@ python3 ew_gui_tools/pickml/tools/export_onnx.py --arch phasenet \
 
 | # | tarea | estado |
 |---|---|---|
-| 1 | `pickml_fetch` (BD manuales + store/SDS → tank + CSV + meta) | **hecho**: 6/6 estaciones, 200 Hz decimado a 100 |
+| 1 | `pickml_fetch` (BD manuales + store/SDS → trazas + CSV + meta) | **hecho**: 6/6 estaciones, 200 Hz decimado a 100 |
 | 2 | `tools/eval_picks.py` (recall, sin FP) | **hecho**: 5/6 P y 5/6 S (EQT) en el primer evento |
-| 3 | `Follow 1` (tail de store/tank) | pendiente |
+| 3 | `Follow 1` (tail de store/trazas) | pendiente |
 | 4 | fuente `SLINK_RING` | **hecho**: ambos modelos en paralelo, sólo archivos |
 | 5 | calibración de umbrales/ventanas por modelo | pendiente (≥10 eventos) |
 | 6 | `PublishRing 1` + alta en `startstop_unix.d` | **hecho**: `pick_FP` (P) + `pickml_iquique` (S) en `PICK_RING`; `pickS`/`pickml_eqt` en `LEGACY_PICK_RING` |

@@ -34,19 +34,20 @@ public:
 
     /* Corre EN el hilo del worker (QMetaObject::invokeMethod del llamador).
      * `pickOn` es un array plano de 2*nrows: [i*2] = P, [i*2+1] = S.
-     * `req` son las estaciones con P de las que se baja onda para el TANK de
-     * csnmags (ventana magT0..+magWindow): sin tank no hay magnitudes. */
+     * `req` son las estaciones con P de las que se baja onda para el TRACE de
+     * csnmags; cada pedido lleva su propia ventana (vertical Mwp/Mb/Ms y
+     * horizontales ML), calculada por la UI. Sin trace no hay magnitudes. */
     void runJob(quint64 jobId, const CsnhypodbpSolution &base,
                 const QVector<CsnhypodbpStaRow> &rows, const QVector<int> &pickOn,
                 int autoOn, int manualOn, int theoOn,
                 double fixDepthKm, const QByteArray &locator,
-                const QVector<BpqFetchReq> &req, double magT0, double magWindow);
+                const QVector<BpqFetchReq> &req);
 
-    /* SOLO magnitudes (boton `calculate` de la sub-pestana): baja el mismo tank
+    /* SOLO magnitudes (boton `calculate` de la sub-pestana): baja el mismo trace
      * y corre csnmags con las ventanas ajustadas (`ovr`), sin tocar la solucion.
      * `kindMask` elige que magnitudes llevan ventana ajustada (0 = las cuatro). */
     void runMagJob(quint64 jobId, const CsnhypodbpSolution &base,
-                   const QVector<BpqFetchReq> &req, double magT0, double magWindow,
+                   const QVector<BpqFetchReq> &req,
                    const QVector<CsnhypodbpMagOvrRow> &ovr, int kindMask);
 
     /* Se llama DIRECTO desde el hilo GUI: mientras runJob bloquea el bucle de

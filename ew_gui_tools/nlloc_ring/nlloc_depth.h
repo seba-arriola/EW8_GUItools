@@ -20,4 +20,9 @@ int nlloc_locgrid_fixdepth(const char *in, char *out, size_t outn,
  * tal cual. Devuelve 0, o -1 si `out` es invalido. */
 int nlloc_locsearch_fixz(const char *in, char *out, size_t outn);
 
+/* Reemplaza la linea LOCSEARCH de la plantilla por `LOCSEARCH <spec>`.
+ * `spec` es "OCT nx ny nz min_node max_nodes scatter density stop" (sin
+ * LOCSEARCH). Devuelve 0, o -1 si `in` no es LOCSEARCH o `spec` esta vacio. */
+int nlloc_locsearch_set(const char *in, const char *spec, char *out, size_t outn);
+
 #endif /* NLLOC_DEPTH_H */

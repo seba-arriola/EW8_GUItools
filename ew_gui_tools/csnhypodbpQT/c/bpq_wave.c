@@ -370,12 +370,12 @@ void *bpq_trace_ew(const BpqTrace *t)
     return (t && t->tr) ? (void *)t->tr : NULL;
 }
 
-/* Tank de csnmags/refinador: muestras CRUDAS (nunca el buffer filtrado) y el
+/* Trace de csnmags/refinador: muestras CRUDAS (nunca el buffer filtrado) y el
  * SCNL de la fila. Apunta al buffer de la traza, que debe vivir hasta que
  * termine la corrida. */
-int bpq_trace_tank(const BpqTrace *t, const char *sta, const char *net,
+int bpq_trace_copy(const BpqTrace *t, const char *sta, const char *net,
                    const char *chan, const char *loc,
-                   CsnhypodbpTankTrace *out)
+                   CsnhypodbpTrace *out)
 {
     const int32_t *s = NULL;
     double t0 = 0.0, rate = 0.0;

@@ -12,7 +12,7 @@ int main(int argc, char **argv)
     FILE       *f;
     int32_t     buf[100];
 
-    if (argc < 2) { fprintf(stderr, "Uso: gen_tank <out.tank> [nrec]\n"); return 1; }
+    if (argc < 2) { fprintf(stderr, "Uso: gen_traces <out.traces> [nrec]\n"); return 1; }
     out = argv[1];
     nrec = argc > 2 ? atoi(argv[2]) : 5;
 

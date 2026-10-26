@@ -1,14 +1,14 @@
 /******************************************************************************
- * gen_sds.c — convierte un tank TRACE2+int32 (gen_tank) al layout SDS de      *
+ * gen_sds.c — convierte un trace TRACE2+int32 (gen_traces) al layout SDS de      *
  * SeisComP con libmseed2, para el test hermetico de `pickml --sds`.            *
  *                                                                             *
- *   gen_sds --tank <file> --root <dir> [--factor 1|2|3|4]                     *
+ *   gen_sds --traces <file> --root <dir> [--factor 1|2|3|4]                     *
  *                                                                             *
  * `--factor` interpola cada muestra y multiplica la tasa (100 -> 200/300/400  *
  * Hz): sirve para ejercitar el camino de decimacion (2x/4x) y el rechazo de   *
  * tasas no soportadas (3x).                                                   *
  *                                                                             *
- * Cada registro del tank se escribe como un registro miniSEED en              *
+ * Cada registro del trace se escribe como un registro miniSEED en              *
  *   <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>*
  * (misma ruta que usa el lector: ewgui_sds_path). Se anade al archivo si ya    *
  * existe; el primer registro de cada ruta lo trunca.                          *
@@ -94,27 +94,27 @@ static int write_rec(const char *path, const TRACE2_HEADER *h,
 
 int main(int argc, char **argv)
 {
-    const char *tank = NULL, *root = NULL;
+    const char *trace = NULL, *root = NULL;
     int         factor = 1, i, rc = 0;
     FILE       *f;
 
     for (i = 1; i < argc; i++) {
-        if      (!strcmp(argv[i], "--tank")   && i + 1 < argc) tank = argv[++i];
+        if      (!strcmp(argv[i], "--traces")   && i + 1 < argc) trace = argv[++i];
         else if (!strcmp(argv[i], "--root")   && i + 1 < argc) root = argv[++i];
         else if (!strcmp(argv[i], "--factor") && i + 1 < argc) factor = atoi(argv[++i]);
         else {
             fprintf(stderr,
-                "Uso: gen_sds --tank <file> --root <dir> [--factor N]\n");
+                "Uso: gen_sds --traces <file> --root <dir> [--factor N]\n");
             return 2;
         }
     }
-    if (!tank || !root || factor < 1 || factor > 4) {
-        fprintf(stderr, "Uso: gen_sds --tank <file> --root <dir> [--factor N]\n");
+    if (!trace || !root || factor < 1 || factor > 4) {
+        fprintf(stderr, "Uso: gen_sds --traces <file> --root <dir> [--factor N]\n");
         return 2;
     }
 
-    f = fopen(tank, "rb");
-    if (!f) { perror(tank); return 1; }
+    f = fopen(trace, "rb");
+    if (!f) { perror(trace); return 1; }
 
     for (;;) {
         TRACE2_HEADER h;

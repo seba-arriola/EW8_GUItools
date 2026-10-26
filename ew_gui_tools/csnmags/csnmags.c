@@ -12,7 +12,7 @@
  * csnmags.c - Motor de magnitudes ML/Mwp/Mb/Ms.
  *
  *   csnmags <csnmags.d>                                   modo anillo
- *   csnmags <csnmags.d> <hypos.jsonl> <tank> [--out F]    modo offline
+ *   csnmags <csnmags.d> <hypos.jsonl> <traces> [--out F]    modo offline
  *
  * Tipo de magnitud índice: 0=ML 1=Mwp 2=Mb 3=Ms
  */
@@ -458,10 +458,10 @@ static void process_station_type(MagCtx *c, MagEvent *ev, const MagStation *st,
 
 /* ------------------------------ offline ------------------------------ */
 
-static void offline_run(MagCtx *c, const char *hypofile, const char *tank, FILE *out)
+static void offline_run(MagCtx *c, const char *hypofile, const char *trace, FILE *out)
 {
     MagHypo h;
-    (void)tank;
+    (void)trace;
 
     if (mag_hypos_open(hypofile) != 0) { fprintf(stderr, "csnmags: no abro %s\n", hypofile); return; }
 
@@ -696,7 +696,7 @@ int main(int argc, char **argv)
      * punto, independientemente del entorno del proceso. */
     setlocale(LC_NUMERIC, "C");
 
-    /* Modo de prueba: parsea un ARC real y calcula con un tank (ruta online). */
+    /* Modo de prueba: parsea un ARC real y calcula con un trace (ruta online). */
     if (argc >= 5 && strcmp(argv[1], "--test-arc") == 0) {
         const char *arcf = argv[3];
         FILE *fp;
@@ -711,7 +711,7 @@ int main(int argc, char **argv)
         mag_sta_apply_corr(&c.stas, c.cfg.sta_corr_file);
     win_ovr_load(c.cfg.win_ovr_file);
         mag_calib_load(&c.cfg, &c.calib);
-        if (wave_open(&c.wave, &c.cfg, argv[4]) != 0) { fprintf(stderr, "tank?\n"); return 1; }
+        if (wave_open(&c.wave, &c.cfg, argv[4]) != 0) { fprintf(stderr, "trace?\n"); return 1; }
         fp = fopen(arcf, "rb");
         if (!fp) { perror(arcf); return 1; }
         buf = malloc(524288);
@@ -734,7 +734,7 @@ int main(int argc, char **argv)
 
     if (argc != 2 && argc < 4) {
         fprintf(stderr, "Uso: csnmags <csnmags.d>\n");
-        fprintf(stderr, "     csnmags <csnmags.d> <hypos.jsonl> <tank> [--out F]\n");
+        fprintf(stderr, "     csnmags <csnmags.d> <hypos.jsonl> <traces> [--out F]\n");
         fprintf(stderr, "     csnmags <csnmags.d> <hypos.jsonl> --store <root> [--out F]\n");
         return 1;
     }
@@ -757,23 +757,23 @@ int main(int argc, char **argv)
     if (argc >= 4) {
         FILE *out = stdout;
         int   i = 3;
-        const char *tank = NULL;
+        const char *trace = NULL;
         if (strcmp(argv[i], "--store") == 0 && i + 1 < argc) {
             snprintf(c.cfg.store_root, sizeof(c.cfg.store_root), "%s", argv[i + 1]);
             i += 2;
         } else {
-            tank = argv[i++];
+            trace = argv[i++];
         }
         for (; i < argc; i++) {
             if (strcmp(argv[i], "--out") == 0 && i + 1 < argc) out = fopen(argv[++i], "w");
         }
         c.offline = 1; c.off = out;
         WaveSource *w = &c.wave;
-        if (wave_open(w, &c.cfg, tank) != 0) {
+        if (wave_open(w, &c.cfg, trace) != 0) {
             fprintf(stderr, "csnmags: no abro la fuente de onda\n");
             return 1;
         }
-        offline_run(&c, argv[2], tank, out);
+        offline_run(&c, argv[2], trace, out);
         wave_close(w);
         if (out != stdout) fclose(out);
         return 0;

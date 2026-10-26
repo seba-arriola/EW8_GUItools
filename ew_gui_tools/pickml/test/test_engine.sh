@@ -9,8 +9,8 @@
 # la referencia tiene un pico P claro, el pick emitido debe caer en él (±2
 # muestras = 20 ms).
 #
-# Fixtures (los genera tools/export_onnx.py con --fixture-tank/--fixture-t0):
-#   test/fixtures/win1.tank        ventana 3C de 60 s, 100 Hz
+# Fixtures (los genera tools/export_onnx.py con --fixture-trace/--fixture-t0):
+#   test/fixtures/win1.traces        ventana 3C de 60 s, 100 Hz
 #   test/fixtures/win1.ref.p.f32   curva P de referencia (float32 x 6000)
 #   test/fixtures/win1.ref.s.f32   curva S de referencia
 #
@@ -24,8 +24,8 @@ cd "$(dirname "$0")/.."
 FIX=test/fixtures
 TMP=test/tmp
 
-if [ ! -f "$FIX/win1.tank" ]; then
-    echo "check-engine: SKIP (falta $FIX/win1.tank; generarlo con tools/export_onnx.py)"
+if [ ! -f "$FIX/win1.traces" ]; then
+    echo "check-engine: SKIP (falta $FIX/win1.traces; generarlo con tools/export_onnx.py)"
     exit 0
 fi
 if [ -z "$PICKML_MODEL" ] || [ -z "$PICKML_ORT" ]; then
@@ -63,9 +63,9 @@ EOF
 ./pickml "$TMP/engine_gate.d" --check-model
 
 # 2. inferencia de la ventana dorada, curvas crudas + picks
-./pickml "$TMP/engine_gate.d" --tank "$FIX/win1.tank" --jsonl \
+./pickml "$TMP/engine_gate.d" --traces "$FIX/win1.traces" --jsonl \
         --dump-curves "$TMP/curve" > "$TMP/eng_a.jsonl"
-./pickml "$TMP/engine_gate.d" --tank "$FIX/win1.tank" --jsonl \
+./pickml "$TMP/engine_gate.d" --traces "$FIX/win1.traces" --jsonl \
         > "$TMP/eng_b.jsonl"
 cmp -s "$TMP/eng_a.jsonl" "$TMP/eng_b.jsonl" || {
     echo "FALLO: la inferencia ONNX no es determinista"; exit 1; }
@@ -82,10 +82,10 @@ awk '!/^#/ && NF != 7 { exit 1 }' "$TMP/curve.idx" || {
 # 3. paridad de curvas contra PyTorch
 python3 - "$TMP/curve.p.f32" "$FIX/win1.ref.p.f32" \
           "$TMP/curve.s.f32" "$FIX/win1.ref.s.f32" \
-          "$FIX/win1.tank" "$TMP/eng_a.jsonl" <<'PY'
+          "$FIX/win1.traces" "$TMP/eng_a.jsonl" <<'PY'
 import json, struct, sys
 
-got_p, ref_p, got_s, ref_s, tank, picks = sys.argv[1:7]
+got_p, ref_p, got_s, ref_s, trace, picks = sys.argv[1:7]
 
 def read_f32(path):
     blob = open(path, "rb").read()
@@ -105,7 +105,7 @@ if dp > 1e-4 or ds > 1e-4:
 
 # Picks: sólo si la referencia tiene un pico claro (el fixture puede ser sintético)
 HDR = struct.Struct("<iiddd7s9s4s3s2s3s2s2s")
-with open(tank, "rb") as f:
+with open(trace, "rb") as f:
     t0 = HDR.unpack(f.read(HDR.size))[2]
 
 best = max(range(6000), key=lambda i: rp[i])

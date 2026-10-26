@@ -257,18 +257,18 @@ int main(void)
         }
     }
 
-    /* --- 9. tank de magnitudes (fase 6): muestras crudas + SCNL ---------- */
+    /* --- 9. trace de magnitudes (fase 6): muestras crudas + SCNL ---------- */
     {
         int32_t *s = (int32_t *)malloc(200 * sizeof(int32_t));
         BpqTrace *t;
-        CsnhypodbpTankTrace tk;
+        CsnhypodbpTrace tk;
 
         CK(s != NULL);
         if (s) {
             for (long k = 0; k < 200; k++) s[k] = (int32_t)(k * 3 - 100);
             t = bpq_trace_new(1700000000.0, 100.0, s, 200);
             CK(t != NULL);
-            CK(bpq_trace_tank(t, "PB01", "C", "HHZ", "--", &tk) == 1);
+            CK(bpq_trace_copy(t, "PB01", "C", "HHZ", "--", &tk) == 1);
             CK(tk.nsamp == 200);
             CK(fabs(tk.rate - 100.0) < 1e-9);
             CK(fabs(tk.oldest - 1700000000.0) < 1e-9);
@@ -276,8 +276,8 @@ int main(void)
             CK(strcmp(tk.net, "C") == 0 && strcmp(tk.loc, "--") == 0);
             /* Apunta al buffer CRUDO (lo que consume csnmags). */
             CK(tk.samples != NULL && tk.samples[5] == s[5]);
-            CK(bpq_trace_tank(NULL, "PB01", "C", "HHZ", "--", &tk) == 0);
-            CK(bpq_trace_tank(t, "PB01", "C", "HHZ", "--", NULL) == 0);
+            CK(bpq_trace_copy(NULL, "PB01", "C", "HHZ", "--", &tk) == 0);
+            CK(bpq_trace_copy(t, "PB01", "C", "HHZ", "--", NULL) == 0);
             bpq_trace_free(t);
             free(s);
         }

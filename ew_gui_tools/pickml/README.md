@@ -10,7 +10,7 @@ No asocia ni localiza (eso es `csnloc`) ni calcula magnitudes.
 ## Flujo
 
 ```
-tank / store (TRACE2_HEADER + int32)      SLINK_RING (TYPE_TRACEBUF2)
+traces / store (TRACE2_HEADER + int32)      SLINK_RING (TYPE_TRACEBUF2)
                  │                                 │
                  └──────────► fuente ◄─────────────┘
                                  │  (por estación y componente)
@@ -49,7 +49,7 @@ El `.onnx` se genera una sola vez con `tools/export_onnx.py` (SeisBench +
 PyTorch, entorno aparte, **no** es dependencia de runtime). El script fija el
 contrato anterior, detecta el layout de entrada del modelo en vez de asumirlo,
 escribe un `.json` con sha256/opset/versiones y puede emitir el fixture dorado
-(`test/fixtures/win1.tank` + curvas de referencia).
+(`test/fixtures/win1.traces` + curvas de referencia).
 
 ## Latencia: lo que hay que saber antes de conectarlo a csnloc
 
@@ -88,7 +88,7 @@ con un test end-to-end; no se asume.
 ## Modos
 
 ```sh
-pickml <pickml.d> --tank  <file> [--jsonl] [--stats] [--dump-curves <prefijo>]
+pickml <pickml.d> --traces <file> [--jsonl] [--stats] [--dump-curves <prefijo>]
 pickml <pickml.d> --store <root> --t0 <t> --t1 <t> [--jsonl] [--stats]
 pickml <pickml.d> --sds   <root> --t0 <t> --t1 <t> [--jsonl] [--stats]
 pickml <pickml.d> --print-config
@@ -104,7 +104,7 @@ comparar contra PyTorch; no hace falta en operación.
 - **Sin flags de fuente el modo es VIVO** (`SLINK_RING`), igual que
   `csnloc <d>`/`pickS <d>`: es el que usa `startstop`, que sólo pasa el `.d`
   (`--ring` sigue valiendo como sinónimo explícito). Dos fuentes a la vez
-  (`--tank --sds`, …) siguen siendo error de uso.
+  (`--traces --sds`, …) siguen siendo error de uso.
 - El **directorio de cada salida se crea si falta** (`PickOutFile`,
   `PicksOutFile`, `RunMetaFile`, o `--out/--picks-out/--meta`): en un worktree
   nuevo `run_working_v8/pickml/` no existe y el arranque moría con `4`.
@@ -124,7 +124,7 @@ comparar contra PyTorch; no hace falta en operación.
 `pickml` lee el formato documentado del store:
 
 ```
-<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank     TRACE2_HEADER(64 B) + int32
+<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.ws       TRACE2_HEADER(64 B) + int32
 ```
 
 Recorre por estación y por día, con un lookahead por componente para
@@ -208,7 +208,7 @@ determinista (`check-offline` compara corridas con `cmp`).
 
 `--meta <file>` (o `RunMetaFile`) deja la corrida reproducible: modelo,
 `model_file`, motor, ventana, paso, umbrales, `w_prob`, `dedup`, `min_sp`,
-fuente (`tank`/`store`), `t0`/`t1`, estaciones, ventanas, picks y `engine_ms`.
+fuente (`traces`/`store`), `t0`/`t1`, estaciones, ventanas, picks y `engine_ms`.
 
 ## Compilación
 
@@ -281,11 +281,11 @@ python3 tools/store_window.py --root ../../run_working_v8/wstore --scan --top 10
 # 2. materializar la ventana 3C (alinea por tiempo; las componentes pueden
 #    empezar con segundos de diferencia)
 python3 tools/store_window.py --root ../../run_working_v8/wstore \
-    --scnl CX.PB15.--.HHZ --t0 1792473299.558 --dur 60 --out /tmp/win.tank
+    --scnl CX.PB15.--.HHZ --t0 1792473299.558 --dur 60 --out /tmp/win.traces
 
 # 3. referencia PyTorch + fixture
 python3 tools/export_onnx.py --out /mnt/d/resources/pickml/eqt.onnx \
-    --fixture-tank /tmp/win.tank --fixture-t0 1792473299.558 \
+    --fixture-traces /tmp/win.traces --fixture-t0 1792473299.558 \
     --fixture-dir test/fixtures
 ```
 
@@ -358,7 +358,7 @@ los umbrales por buenos.
 | target | qué cubre | necesita |
 |---|---|---|
 | `make check` | buffer 3C (cobertura/gaps/solape/tasa/deslizamiento), ventanas, post-proceso, formato de pick, config, `.sta` | nada |
-| `make check-offline` | **end-to-end** tank, store y SDS sintético con motor stub: 1 P y 1 S en los tiempos esperados, determinismo, tank≡store≡sds, día ausente y tasa no soportada | nada |
+| `make check-offline` | **end-to-end** traces, store y SDS sintético con motor stub: 1 P y 1 S en los tiempos esperados, determinismo, traces≡store≡sds, día ausente y tasa no soportada | nada |
 | `make check-engine` | **paridad numérica** de las curvas P/S contra PyTorch (≤1e-4), determinismo de ORT y, si la referencia tiene un pico P claro, que el pick caiga en él | ORT + `.onnx` + fixture |
 
 ## Estado
@@ -373,7 +373,7 @@ Implementado y verificado:
 - **Modo live** (`--ring`): lee `SLINK_RING`, escribe picks en streaming a JSONL/SCNL y
   **no** publica en `PICK_RING`. Dos instancias (EQT y PhaseNet) corren en paralelo; medido
   0.8 % CPU con PhaseNet y ~2–3 % en régimen con EQT.
-- **`pickml_fetch`**: evento de la BD → `event.tank` + `picks_ref.csv` + `stations.sta` +
+- **`pickml_fetch`**: evento de la BD → `event.traces` + `picks_ref.csv` + `stations.sta` +
   `meta.json`, con picadas **manuales**, store primero y SDS de fallback, y decimación
   entera (200/400 → 100 Hz) con anti-alias.
 - **`tools/eval_picks.py`**: recall por fase contra las manuales; lo extra no penaliza.
@@ -386,16 +386,16 @@ Implementado y verificado:
   valida contra la dimensión declarada del grafo.
 - **Salidas a archivo**: JSONL (`--out`), `TYPE_PICK_SCNL` en texto
   (`--picks-out`) y cabecera JSON de la corrida (`--meta`).
-- Procesamiento offline desde **tank**, desde **store** y desde un **SDS** de
+- Procesamiento offline desde **traces**, desde **store** y desde un **SDS** de
   SeisComP (`--sds <root>` + `--t0/--t1`, decimando 1x/2x/4x a `Rate`), con
-  troceo de registros mayores que el buffer (un tank de 60 s con ventana de
+  troceo de registros mayores que el buffer (un archivo de trazas de 60 s con ventana de
   30 s no pierde el prefijo).
 
 Pendiente, en orden:
 
 1. **Calibración** de umbrales/ventanas por modelo con ≥10 eventos, usando
    `pickml_fetch` + `tools/eval_picks.py` (la primera medición ya existe: §Estado).
-2. **`Follow 1`** (tail de store/tank) para live sin anillo.
+2. **`Follow 1`** (tail de store/traces) para live sin anillo.
 3. ~~`PublishRing 1` + alta en `startstop_unix.d`~~ **hecho** (publica en `PICK_RING`;
    los pickers viejos en `LEGACY_PICK_RING`). Queda la comparación de 24 h.
 4. **Arranque de EQT (~58 s)**: aceptable para un módulo de larga vida; el

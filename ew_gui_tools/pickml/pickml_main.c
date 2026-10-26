@@ -5,7 +5,7 @@
  *   pickml <pickml.d>                        (VIVO: SLINK_RING; es el modo   *
  *                                             que usa startstop, sin flags)  *
  *   pickml <pickml.d> --ring                 (sinónimo explícito del vivo)   *
- *   pickml <pickml.d> --tank <file> [--jsonl] [--stats]                     *
+ *   pickml <pickml.d> --traces <file> [--jsonl] [--stats]                     *
  *   pickml <pickml.d> --store <root> --t0 <t> --t1 <t> [--jsonl] [--stats]  *
  *   pickml <pickml.d> --sds <root> --t0 <t> --t1 <t> [--jsonl] [--stats]    *
  *   pickml <pickml.d> --print-config                                        *
@@ -247,7 +247,7 @@ static void write_pick_json(FILE *f, const OutPick *p)
     pm_fmt_utc(utc, sizeof(utc), p->t);
 
     /* En offline la salida debe seguir siendo determinista (test_offline hace
-     * cmp entre corridas y entre tank y store), así que la marca de generación
+     * cmp entre corridas y entre trace y store), así que la marca de generación
      * sólo viaja en modo live, donde sí tiene significado. */
     if (!g_live) {
         fprintf(f, "{\"sta\":\"%s\",\"net\":\"%s\",\"loc\":\"%s\",\"chan\":\"%s\","
@@ -510,7 +510,7 @@ static void advance(int si)
         int    np, ns, i;
 
         /* `ready` es el tiempo de la ULTIMA muestra recibida; una ventana de N
-         * muestras abarca (N-1)/rate, no N/rate. Sin este término un tank con
+         * muestras abarca (N-1)/rate, no N/rate. Sin este término un trace con
          * exactamente 60 s (o el borde de un stream) nunca completaría la
          * primera ventana. */
         if (!pm_win_next(&run[si].win, ready + 1.0 / cfg.Rate, &t0)) break;
@@ -602,7 +602,7 @@ static void route_trace(const PmTrace *tr)
         if (d > stats.in_lag_max) stats.in_lag_max = d;
     }
 
-    /* Un registro puede ser mayor que el buffer (un tank con un bloque de
+    /* Un registro puede ser mayor que el buffer (un trace con un bloque de
      * 60 s y una ventana nativa de 30 s). Se trocea en trozos que quepan:
      * rechazarlo o truncarlo perdería arribos tempranos. */
     {
@@ -886,7 +886,7 @@ static void usage(void)
     fprintf(stderr,
         "Uso: pickml <pickml.d>                        (vivo: SLINK_RING)\n"
         "     pickml <pickml.d> --ring                 (sinónimo del modo vivo)\n"
-        "     pickml <pickml.d> --tank <file> [--jsonl] [--stats]\n"
+        "     pickml <pickml.d> --traces <file> [--jsonl] [--stats]\n"
         "     pickml <pickml.d> --store <root> --t0 <t> --t1 <t> [--jsonl] [--stats]\n"
         "     pickml <pickml.d> --sds <root> --t0 <t> --t1 <t> [--jsonl] [--stats]\n"
         "     pickml <pickml.d> --print-config\n"
@@ -906,7 +906,7 @@ static void usage(void)
 
 int main(int argc, char **argv)
 {
-    const char *d = NULL, *tank = NULL, *store = NULL, *sds = NULL;
+    const char *d = NULL, *trace = NULL, *store = NULL, *sds = NULL;
     const char *t0s = NULL, *t1s = NULL, *dump_prefix = NULL;
     const char *out_path = NULL, *picks_path = NULL, *meta_path = NULL;
     int print_cfg = 0, check_model = 0, want_stats = 0, use_ring = 0;
@@ -919,7 +919,7 @@ int main(int argc, char **argv)
 
     for (i = 1; i < argc; i++) {
         if (!d && argv[i][0] != '-') { d = argv[i]; continue; }
-        if      (!strcmp(argv[i], "--tank"))         { if (++i < argc) tank = argv[i]; }
+        if      (!strcmp(argv[i], "--traces"))         { if (++i < argc) trace = argv[i]; }
         else if (!strcmp(argv[i], "--store"))        { if (++i < argc) store = argv[i]; }
         else if (!strcmp(argv[i], "--sds"))          { if (++i < argc) sds = argv[i]; }
         else if (!strcmp(argv[i], "--ring"))         { use_ring = 1; }
@@ -986,11 +986,11 @@ int main(int argc, char **argv)
      * sigue valiendo como sinónimo explícito. El modo se valida ANTES de abrir
      * el motor: si no, un modo no implementado se reportaría como "falta ONNX
      * Runtime" (mentira útil sólo para el que ya sabe el orden interno). */
-    if (!use_ring && tank == NULL && store == NULL && sds == NULL)
+    if (!use_ring && trace == NULL && store == NULL && sds == NULL)
         use_ring = 1;
 
-    if ((tank != NULL) + (store != NULL) + (sds != NULL) + (use_ring != 0) != 1) {
-        plog("pickml: elegir exactamente un modo: --tank, --store, --sds o --ring\n");
+    if ((trace != NULL) + (store != NULL) + (sds != NULL) + (use_ring != 0) != 1) {
+        plog("pickml: elegir exactamente un modo: --traces, --store, --sds o --ring\n");
         return 2;
     }
 
@@ -1032,9 +1032,9 @@ int main(int argc, char **argv)
         return lrc;
     }
 
-    if (tank) {
-        if (pm_src_open_tank(&src, tank) != PM_OK) {
-            fprintf(stderr, "pickml: no se pudo abrir el tank %s\n", tank);
+    if (trace) {
+        if (pm_src_open_traces(&src, trace) != PM_OK) {
+            fprintf(stderr, "pickml: no se pudo abrir el trace %s\n", trace);
             return 4;
         }
     } else if (store) {
@@ -1082,7 +1082,7 @@ int main(int argc, char **argv)
 
     qsort(out.v, (size_t)out.n, sizeof(OutPick), cmp_pick);
     if (write_outputs(out_path, picks_path, meta_path,
-                      tank ? "tank" : (store ? "store" : "sds"),
+                      trace ? "trace" : (store ? "store" : "sds"),
                       t0, t1) != PM_OK) {
         for (i = 0; i < nsta; i++)
             if (run[i].inited) pm_buf_free(&run[i].buf);

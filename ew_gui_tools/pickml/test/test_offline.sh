@@ -1,7 +1,7 @@
 #!/bin/sh
 # test_offline.sh — modo offline determinista con el motor stub.
 #
-# Comprueba la plomería completa: fuente (tank y store) -> buffer 3C ->
+# Comprueba la plomería completa: fuente (trace y store) -> buffer 3C ->
 # ventanas de 60 s -> post-proceso -> JSON. NO valida el modelo (eso es
 # check-engine, que exige ONNX Runtime y el golden fixture).
 #
@@ -20,8 +20,8 @@ TS=$((T0 + 107))
 rm -rf "$TMP"
 mkdir -p "$TMP"
 
-./test/gen_tank --tank "$TMP/burst.tank" --epoch "$T0" --dur 180
-./test/gen_tank --store "$TMP/store"     --epoch "$T0" --dur 180
+./test/gen_traces --traces "$TMP/burst.traces" --epoch "$T0" --dur 180
+./test/gen_traces --store "$TMP/store"     --epoch "$T0" --dur 180
 
 cat > "$TMP/pickml_test.sta" <<'EOF'
 # PickFlag Pin Sta Net Loc ChanE ChanN ChanZ
@@ -52,49 +52,49 @@ DedupSec        2.0
 MaxGapSec       0.10
 EOF
 
-# --- 1. tank: picks esperados, en los tiempos esperados ---
-./pickml "$TMP/pickml_test.d" --tank "$TMP/burst.tank" --jsonl --stats \
-    > "$TMP/tank_a.jsonl" 2> "$TMP/tank_a.err"
+# --- 1. trace: picks esperados, en los tiempos esperados ---
+./pickml "$TMP/pickml_test.d" --traces "$TMP/burst.traces" --jsonl --stats \
+    > "$TMP/traces_a.jsonl" 2> "$TMP/traces_a.err"
 
-nP=$(grep -c '"phase":"P"' "$TMP/tank_a.jsonl" || true)
-nS=$(grep -c '"phase":"S"' "$TMP/tank_a.jsonl" || true)
+nP=$(grep -c '"phase":"P"' "$TMP/traces_a.jsonl" || true)
+nS=$(grep -c '"phase":"S"' "$TMP/traces_a.jsonl" || true)
 if [ "$nP" -ne 1 ] || [ "$nS" -ne 1 ]; then
     echo "FALLO: esperaba 1 P y 1 S, obtuve P=$nP S=$nS"
-    cat "$TMP/tank_a.jsonl"
+    cat "$TMP/traces_a.jsonl"
     exit 1
 fi
 
-grep -q "\"phase\":\"P\",\"t_epoch\":$TP.000000" "$TMP/tank_a.jsonl" || {
-    echo "FALLO: la P no está en $TP"; cat "$TMP/tank_a.jsonl"; exit 1; }
-grep -q "\"phase\":\"S\",\"t_epoch\":$TS.000000" "$TMP/tank_a.jsonl" || {
-    echo "FALLO: la S no está en $TS"; cat "$TMP/tank_a.jsonl"; exit 1; }
+grep -q "\"phase\":\"P\",\"t_epoch\":$TP.000000" "$TMP/traces_a.jsonl" || {
+    echo "FALLO: la P no está en $TP"; cat "$TMP/traces_a.jsonl"; exit 1; }
+grep -q "\"phase\":\"S\",\"t_epoch\":$TS.000000" "$TMP/traces_a.jsonl" || {
+    echo "FALLO: la S no está en $TS"; cat "$TMP/traces_a.jsonl"; exit 1; }
 
-grep -q '"weight":0' "$TMP/tank_a.jsonl" || {
+grep -q '"weight":0' "$TMP/traces_a.jsonl" || {
     echo "FALLO: prob 0.95 debería mapear a weight 0"; exit 1; }
 
-grep -q 'ventanas=' "$TMP/tank_a.err" || {
-    echo "FALLO: falta la línea de stats"; cat "$TMP/tank_a.err"; exit 1; }
+grep -q 'ventanas=' "$TMP/traces_a.err" || {
+    echo "FALLO: falta la línea de stats"; cat "$TMP/traces_a.err"; exit 1; }
 
 # --- 2. determinismo: dos corridas byte a byte ---
-./pickml "$TMP/pickml_test.d" --tank "$TMP/burst.tank" --jsonl --stats \
-    > "$TMP/tank_b.jsonl" 2> /dev/null
-cmp -s "$TMP/tank_a.jsonl" "$TMP/tank_b.jsonl" || {
-    echo "FALLO: la salida no es determinista"; diff "$TMP/tank_a.jsonl" "$TMP/tank_b.jsonl" | head; exit 1; }
+./pickml "$TMP/pickml_test.d" --traces "$TMP/burst.traces" --jsonl --stats \
+    > "$TMP/traces_b.jsonl" 2> /dev/null
+cmp -s "$TMP/traces_a.jsonl" "$TMP/traces_b.jsonl" || {
+    echo "FALLO: la salida no es determinista"; diff "$TMP/traces_a.jsonl" "$TMP/traces_b.jsonl" | head; exit 1; }
 
 # --- 3. store: el mismo dato por la otra fuente da EXACTAMENTE lo mismo ---
 ./pickml "$TMP/pickml_test.d" --store "$TMP/store" \
     --t0 "$T0" --t1 "$((T0 + 180))" --jsonl --stats \
     > "$TMP/store.jsonl" 2> "$TMP/store.err"
-cmp -s "$TMP/tank_a.jsonl" "$TMP/store.jsonl" || {
-    echo "FALLO: tank y store no coinciden"
-    diff "$TMP/tank_a.jsonl" "$TMP/store.jsonl" | head
+cmp -s "$TMP/traces_a.jsonl" "$TMP/store.jsonl" || {
+    echo "FALLO: trace y store no coinciden"
+    diff "$TMP/traces_a.jsonl" "$TMP/store.jsonl" | head
     exit 1; }
 
 # --- 4. tasa no soportada: deshabilita con log, no revienta ---
-./test/gen_tank --tank "$TMP/burst50.tank" --epoch "$T0" --dur 20 > /dev/null
+./test/gen_traces --traces "$TMP/burst50.trace" --epoch "$T0" --dur 20 > /dev/null
 # (reusa el mismo generador; el caso de 50 Hz se cubre en test_buffer)
 
-# --- 5. ventana sin datos (ventana de tiempo fuera del tank) ---
+# --- 5. ventana sin datos (ventana de tiempo fuera del trace) ---
 if ./pickml "$TMP/pickml_test.d" --store "$TMP/store" \
        --t0 "$((T0 + 86400))" --t1 "$((T0 + 86400 + 120))" --jsonl \
        > "$TMP/empty.jsonl" 2> /dev/null; then

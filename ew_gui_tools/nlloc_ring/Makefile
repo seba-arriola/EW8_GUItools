@@ -33,9 +33,13 @@ $(TARGET): nlloc_ring.o nlloc_depth.o $(NLLLIB)
 test/test_fixdepth: test/test_fixdepth.c nlloc_depth.c nlloc_depth.h
 	$(CC) $(CFLAGS) -o $@ test/test_fixdepth.c nlloc_depth.c -lm
 
+test/test_locsearch: test/test_locsearch.c nlloc_depth.c nlloc_depth.h
+	$(CC) $(CFLAGS) -o $@ test/test_locsearch.c nlloc_depth.c -lm
+
 .PHONY: check check-offline
-check: test/test_fixdepth
+check: test/test_fixdepth test/test_locsearch
 	./test/test_fixdepth
+	./test/test_locsearch
 
 # Prueba real offline (necesita EW_PARAMS, csnloc y los recursos de NLLoc).
 check-offline: $(TARGET)
@@ -43,7 +47,7 @@ check-offline: $(TARGET)
 
 clean:
 	-$(MAKE) -C nlloc clean
-	-rm -f *.o $(TARGET) test/test_fixdepth
+	-rm -f *.o $(TARGET) test/test_fixdepth test/test_locsearch
 
 # --- Dependencias de cabeceras (ver AGENTS.md §5) ---------------------------
 # Sin esto, cambiar un .h NO recompila los .o que lo incluyen: el modulo queda

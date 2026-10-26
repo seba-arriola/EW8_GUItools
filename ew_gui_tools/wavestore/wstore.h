@@ -2,13 +2,13 @@
 #define WSTORE_H
 
 /*
- * wstore — store de formas de onda indexado (headless, tank-compatible).
+ * wstore — store de formas de onda indexado (headless, segment-compatible).
  *
  * Formato en disco:
- *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank   (TRACE2_HEADER + int32)
+ *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.ws   (TRACE2_HEADER + int32)
  *   <root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.idx    (indice lateral)
  *
- * El `.tank` es un tank valido (lo leen pick_FP/pickS/csnmags sin
+ * El `.ws` es un segment valido (lo leen pick_FP/pickS/csnmags sin
  * cambios); el `.idx` permite acceso por ventana O(log n).
  */
 
@@ -54,14 +54,14 @@ int   wstore_scnls(WStore *s, char (*out)[WSTORE_SCNL_LEN], int cap);
 
 /* Conteo de una purga. */
 typedef struct {
-    long tanks_removed;   /* YYYYMMDD.tank borrados                  */
+    long segments_removed;   /* YYYYMMDD.ws borrados                  */
     long idx_removed;     /* .idx companeros borrados                */
     long bytes_freed;     /* suma de tamanos (stat previo al unlink) */
 } WStorePruneStats;
 
 #define WSTORE_PRUNE_DRY_RUN 1u   /* cuenta lo que se borraria, sin borrar */
 
-/* Borra segmentos (tank+idx) anteriores a `keep_days` dias UTC. 0 OK. */
+/* Borra segmentos (segment+idx) anteriores a `keep_days` dias UTC. 0 OK. */
 int   wstore_prune(WStore *s, long keep_days);
 
 /* Igual, pero devolviendo el conteo (`st` puede ser NULL). */

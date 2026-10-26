@@ -48,7 +48,7 @@ static void mkrec(TRACE2_HEADER *h, double t0, double rate, int nsamp)
 int main(void)
 {
     char          root[] = "/tmp/wstore_ws_XXXXXX";
-    char          tankp[1400];
+    char          tracepath[1400];
     double        t0 = 1700000000.0, rate = 100.0;
     int           per = 100, nrec = 3;
     int32_t       buf[100];
@@ -60,10 +60,10 @@ int main(void)
     TRACE2_HEADER h;
 
     if (!mkdtemp(root)) { perror("mkdtemp"); return 1; }
-    snprintf(tankp, sizeof(tankp), "%s/tank.tank", root);
+    snprintf(tracepath, sizeof(tracepath), "%s/traces.traces", root);
 
     CHECK(wstore_writer_open(&wr, root, "ABC", "CX", "--", "HHZ") == 0);
-    tf = fopen(tankp, "wb");
+    tf = fopen(tracepath, "wb");
     CHECK(tf != NULL);
 
     for (int k = 0; k < nrec; k++) {
@@ -76,10 +76,10 @@ int main(void)
     wstore_writer_close(wr);
     fclose(tf);
 
-    /* TANK backend */
+    /* TRACES backend */
     memset(&cfg, 0, sizeof(cfg));
-    cfg.mode = WSRC_TANK;
-    cfg.tank_or_null = tankp;
+    cfg.mode = WSRC_TRACES;
+    cfg.traces_or_null = tracepath;
     CHECK(wave_open(&wsrc, &cfg) == 0);
     memset(&a, 0, sizeof(a));
     CHECK(wave_get(wsrc, "ABC", "CX", "HHZ", "--", t0, t0 + 5.0, &a) == 0);
@@ -94,7 +94,7 @@ int main(void)
     CHECK(wave_get(wsrc, "ABC", "CX", "HHZ", "--", t0, t0 + 5.0, &b) == 0);
     wave_close(wsrc);
 
-    /* AC8: store == tank */
+    /* AC8: store == traces */
     CHECK(a.n == nrec * per);
     CHECK(b.n == nrec * per);
     CHECK(a.n == b.n);

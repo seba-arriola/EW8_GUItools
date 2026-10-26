@@ -81,7 +81,7 @@
 #  4) Modulos cuyo BINARIO no se llama como la carpeta. El script acepta el
 #     nombre de la carpeta o el del binario, y siempre reporta el canonico:
 #        hypodb     -> instala hypodb_ingest
-#        wavestore  -> instala wstore_ingest tank2store store2tank
+#        wavestore  -> instala wstore_ingest wstore_import wstore_export
 #                              wstore_query wstore_prune
 #
 #        ./ew8_compile.sh hypodb

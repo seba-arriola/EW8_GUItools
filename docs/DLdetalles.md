@@ -14,8 +14,8 @@ para **entender, instalar, operar y portar** el sistema a otra máquina.
 
 | binario | qué hace | entradas | salidas |
 |---|---|---|---|
-| `pickml` | pica P y S con un modelo neuronal ONNX | `SLINK_RING` (live); `--tank`, `--store`, `--sds` (offline) | JSONL de picks, líneas `TYPE_PICK_SCNL`, `meta.json` |
-| `pickml_fetch` | prepara un evento para calibrar | BD hipocentral (libpq) + store/SDS (libmseed2) | `event.tank`, `picks_ref.csv`, `meta.json` |
+| `pickml` | pica P y S con un modelo neuronal ONNX | `SLINK_RING` (live); `--traces`, `--store`, `--sds` (offline) | JSONL de picks, líneas `TYPE_PICK_SCNL`, `meta.json` |
+| `pickml_fetch` | prepara un evento para calibrar | BD hipocentral (libpq) + store/SDS (libmseed2) | `event.traces`, `picks_ref.csv`, `meta.json` |
 
 `pickml` **no asocia, no localiza y no calcula magnitudes**. Eso sigue siendo de `csnloc` y
 `csnmags`. Tampoco escribe en la BD: `hypodb_ingest` no lo conoce.
@@ -23,9 +23,9 @@ para **entender, instalar, operar y portar** el sistema a otra máquina.
 El flujo completo de calibración es:
 
 ```
-BD (picadas manuales) ──pickml_fetch──> event.tank + picks_ref.csv
+BD (picadas manuales) ──pickml_fetch──> event.traces + picks_ref.csv
                                               │
-                                        pickml --tank
+                                        pickml --traces
                                               │
                                         picks.jsonl
                                               │
@@ -130,14 +130,14 @@ T         WindowSamples del modelo (EQT 6000, PhaseNet 3001)
   - `Engine stub` → no usa modelo; tests deterministas.
   - `Engine onnx` → carga `ModelFile` + `OrtLib`.
 - **Modos**:
-  - `--tank <file>` / `--store <root> --t0 --t1` / `--sds <root> --t0 --t1`: offline,
+  - `--traces <file>` / `--store <root> --t0 --t1` / `--sds <root> --t0 --t1`: offline,
     determinista (un JSON por pick en stdout o `--out`). El SDS de SeisComP se lee directo y se
     decima 1x/2x/4x a `Rate`; un día/estación ausente se informa en `--stats`.
   - `--ring`: live desde `SLINK_RING`; escribe archivos y `--stats` cada 60 s; **no** publica en
     `PICK_RING`.
 - En live lee del anillo con cursor propio y **purga** al arrancar para partir en la cola (no
   reprocesa minutos de historial). `LiveMaxAgeSec` (120 s) descarta trazas más viejas.
-- El **store** se lee con el formato documentado (`<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank`),
+- El **store** se lee con el formato documentado (`<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.ws`),
   **sin** `wstore_get`: esa función rellena huecos con ceros y la red los leería como señal. Aquí
   cada muestra sabe si existe; huecos cortos se interpolan (`MaxGapSec`) y los largos descartan la
   ventana.
@@ -210,7 +210,7 @@ Relevantes para esta red (norte de Chile, redes `C1`/`CX`):
   “pesado” habitual como alternativa.
 
 **No hay hoy una comparación medida de variantes.** El pipeline para hacerla ya está:
-`pickml_fetch` (eventos con picadas manuales) → exportar el candidato → `pickml --tank` →
+`pickml_fetch` (eventos con picadas manuales) → exportar el candidato → `pickml --traces` →
 `eval_picks.py` (recall y extras). Es la forma correcta de decidir: no por papers, sino contra las
 picadas manuales de esta red.
 
@@ -411,14 +411,14 @@ pickml_fetch ew_gui_tools/pickml/pickml_fetch.d \
     --event <event_id> --out /tmp/cal/<event_id>
 ```
 
-Deja `event.tank` (3C por estación), `picks_ref.csv` (**sólo picadas manuales**; las revisadas por
+Deja `event.traces` (3C por estación), `picks_ref.csv` (**sólo picadas manuales**; las revisadas por
 una persona) y `meta.json`. Las componentes se derivan del canal picado (`HHZ` → `HHE/HHN/HHZ`).
 Las ondas salen del store y, si el día no está, del SDS (`SdsRoot`).
 
 ### 9.2 Picar y evaluar
 
 ```sh
-pickml <modelo>.d --tank /tmp/cal/<event>/event.tank --out picks.jsonl
+pickml <modelo>.d --traces /tmp/cal/<event>/event.traces --out picks.jsonl
 python3 ew_gui_tools/pickml/tools/eval_picks.py \
     --picks picks.jsonl --ref /tmp/cal/<event>/picks_ref.csv --min-prob 0.3
 ```
@@ -430,7 +430,7 @@ falso positivo: son detecciones adicionales (la referencia no es exhaustiva). Aj
 ### 9.3 Paridad numérica
 
 `make check-engine` compara la salida del `.onnx` contra PyTorch sobre una ventana real
-(`test/fixtures/win1.tank`). Sirve para detectar un export mal hecho (diferencias ~1e-07).
+(`test/fixtures/win1.traces`). Sirve para detectar un export mal hecho (diferencias ~1e-07).
 
 ### 9.4 EQT sobre la red de 137 estaciones (medición 2026-10-21)
 
@@ -597,7 +597,7 @@ El orden queda en el `.onnx.json` (`channel_order`).
 **(b) `pickml_fetch` nunca leía el store con localización nula.** Construía la ruta con el `loc`
 vacío de la picada (`CX.PB19..HHZ`) en vez del `--` con que el store nombra el directorio, así que
 el `fopen` fallaba en silencio y caía al SDS. Con eventos del día anterior funcionaba *de casualidad*
-(estaban en el SDS); con los del día en curso (`2026.294`) daba `estaciones=0/4` y un `event.tank`
+(estaban en el SDS); con los del día en curso (`2026.294`) daba `estaciones=0/4` y un `event.traces`
 de 0 bytes. Arreglo: normalizar `loc` vacío a `--` en `store_channel` (`pickml_fetch.c`).
 
 ### 11.2 Coste medido
@@ -653,7 +653,7 @@ source ./ew8_unix.sh
 cd run_working_v8/params
 pickml pickml_phasenetwc.d --ring --stats        # sólo escribe ../pickml/phasenetwc.*
 
-# evento histórico, directo del SDS (sin store ni tank):
+# evento histórico, directo del SDS (sin store ni archivos de trazas):
 pickml pickml_phasenetwc.d --sds /mnt/sds/archive \
     --t0 2026-10-20T21:45:00 --t1 2026-10-20T21:49:00 --jsonl --stats
 ```

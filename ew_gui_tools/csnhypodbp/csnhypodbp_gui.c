@@ -1880,8 +1880,8 @@ typedef struct {
     CsnhypodbpSolution base;
     CsnhypodbpManualPick mp[CSNHYPODBP_MANUAL_MAX];
     int nmp;
-    CsnhypodbpTankTrace tank[MAX_ESTA];
-    int ntank;
+    CsnhypodbpTrace trace[MAX_ESTA];
+    int ntr;
     char locator[32];
     double fix_depth_km;          /* < 0 = profundidad libre */
     CsnhypodbpSolution out;
@@ -1926,14 +1926,14 @@ static gpointer locate_thread(gpointer data) {
         job->out = job->base;
         job->rc = csnhypodbp_mag_run(getenv("EW_PARAMS"), getenv("EW_HOME"),
                                      getenv("EW_VERSION"), NULL, &job->base,
-                                     job->tank, job->ntank,
+                                     job->trace, job->ntr,
                                      job->ovr, job->novr, job->kind_mask,
                                      &job->mag, job->err, sizeof(job->err));
     } else {
         job->rc = csnhypodbp_locate_run(g_locators, g_nlocators, job->locator,
                                         getenv("EW_PARAMS"), getenv("EW_HOME"), getenv("EW_VERSION"),
                                         NULL, &job->base, job->mp, job->nmp,
-                                        job->tank, job->ntank,
+                                        job->trace, job->ntr,
                                         job->ovr, job->novr, job->kind_mask,
                                         job->fix_depth_km, g_locator_timeout_sec,
                                         NULL, NULL, NULL,
@@ -2325,11 +2325,11 @@ static void locate_start(int mags_only) {
         }
     }
     job->nmp = 0;   /* el overlay manual ya va incluido en las filas de la tabla */
-    for (i = 0; i < NumEstaciones && job->ntank < MAX_ESTA; i++) {
+    for (i = 0; i < NumEstaciones && job->ntr < MAX_ESTA; i++) {
         EwGuiTrace *tr = StaArray[i].trace;
-        CsnhypodbpTankTrace *t;
+        CsnhypodbpTrace *t;
         if (bHasData[i] != 1 || !tr || ewgui_trace_length(tr) <= 0) continue;
-        t = &job->tank[job->ntank++];
+        t = &job->trace[job->ntr++];
         snprintf(t->sta, sizeof(t->sta), "%s", StaArray[i].szStation);
         snprintf(t->net, sizeof(t->net), "%s", StaArray[i].szNetID);
         snprintf(t->chan, sizeof(t->chan), "%s", StaArray[i].szChannel);
@@ -2351,9 +2351,9 @@ static void locate_start(int mags_only) {
     job->novr = mags_only
         ? mag_ovr_rows_build(job->kind_mask, job->ovr, CSNHYPODBP_MAGMARKS_MAX)
         : mag_ovr_rows_build_locate(&job->base, job->ovr, CSNHYPODBP_MAGMARKS_MAX);
-    logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d tank=%d winovr=%d\n",
+    logit("t", "csnhypodbp: %s [%s] qid=%d npicks=%d overlay=%d trace=%d winovr=%d\n",
           mags_only ? "calculate" : "locate", job->locator, job->base.qid,
-          job->base.npicks, job->nmp, job->ntank, job->novr);
+          job->base.npicks, job->nmp, job->ntr, job->novr);
     /* Indicador general: arranca ANTES del hilo, asi hasta un localizador
        instantaneo alcanza a mostrarse como "calculando". */
     g_locate_busy = 1;

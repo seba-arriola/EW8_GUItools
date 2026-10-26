@@ -234,7 +234,7 @@ int main(void)
     {
         const char *hp = "/tmp/bpq_test_hypos.jsonl";
         CsnhypodbpSolution hs;
-        CsnhypodbpTankTrace tk[1];
+        CsnhypodbpTrace tk[1];
         char buf[2048] = "";
         FILE *f;
         size_t rd;
@@ -263,8 +263,8 @@ int main(void)
             buf[rd] = '\0';
             fclose(f);
         }
-        /* A: la red de la picada manda (el tank no la tiene). B: sin SCNL, lo
-         * completa el tank por estacion. Nunca "--" si hay un dato real. */
+        /* A: la red de la picada manda (el trace no la tiene). B: sin SCNL, lo
+         * completa el trace por estacion. Nunca "--" si hay un dato real. */
         CK(strstr(buf, "\"sta\":\"A\",\"net\":\"PB\",\"chan\":\"HHZ\"") != NULL);
         CK(strstr(buf, "\"sta\":\"B\",\"net\":\"CX\",\"chan\":\"HHZ\"") != NULL);
         remove(hp);

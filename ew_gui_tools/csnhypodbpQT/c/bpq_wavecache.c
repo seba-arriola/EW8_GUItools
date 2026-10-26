@@ -3,7 +3,7 @@
  *
  * Antes, cada cambio de estacion o de evento liberaba TODAS las trazas y
  * volvia a pedirlas al store/SDS (bpq_mainwindow.cxx:921-924). El store abre y
- * cierra el .idx/.tank por llamada (wavestore.c:93-170) y el SDS el miniSEED
+ * cierra el .idx/.trace por llamada (wavestore.c:93-170) y el SDS el miniSEED
  * del dia (csnhypodbp_sds.c:47-132), asi que un clic costaba disco aunque la
  * misma estacion se hubiera mirado un segundo antes.
  *

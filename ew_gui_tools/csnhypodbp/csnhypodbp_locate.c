@@ -354,7 +354,7 @@ int csnhypodbp_picks_write(const char *path, int type, int mod, int inst,
 }
 
 int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
-                           const CsnhypodbpTankTrace *tank, int ntank)
+                           const CsnhypodbpTrace *trace, int ntr)
 {
     FILE *fp = fopen(path, "w");
     int i, k;
@@ -368,20 +368,20 @@ int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
         const CsnhypodbpPick *pk = &sol->picks[i];
         char net[16] = "", loc[16] = "", chan[16] = "";
 
-        /* El SCNL de la picada manda: el tank solo completa lo que falte. Antes
-         * se arrancaba con "--" y, si el tank no tenia la traza (p. ej. una P
+        /* El SCNL de la picada manda: el trace solo completa lo que falte. Antes
+         * se arrancaba con "--" y, si el trace no tenia la traza (p. ej. una P
          * manual fuera de las 48), csnmags descartaba la estacion en silencio. */
         snprintf(net, sizeof(net), "%s", pk->net);
         snprintf(loc, sizeof(loc), "%s", pk->loc);
         snprintf(chan, sizeof(chan), "%s", pk->chan);
-        for (k = 0; k < ntank; k++) {
-            if (strcmp(tank[k].sta, pk->sta) != 0) continue;
-            if (chan[0] && strcmp(tank[k].chan, chan) != 0) continue;
-            if (!chan[0]) snprintf(chan, sizeof(chan), "%s", tank[k].chan);
+        for (k = 0; k < ntr; k++) {
+            if (strcmp(trace[k].sta, pk->sta) != 0) continue;
+            if (chan[0] && strcmp(trace[k].chan, chan) != 0) continue;
+            if (!chan[0]) snprintf(chan, sizeof(chan), "%s", trace[k].chan);
             if (!net[0] || strcmp(net, "--") == 0)
-                snprintf(net, sizeof(net), "%s", tank[k].net);
+                snprintf(net, sizeof(net), "%s", trace[k].net);
             if (!loc[0] || strcmp(loc, "--") == 0)
-                snprintf(loc, sizeof(loc), "%s", tank[k].loc);
+                snprintf(loc, sizeof(loc), "%s", trace[k].loc);
             break;
         }
         if (!net[0]) snprintf(net, sizeof(net), "%s", "--");
@@ -399,7 +399,7 @@ int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
 int csnhypodbp_hypos_write_mag(const char *path,
                                const CsnhypodbpSolution *refined,
                                const CsnhypodbpSolution *picked,
-                               const CsnhypodbpTankTrace *tank, int ntank)
+                               const CsnhypodbpTrace *trace, int ntr)
 {
     CsnhypodbpSolution magsol;
     int i, n = 0;
@@ -413,10 +413,10 @@ int csnhypodbp_hypos_write_mag(const char *path,
     }
     magsol.npicks = n;
     magsol.nph = n;
-    return csnhypodbp_hypos_write(path, &magsol, tank, ntank);
+    return csnhypodbp_hypos_write(path, &magsol, trace, ntr);
 }
 
-int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n)
+int csnhypodbp_trace_write(const char *path, const CsnhypodbpTrace *tr, int n)
 {
     FILE *fp = fopen(path, "wb");
     int i;
@@ -711,7 +711,7 @@ static double json_num(const char *json, const char *key, int *found){
     return atof(p);
 }
 
-/* Corrida de SOLO magnitudes: hypos + tank -> csnmags con las ventanas ajustadas
+/* Corrida de SOLO magnitudes: hypos + trace -> csnmags con las ventanas ajustadas
    a mano por estacion (clave `WindowOverridesFile`). NO localiza: deja la
    solucion como esta y solo recalcula las magnitudes. `kind_mask` elige que
    magnitudes llevan ventana ajustada (bit 0=ML, 1=Mwp, 2=Mb, 3=Ms; 0xF = las
@@ -788,17 +788,17 @@ int csnhypodbp_mag_result_ok(const CsnhypodbpMagOut *mag, unsigned kind_mask)
 int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *ew_version,
                        const char *tmp_root,
                        const CsnhypodbpSolution *base,
-                       const CsnhypodbpTankTrace *tank, int ntank,
+                       const CsnhypodbpTrace *trace, int ntr,
                        const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                        CsnhypodbpMagOut *mag, char *err, size_t errlen)
 {
-    char tmp[512], hypos[600], tankf[600], magf[600], ovrf[600], magsd[600], src[600];
+    char tmp[512], hypos[600], tracef[600], magf[600], ovrf[600], magsd[600], src[600];
     char mags_bin[512], cmd[8192], buf[262144], erp[600];
     int rc = -1, novr_used = 0;
 
     if (err && errlen) err[0] = '\0';
     if (mag) memset(mag, 0, sizeof(*mag));
-    if (!base || !tank || ntank <= 0) {
+    if (!base || !trace || ntr <= 0) {
         if (err) snprintf(err, errlen, "no hay trazas para calcular magnitudes");
         return -1;
     }
@@ -818,7 +818,7 @@ int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *e
              (tmp_root && tmp_root[0]) ? tmp_root : "/tmp");
     if (!mkdtemp(tmp)) { if (err) snprintf(err, errlen, "mkdtemp fallo en %s", tmp); return -1; }
     snprintf(hypos, sizeof(hypos), "%s/hypos.jsonl", tmp);
-    snprintf(tankf, sizeof(tankf), "%s/event.tank", tmp);
+    snprintf(tracef, sizeof(tracef), "%s/event.traces", tmp);
     snprintf(magf,  sizeof(magf),  "%s/mags.json", tmp);
     snprintf(ovrf,  sizeof(ovrf),  "%s/winovr.txt", tmp);
     snprintf(magsd, sizeof(magsd), "%s/csnmags.d", tmp);
@@ -826,8 +826,8 @@ int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *e
     snprintf(mags_bin, sizeof(mags_bin), "%s/%s/bin/csnmags",
              ew_home ? ew_home : "", ew_version ? ew_version : "");
 
-    csnhypodbp_hypos_write(hypos, base, tank, ntank);
-    csnhypodbp_tank_write(tankf, tank, ntank);
+    csnhypodbp_hypos_write(hypos, base, trace, ntr);
+    csnhypodbp_trace_write(tracef, trace, ntr);
 
     /* Ventanas ajustadas: solo las magnitudes de la mascara. */
     {
@@ -848,7 +848,7 @@ int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *e
 
     snprintf(cmd, sizeof(cmd),
              "cd '%s' && '%s' '%s' '%s' '%s' --out '%s' 2>'%s/mags.err'",
-             ew_params, mags_bin, magsd, hypos, tankf, magf, tmp);
+             ew_params, mags_bin, magsd, hypos, tracef, magf, tmp);
     run_capture(cmd, NULL, 0, 0, NULL, NULL, 0);
     snprintf(erp, sizeof(erp), "%s/mags.err", tmp);
     if (read_file(magf, buf, sizeof(buf)) == 0) {
@@ -1107,7 +1107,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           const char *tmp_root,
                           const CsnhypodbpSolution *base,
                           const CsnhypodbpManualPick *mp, int nmp,
-                          const CsnhypodbpTankTrace *tank, int ntank,
+                          const CsnhypodbpTrace *trace, int ntr,
                           const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                           double fix_depth_km, int timeout_sec,
                           CsnhypodbpLocateStageFn on_stage, void *stage_ud,
@@ -1115,7 +1115,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                           CsnhypodbpSolution *out, CsnhypodbpMagOut *mag,
                           char *err, size_t errlen)
 {
-    char tmp[512], picks[600], csnlocd[600], arcf[600], hypos[600], tankf[600], magf[600];
+    char tmp[512], picks[600], csnlocd[600], arcf[600], hypos[600], tracef[600], magf[600];
     char ovrf[600], magsd[600], src[600], ref_cfg[600];
     char workdir[600], workdir_abs[600];
     char cmd[8192], buf[262144], logbuf[524288], errbuf[4096], errpath[600];
@@ -1136,7 +1136,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     snprintf(csnlocd,sizeof(csnlocd),"%s/csnloc.d", tmp);
     snprintf(arcf,   sizeof(arcf),   "%s/event.arc", tmp);
     snprintf(hypos,  sizeof(hypos),  "%s/hypos.jsonl", tmp);
-    snprintf(tankf,  sizeof(tankf),  "%s/event.tank", tmp);
+    snprintf(tracef,  sizeof(tracef),  "%s/event.traces", tmp);
     snprintf(magf,   sizeof(magf),   "%s/mags.json", tmp);
 
     csn = find_locator(list, nlist, "csnloc");
@@ -1305,17 +1305,17 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         csnhypodbp_locate_identity(base, sel, out);
     }
 
-    /* 5) magnitud offline (hypos + tank -> csnmags), con las ventanas ajustadas a
+    /* 5) magnitud offline (hypos + trace -> csnmags), con las ventanas ajustadas a
        mano por estacion si las hay: es la misma ruta que usa `calculate`. */
-    if (ntank > 0 && tank) {
+    if (ntr > 0 && trace) {
         CsnhypodbpMagOvrRow rows[CSNHYPODBP_MAGMARKS_MAX];
         int nrows = 0;
 
         /* Magnitudes: origen refinado + P efectivas elegidas en la tabla
            (incluye manuales y teoricas). No se usan las S ni out->picks: la
            ventana de csnmags se ancla en la fase y solo la P define el ancla. */
-        csnhypodbp_hypos_write_mag(hypos, out, base, tank, ntank);
-        csnhypodbp_tank_write(tankf, tank, ntank);
+        csnhypodbp_hypos_write_mag(hypos, out, base, trace, ntr);
+        csnhypodbp_trace_write(tracef, trace, ntr);
         snprintf(ovrf,  sizeof(ovrf),  "%s/winovr.txt", tmp);
         snprintf(magsd, sizeof(magsd), "%s/csnmags.d", tmp);
         snprintf(src,   sizeof(src),   "%s/csnmags.d", ew_params);
@@ -1326,11 +1326,11 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
         if (mag_cfg_with_overrides(src, magsd, nrows > 0 ? ovrf : NULL) == 0) {
             snprintf(cmd, sizeof(cmd),
                      "cd '%s' && '%s' '%s' '%s' '%s' --out '%s' 2>'%s/mags.err'",
-                     ew_params, mags_bin, magsd, hypos, tankf, magf, tmp);
+                     ew_params, mags_bin, magsd, hypos, tracef, magf, tmp);
         } else {
             snprintf(cmd, sizeof(cmd),
                      "cd '%s' && '%s' '%s/csnmags.d' '%s' '%s' --out '%s' 2>'%s/mags.err'",
-                     ew_params, mags_bin, ew_params, hypos, tankf, magf, tmp);
+                     ew_params, mags_bin, ew_params, hypos, tracef, magf, tmp);
         }
         /* Sin el timeout del refinador: Ms puede necesitar su ventana completa
            (MagFetchSeconds) y no debe morir por LocatorTimeoutSec. */

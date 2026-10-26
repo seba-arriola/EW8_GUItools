@@ -58,14 +58,14 @@ int wstore_normalize_samples(const TRACE2_HEADER *h, const void *raw, int32_t **
     return 0;
 }
 
-int wstore_append_record(FILE *tank, int64_t at, const TRACE2_HEADER *h,
+int wstore_append_record(FILE *seg, int64_t at, const TRACE2_HEADER *h,
                          const int32_t *samples, int64_t *new_size)
 {
-    if (!tank || !h) return -1;
-    if (fseeko(tank, (off_t)at, SEEK_SET) != 0) return -1;
-    if (fwrite(h, sizeof(*h), 1, tank) != 1) return -1;
+    if (!seg || !h) return -1;
+    if (fseeko(seg, (off_t)at, SEEK_SET) != 0) return -1;
+    if (fwrite(h, sizeof(*h), 1, seg) != 1) return -1;
     if (h->nsamp > 0) {
-        if (fwrite(samples, sizeof(int32_t), (size_t)h->nsamp, tank) != (size_t)h->nsamp)
+        if (fwrite(samples, sizeof(int32_t), (size_t)h->nsamp, seg) != (size_t)h->nsamp)
             return -1;
     }
     if (new_size) *new_size = at + wstore_record_size(h->nsamp);
@@ -101,7 +101,7 @@ int wstore_seg_overlaps(const char *name, double t0, double t1)
     double    a, b;
 
     if (!name) return 0;
-    if (sscanf(name, "%4d%2d%2d.tank", &y, &m, &d) != 3) return 0;
+    if (sscanf(name, "%4d%2d%2d.ws", &y, &m, &d) != 3) return 0;
     memset(&tm, 0, sizeof(tm));
     tm.tm_year = y - 1900;
     tm.tm_mon  = m - 1;

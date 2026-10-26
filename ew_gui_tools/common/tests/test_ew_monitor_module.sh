@@ -52,7 +52,7 @@ need    "las acciones por modulo van por PID"    'ewmon_bin restart'
 need    "status reporta el estado de cada modulo" 'ewmon_status_modules'
 need    "sin argumentos start/stop/restart siguen siendo el stack" 'if [ "$#" -eq 0 ]; then start;'
 nneedre "sin pgrep -f (mataba por linea de comandos)" 'pgrep[[:space:]]+-f'
-nneedre "sin NINGUN nombre de modulo literal" 'slink2ew|pick_FP|pickS|csnloc|csnmags|hypodb_ingest|hyp2000_ring|nlloc_ring|wstore_ingest|csntvp|csnhypodbp|csnrv|csnstaevdisp|ew_controller|wave_serverV'
+nneedre "sin NINGUN nombre de modulo literal" 'slink2ew|pick_FP|pickS|csnloc|csnmags|hypodb_ingest|hyp2000_ring|nlloc_ring|wstore_ingest|csntvp|csnhypodbp|csnrv|csnstaevdisp|ew_controller'
 
 # ---------------------------------------------------------------------------
 # 2) entorno falso

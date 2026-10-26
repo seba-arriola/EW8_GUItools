@@ -285,9 +285,9 @@ static void purge_and_log(WStoreIngest *ing, const WStoreConfig *cfg, const char
         logit("et", "wstore_ingest: purga fallida\n");
         return;
     }
-    if (st.tanks_removed > 0)
+    if (st.segments_removed > 0)
         logit("t", "wstore_ingest: purga %s: %ld segmentos, %ld MB liberados\n",
-              when, st.tanks_removed, (st.bytes_freed + 1048575) / 1048576);
+              when, st.segments_removed, (st.bytes_freed + 1048575) / 1048576);
 }
 
 int wstore_ingest_run_ring(WStoreIngest *ing, const WStoreConfig *cfg)

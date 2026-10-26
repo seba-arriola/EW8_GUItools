@@ -14,7 +14,7 @@
  *
  * Cadena: picks -> csnloc offline (DumpHypo 1; el ARC se extrae del log) ->
  * refinador elegido (hyp2000_ring/nlloc_ring, ARC->ARC) -> magnitud
- * (hypos.jsonl + tank -> csnmags offline). Todo por subproceso (popen).
+ * (hypos.jsonl + trace -> csnmags offline). Todo por subproceso (popen).
  */
 
 #define CSNHYPODBP_MAG_MAX 32
@@ -24,7 +24,7 @@ typedef struct {
     double        rate, oldest;
     const int32_t *samples;   /* muestras crudas (INT_MAX = gap) */
     long          nsamp;
-} CsnhypodbpTankTrace;
+} CsnhypodbpTrace;
 
 typedef struct {
     char ml[CSNHYPODBP_MAG_MAX];
@@ -39,9 +39,9 @@ int csnhypodbp_picks_write(const char *path, int type, int mod, int inst,
                            const CsnhypodbpManualPick *mp, int nmp);
 
 /* hypos.jsonl (schema de csnloc offline) de una solucion; net/loc se toman
-   del tank por (sta,chan). */
+   del trace por (sta,chan). */
 int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
-                           const CsnhypodbpTankTrace *tank, int ntank);
+                           const CsnhypodbpTrace *trace, int ntr);
 
 /* hypos.jsonl de magnitudes: origen refinado (`refined`) + SOLO las P de la
  * solucion elegida (`picked`, ya filtrada por g_pick_on/g_filter_*). Una entrada
@@ -49,10 +49,10 @@ int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
 int csnhypodbp_hypos_write_mag(const char *path,
                                const CsnhypodbpSolution *refined,
                                const CsnhypodbpSolution *picked,
-                               const CsnhypodbpTankTrace *tank, int ntank);
+                               const CsnhypodbpTrace *trace, int ntr);
 
-/* Tank EarthWorm (TRACE2_HEADER + int32) desde las trazas en memoria. */
-int csnhypodbp_tank_write(const char *path, const CsnhypodbpTankTrace *tr, int n);
+/* Trace EarthWorm (TRACE2_HEADER + int32) desde las trazas en memoria. */
+int csnhypodbp_trace_write(const char *path, const CsnhypodbpTrace *tr, int n);
 
 /* Primer ARC Y2K entre los marcadores de un log de csnloc. 0 si hay. */
 int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn);
@@ -83,7 +83,7 @@ int csnhypodbp_mag_parse(const char *json, CsnhypodbpMagOut *mag);
 int csnhypodbp_mag_run(const char *ew_params, const char *ew_home, const char *ew_version,
                        const char *tmp_root,
                        const CsnhypodbpSolution *base,
-                       const CsnhypodbpTankTrace *tank, int ntank,
+                       const CsnhypodbpTrace *trace, int ntr,
                        const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                        CsnhypodbpMagOut *mag, char *err, size_t errlen);
 
@@ -148,7 +148,7 @@ void csnhypodbp_locate_identity(const CsnhypodbpSolution *base,
                           const char *tmp_root,
                           const CsnhypodbpSolution *base,
                           const CsnhypodbpManualPick *mp, int nmp,
-                          const CsnhypodbpTankTrace *tank, int ntank,
+                          const CsnhypodbpTrace *trace, int ntr,
                           const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                           double fix_depth_km, int timeout_sec,
                           CsnhypodbpLocateStageFn on_stage, void *stage_ud,

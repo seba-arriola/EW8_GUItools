@@ -92,6 +92,12 @@ static double LG_dx = 0.0, LG_dy = 0.0, LG_dz = 0.0;
    NO converge. 0 = usar el LOCGRID de la plantilla tal cual. */
 static double LocGridKm = 0.0;
 
+/* Si no esta vacio, reemplaza la linea LOCSEARCH de la plantilla. Formato:
+ * "OCT nx ny nz min_node max_nodes scatter density stop". La busqueda por
+ * defecto de las bandas 3D (96x48x6, min 0.05 km, stop=0) tarda minutos por
+ * fase; esta clave permite bajarla sin tocar /mnt/d. */
+static char   LocSearch[MAX_STR] = "";
+
 /* Bandas de modelo 3D: cada una aporta su TtimeRoot y ControlFile. Las bandas
    se solapan (~4 grados), asi que entre las que contienen el hipocentro gana
    la que cubre MAS estaciones del evento (ver select_model). */
@@ -151,6 +157,35 @@ static int read_config(const char *file)
         else if (k_its("NllTTLSec"))      NllTTLSec = k_int();
         else if (k_its("NllMaxPending"))  NllMaxPending = k_int();
         else if (k_its("LocGridKm"))      LocGridKm = k_val();
+        else if (k_its("LocSearch")) {
+            char   kind[16] = "";
+            int    nx, ny, nz, maxn, nsc, dens, stop;
+            double minn;
+
+            str = k_str();
+            if (str) snprintf(kind, sizeof(kind), "%s", str);
+            nx = k_int();
+            ny = k_int();
+            nz = k_int();
+            minn = k_val();
+            maxn = k_int();
+            nsc = k_int();
+            dens = k_int();
+            stop = k_int();
+            if (strcmp(kind, "OCT") != 0 || nx <= 0 || ny <= 0 || nz <= 0 ||
+                !(minn > 0.0) || maxn <= 0 || nsc < 0 || dens < 0 || dens > 4 ||
+                (stop != 0 && stop != 1)) {
+                fprintf(stderr,
+                        "nlloc_ring: LocSearch invalido; formato "
+                        "LocSearch OCT nx ny nz min_node max_nodes scatter "
+                        "density stop\n");
+                k_close();
+                return -1;
+            }
+            snprintf(LocSearch, sizeof(LocSearch),
+                     "%s %d %d %d %.6g %d %d %d %d",
+                     kind, nx, ny, nz, minn, maxn, nsc, dens, stop);
+        }
         else if (k_its("TransOrigin")) {
             str = k_str();
             if (str) { TransLat = atof(str); TransLon = k_val(); HaveTrans = 1; }
@@ -542,15 +577,30 @@ static int build_control(const char *tmpl, const char *out,
             continue;
         }
         if (strncmp(line, "LOCSEARCH", 9) == 0 && !locsearch) {
+            char current[2048];
+            const char *src = line;
+
             locsearch = 1;
+            if (LocSearch[0] && !g_use_global_grid) {
+                if (nlloc_locsearch_set(line, LocSearch, current,
+                                        sizeof(current)) != 0) {
+                    logit("et", "nlloc_ring: no pude aplicar LocSearch\n");
+                    fclose(fi);
+                    fclose(fo);
+                    return -1;
+                }
+                src = current;
+            }
             if (FixedDepthKm >= 0.0) {
                 char fixed[2048];
 
-                if (nlloc_locsearch_fixz(line, fixed, sizeof(fixed)) == 0) {
+                if (nlloc_locsearch_fixz(src, fixed, sizeof(fixed)) == 0) {
                     fputs(fixed, fo);
                     continue;
                 }
             }
+            fputs(src, fo);
+            continue;
         }
         fputs(line, fo);
     }

@@ -34,18 +34,18 @@ pickS <pickS.d>
 
 Requiere `earthworm.d` cargado (`MOD_PICKS 165`) y los anillos enlazados.
 
-### Offline sobre tanks (para calibrar y para csnloc)
+### Offline sobre archivos de trazas (para calibrar y para csnloc)
 
 ```
-pickS <pickS.d> <tankfile> [ppicksfile]
+pickS <pickS.d> <tracesfile> [ppicksfile]
 ```
 
-Lee el tank directo (`TRACE2_HEADER + int32`), sin anillos ni reloj de pared, y
+Lee el archivo de trazas directo (`TRACE2_HEADER + int32`), sin anillos ni reloj de pared, y
 escribe una línea `TYPE_PICK_SCNL` (fase `S`) por pick a **stdout**.
 `ppicksfile` es opcional y aporta los picks P de guía (formato `.picks` de
 `pick_FP`).
 
-Cada corrida es **determinista**: misma config + mismo tank → salida byte a byte
+Cada corrida es **determinista**: misma config + mismo archivo de trazas → salida byte a byte
 idéntica.
 
 ## Algoritmo
@@ -124,8 +124,8 @@ token de fase) y con el regex `PICK_RE`.
 
 ## Herramientas offline
 
-El modo offline (`pickS <pickS.d> <tank> [ppicks]`) se usa desde el arnés de validación; los
-scripts que lo manejaban (`tank_tools/`) ya no están en el repo.
+El modo offline (`pickS <pickS.d> <traces> [ppicks]`) se usa desde el arnés de validación; los
+scripts que lo manejaban ya no están en el repo.
 
 ## Horizontales en la adquisición
 

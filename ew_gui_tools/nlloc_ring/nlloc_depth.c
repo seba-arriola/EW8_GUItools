@@ -43,3 +43,23 @@ int nlloc_locsearch_fixz(const char *in, char *out, size_t outn)
     snprintf(out, outn, "%s", in);
     return 0;
 }
+
+int nlloc_locsearch_set(const char *in, const char *spec, char *out, size_t outn)
+{
+    char   kind[16];
+    int    nx, ny, nz, maxn, nsc, dens, stop;
+    double minn;
+
+    if (!in || !spec || !out || outn == 0 || !spec[0]) return -1;
+    if (strncmp(in, "LOCSEARCH", 9) != 0) return -1;
+    if (strchr(spec, '\n') != NULL) return -1;
+    if (sscanf(spec, "%15s %d %d %d %lf %d %d %d %d",
+               kind, &nx, &ny, &nz, &minn, &maxn, &nsc, &dens, &stop) != 9)
+        return -1;
+    if (strcmp(kind, "OCT") != 0 || nx <= 0 || ny <= 0 || nz <= 0 ||
+        !(minn > 0.0) || maxn <= 0 || nsc < 0 || dens < 0 || dens > 4 ||
+        (stop != 0 && stop != 1))
+        return -1;
+    snprintf(out, outn, "LOCSEARCH %s\n", spec);
+    return 0;
+}

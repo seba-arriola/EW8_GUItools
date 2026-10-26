@@ -74,6 +74,41 @@ int main(void)
     sta_set(&stas[0], "PB01", 1700000010.0, 3.0, 300.0);
     sta_set(&stas[1], "PB02", 1700000020.0, 20.0, 500.0);
 
+    /* --- 3b. ventana de traza por magnitud (la que pide BpqWave) ---------- */
+    {
+        double wt0 = 0.0, wsec = 0.0;
+
+        CK(bpq_magpanel_req_window(p, &stas[0], 0, NULL, 0, &wt0, &wsec) == 1);
+        CK(fabs(wt0 - (1700000010.0 + 3.0)) < 1e-6);
+        CK(fabs(wsec - 47.0) < 1e-6);
+        CK(bpq_magpanel_req_window(p, &stas[0], 1, NULL, 0, &wt0, &wsec) == 1);
+        CK(fabs(wt0 - (1700000010.0 - 7.0)) < 1e-6);
+        CK(fabs(wsec - 107.0) < 1e-6);
+        CK(bpq_magpanel_req_window(p, &stas[0], 2, NULL, 0, &wt0, &wsec) == 1);
+        CK(fabs(wsec - 42.0) < 1e-6);
+        CK(bpq_magpanel_req_window(p, &stas[0], 3, NULL, 0, &wt0, &wsec) == 1);
+        CK(fabs(wsec - 412.0) < 1e-6);
+        CK(bpq_magpanel_req_window(p, &stas[0], 4, NULL, 0, &wt0, &wsec) == 0);
+        {
+            CsnhypodbpStaRow empty = stas[0];
+
+            empty.p.present = 0;
+            CK(bpq_magpanel_req_window(p, &empty, 0, NULL, 0, &wt0, &wsec) == 0);
+        }
+        {
+            CsnhypodbpMagOvrRow o;
+
+            memset(&o, 0, sizeof(o));
+            snprintf(o.sta, sizeof(o.sta), "PB01");
+            o.kind = 1;
+            o.t0 = 100.0;
+            o.t1 = 200.0;
+            CK(bpq_magpanel_req_window(p, &stas[0], 1, &o, 1, &wt0, &wsec) == 1);
+            CK(fabs(wt0 - 95.0) < 1e-9);
+            CK(fabs(wsec - 110.0) < 1e-9);
+        }
+    }
+
     /* Sin override manda la puerta del .d; con override, la del usuario. */
     CK(bpq_magpanel_gate_set(p, "0.0", "10.0") == 1);
     n = bpq_magpanel_rows(p, stas, 2, NULL, 0, NAN, rows, 16);

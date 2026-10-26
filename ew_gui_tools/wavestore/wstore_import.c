@@ -13,7 +13,7 @@ typedef struct {
 
 int main(int argc, char **argv)
 {
-    const char   *tank = NULL, *root = NULL;
+    const char   *traces = NULL, *root = NULL;
     FILE         *f;
     CEntry       *ents = NULL;
     int           ne = 0, cap = 0;
@@ -24,15 +24,15 @@ int main(int argc, char **argv)
 
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--root") && i + 1 < argc) root = argv[++i];
-        else if (!tank) tank = argv[i];
+        else if (!traces) traces = argv[i];
     }
-    if (!tank || !root) {
-        fprintf(stderr, "Uso: tank2store <tank> --root <store>\n");
+    if (!traces || !root) {
+        fprintf(stderr, "Uso: wstore_import <traces> --root <store>\n");
         return 1;
     }
 
-    f = fopen(tank, "rb");
-    if (!f) { perror(tank); return 1; }
+    f = fopen(traces, "rb");
+    if (!f) { perror(traces); return 1; }
 
     while (fread(&h, sizeof(h), 1, f) == 1) {
         size_t   esz;
@@ -74,7 +74,7 @@ int main(int argc, char **argv)
             snprintf(e->loc, sizeof(e->loc), "%s", h.loc);
             snprintf(e->chan, sizeof(e->chan), "%s", h.chan);
             if (wstore_writer_open(&e->w, root, h.sta, h.net, h.loc, h.chan) != 0) {
-                fprintf(stderr, "tank2store: no se pudo abrir writer\n");
+                fprintf(stderr, "wstore_import: no se pudo abrir writer\n");
                 free(conv);
                 fclose(f);
                 return 1;
@@ -89,6 +89,6 @@ int main(int argc, char **argv)
     free(ents);
     free(data);
     fclose(f);
-    fprintf(stderr, "tank2store: %ld registros, %ld omitidos\n", nrec, nskip);
+    fprintf(stderr, "wstore_import: %ld registros, %ld omitidos\n", nrec, nskip);
     return 0;
 }

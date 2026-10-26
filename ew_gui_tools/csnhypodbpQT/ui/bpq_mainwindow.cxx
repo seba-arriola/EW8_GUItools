@@ -89,26 +89,110 @@ static QString solKey(const CsnhypodbpSolution *s)
     return QString::fromLatin1(buf);
 }
 
-/* Pedido de traza para una fila: manda el canal de la P EFECTIVA (una manual
- * puede estar picada en HHN); el catalogo solo completa lo que falte. Sin esto
- * el tank pide HHZ y csnmags no encuentra la traza de esa P. */
-static BpqFetchReq fetchReqForRow(const BpqStations *cat,
-                                  const CsnhypodbpStaRow &r)
+/* Pedidos de traza para el trace de magnitudes/locate. Una traza por
+ * (estacion, canal), con la ventana de CADA magnitud:
+ *   - vertical (HHZ/BHZ/HNZ): union de Mwp/Mb/Ms (csnmags usa esas ventanas);
+ *   - horizontales (HHE/HHN, BHE/BHN): ventana de ML.
+ * La vertical va primero: si se alcanza `max`, nunca se pierde una magnitud
+ * vertical por culpa de las horizontales. `ovr` son las ventanas ajustadas a
+ * mano (absolutas); sin fila, manda el .d via bpq_magpanel_req_window(). */
+static void buildMagReqs(const BpqStations *cat, const BpqConfig *cfg,
+                         const BpqMagPanel *panel,
+                         const CsnhypodbpStaRow *rows, int nrows,
+                         const int *sel, int nsel,
+                         const CsnhypodbpMagOvrRow *ovr, int novr,
+                         unsigned kindMask,
+                         QVector<BpqFetchReq> *out, int max)
 {
-    const char *sta = nullptr, *net = nullptr, *chan = nullptr, *loc = nullptr;
-    BpqFetchReq q;
+    const int all = (kindMask == 0u);
+    const int wantMl = all || (kindMask & (1u << 0));
+    const int wantV = all || (kindMask & 0xEu);
+    int pass, j;
 
-    q.sta = QString::fromUtf8(r.sta);
-    q.net = QString::fromUtf8(r.p.net);
-    q.chan = QString::fromUtf8(r.p.chan);
-    q.loc = QString::fromUtf8(r.p.loc);
-    if (cat && bpq_stations_scnl(cat, r.idx, &sta, &net, &chan, &loc)) {
-        if (q.sta.isEmpty() && sta) q.sta = QString::fromUtf8(sta);
-        if (q.net.isEmpty() && net) q.net = QString::fromUtf8(net);
-        if (q.chan.isEmpty() && chan) q.chan = QString::fromUtf8(chan);
-        if (q.loc.isEmpty() && loc) q.loc = QString::fromUtf8(loc);
+    if (!cat || !cfg || !panel || !rows || !sel || !out || max <= 0)
+        return;
+
+    for (pass = 0; pass < 2; pass++) {
+        for (j = 0; j < nsel && out->size() < max; j++) {
+            const CsnhypodbpStaRow &row = rows[sel[j]];
+            const char *sta = nullptr, *net = nullptr, *loc = nullptr;
+            CsnhypodbpStaRow chrows[BPQ_MAG_MAX_TRACES];
+            char chans[BPQ_MAG_MAX_TRACES][8];
+            int nc, k;
+            double t0u = 0.0, t1u = 0.0;
+            int have = 0;
+
+            if (sel[j] < 0 || sel[j] >= nrows) continue;
+            if (!row.p.present || !(row.p.t > 0.0)) continue;
+            if (!bpq_stations_scnl(cat, row.idx, &sta, &net, nullptr, &loc))
+                continue;
+            nc = bpq_stations_chan_rows(cat, row.sta, cfg->channels_order,
+                                        cfg->components_order, &row,
+                                        chrows, chans, BPQ_MAG_MAX_TRACES);
+            if (nc <= 0) continue;
+
+            if (pass == 0 && wantV) {
+                for (k = 1; k < 4; k++) {
+                    double t0, sec;
+
+                    if (!all && !(kindMask & (1u << k))) continue;
+                    if (!bpq_magpanel_req_window(panel, &row, k, ovr, novr,
+                                                 &t0, &sec))
+                        continue;
+                    if (!have) {
+                        t0u = t0;
+                        t1u = t0 + sec;
+                        have = 1;
+                    } else {
+                        if (t0 < t0u) t0u = t0;
+                        if (t0 + sec > t1u) t1u = t0 + sec;
+                    }
+                }
+                if (!have) continue;
+                for (k = 0; k < nc; k++) {
+                    const size_t l = std::strlen(chans[k]);
+
+                    if (!l || chans[k][l - 1] != 'Z') continue;
+                    {
+                        BpqFetchReq q;
+
+                        q.sta = QString::fromUtf8(sta);
+                        q.net = QString::fromUtf8(net);
+                        q.chan = QString::fromUtf8(chans[k]);
+                        q.loc = QString::fromUtf8(loc);
+                        q.t0 = t0u;
+                        q.seconds = t1u - t0u;
+                        out->append(q);
+                    }
+                    break;
+                }
+            } else if (pass == 1 && wantMl) {
+                double t0, sec;
+
+                if (!bpq_magpanel_req_window(panel, &row, 0, ovr, novr,
+                                             &t0, &sec))
+                    continue;
+                for (k = 0; k < nc && out->size() < max; k++) {
+                    const size_t l = std::strlen(chans[k]);
+
+                    if (!l || (chans[k][l - 1] != 'N' &&
+                               chans[k][l - 1] != 'E'))
+                        continue;
+                    {
+                        BpqFetchReq q;
+
+                        q.sta = QString::fromUtf8(sta);
+                        q.net = QString::fromUtf8(net);
+                        q.chan = QString::fromUtf8(chans[k]);
+                        q.loc = QString::fromUtf8(loc);
+                        q.t0 = t0;
+                        q.seconds = sec;
+                        out->append(q);
+                    }
+                }
+            }
+        }
     }
-    return q;
 }
 
 /* Cabeceras de las tablas que aun no tienen modelo propio (fases 3/6). Las de
@@ -2286,7 +2370,6 @@ void BpqMainWindow::locateNow()
         QByteArray loc = m_locCombo ? m_locCombo->currentText().toUtf8()
                                     : QByteArray();
         QVector<BpqFetchReq> magReq;
-        double magT0 = 0.0, magWin = 700.0;
         quint64 id;
         BpqLocateWorker *w = m_locWorker;
 
@@ -2335,26 +2418,15 @@ void BpqMainWindow::locateNow()
             }
         }
 
-    if (m_staCat) {
-        QVector<BpqFetchReq> mreq;
+    if (m_staCat && m_magPanel) {
+        int rb[512];
+        const int nf = bpq_magpanel_fetch_rows(
+            m_magPanel, rows.constData(), rows.size(), 0u, base.depth,
+            am, mm, tm, rb, 512);
 
-        if (m_magPanel) {
-            int rb[512];
-            const int nf = bpq_magpanel_fetch_rows(
-                m_magPanel, rows.constData(), rows.size(), 0u, base.depth,
-                am, mm, tm, rb, 512);
-
-            for (int j = 0; j < nf; j++) {
-                const BpqFetchReq q = fetchReqForRow(m_staCat, rows.at(rb[j]));
-
-                if (!q.sta.isEmpty()) mreq.append(q);
-            }
-        }
-        magReq = mreq;
+        buildMagReqs(m_staCat, m_cfg, m_magPanel, rows.constData(), rows.size(),
+                     rb, nf, nullptr, 0, 0u, &magReq, BPQ_TRACE_MAX);
     }
-        /* Ventana de magnitudes: MagFetchSeconds del .d (Ms necesita su ventana). */
-        magT0 = base.otime - 5.0;
-        magWin = (m_cfg && m_cfg->mag_fetch_s > 0.0) ? m_cfg->mag_fetch_s : 700.0;
 
         if (!w) {
             m_candErr = QStringLiteral("worker no disponible");
@@ -2373,9 +2445,8 @@ void BpqMainWindow::locateNow()
         tickLocate();
 
         QMetaObject::invokeMethod(w, [w, id, base, rows, on, am, mm, tm, fix, loc,
-                                      magReq, magT0, magWin]() {
-            w->runJob(id, base, rows, on, am, mm, tm, fix, loc, magReq, magT0,
-                      magWin);
+                                      magReq]() {
+            w->runJob(id, base, rows, on, am, mm, tm, fix, loc, magReq);
         }, Qt::QueuedConnection);
     }
 }
@@ -2740,7 +2811,7 @@ void BpqMainWindow::renderMagnitudes()
                                m_magChkT ? m_magChkT->isChecked() : 1);
 
     if (m_magPanel && !m_staRows.isEmpty()) {
-        /* `has_data` = "el calculo tendra su onda": `calculate` baja el tank de
+        /* `has_data` = "el calculo tendra su onda": `calculate` baja el trace de
          * las estaciones con P que estan en el catalogo. Sin esto la columna
          * `stat` y el recuento "en uso" dirian que ninguna entra, aunque si
          * entren (el nucleo puro no conoce las trazas en memoria). */
@@ -2904,7 +2975,6 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     QVector<CsnhypodbpMagOvrRow> ovr;
     CsnhypodbpMagOvrRow buf[600];
     const unsigned kindMask = allKinds ? 0u : (1u << m_magKind);
-    double t0 = 0.0, win = 700.0;
     int nm = 0, i;
     int magA = 0, magM = 0, magT = 0;
     CsnhypodbpSolution base;
@@ -2944,6 +3014,10 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         return;
     }
 
+    nm = bpq_magpanel_ovr(m_magPanel, rows.constData(), rows.size(),
+                          kindMask, buf, 600);
+    for (i = 0; i < nm; i++) ovr.append(buf[i]);
+
     if (m_staCat && m_magPanel) {
         int rb[512];
         const int nf = bpq_magpanel_fetch_rows(
@@ -2972,18 +3046,10 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
             }
             return;
         }
-        for (int j = 0; j < nf; j++) {
-            const BpqFetchReq q = fetchReqForRow(m_staCat, rows.at(rb[j]));
-
-            if (!q.sta.isEmpty()) req.append(q);
-        }
+        buildMagReqs(m_staCat, m_cfg, m_magPanel, rows.constData(), rows.size(),
+                     rb, nf, ovr.constData(), ovr.size(), kindMask, &req,
+                     BPQ_TRACE_MAX);
     }
-    nm = bpq_magpanel_ovr(m_magPanel, rows.constData(), rows.size(),
-                          kindMask, buf, 600);
-    for (i = 0; i < nm; i++) ovr.append(buf[i]);
-
-    t0 = m_cand.otime - 5.0;
-    win = (m_cfg->mag_fetch_s > 0.0) ? m_cfg->mag_fetch_s : 700.0;
 
     m_magBusy = true;
     m_magMask = kindMask;
@@ -2993,8 +3059,8 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
 
     BpqLocateWorker *w = m_locWorker;
     const int km = (int)kindMask;
-    QMetaObject::invokeMethod(w, [w, id, base, req, t0, win, ovr, km]() {
-        w->runMagJob(id, base, req, t0, win, ovr, km);
+    QMetaObject::invokeMethod(w, [w, id, base, req, ovr, km]() {
+        w->runMagJob(id, base, req, ovr, km);
     }, Qt::QueuedConnection);
 }
 
@@ -3410,7 +3476,7 @@ bool BpqMainWindow::runMwwForTest()
 }
 
 /* Hook headless (BPQ_MODE=--magcalc): locate + boton `calculate`. Corre el mismo
- * camino que el clic (tank + csnmags con las ventanas ajustadas) y espera el
+ * camino que el clic (trace + csnmags con las ventanas ajustadas) y espera el
  * resultado girando el bucle, porque el trabajo va al hilo del localizador. */
 bool BpqMainWindow::runMagCalcForTest()
 {

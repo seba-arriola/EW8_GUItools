@@ -264,6 +264,38 @@ int bpq_magpanel_ovr(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
     return nr;
 }
 
+int bpq_magpanel_req_window(const BpqMagPanel *p, const CsnhypodbpStaRow *row,
+                            int kind, const CsnhypodbpMagOvrRow *ovr, int novr,
+                            double *t0, double *seconds)
+{
+    double a = 0.0, b = 0.0, lo, hi;
+    int i;
+
+    if (!p || !row || !t0 || !seconds) return 0;
+    if (kind < 0 || kind >= BPQ_MAG_KINDS) return 0;
+    if (!row->p.present || !(row->p.t > 0.0)) return 0;
+
+    csnhypodbp_magcfg_window(&p->cfg, kind, &a, &b);
+    /* Mismo recorte que csnmags: -2 s (Mwp/ML), -1 s (Mb), 0 (Ms). El margen
+     * de 5 s cubre ese recorte y el redondeo de la ventana. */
+    lo = row->p.t + a - 2.0;
+    hi = row->p.t + b;
+    for (i = 0; i < novr; i++) {
+        if (ovr[i].kind != kind) continue;
+        if (strcmp(ovr[i].sta, row->sta) != 0) continue;
+        if (!(ovr[i].t1 > ovr[i].t0)) continue;
+        lo = ovr[i].t0;
+        hi = ovr[i].t1;
+        break;
+    }
+    lo -= 5.0;
+    hi += 5.0;
+    if (!(hi > lo)) return 0;
+    *t0 = lo;
+    *seconds = hi - lo;
+    return 1;
+}
+
 int bpq_magpanel_ovr_write(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                            int n, const char *path)
 {

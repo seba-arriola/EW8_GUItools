@@ -78,6 +78,7 @@ LDLIBS   = -L$(QT_LIB) -lQt6Widgets -lQt6Gui -lQt6Core -lm -lpthread
 # (AGENTS §5; common/tests/test_build_deps.sh).
 CXXFLAGS += -MMD -MP -MF $(BUILDDIR)/$(@F).dep
 CFLAGS   += -MMD -MP -MF $(BUILDDIR)/$(@F).dep
+-include $(wildcard $(BUILDDIR)/*.dep)
 
 # ---------------------------------------------------------------------------
 # Targets
@@ -128,5 +129,8 @@ check: qt_check $(LIB) $(TEST_BINS)
 	@echo "== check_no_gtk_link =="
 	@bash tests/test_no_gtk_link.sh
 
-clean:
+clean: clean-deps
 	rm -rf $(BUILDDIR)
+
+clean-deps:
+	rm -f $(BUILDDIR)/*.dep

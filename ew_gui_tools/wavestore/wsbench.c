@@ -15,7 +15,7 @@ static double now_ms(void)
 
 int main(int argc, char **argv)
 {
-    const char *mode = "store", *store = NULL, *tank = NULL, *scnl = NULL;
+    const char *mode = "store", *store = NULL, *traces = NULL, *scnl = NULL;
     double      t0 = -1, t1 = -1;
     int         repeat = 10;
     char        net[16], sta[16], loc[8], chan[8];
@@ -28,14 +28,14 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--mode") && i + 1 < argc) mode = argv[++i];
         else if (!strcmp(argv[i], "--store") && i + 1 < argc) store = argv[++i];
-        else if (!strcmp(argv[i], "--tank") && i + 1 < argc) tank = argv[++i];
+        else if (!strcmp(argv[i], "--traces") && i + 1 < argc) traces = argv[++i];
         else if (!strcmp(argv[i], "--scnl") && i + 1 < argc) scnl = argv[++i];
         else if (!strcmp(argv[i], "--start") && i + 1 < argc) t0 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--end") && i + 1 < argc) t1 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--repeat") && i + 1 < argc) repeat = atoi(argv[++i]);
     }
     if (!scnl || t0 < 0 || t1 < 0 || repeat < 1) {
-        fprintf(stderr, "Uso: wsbench --mode store|tank [--store R | --tank F] "
+        fprintf(stderr, "Uso: wsbench --mode store|traces [--store R | --traces F] "
                         "--scnl NET.STA.LOC.CHAN --start <e> --end <e> [--repeat N]\n");
         return 1;
     }
@@ -46,10 +46,10 @@ int main(int argc, char **argv)
 
     memset(&cfg, 0, sizeof(cfg));
     if (!strcmp(mode, "store"))      cfg.mode = WSRC_STORE;
-    else if (!strcmp(mode, "tank"))  cfg.mode = WSRC_TANK;
-    else { fprintf(stderr, "wsbench: --mode invalido <%s> (store|tank)\n", mode); return 1; }
+    else if (!strcmp(mode, "traces"))  cfg.mode = WSRC_TRACES;
+    else { fprintf(stderr, "wsbench: --mode invalido <%s> (store|traces)\n", mode); return 1; }
     cfg.store_root = store;
-    cfg.tank_or_null = tank;
+    cfg.traces_or_null = traces;
 
     if (wave_open(&w, &cfg) != 0) {
         fprintf(stderr, "wsbench: no abro la fuente (%s)\n", mode);

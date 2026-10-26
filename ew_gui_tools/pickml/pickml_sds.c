@@ -5,7 +5,7 @@
  *   <root>/<YYYY>/<NET>/<STA>/<CHAN>.D/<NET>.<STA>.<LOC>.<CHAN>.D.<YYYY>.<DDD>*
  *                                                                            *
  * Se usa el mismo camino que pickml_fetch para que un evento historico se    *
- * pueda picar sin convertirlo antes a tank:                                  *
+ * pueda picar sin convertirlo antes a trace:                                  *
  *   - dia ausente -> se salta (NO_DAY), no es error;                          *
  *   - tasa 1x/2x/4x -> se decima a Rate con un Butterworth de 2.o orden       *
  *     (fc = 0.35 * Rate) sobre la senal original, como el fetch;             *
@@ -27,7 +27,7 @@
 
 /* Tramo maximo que se entrega al buffer. `pickml_main` trocea por capacidad,
  * pero `advance` se llama una vez por traza: entregar el dia entero perderia
- * ventanas. 1 s es ademas la cadencia del tank que escribe pickml_fetch. */
+ * ventanas. 1 s es ademas la cadencia del trace que escribe pickml_fetch. */
 #define PMSDS_SLICE_SEC 1.0
 
 /* --------------------------------------------------------------- auxiliares */

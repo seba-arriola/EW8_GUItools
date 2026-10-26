@@ -1,6 +1,6 @@
 #!/bin/sh
 # test_offline.sh — test integrado del modo offline de pickS.
-# Determinista: dos corridas sobre el mismo tank deben ser idénticas y debe
+# Determinista: dos corridas sobre el mismo trace deben ser idénticas y debe
 # emitirse al menos un pick S.
 
 set -e
@@ -35,10 +35,10 @@ cat > "$DIR/pickS.sta" <<EOF
 1 1 TEST C -- HHE HHN HHZ
 EOF
 
-"$HERE/test/gen_tank" "$DIR/t.tank" TEST C -- HHE HHN HHZ
+"$HERE/test/gen_traces" "$DIR/t.traces" TEST C -- HHE HHN HHZ
 
-"$HERE/pickS" "$DIR/pickS.d" "$DIR/t.tank" > "$DIR/out1.txt" 2> "$DIR/err1.txt"
-"$HERE/pickS" "$DIR/pickS.d" "$DIR/t.tank" > "$DIR/out2.txt" 2> "$DIR/err2.txt"
+"$HERE/pickS" "$DIR/pickS.d" "$DIR/t.traces" > "$DIR/out1.txt" 2> "$DIR/err1.txt"
+"$HERE/pickS" "$DIR/pickS.d" "$DIR/t.traces" > "$DIR/out2.txt" 2> "$DIR/err2.txt"
 
 if ! diff -q "$DIR/out1.txt" "$DIR/out2.txt" > /dev/null; then
     echo "FAIL: salidas no deterministas"

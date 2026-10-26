@@ -3,7 +3,7 @@
 
 /*
  * gen_hypos.c - genera un hypos.jsonl mínimo (schema del csnloc offline) que
- * casa con el tank de gen_tank.c.
+ * casa con el trace de gen_traces.c.
  */
 
 #define T0 1700000000.0

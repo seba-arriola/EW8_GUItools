@@ -6,7 +6,7 @@
 #include <trace_buf.h>
 
 /*
- * gen_tank.c - tank sintético determinista para el test offline.
+ * gen_traces.c - trace sintético determinista para el test offline.
  * Tres componentes (HHZ/HHN/HHE) por estación, 60 s a 100 Hz, seno de 1 Hz
  * (1000 cuentas) entre t0+2 y t0+55.
  */
@@ -46,7 +46,7 @@ static void emit(FILE *f, const char *sta, const char *chan)
 int main(int argc, char **argv)
 {
     FILE *f;
-    const char *path = (argc > 1) ? argv[1] : "test/tmp/test.tank";
+    const char *path = (argc > 1) ? argv[1] : "test/tmp/test.traces";
     f = fopen(path, "wb");
     if (!f) { perror(path); return 1; }
     emit(f, "TST1", "HHZ");

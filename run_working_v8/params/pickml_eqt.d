@@ -14,7 +14,7 @@
 #   3/1950 ventanas llegan a 0.02. Con los umbrales de la otra rama (0.20/0.20)
 #   el picker es MUDO: 0 picks en 5 min contra 332 de PhaseNetWC; con 0.02 emite
 #   2 (24/h, solo los transitorios mas fuertes). OJO: sobre la ventana dorada
-#   del fixture (test/fixtures/win1.tank) su curva P SI llega a 0.92, asi que
+#   del fixture (test/fixtures/win1.traces) su curva P SI llega a 0.92, asi que
 #   "casi no detecta" no esta probado: la comparacion honesta exige el corpus de
 #   eventos con referencia (tools/eval_picks.py), que esta pendiente.
 #

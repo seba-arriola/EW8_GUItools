@@ -82,8 +82,8 @@ expect() {
 # 1. publicar en modo offline es error de uso.
 mk_d "$TMP/off.d" "PublishRing 1"
 expect 2 "vale en modo --ring" \
-    "PublishRing 1 con --tank es error" \
-    ./pickml "$TMP/off.d" --tank "$TMP/no_hace_falta.tank"
+    "PublishRing 1 con --traces es error" \
+    ./pickml "$TMP/off.d" --traces "$TMP/no_hace_falta.trace"
 
 # 2. --publish-dry-run sólo tiene sentido publicando en vivo.
 mk_d "$TMP/dry0.d"
@@ -94,7 +94,7 @@ expect 2 "publish-dry-run exige PublishRing 1" \
 mk_d "$TMP/dryoff.d" "PublishRing 1"
 expect 2 "publish-dry-run exige PublishRing 1" \
     "--publish-dry-run offline es error" \
-    ./pickml "$TMP/dryoff.d" --tank "$TMP/no_hace_falta.tank" --publish-dry-run
+    ./pickml "$TMP/dryoff.d" --traces "$TMP/no_hace_falta.trace" --publish-dry-run
 
 # 3. anillo inexistente: fail-fast antes del motor (exit 1).
 mk_d "$TMP/noring.d" "PublishRing 1" "OutRing NO_EXISTE_ESTE_ANILLO"
@@ -118,7 +118,7 @@ done
 mk_d "$TMP/log2.d" "PublishRing 1" "LogFile 2"
 expect 2 "-" \
     "LogFile 2 + error de config" \
-    ./pickml "$TMP/log2.d" --tank "$TMP/no_hace_falta.tank"
+    ./pickml "$TMP/log2.d" --traces "$TMP/no_hace_falta.trace"
 if ls "$TMP/log"/pickml_*.log >/dev/null 2>&1; then
     echo "PASS LogFile 2 escribe EW_LOG/pickml_*.log"
 else
@@ -131,7 +131,7 @@ mkdir -p "$TMP/log"
 mk_d "$TMP/log0.d" "PublishRing 1" "LogFile 0"
 expect 2 "vale en modo --ring" \
     "LogFile 0 + error de config" \
-    ./pickml "$TMP/log0.d" --tank "$TMP/no_hace_falta.tank"
+    ./pickml "$TMP/log0.d" --traces "$TMP/no_hace_falta.trace"
 if ls "$TMP/log"/pickml_*.log >/dev/null 2>&1; then
     echo "FAIL LogFile 0 creo un log en EW_LOG"
     fails=$((fails + 1))
@@ -163,16 +163,16 @@ fi
 # ...y dos fuentes siguen siendo error de uso.
 expect 2 "exactamente un modo" \
     "dos fuentes siguen siendo error" \
-    ./pickml "$TMP/live_default.d" --tank "$TMP/x.tank" --sds "$TMP/y"
+    ./pickml "$TMP/live_default.d" --traces "$TMP/x.traces" --sds "$TMP/y"
 
 # 7. el directorio de salida se crea si falta (antes moría con exit 4 en un
 #    worktree nuevo, donde run_working_v8/pickml/ no existe).
-./test/gen_tank --tank "$TMP/burst.tank" --epoch 1700000000 --dur 60
+./test/gen_traces --traces "$TMP/burst.traces" --epoch 1700000000 --dur 60
 mk_d "$TMP/nested.d"
 set_key "$TMP/nested.d" PickOutFile "$TMP/a/b/c/out.jsonl"
 expect 0 "-" \
     "crea el directorio anidado de PickOutFile" \
-    ./pickml "$TMP/nested.d" --tank "$TMP/burst.tank" --stats
+    ./pickml "$TMP/nested.d" --traces "$TMP/burst.traces" --stats
 if [ -f "$TMP/a/b/c/out.jsonl" ]; then
     echo "PASS PickOutFile quedo escrito bajo $TMP/a/b/c/"
 else
@@ -185,7 +185,7 @@ mk_d "$TMP/badout.d"
 set_key "$TMP/badout.d" PickOutFile /proc/x/y/out.jsonl
 expect 4 "no se pudo crear el directorio de salida" \
     "directorio de salida imposible" \
-    ./pickml "$TMP/badout.d" --tank "$TMP/burst.tank" --stats
+    ./pickml "$TMP/badout.d" --traces "$TMP/burst.traces" --stats
 
 # 9. invariante del propio script: EW_LOG se aísla antes del primer caso.
 first_pickml=$(grep -n '\./pickml' "$0" | head -1 | cut -d: -f1)

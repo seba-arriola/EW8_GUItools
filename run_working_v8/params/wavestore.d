@@ -8,8 +8,8 @@
 #     Process       "wstore_ingest wavestore.d"
 #     Class/Priority    OTHER 0
 #
-# Para cargar tanks historicos al store (offline/calibracion):
-#     ew_gui_tools/wavestore/tank2store <master.tank> --root <StoreRoot>
+# Para cargar traces historicos al store (offline/calibracion):
+#     ew_gui_tools/wavestore/wstore_import <master.traces> --root <StoreRoot>
 
 MyModuleId    MOD_WSTORE
 RingName      SLINK_RING

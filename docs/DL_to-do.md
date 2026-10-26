@@ -13,7 +13,7 @@ Estado: 2026-10-21. Este documento lista **sólo lo que falta**. Lo hecho está 
   La política es pura y testeable (`pickml_publish.c`): `PublishPhases P|S|PS` y
   `PublishMaxWeight 0..3`; `--publish-dry-run` cuenta sin escribir.
 - `pickml` **no lee del SDS en modo vivo**: el modo vivo lee `SLINK_RING`; el offline admite
-  `--tank`, `--store` (disco local, 7 días de retención) y `--sds <root>` (SDS de SeisComP, para
+  `--traces`, `--store` (disco local, 7 días de retención) y `--sds <root>` (SDS de SeisComP, para
   eventos históricos; decima 1x/2x/4x a `Rate`). El SDS también lo usan `pickml_fetch`
   (calibración) y `csnwphase`.
 - Prioridad declarada: **recall primero**. Las picadas sin referencia se reportan como adicionales,
@@ -99,7 +99,7 @@ Formato del mensaje (no tocar): `TYPE_PICK_SCNL` =
   intercambiadas y un S saturado. `export_onnx.py --channel-order auto` lo detecta y lo deja en
   `.onnx.json`; si algún peso nuevo sale mal, forzar `nps`/`psn` y volver a medir. `--check-model`
   sólo valida formas, **no** semántica.
-- **`pickml_fetch` escribe un tank vacío sin error** cuando no encuentra ondas (hoy ya no le pasa
+- **`pickml_fetch` escribe un archivo de trazas vacío sin error** cuando no encuentra ondas (hoy ya no le pasa
   con el store: se corregía la ruta del `loc` nulo). Antes de dar un corpus por bueno, verificar
   `stations_written > 0` en cada `meta.json`.
 
@@ -133,7 +133,7 @@ El primer ajuste se hizo contra picadas automáticas. La decisión final necesit
 - **Volumen**: `MaxStations 20` y `PadPreSec`/`PadPostSec` (60/120 s) ya existen; la ventana se toma
   alrededor de las picadas, no del origen (`pickml_fetch.c:673`).
 - **Herramientas que faltan**: `tools/calib_run.sh` (un `pickml_fetch` por evento + concatenar refs),
-  `tools/make_dataset.py` (tank → ventanas 3001 con etiquetas gaussianas).
+  `tools/make_dataset.py` (trazas → ventanas 3001 con etiquetas gaussianas).
 - **Riesgo**: los eventos manuales pueden ser de una época con otros canales. `pickml_fetch` escribe
   `stations.sta` por evento: usarlo como `StaFile` evita el desajuste de canales.
 - **Criterio de cierre**: recall en `test` reportada **una sola vez**, con IC, y comparación pareada
@@ -172,7 +172,7 @@ El primer ajuste se hizo contra picadas automáticas. La decisión final necesit
 | modelos + ORT 1.31 | `/mnt/d/resources/pickml/` (`phasenet.onnx`, `eqt.onnx`, `phasenetwc.onnx`) |
 | venv Python | `~/.venvs/pickml` (seisbench 0.10.2, torch 2.4). **No se usa en runtime** |
 | salidas operativas | `run_working_v8/pickml/` (la crea `pickml` al arrancar si falta; está en `.gitignore`) |
-| corpus de calibración | `run_working_v8/pickml/calib/<event>/` (tank + refs + `curve.*` + `curve.idx`) |
+| corpus de calibración | `run_working_v8/pickml/calib/<event>/` (trazas + refs + `curve.*` + `curve.idx`) |
 | configuración | `run_working_v8/params/pickml_phasenetwc.d` |
 | config del fetch | `run_working_v8/params/pickml_fetch_calib.d` (usa `db.env`; `OnlyManual 0` en dev) |
 | herramientas | `tools/calib_run.sh`, `tools/sweep_post.py`, `tools/eval_picks.py`, `tools/latency.py` |
@@ -206,7 +206,7 @@ cd run_working_v8/params && pickml pickml_phasenetwc.d --ring --publish-dry-run 
 # rollback de la publicacion sin tocar el resto del stack
 #   PublishRing 0 en pickml_phasenetwc.d  +  ./ew_monitor.sh restart pickml
 
-# evento histórico directo del SDS (sin store ni tank)
+# evento histórico directo del SDS (sin store ni archivos de trazas)
 cd run_working_v8/params && pickml pickml_phasenetwc.d --sds /mnt/sds/archive \
     --t0 2026-10-20T21:45:00 --t1 2026-10-20T21:49:00 --jsonl --stats
 
@@ -227,7 +227,7 @@ pickml pickml_phasenetwc.d --store <root> --t0 <t0> --t1 <t1> \
   `filter_factor=2`, `in_samples=3001`, `labels PSN`, y el orden real de salida es `(P,S,N)`.
 - ~~Coste de PhaseNetWC ≈ 4× PhaseNet~~ **medido**: 3.2 ms/ventana y 166 ms de arranque (2× y 1.6×).
 - ~~El store cubre la ventana~~ **verificado**, pero con dos matices: el store rota a
-  `YYYYMMDD.tank` a medianoche **UTC** y `pickml_fetch` necesitaba `loc="--"` (corregido).
+  `YYYYMMDD.ws` a medianoche **UTC** y `pickml_fetch` necesitaba `loc="--"` (corregido).
 - La referencia del corpus es **automática**: no confundirla con la calibración manual (§3).
 - Al publicar, el `lag` de PhaseNetWC **no está medido en vivo**. Ojo con la atribución: el
   máximo de 131.8 s de la corrida de 9.3 h es de PhaseNet `original` (`docs/DLdetalles.md:445`),

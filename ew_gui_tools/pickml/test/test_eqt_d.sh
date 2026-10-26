@@ -60,7 +60,7 @@ MODEL=$(cfgval ModelFile)
 ORTLIB=$(cfgval OrtLib)
 [ -f "$MODEL" ]  || { echo "test_eqt_d: SKIP 2/3 y 3/3 (no existe $MODEL)"; exit 0; }
 [ -f "$ORTLIB" ] || { echo "test_eqt_d: SKIP 2/3 y 3/3 (no existe $ORTLIB)"; exit 0; }
-[ -f "$FIX/win1.tank" ] || { echo "test_eqt_d: SKIP 3/3 (falta $FIX/win1.tank)"; exit 0; }
+[ -f "$FIX/win1.traces" ] || { echo "test_eqt_d: SKIP 3/3 (falta $FIX/win1.traces)"; exit 0; }
 
 cat > "$TMP/eqt.sta" <<'EOF'
 1 1 TEST XX -- HHE HHN HHZ
@@ -107,7 +107,7 @@ echo "OK 2/3 --check-model: sesion ONNX y entrada [B,3,6000]"
 
 # 3. la salida del grafo. Si tuviera otra forma (p.ej. [B,3,T] sin el wrapper del
 #    exportador) pm_onnx_run lo dice y descarta la ventana; aqui eso es un FAIL.
-run() { ./pickml "$TMP/eqt.d" --tank "$FIX/win1.tank" --jsonl --stats; }
+run() { ./pickml "$TMP/eqt.d" --traces "$FIX/win1.traces" --jsonl --stats; }
 run > "$TMP/a.jsonl" 2> "$TMP/a.err"
 run > "$TMP/b.jsonl" 2> "$TMP/b.err"
 

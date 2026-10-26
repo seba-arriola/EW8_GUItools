@@ -209,7 +209,6 @@
  Module   MOD_STATMGR           132
  Module   MOD_STATRIGFILTER     133
  Module   MOD_STATUS            134
- Module   MOD_TANKPLAYER        135
  Module   MOD_TERRA2EW          136
  Module   MOD_TRG_ASSOC         137
  Module   MOD_TRIG2DISK         138

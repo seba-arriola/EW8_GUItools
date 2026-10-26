@@ -77,7 +77,7 @@ m = sbm.EQTransformer(in_channels=3, in_samples=6000, classes=2, phases="PS")
 
 El camino ya existe a medias en `tools/`:
 
-1. `pickml_fetch` escribe por evento un `event.tank` 3C + `picks_ref.csv` + `stations.sta`
+1. `pickml_fetch` escribe por evento un `event.traces` 3C + `picks_ref.csv` + `stations.sta`
    (del store; el SDS como respaldo).
 2. `tools/store_window.py` materializa una ventana 3C del store (grilla 100 Hz, exige
    cobertura completa).
@@ -130,7 +130,7 @@ No entrenar desde cero: 1.3 M de ventanas y 89 h en 4 GPU. Partir de lo que ya f
 --arch eqt|phasenet          --out <ruta.onnx>
 --model <variante SeisBench> --opset 17
 --window <muestras>          --channel-order auto|nps|psn
---fixture-tank/--fixture-t0/--fixture-dir/--fixture-prefix
+--fixture-trace/--fixture-t0/--fixture-dir/--fixture-prefix
 ```
 
 - Obtiene los pesos con `cls.from_pretrained(args.model)` ⇒ **sólo variantes publicadas**.
@@ -155,7 +155,7 @@ el tiempo de creación de sesión (medido con `iquique`: **0.18 s tras slim**, c
 
 | qué | cómo | criterio |
 |---|---|---|
-| paridad numérica ONNX vs torch | `test/test_engine.sh` con fixtures `win1.tank` + `win1.ref.{p,s}.f32` (float32 crudo) | `max|Δ| ≤ 1e-4` en P y en S |
+| paridad numérica ONNX vs torch | `test/test_engine.sh` con fixtures `win1.traces` + `win1.ref.{p,s}.f32` (float32 crudo) | `max|Δ| ≤ 1e-4` en P y en S |
 | engine completo | `make -C ew_gui_tools/pickml check-engine` | SKIP si falta ORT/modelo/fixture |
 | contrato del `.d` y del grafo | `pickml <d> --check-model` | abre la sesión, valida `[B,3,6000]` y las estaciones |
 
@@ -191,7 +191,7 @@ PublishRing   1
 3. Export a ONNX (§6.1) — hoy el script sólo toma variantes de SeisBench.
 4. `slim_onnx.py` (§6.2).
 5. Paridad `≤1e-4` + `--check-model` (§6.3).
-6. Offline contra el corpus de calibración (`--tank`/`--store`) y barrido de umbrales
+6. Offline contra el corpus de calibración (`--traces`/`--store`) y barrido de umbrales
    con `tools/sweep_post.py`; recall con `tools/eval_picks.py`.
 7. Publicar primero en un anillo sin consumidor (`LEGACY_PICK_RING`); pasar a `PICK_RING`
    sólo después de comparar en vivo.

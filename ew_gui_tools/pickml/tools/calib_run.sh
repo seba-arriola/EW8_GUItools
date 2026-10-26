@@ -7,9 +7,9 @@
 #        /tmp/opencode/pnwc/calib.d
 #
 # Por cada evento:
-#   1. `pickml_fetch` escribe <out>/<event>/{event.tank,picks_ref.csv,stations.sta}
+#   1. `pickml_fetch` escribe <out>/<event>/{event.traces,picks_ref.csv,stations.sta}
 #      (del store local si esta; el SDS solo como respaldo).
-#   2. `pickml` corre sobre ese tank y deja `<out>/<event>/curve.{p,s,det}.f32`
+#   2. `pickml` corre sobre ese trace y deja `<out>/<event>/curve.{p,s,det}.f32`
 #      + `curve.idx` (el volcado autocontenido que consume tools/sweep_post.py)
 #      y `picks.jsonl`.
 #
@@ -35,7 +35,7 @@ while IFS= read -r line; do
     case "$ev" in \#*) continue ;; esac
     d="$OUT/$ev"
     mkdir -p "$d"
-    if [ -s "$d/event.tank" ] && [ -s "$d/picks_ref.csv" ]; then
+    if [ -s "$d/event.traces" ] && [ -s "$d/picks_ref.csv" ]; then
         echo "fetch $ev: ya existe" >> "$OUT/run.log"
         continue
     fi
@@ -59,8 +59,8 @@ sed "s#^StaFile.*#StaFile $OUT/stations_all.sta#" "$PM_D" > "$OUT/pickml_calib.d
 
 # 4. corrida + volcado
 for d in "$OUT"/*/; do
-    [ -f "$d/event.tank" ] || continue
-    pickml "$OUT/pickml_calib.d" --tank "$d/event.tank" \
+    [ -f "$d/event.traces" ] || continue
+    pickml "$OUT/pickml_calib.d" --traces "$d/event.traces" \
            --dump-curves "$d/curve" --out "$d/picks.jsonl" --stats \
            >> "$OUT/run.log" 2>&1 || echo "pickml $d: FALLO" >> "$OUT/run.log"
 done

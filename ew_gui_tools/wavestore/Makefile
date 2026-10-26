@@ -14,7 +14,7 @@ LIB     = libwavestore.a
 LIBOBJS = wstore.o wstore_index.o wstore_io.o wstore_writer.o \
           wstore_config.o wstore_ingest.o wstore_filter.o wavesource.o
 
-CONVBINS = tank2store store2tank wstore_query wstore_prune gen_tank
+CONVBINS = wstore_import wstore_export wstore_query wstore_prune gen_traces
 TESTS    = test_wstore test_wstore_concurrent test_ingest test_wavesource \
            test_filter test_config test_prune
 
@@ -36,13 +36,13 @@ wstore_ingest: wstore_ingest_main.o $(LIB)
 # Instala en EW_HOME/bin de forma atómica y SIEMPRE. No lo hace `check`.
 .PHONY: install
 install: wstore_ingest $(CONVBINS)
-	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin wstore_ingest tank2store store2tank wstore_query wstore_prune
+	sh ../common/tools/install_bin.sh $(EW_HOME)/$(EW_VERSION)/bin wstore_ingest wstore_import wstore_export wstore_query wstore_prune
 
-tank2store: tank2store.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ tank2store.c $(LIB) $(LIBS)
+wstore_import: wstore_import.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ wstore_import.c $(LIB) $(LIBS)
 
-store2tank: store2tank.c $(LIB)
-	$(CC) $(CFLAGS) -o $@ store2tank.c $(LIB) $(LIBS)
+wstore_export: wstore_export.c $(LIB)
+	$(CC) $(CFLAGS) -o $@ wstore_export.c $(LIB) $(LIBS)
 
 wstore_query: wstore_query.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ wstore_query.c $(LIB) $(LIBS)
@@ -52,8 +52,8 @@ wstore_query: wstore_query.c $(LIB)
 wstore_prune: wstore_prune.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ wstore_prune.c $(LIB) $(LIBS)
 
-gen_tank: gen_tank.c
-	$(CC) $(CFLAGS) -o $@ gen_tank.c $(LIBS)
+gen_traces: gen_traces.c
+	$(CC) $(CFLAGS) -o $@ gen_traces.c $(LIBS)
 
 wsbench: wsbench.c $(LIB)
 	$(CC) $(CFLAGS) -o $@ wsbench.c $(LIB) $(EWLIB) $(LIBS)

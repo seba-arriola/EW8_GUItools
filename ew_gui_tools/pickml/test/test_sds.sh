@@ -3,13 +3,13 @@
 #
 # Cubre:
 #   AC1  --sds es exclusivo y exige --t0/--t1; root inexistente falla
-#   AC2  100 Hz: --sds y --tank con el mismo contenido dan JSONL byte a byte
+#   AC2  100 Hz: --sds y --traces con el mismo contenido dan JSONL byte a byte
 #   AC3  200 Hz: la decimacion 2x conserva las picadas (+-0.05 s)
 #   AC4  rango que cruza medianoche UTC (dos archivos de dia)
 #   AC5  estacion/dia ausente: exit 0, contadores y resto procesado
 #   AC6  tasa no soportada (300 Hz): exit 0, estacion omitida, contador
 #
-# El dato sintetico es el de gen_tank: P en t0+95 s y S en t0+107 s (motor
+# El dato sintetico es el de gen_traces: P en t0+95 s y S en t0+107 s (motor
 # stub = argmax de |Z|), igual que test_offline.sh.
 
 set -e
@@ -30,8 +30,8 @@ mkdir -p "$TMP"
 fail() { echo "FALLO: $*"; exit 1; }
 
 # ---------------------------------------------------------------- datos ------
-./test/gen_tank --tank "$TMP/burst.tank" --epoch "$T0" --dur 180
-./test/gen_sds  --tank "$TMP/burst.tank" --root "$TMP/sds"
+./test/gen_traces --traces "$TMP/burst.traces" --epoch "$T0" --dur 180
+./test/gen_sds  --traces "$TMP/burst.traces" --root "$TMP/sds"
 
 cat > "$TMP/sds.sta" <<'EOF'
 # PickFlag Pin Sta Net Loc ChanE ChanN ChanZ
@@ -68,22 +68,22 @@ EOF
     && fail "--sds sin --t0/--t1 no fallo"
 grep -q -- "--sds exige" "$TMP/e1" || fail "mensaje de --sds sin rango"
 
-./pickml "$TMP/sds.d" --sds "$TMP/sds" --tank "$TMP/burst.tank" \
-    >/dev/null 2>"$TMP/e2" && fail "--sds + --tank no fallo"
+./pickml "$TMP/sds.d" --sds "$TMP/sds" --traces "$TMP/burst.traces" \
+    >/dev/null 2>"$TMP/e2" && fail "--sds + --traces no fallo"
 grep -q "exactamente un modo" "$TMP/e2" || fail "mensaje de exclusividad"
 
 ./pickml "$TMP/sds.d" --sds "$TMP/noexiste" --t0 "$T0" --t1 "$((T0 + 180))" \
     >/dev/null 2>&1 && fail "SDS inexistente no fallo"
 
 # ------------------------------------- AC2/AC5: paridad 100 Hz y contadores --
-./pickml "$TMP/sds.d" --tank "$TMP/burst.tank" --jsonl \
-    > "$TMP/tank.jsonl" 2> "$TMP/tank.err"
+./pickml "$TMP/sds.d" --traces "$TMP/burst.traces" --jsonl \
+    > "$TMP/trace.jsonl" 2> "$TMP/trace.err"
 ./pickml "$TMP/sds.d" --sds "$TMP/sds" --t0 "$T0" --t1 "$((T0 + 180))" \
     --jsonl --stats > "$TMP/sds.jsonl" 2> "$TMP/sds.err"
 
-cmp -s "$TMP/tank.jsonl" "$TMP/sds.jsonl" || {
-    diff "$TMP/tank.jsonl" "$TMP/sds.jsonl" | head -n 6
-    fail "--tank y --sds difieren a 100 Hz"
+cmp -s "$TMP/trace.jsonl" "$TMP/sds.jsonl" || {
+    diff "$TMP/trace.jsonl" "$TMP/sds.jsonl" | head -n 6
+    fail "--traces y --sds difieren a 100 Hz"
 }
 grep -q "\"phase\":\"P\",\"t_epoch\":$TP.000000" "$TMP/sds.jsonl" \
     || fail "falta la P en $TP"
@@ -94,7 +94,7 @@ grep -q "sin_dia=3" "$TMP/sds.err" \
     || fail "NOPE deberia contar 3 (una por componente)"
 
 # ------------------------------------------------ AC3: decimacion 2x --------
-./test/gen_sds --tank "$TMP/burst.tank" --root "$TMP/sds2" --factor 2
+./test/gen_sds --traces "$TMP/burst.traces" --root "$TMP/sds2" --factor 2
 ./pickml "$TMP/sds.d" --sds "$TMP/sds2" --t0 "$T0" --t1 "$((T0 + 180))" \
     --jsonl > "$TMP/sds2.jsonl" 2>/dev/null
 tP=$(grep -o '"phase":"P","t_epoch":[0-9.]*' "$TMP/sds2.jsonl" | head -n 1 \
@@ -104,19 +104,19 @@ awk -v t="$tP" -v p="$TP" 'BEGIN { d = t - p; if (d < 0) d = -d; exit (d > 0.05)
     || fail "200 Hz: P en $tP, fuera de +-0.05 s de $TP"
 
 # ------------------------------------- AC4: rango que cruza medianoche -------
-./test/gen_tank --tank "$TMP/mid.tank" --epoch "$MID" --dur 180
-./test/gen_sds  --tank "$TMP/mid.tank" --root "$TMP/sdsmid"
-./pickml "$TMP/sds.d" --tank "$TMP/mid.tank" --jsonl \
-    > "$TMP/mid_tank.jsonl" 2>/dev/null
+./test/gen_traces --traces "$TMP/mid.trace" --epoch "$MID" --dur 180
+./test/gen_sds  --traces "$TMP/mid.trace" --root "$TMP/sdsmid"
+./pickml "$TMP/sds.d" --traces "$TMP/mid.trace" --jsonl \
+    > "$TMP/mid_traces.jsonl" 2>/dev/null
 ./pickml "$TMP/sds.d" --sds "$TMP/sdsmid" --t0 "$MID" --t1 "$((MID + 180))" \
     --jsonl > "$TMP/mid_sds.jsonl" 2>/dev/null
-cmp -s "$TMP/mid_tank.jsonl" "$TMP/mid_sds.jsonl" || {
-    diff "$TMP/mid_tank.jsonl" "$TMP/mid_sds.jsonl" | head -n 6
+cmp -s "$TMP/mid_traces.jsonl" "$TMP/mid_sds.jsonl" || {
+    diff "$TMP/mid_traces.jsonl" "$TMP/mid_sds.jsonl" | head -n 6
     fail "el rango que cruza medianoche difiere"
 }
 
 # ---------------------------------------------- AC6: tasa no soportada ------
-./test/gen_sds --tank "$TMP/burst.tank" --root "$TMP/sds3" --factor 3
+./test/gen_sds --traces "$TMP/burst.traces" --root "$TMP/sds3" --factor 3
 ./pickml "$TMP/sds.d" --sds "$TMP/sds3" --t0 "$T0" --t1 "$((T0 + 180))" \
     --jsonl --stats > "$TMP/sds3.jsonl" 2> "$TMP/sds3.err"
 [ -s "$TMP/sds3.jsonl" ] && fail "300 Hz no deberia producir picadas"

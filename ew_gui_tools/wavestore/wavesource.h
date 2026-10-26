@@ -3,16 +3,16 @@
 
 /*
  * Fuente de onda unificada:
- *   WSRC_TANK  : tank directo (indice en memoria; patron pickS).
+ *   WSRC_TRACES  : traces directo (indice en memoria; patron pickS).
  *   WSRC_STORE : store indexado (wstore).
  */
 
-typedef enum { WSRC_TANK, WSRC_STORE } WaveSourceMode;
+typedef enum { WSRC_TRACES, WSRC_STORE } WaveSourceMode;
 
 typedef struct {
     WaveSourceMode mode;
     const char    *store_root;   /* WSRC_STORE */
-    const char    *tank_or_null; /* WSRC_TANK  */
+    const char    *traces_or_null; /* WSRC_TRACES  */
 } WaveSrcCfg;
 
 typedef struct {

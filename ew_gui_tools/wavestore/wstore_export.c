@@ -27,12 +27,12 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--out") && i + 1 < argc) out = argv[++i];
     }
     if (!root || !scnl || !out || t0 < 0 || t1 < 0) {
-        fprintf(stderr, "Uso: store2tank --root <store> --scnl NET.STA.LOC.CHAN "
-                        "--start <epoch> --end <epoch> --out <file.tank>\n");
+        fprintf(stderr, "Uso: wstore_export --root <store> --scnl NET.STA.LOC.CHAN "
+                        "--start <epoch> --end <epoch> --out <file.traces>\n");
         return 1;
     }
     if (sscanf(scnl, "%15[^.].%15[^.].%7[^.].%7s", net, sta, loc, chan) != 4) {
-        fprintf(stderr, "store2tank: SCNL invalido <%s>\n", scnl);
+        fprintf(stderr, "wstore_export: SCNL invalido <%s>\n", scnl);
         return 1;
     }
     if (wstore_scnl_dir(dir, sizeof(dir), root, sta, net, loc, chan) != 0) return 1;
@@ -41,25 +41,25 @@ int main(int argc, char **argv)
     if (!o) { perror(out); return 1; }
     dp = opendir(dir);
     if (!dp) {
-        fprintf(stderr, "store2tank: sin datos en %s\n", dir);
+        fprintf(stderr, "wstore_export: sin datos en %s\n", dir);
         fclose(o);
         return 1;
     }
 
     while ((de = readdir(dp)) != NULL) {
-        char          tankp[1600], idxp[1600], *dot;
+        char          segpath[1600], idxp[1600], *dot;
         int           tfd, ifd;
         WStoreIdxHdr  h;
         int64_t       f = -1, l = -1, i;
 
         if (!wstore_seg_overlaps(de->d_name, t0, t1)) continue;
-        snprintf(tankp, sizeof(tankp), "%s/%s", dir, de->d_name);
+        snprintf(segpath, sizeof(segpath), "%s/%s", dir, de->d_name);
         snprintf(idxp, sizeof(idxp), "%s/%s", dir, de->d_name);
         dot = strrchr(idxp, '.');
         if (!dot) continue;
         strcpy(dot, ".idx");
 
-        tfd = open(tankp, O_RDONLY);
+        tfd = open(segpath, O_RDONLY);
         if (tfd < 0) continue;
         ifd = open(idxp, O_RDONLY);
         if (ifd < 0) { close(tfd); continue; }
@@ -83,6 +83,6 @@ int main(int argc, char **argv)
     }
     closedir(dp);
     fclose(o);
-    fprintf(stderr, "store2tank: %ld registros -> %s\n", n, out);
+    fprintf(stderr, "wstore_export: %ld registros -> %s\n", n, out);
     return n > 0 ? 0 : 1;
 }

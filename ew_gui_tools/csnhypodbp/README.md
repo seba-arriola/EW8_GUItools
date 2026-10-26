@@ -216,7 +216,7 @@ estaciones/picks y por los checkboxes `A`/`M`/`Teo` (las `Teo` son la P teórica
 estaciones sin P A ni M). El set enviado es **exactamente lo que muestra la tabla**: una estación que
 no aparece (por `MaxDistKm` o `HideStationsWithoutData`) no se manda. La cadena escribe las picadas →
 `csnloc` offline (`DumpHypo 1`; el ARC se extrae del log) → refinador
-elegido (`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + `tank` temporal → `csnmags`
+elegido (`hyp2000_ring`/`nlloc_ring`) → magnitud (`hypos.jsonl` + archivo de trazas temporal → `csnmags`
 offline). El **residual por fase** lo aporta el propio localizador: el JSONL que `csnloc` emite a
 stdout y las columnas 35-38 (P) / 51-54 (S) del ARC de los refinadores; se muestra en la tabla.
 `nlloc_ring`/`hyp2000_ring` en modo offline **dicen la condición** que falló (`MinPhases`, `MaxRMS`,
@@ -391,7 +391,7 @@ SeisComP**. Con `SdsEnabled 1`, un evento más antiguo que `SdsFallbackHours` (d
 días, alineado con la retención del `wstore`) se consulta **directo al SDS** (`SdsRoot`, def.
 `/mnt/sds/archive`), porque la retención local ya no lo tiene. En ese caso (**evento antiguo**) el
 orden es **SDS → store**, y si ninguno tiene datos la estación queda sin traza. Para eventos
-recientes el SDS es el **último recurso**. El backend TCP (`wave_serverV`) se **eliminó** del
+recientes el SDS es el **último recurso**. El backend TCP del visor de ondas de fábrica se **eliminó** del
 código: solo quedan el store y el SDS.
 
 La ruta se arma con `ewgui_sds_path` (`common`):

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""store_window.py — ventana 3C del store en un tank, y búsqueda de eventos reales.
+"""store_window.py — ventana 3C del store en un trace, y búsqueda de eventos reales.
 
 Dos usos, ambos OFFLINE (no tocan el sistema en marcha):
 
@@ -7,9 +7,9 @@ Dos usos, ambos OFFLINE (no tocan el sistema en marcha):
 
        python3 tools/store_window.py --root ../wstore \
            --scnl CX.PB15.--.HHZ --t0 1792473299.558 --dur 60 \
-           --out /tmp/win.tank
+           --out /tmp/win.trace
 
-   Equivale a tres `store2tank` + `cat`, pero alinea por TIEMPO: en un stream
+   Equivale a tres `wstore_export` + `cat`, pero alinea por TIEMPO: en un stream
    real cada componente puede empezar en un instante distinto (se han medido
    6.7 s) y concatenar por componente desplaza unas respecto de otras.
 
@@ -22,7 +22,7 @@ Dos usos, ambos OFFLINE (no tocan el sistema en marcha):
    "máximo" de 7.7M counts era offset puro).
 
 El formato leído es el del store documentado en ew_gui_tools/wavestore/README.md:
-<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.tank con TRACE2_HEADER + int32.
+<root>/<NET>.<STA>.<LOC>.<CHAN>/<YYYYMMDD>.trace con TRACE2_HEADER + int32.
 """
 import argparse
 import glob
@@ -58,7 +58,7 @@ def read_records(path):
             }
 
 
-def write_tank(path, recs, rate):
+def write_traces(path, recs, rate):
     with open(path, "wb") as f:
         for r in recs:
             n = len(r["x"])
@@ -88,8 +88,8 @@ def materialize(args):
 
     for c in comps:
         d = scnl_dir(args.root, f"{net}.{sta}.{loc}.{c}")
-        for tank in sorted(glob.glob(os.path.join(d, "*.tank"))):
-            for r in read_records(tank):
+        for trace in sorted(glob.glob(os.path.join(d, "*.trace"))):
+            for r in read_records(trace):
                 rate = r["rate"] or 100.0
                 rate_seen = rate_seen or rate
                 idx0 = int(round((r["t0"] - args.t0) * rate))
@@ -106,7 +106,7 @@ def materialize(args):
 
     recs = [{"t0": args.t0, "sta": sta, "net": net, "loc": loc,
              "chan": c, "x": grid[c]} for c in comps]
-    write_tank(args.out, recs, rate_seen or 100.0)
+    write_traces(args.out, recs, rate_seen or 100.0)
     print(f"store_window: {args.out} ({nsamp} muestras x 3, {args.dur:.0f} s, "
           f"rate {rate_seen:.0f} Hz)")
 
@@ -115,7 +115,7 @@ def scan(args):
     if np is None:
         sys.exit("store_window --scan necesita numpy")
     res = []
-    for p in sorted(glob.glob(os.path.join(args.root, "*.HHZ", "*.tank"))):
+    for p in sorted(glob.glob(os.path.join(args.root, "*.HHZ", "*.trace"))):
         scnl = os.path.basename(os.path.dirname(p))
         vmax, tmax = 0, 0.0
         for r in read_records(p):
@@ -141,7 +141,7 @@ def main():
     ap.add_argument("--scnl", help="NET.STA.LOC.CHAN de la componente Z")
     ap.add_argument("--t0", type=float, help="epoch de inicio de la ventana")
     ap.add_argument("--dur", type=float, default=60.0, help="segundos (default 60)")
-    ap.add_argument("--out", help="tank de salida")
+    ap.add_argument("--out", help="trace de salida")
     ap.add_argument("--scan", action="store_true", help="rankear transitorios del store")
     ap.add_argument("--top", type=int, default=12)
     args = ap.parse_args()

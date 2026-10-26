@@ -2,9 +2,9 @@
  * pickS.c — picker automático de onda S (Earthworm nativo).                  *
  *                                                                            *
  *   Uso: pickS <pickS.d>                    (modo anillo, producción)         *
- *        pickS <pickS.d> <tankfile> [ppicks] (modo offline, stdout)          *
+ *        pickS <pickS.d> <tracesfile> [ppicks] (modo offline, stdout)          *
  *                                                                            *
- * En modo offline lee un tank (TRACEBUF2 + int32) secuencialmente y emite    *
+ * En modo offline lee un trace (TRACEBUF2 + int32) secuencialmente y emite    *
  * líneas TYPE_PICK_SCNL (fase S) a stdout. `ppicks` es opcional y aporta los *
  * picks P de guía (formato .picks de pick_FP). En modo anillo lee las ondas  *
  * de InRing y los picks P de PickRing, y publica los S en OutRing.           *
@@ -364,7 +364,7 @@ static void load_ppicks(const char *file)
 
 /*----------------------------- modo offline ---------------------------------*/
 
-static int run_offline(const char *tankfile, const char *ppicksfile)
+static int run_offline(const char *tracesfile, const char *ppicksfile)
 {
     FILE *f;
     TRACE2_HEADER head;
@@ -373,8 +373,8 @@ static int run_offline(const char *tankfile, const char *ppicksfile)
 
     if (ppicksfile) load_ppicks(ppicksfile);
 
-    f = fopen(tankfile, "rb");
-    if (!f) { perror(tankfile); return -1; }
+    f = fopen(tracesfile, "rb");
+    if (!f) { perror(tracesfile); return -1; }
 
     while (fread(&head, sizeof(TRACE2_HEADER), 1, f) == 1) {
         if (head.nsamp <= 0 || head.nsamp > 200000) break;
@@ -505,7 +505,7 @@ int main(int argc, char **argv)
     int i;
 
     if (argc < 2 || argc > 4) {
-        fprintf(stderr, "Uso: pickS <pickS.d> [tankfile [ppicksfile]]\n");
+        fprintf(stderr, "Uso: pickS <pickS.d> [tracesfile [ppicksfile]]\n");
         return 1;
     }
 
@@ -538,9 +538,9 @@ int main(int argc, char **argv)
     logit_init(argv[1], (short)ctx.MyModId, 16384, ctx.offline ? 0 : ctx.cfg.LogFile);
 
     if (ctx.offline) {
-        const char *tank = argv[2];
+        const char *trace = argv[2];
         const char *pp   = (argc >= 4) ? argv[3] : NULL;
-        int rc = run_offline(tank, pp);
+        int rc = run_offline(trace, pp);
         for (i = 0; i < ctx.nsta; i++) PickS_Ring3C_Free(&ctx.rings[i]);
         free(ctx.rings); free(ctx.refs);
         return (rc == 0) ? 0 : 1;

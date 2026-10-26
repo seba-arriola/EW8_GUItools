@@ -15,7 +15,7 @@
  * Entradas/salidas:                                                          *
  *   anillo : ondas TYPE_TRACEBUF2 de SLINK_RING + picks P de PICK_RING        *
  *            -> picks S TYPE_PICK_SCNL a PICK_RING                            *
- *   offline: pickS <config> <tankfile> [ppicksfile]                           *
+ *   offline: pickS <config> <tracesfile> [ppicksfile]                           *
  *            -> imprime una línea TYPE_PICK_SCNL por pick (stdout)            *
  ******************************************************************************/
 

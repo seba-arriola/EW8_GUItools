@@ -161,7 +161,8 @@ hace **`csnloc`** localmente.
     (`<ManualStateFile>.picks.<qid>_<otime>`, con el `.picks` legado como respaldo si coincide el
     `qid`), no por solución: cambiar de Origin no borra las picadas. `locate` cuenta las picadas por
     origen (`M/A/T`) antes de lanzar la cadena y `calculate` rebasa las distancias a la candidata,
-    pide al tank el canal de la P efectiva, prioriza M/A sobre Teo y conserva el SCNL de cada picada
+    pide una traza por (estación, canal) con la ventana de cada magnitud, prioriza M/A sobre Teo y
+    conserva el SCNL de cada picada
     en `hypos.jsonl`.
     La **columna derecha** (a nivel de ventana, compartida por las dos pestañas) tiene dos paneles:
     **planta** (imagen equirectangular + capas `.lines` con el mismo contrato que `csnrv`:
@@ -262,7 +263,7 @@ hace **`csnloc`** localmente.
     (default 0 = off) permiten sumar planaridad y H/V al weight. `GateIncidMinDeg`/
     `GateIncidMaxDeg` (Max≤Min = off) son una compuerta dura de incidencia.
     Modo **offline**
-    (`pickS <pickS.d> <tank> [ppicks]`) análogo a `pick_FP`, con config
+    (`pickS <pickS.d> <traces> [ppicks]`) análogo a `pick_FP`, con config
     `pickS.d` y lista `pickS.sta`. Tests con `make check` (unitarios) y
     `make check-offline` (integrado determinista). Ver `pickS/README.md`.
   - `pickml/`: **picker neuronal P/S** (PhaseNetWC sobre ONNX Runtime) en C. Modo vivo:
@@ -282,11 +283,11 @@ hace **`csnloc`** localmente.
     Publicación con `PublishRing` (0/1), `PublishPhases P|S|PS` y `PublishMaxWeight 0..3`
     (`pickml_iquique.d` publica **sólo S**: la P de `PICK_RING` la pone `pick_FP`);
     `--publish-dry-run` cuenta sin escribir y un `OutRing` inexistente es fail-fast.
-    Modos offline `--tank`, `--store` y `--sds` (deterministas, motor `stub` en los
+    Modos offline `--traces`, `--store` y `--sds` (deterministas, motor `stub` en los
     tests). `logit_init("pickml", …)` escribe `EW_LOG/pickml_*.log` con `LogFile` 0/1/2;
     ojo: `logit` con flag 0 es **mudo** y sin `EW_LOG` mata el proceso, así que el
     binario fuerza consola cuando falta la variable. Tests: `make check` (unitarios),
-    `check-offline` (tank/store/SDS + guardas de publicación) y `check-engine` (ONNX).
+    `check-offline` (traces/store/SDS + guardas de publicación) y `check-engine` (ONNX).
     Ver `pickml/README.md` y `docs/DLintegration.md`.
   - `csnwphase/`: inversión de **fase W** (motor `eost/wphase` vendorizado) como cálculo
     **on-demand**: NO es módulo de anillos (no se declara en `startstop_unix.d`) y se
@@ -652,7 +653,7 @@ comodines `*`/`?`; `--` es la loc nula). Un canal que no pase el filtro **no est
 **añadir** canales: sólo reduce lo que `slink2ew` ya entrega.
 
 El store se acota solo por **antigüedad**: `RetentionDays` (`wavestore.d`, def. 7) y `wstore_ingest`
-purga al arrancar y cada hora los segmentos `<SCNL>/<YYYYMMDD>.tank`+`.idx` anteriores a la medianoche
+purga al arrancar y cada hora los segmentos `<SCNL>/<YYYYMMDD>.ws`+`.idx` anteriores a la medianoche
 UTC de hoy menos esos días (conserva `RetentionDays+1` ficheros diarios porque el día del corte no se
 borra; `0` = sin purga y crecimiento ilimitado). Es la válvula del disco: con los 270 canales actuales
 son ~9 GB/día, así que 7 días estabilizan el store en ~70 GB. `wstore_prune --root <store> --days <N>

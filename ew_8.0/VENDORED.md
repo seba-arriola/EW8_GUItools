@@ -48,6 +48,8 @@ EarthWorm no se construye con un único `make`:
 
 ## Nota sobre el backend TCP de ondas
 
-El backend TCP (`wave_serverV`) se **eliminó** del código, así que los objetos del cliente
-(`ws_clientII.o`, `socket_ew.o`, `socket_ew_common.o`) ya no están en `lib/`. En `include/`
-siguen los headers `ws_clientII.h`/`socket_ew.h` (recortarlos sería cosmético).
+El backend TCP del visor de ondas de fábrica se **eliminó** del código, así que los objetos del cliente
+(`ws_clientII.o`, `socket_ew.o`, `socket_ew_common.o`) ya no están en `lib/`, y los headers de ese
+cliente (`ws_client*.h`, `wave_client.h`, `ewdb_ora_api.h`, `watchdog_client.h`) se retiraron de
+`include/` al no incluirlos ningún módulo. El puerto del protocolo sigue declarado como constante
+de la librería de fábrica (`earthworm_defs.h`).

@@ -11,7 +11,7 @@ static void usage(void)
     fprintf(stderr,
             "Uso: wstore_prune --root <store> --days <N> [--dry-run] [--quiet]\n"
             "\n"
-            "Borra los segmentos <SCNL>/<YYYYMMDD>.tank (y su .idx) anteriores a la\n"
+            "Borra los segmentos <SCNL>/<YYYYMMDD>.ws (y su .idx) anteriores a la\n"
             "medianoche UTC de hoy menos N dias (lo mismo que hace wstore_ingest\n"
             "cada hora con `RetentionDays`). Con --dry-run solo cuenta lo que\n"
             "borraria. Sin --root o con --days <= 0 sale 2 sin tocar nada.\n");
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
     if (!quiet)
         printf("%s: %s %ld segmentos (+%ld idx), %ld MB\n",
                root, dry ? "borraria" : "borro",
-               st.tanks_removed, st.idx_removed,
+               st.segments_removed, st.idx_removed,
                (st.bytes_freed + 1048575) / 1048576);
     return 0;
 }

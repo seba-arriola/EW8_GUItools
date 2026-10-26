@@ -304,7 +304,7 @@ gfortran. TauP/ObsPy **no** generan `.tbl/.hed` (solo `.taup`/`.npz`/LOCSAT).
 ## 7. Ajuste de `AssocWindowSec` (medido)
 
 El catálogo `tests_soluciones_publicadas.dat` y los scripts que lo cruzaban (`loc_report.py`,
-`catalog_report.py`, `calibrate_csnloc.py`) vivían en el arnés `tank_tools/`, hoy fuera del repo.
-Lo que dejan medido (408 tanks, `csnloc` `2ff357a7`, P+S): con `AssocWindowSec 120` (base) aparecen
+`catalog_report.py`, `calibrate_csnloc.py`) vivían en un arnés de archivos de trazas, hoy fuera del repo.
+Lo que dejan medido (408 archivos de trazas, `csnloc` `2ff357a7`, P+S): con `AssocWindowSec 120` (base) aparecen
 340/410 eventos a ≤100 km (164 a ≤25 km), 38 sin solución, mediana 27.6 km; con `AssocWindowSec 60`
 aparecen 371/410 (217 a ≤25 km), 25 sin solución, mediana 23.0 km.

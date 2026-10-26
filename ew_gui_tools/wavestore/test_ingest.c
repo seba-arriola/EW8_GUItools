@@ -50,7 +50,7 @@ static void mk_seg_dir(const char *dir, int ago)
     FILE *f;
 
     day_at(day, sizeof(day), ago);
-    snprintf(p, sizeof(p), "%s/%s.tank", dir, day);
+    snprintf(p, sizeof(p), "%s/%s.ws", dir, day);
     f = fopen(p, "w"); if (f) fclose(f);
     snprintf(p, sizeof(p), "%s/%s.idx", dir, day);
     f = fopen(p, "w"); if (f) fclose(f);
@@ -216,24 +216,24 @@ int main(void)
 
         memset(&pst, 0, sizeof(pst));
         CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
-        CHECK(pst.tanks_removed == 3);
+        CHECK(pst.segments_removed == 3);
         CHECK(pst.idx_removed == 3);
-        CHECK(seg_at(pdir, 0, "tank"));             /* el dia en curso queda */
+        CHECK(seg_at(pdir, 0, "ws"));             /* el dia en curso queda */
         for (k = 1; k < 4; k++) {
-            CHECK(!seg_at(pdir, 29 + k, "tank"));
+            CHECK(!seg_at(pdir, 29 + k, "ws"));
             CHECK(!seg_at(pdir, 29 + k, "idx"));
         }
 
         /* Segunda pasada: nada que borrar, y el conteo queda a cero. */
         CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
-        CHECK(pst.tanks_removed == 0 && pst.idx_removed == 0);
+        CHECK(pst.segments_removed == 0 && pst.idx_removed == 0);
 
         /* RetentionDays 0 = sin retencion: no toca nada. */
         mk_seg_dir(pdir, 40);
         pcfg.retention_days = 0;
         CHECK(wstore_ingest_purge_now(ping, &pcfg, &pst) == 0);
-        CHECK(pst.tanks_removed == 0);
-        CHECK(seg_at(pdir, 40, "tank"));
+        CHECK(pst.segments_removed == 0);
+        CHECK(seg_at(pdir, 40, "ws"));
 
         wstore_ingest_close(ping);
         rm_tree(proot);

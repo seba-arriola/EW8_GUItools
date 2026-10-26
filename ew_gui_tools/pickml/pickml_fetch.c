@@ -4,7 +4,7 @@
  *   pickml_fetch <fetch.d> --event <event_id> --out <dir>                     *
  *                                                                            *
  * Deja en <dir>:                                                             *
- *   event.tank     registros TRACE2_HEADER + int32 (3 componentes/estación)   *
+ *   event.traces     registros TRACE2_HEADER + int32 (3 componentes/estación)   *
  *   picks_ref.csv  net,sta,loc,chan,phase,t_ref,weight,pick_status,residual_s *
  *   meta.json      evento, origen, ventana, fuente y estaciones               *
  *                                                                            *
@@ -167,7 +167,7 @@ static int append_samples(int32_t **buf, long *n, long *cap,
     return PM_OK;
 }
 
-/* Copia [i0,i1) de un registro mseed/tank a int32. */
+/* Copia [i0,i1) de un registro mseed/trace a int32. */
 static __attribute__((unused)) int copy_range(const void *src, char type, long i0, long i1, int32_t *dst)
 {
     long i;
@@ -184,7 +184,7 @@ static __attribute__((unused)) int copy_range(const void *src, char type, long i
 }
 
 
-/* Lee un tank del store — mismo formato que pickml_source. */
+/* Lee un trace del store — mismo formato que pickml_source. */
 static int store_channel(const FetchCfg *c, const char *net, const char *sta,
                          const char *loc, const char *chan, double t0, double t1,
                          int32_t **out, long *n, double *start)
@@ -204,7 +204,7 @@ static int store_channel(const FetchCfg *c, const char *net, const char *sta,
         const char *locp = (loc && loc[0]) ? loc : "--";
 
         ymd(day, ymdstr, sizeof(ymdstr));
-        snprintf(path, sizeof(path), "%s/%s.%s.%s.%s/%s.tank",
+        snprintf(path, sizeof(path), "%s/%s.%s.%s.%s/%s.trace",
                  c->StoreRoot, net, sta, locp, chan, ymdstr);
         f = fopen(path, "rb");
         if (!f) continue;
@@ -250,7 +250,7 @@ static int store_channel(const FetchCfg *c, const char *net, const char *sta,
 }
 
 /* sds_channel se movio a pickml_sds.c (pmsds_channel), compartido con
- * `pickml --sds` para que el tank del fetch y el modo offline lean igual. */
+ * `pickml --sds` para que el trace del fetch y el modo offline lean igual. */
 
 static int channel_data(const FetchCfg *c, const char *net, const char *sta,
                         const char *loc, const char *chan, double t0, double t1,
@@ -263,7 +263,7 @@ static int channel_data(const FetchCfg *c, const char *net, const char *sta,
     return PM_NODATA;
 }
 
-static int tank_write(FILE *f, const char *sta, const char *net, const char *loc,
+static int traces_write(FILE *f, const char *sta, const char *net, const char *loc,
                       const char *chan, double t0, const int32_t *x, long n,
                       double rate)
 {
@@ -365,8 +365,8 @@ int main(int argc, char **argv)
     int       i, npk = 0, cap = 0, nf = 0, capf = 0, nskipped = 0, nwritten = 0, nofill = 0;
     RefPick  *pk = NULL;
     FSta     *fsta = NULL;
-    char      tankpath[1024], csvpath[1024], metapath[1024];
-    FILE     *tank = NULL, *csv = NULL, *meta = NULL;
+    char      tracepath[1024], csvpath[1024], metapath[1024];
+    FILE     *trace = NULL, *csv = NULL, *meta = NULL;
 
     for (i = 1; i < argc; i++) {
         if (!d && argv[i][0] != '-') { d = argv[i]; continue; }
@@ -540,13 +540,13 @@ int main(int argc, char **argv)
     t0 -= cfg.PadPreSec;
     t1 += cfg.PadPostSec;
 
-    snprintf(tankpath, sizeof(tankpath), "%s/event.tank", outdir);
+    snprintf(tracepath, sizeof(tracepath), "%s/event.traces", outdir);
     snprintf(csvpath,  sizeof(csvpath),  "%s/picks_ref.csv", outdir);
     snprintf(metapath, sizeof(metapath), "%s/meta.json", outdir);
 
-    tank = fopen(tankpath, "wb");
+    trace = fopen(tracepath, "wb");
     csv  = fopen(csvpath, "w");
-    if (!tank || !csv) {
+    if (!trace || !csv) {
         fprintf(stderr, "pickml_fetch: no se pudo escribir en %s\n", outdir);
         return 4;
     }
@@ -595,7 +595,7 @@ int main(int argc, char **argv)
                 if (b < tb1) tb1 = b;
             }
 
-            /* El tank se escribe INTERCALADO por tiempo (1 s por componente):
+            /* El trace se escribe INTERCALADO por tiempo (1 s por componente):
              * un registro gigante por componente haría que, al llegar la
              * segunda, el buffer de la estación ya hubiera avanzado. */
             for (bt = tb0; bt < tb1; bt += (double)blk / cfg.Rate) {
@@ -607,7 +607,7 @@ int main(int argc, char **argv)
                     if (i0 + nb > c3[c].n) nb = c3[c].n - i0;
                     if (nb <= 0) continue;
 
-                    if (tank_write(tank, fsta[i].sta, fsta[i].net, fsta[i].loc,
+                    if (traces_write(trace, fsta[i].sta, fsta[i].net, fsta[i].loc,
                                    fsta[i].chan[c],
                                    c3[c].st + (double)i0 / cfg.Rate,
                                    c3[c].x + i0, nb, cfg.Rate) == PM_OK)
@@ -630,9 +630,9 @@ int main(int argc, char **argv)
                 pk[i].status, pk[i].unc);
     }
     fclose(csv);
-    fclose(tank);
+    fclose(trace);
 
-    /* StaFile de la corrida: pickml --tank lo consume tal cual. */
+    /* StaFile de la corrida: pickml --traces lo consume tal cual. */
     {
         char  stapath[1024];
         FILE *sf;
@@ -669,7 +669,7 @@ int main(int argc, char **argv)
         fclose(meta);
     }
 
-    printf("pickml_fetch: %s origen=%s picks=%d estaciones=%d/%d -> %s/event.tank\n",
+    printf("pickml_fetch: %s origen=%s picks=%d estaciones=%d/%d -> %s/event.traces\n",
            event, origin_id, npk, nwritten, nf, outdir);
     free(pk);
     free(fsta);

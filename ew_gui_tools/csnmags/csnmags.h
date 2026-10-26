@@ -6,11 +6,11 @@
  *
  * Módulo C nativo con dos modos (el modo lo decide argv, patrón csnloc/pickS):
  *   csnmags <csnmags.d>                                  -> anillo (producción/replay)
- *   csnmags <csnmags.d> <hypos.jsonl> <tank> [--out F]   -> offline (reloj virtual, stdout)
+ *   csnmags <csnmags.d> <hypos.jsonl> <traces> [--out F]   -> offline (reloj virtual, stdout)
  *
  * La respuesta instrumental se lee de ficheros SAC PZ en disco (generados por
  * tools/fetch_responses.py desde el FDSNWS de metadata). El modo offline no toca
- * los anillos: lee el tank directamente (patrón pickS/pick_FP).
+ * los anillos: lee el trace directamente (patrón pickS/pick_FP).
  */
 
 #include <stdio.h>
@@ -178,21 +178,21 @@ typedef struct {
 
 /* ============================ Fuente de onda ============================ */
 
-typedef enum { WSRC_TANK, WSRC_STORE } WaveSourceMode;
+typedef enum { WSRC_TRACES, WSRC_STORE } WaveSourceMode;
 
 typedef struct {
     char   sta[8], net[8], chan[8], loc[8];
     double starttime;
     long   nsamp;
-    long   offset;       /* offset del int32[0] en el fichero tank */
+    long   offset;       /* offset del int32[0] en el fichero trace */
     double samprate;
-} MagTankIndex;
+} MagTraceIndex;
 
 typedef struct {
     WaveSourceMode mode;
-    FILE *tank;                    /* modo offline */
-    char  tank_path[MAG_STR];
-    MagTankIndex *idx;             /* índice del tank (offline) */
+    FILE *trace;                    /* modo offline */
+    char  trace_path[MAG_STR];
+    MagTraceIndex *idx;             /* índice del trace (offline) */
     int   nidx;
     void *store;                   /* WStore* (modo store) */
     /* Fuente SDS (archivo SeisComP): copia de la config en wave_open. */
@@ -259,7 +259,7 @@ void mag_calib_free(MagCalib *c);
 
 /* ============================ Fuente de onda ============================ */
 
-int  wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null);
+int  wave_open(WaveSource *w, const MagConfig *cfg, const char *traces_or_null);
 void wave_close(WaveSource *w);
 /* Extrae la ventana [t0,t1] de un SCNL. Devuelve 0 si OK, -1 si no hay datos. */
 int  wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,

@@ -1,8 +1,8 @@
 /*
- * bpq_mag.c - Magnitudes (fase 6): csnmags con el tank de trazas en memoria.
+ * bpq_mag.c - Magnitudes (fase 6): csnmags con el trace de trazas en memoria.
  *
  * No reimplementa nada: `csnhypodbp_mag_run` (nucleo puro del modulo GTK)
- * escribe hypos.jsonl + tank, corre `csnmags --out` con las ventanas y puertas
+ * escribe hypos.jsonl + trace, corre `csnmags --out` con las ventanas y puertas
  * del MagConfigFile y devuelve las cuatro magnitudes. Aqui solo se resuelve el
  * entorno EW_* y se traduce el rc.
  */
@@ -13,7 +13,7 @@
 #include <string.h>
 
 int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
-                const CsnhypodbpTankTrace *tank, int ntank,
+                const CsnhypodbpTrace *trace, int ntr,
                 const CsnhypodbpMagOvrRow *ovr, int novr, unsigned kind_mask,
                 CsnhypodbpMagOut *out, char *err, size_t errn)
 {
@@ -27,7 +27,7 @@ int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
         if (err && errn) snprintf(err, errn, "magnitudes: falta la solucion");
         return 0;
     }
-    if (!tank || ntank <= 0) {
+    if (!trace || ntr <= 0) {
         if (err && errn) snprintf(err, errn, "magnitudes: no hay trazas para csnmags");
         return 0;
     }
@@ -41,7 +41,7 @@ int bpq_mag_run(const BpqConfig *cfg, const CsnhypodbpSolution *base,
         return 0;
     }
 
-    return csnhypodbp_mag_run(ewp, ewh, ewv, NULL, base, tank, ntank,
+    return csnhypodbp_mag_run(ewp, ewh, ewv, NULL, base, trace, ntr,
                               ovr, novr, kind_mask,
                               out, err, errn) == 0 ? 1 : 0;
 }

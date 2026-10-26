@@ -100,7 +100,7 @@ def write_nlloc_ctrl(path, lat0, lon0, dims, ttroot, outroot):
         f.write("TRANS SIMPLE %s %s 0.0\n" % (lat0, lon0))
         f.write("LOCFILES obs.nll NLLOC_OBS %s %s 0\n" % (ttroot, outroot))
         f.write("LOCHYPOUT SAVE_HYPOINVERSE_Y2000_ARC\n")
-        f.write("LOCSEARCH OCT 96 48 6 0.05 50000 10000 4 0\n")
+        f.write("LOCSEARCH OCT 24 24 6 1.5 20000 1000 0 1\n")
         f.write("LOCGRID %d %d %d %g %g %g %g %g %g PROB_DENSITY SAVE\n"
                 % (numx, numy, numz, x0, y0, z0, dx, dy, dz))
         f.write("LOCMETH EDT_OT_WT 9999.0 4 -1 -1 1.78 6 -1.0 1\n")

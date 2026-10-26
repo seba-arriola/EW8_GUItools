@@ -13,14 +13,14 @@
 /*
  * wave_source.c - Abstracción de la fuente de onda.
  *
- *   WSRC_TANK  : lectura directa del tank (modo offline), patrón de pickS.
+ *   WSRC_TRACES  : lectura directa del trace (modo offline), patrón de pickS.
  *   WSRC_STORE : store indexado (wstore); si no tiene la traza, va al SDS.
  *
  * QUE fuentes se usan es CONFIGURACION (SdsEnabled/SdsRoot/SdsFallbackHours del
  * .d), no codigo: el store cubre lo reciente y el archivo SDS lo mas antiguo que
  * la retencion local.
  *
- * En offline se construye un índice (SCNL + offset) recorriendo el tank una sola
+ * En offline se construye un índice (SCNL + offset) recorriendo el trace una sola
  * vez; wave_get lee sólo los paquetes del SCNL pedido, sin volver a barrer todo.
  */
 
@@ -32,34 +32,34 @@ static void scnl_copy(char *dst, size_t dsz, const char *src)
 
 /* ------------------------------ offline ------------------------------ */
 
-static int tank_index(WaveSource *w)
+static int trace_index(WaveSource *w)
 {
     TRACE2_HEADER head;
     long offset;
     int  cap = 1024;
 
-    w->idx = (MagTankIndex *)malloc((size_t)cap * sizeof(MagTankIndex));
+    w->idx = (MagTraceIndex *)malloc((size_t)cap * sizeof(MagTraceIndex));
     w->nidx = 0;
     if (!w->idx) return -1;
 
-    rewind(w->tank);
+    rewind(w->trace);
     for (;;) {
-        offset = ftell(w->tank);
-        if (fread(&head, sizeof(TRACE2_HEADER), 1, w->tank) != 1) break;
+        offset = ftell(w->trace);
+        if (fread(&head, sizeof(TRACE2_HEADER), 1, w->trace) != 1) break;
         if (head.nsamp <= 0 || head.nsamp > MAG_MAX_TRACE) break;
         offset += (long)sizeof(TRACE2_HEADER);
         /* skip samples */
-        if (fseek(w->tank, (long)head.nsamp * (long)sizeof(int32_t), SEEK_CUR) != 0) break;
+        if (fseek(w->trace, (long)head.nsamp * (long)sizeof(int32_t), SEEK_CUR) != 0) break;
 
         if (w->nidx >= cap) {
-            MagTankIndex *ni;
+            MagTraceIndex *ni;
             cap *= 2;
-            ni = (MagTankIndex *)realloc(w->idx, (size_t)cap * sizeof(MagTankIndex));
+            ni = (MagTraceIndex *)realloc(w->idx, (size_t)cap * sizeof(MagTraceIndex));
             if (!ni) return -1;
             w->idx = ni;
         }
         {
-            MagTankIndex *e = &w->idx[w->nidx++];
+            MagTraceIndex *e = &w->idx[w->nidx++];
             scnl_copy(e->sta, sizeof(e->sta), head.sta);
             scnl_copy(e->net, sizeof(e->net), head.net);
             scnl_copy(e->chan, sizeof(e->chan), head.chan);
@@ -81,7 +81,7 @@ static int scnl_match(const char *a, const char *b)
     return strcmp(a, b) == 0;
 }
 
-static int tank_get(WaveSource *w, const char *sta, const char *net,
+static int trace_get(WaveSource *w, const char *sta, const char *net,
                     const char *chan, const char *loc, double t0, double t1,
                     MagTrace *out)
 {
@@ -93,7 +93,7 @@ static int tank_get(WaveSource *w, const char *sta, const char *net,
     out->x = NULL; out->n = 0; out->t0 = 0; out->dt = 0; out->samprate = 0;
 
     for (i = 0; i < w->nidx; i++) {
-        MagTankIndex *e = &w->idx[i];
+        MagTraceIndex *e = &w->idx[i];
         double endt;
         if (!scnl_match(e->sta, sta)) continue;
         if (!scnl_match(e->net, net)) continue;
@@ -116,7 +116,7 @@ static int tank_get(WaveSource *w, const char *sta, const char *net,
 
     out->n = 0;
     for (i = 0; i < w->nidx; i++) {
-        MagTankIndex *e = &w->idx[i];
+        MagTraceIndex *e = &w->idx[i];
         double endt;
         long   j;
         if (!scnl_match(e->sta, sta)) continue;
@@ -125,8 +125,8 @@ static int tank_get(WaveSource *w, const char *sta, const char *net,
         if (!scnl_match(e->loc, loc)) continue;
         endt = e->starttime + (double)(e->nsamp - 1) / e->samprate;
         if (endt < t0 || e->starttime > t1) continue;
-        if (fseek(w->tank, e->offset, SEEK_SET) != 0) break;
-        if (fread(buf, sizeof(int32_t), (size_t)e->nsamp, w->tank) != (size_t)e->nsamp) break;
+        if (fseek(w->trace, e->offset, SEEK_SET) != 0) break;
+        if (fread(buf, sizeof(int32_t), (size_t)e->nsamp, w->trace) != (size_t)e->nsamp) break;
         if (out->n == 0) out->t0 = e->starttime;
         for (j = 0; j < e->nsamp; j++) out->x[out->n++] = (double)buf[j];
     }
@@ -275,37 +275,37 @@ static int sds_get(WaveSource *w, const char *sta, const char *net, const char *
 
 /* ------------------------------ API ------------------------------ */
 
-int wave_open(WaveSource *w, const MagConfig *cfg, const char *tank_or_null)
+int wave_open(WaveSource *w, const MagConfig *cfg, const char *traces_or_null)
 {
     memset(w, 0, sizeof(*w));
     w->sds_enabled = cfg->sds_enabled;
     w->sds_fallback_hours = cfg->sds_fallback_hours;
     scnl_copy(w->sds_root, sizeof(w->sds_root), cfg->sds_root);
 
-    if (!tank_or_null && cfg->store_root[0]) {
+    if (!traces_or_null && cfg->store_root[0]) {
         /* store + SDS segun la ventana. */
         w->mode = WSRC_STORE;
         if (wstore_open((WStore **)&w->store, cfg->store_root, NULL) != 0) return -1;
         return 0;
     }
 
-    if (tank_or_null) {
-        w->mode = WSRC_TANK;
-        w->tank = fopen(tank_or_null, "rb");
-        if (!w->tank) { perror(tank_or_null); return -1; }
-        if (tank_index(w) != 0) { fclose(w->tank); w->tank = NULL; return -1; }
+    if (traces_or_null) {
+        w->mode = WSRC_TRACES;
+        w->trace = fopen(traces_or_null, "rb");
+        if (!w->trace) { perror(traces_or_null); return -1; }
+        if (trace_index(w) != 0) { fclose(w->trace); w->trace = NULL; return -1; }
         return 0;
     }
 
-    /* Sin tank y sin store no hay fuente de ondas. */
+    /* Sin trace y sin store no hay fuente de ondas. */
     return -1;
 }
 
 void wave_close(WaveSource *w)
 {
     if (!w) return;
-    if (w->mode == WSRC_TANK) {
-        if (w->tank) fclose(w->tank);
+    if (w->mode == WSRC_TRACES) {
+        if (w->trace) fclose(w->trace);
     } else if (w->mode == WSRC_STORE) {
         if (w->store) wstore_close((WStore *)w->store);
     }
@@ -317,7 +317,7 @@ int wave_get(WaveSource *w, const char *sta, const char *net, const char *chan,
              const char *loc, double t0, double t1, MagTrace *out)
 {
     if (!w) return -1;
-    if (w->mode == WSRC_TANK) return tank_get(w, sta, net, chan, loc, t0, t1, out);
+    if (w->mode == WSRC_TRACES) return trace_get(w, sta, net, chan, loc, t0, t1, out);
     if (w->mode == WSRC_STORE) {
         /* Politica de fuentes (toda por .d): lo reciente del store y lo mas
          * antiguo que SdsFallbackHours del archivo SDS. */

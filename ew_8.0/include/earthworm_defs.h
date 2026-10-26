@@ -56,7 +56,6 @@
 
 /* Define unique port numbers for interprocess communications
  ************************************************************/
-#define WAVE_SERVER_PORT  16022    /* for requesting/receiving trace data */
 
 
 /* Define error words (2-bytes; >9999) global to earthworm modules

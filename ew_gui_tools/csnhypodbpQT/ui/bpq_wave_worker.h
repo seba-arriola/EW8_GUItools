@@ -30,6 +30,8 @@ Q_DECLARE_OPAQUE_POINTER(BpqTrace *)
 
 struct BpqFetchReq {
     QString sta, net, chan, loc;
+    double  t0 = 0.0;       /* ventana propia de esta traza (absoluta) */
+    double  seconds = 0.0;
 };
 
 class BpqWaveWorker : public QObject

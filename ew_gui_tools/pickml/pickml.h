@@ -14,7 +14,7 @@
  *   - Motor conmutable: `stub` (tests sin ONNX Runtime) u `onnx`.            *
  *                                                                            *
  * Entradas/salidas:                                                          *
- *   offline: pickml <pickml.d> --tank <file> | --store <root> --t0 --t1      *
+ *   offline: pickml <pickml.d> --traces <file> | --store <root> --t0 --t1      *
  *            -> un JSON por pick (stdout), determinista.                     *
  *   anillo : ondas TYPE_TRACEBUF2 de SLINK_RING                              *
  *            -> picks TYPE_PICK_SCNL a PICK_RING.                            *
@@ -51,7 +51,7 @@
 enum { PM_COMP_Z = 0, PM_COMP_N = 1, PM_COMP_E = 2 };
 
 enum { PM_ENGINE_STUB = 0, PM_ENGINE_ONNX = 1 };
-enum { PM_SRC_TANK = 0, PM_SRC_STORE = 1, PM_SRC_SDS = 2 };
+enum { PM_SRC_TRACES = 0, PM_SRC_STORE = 1, PM_SRC_SDS = 2 };
 
 /* ---- Estación de pickml.sta ------------------------------------------------
  * Formato (idéntico a pickS.sta):  PickFlag Pin Sta Net Loc ChanE ChanN ChanZ
@@ -157,7 +157,7 @@ typedef struct {
     int    n;
 } PmDedup;
 
-/* ---- Fuente de trazas (tank | store) ------------------------------------- */
+/* ---- Fuente de trazas (trace | store) ------------------------------------- */
 typedef struct PmSrc PmSrc;
 
 /* ---- Motor de inferencia -------------------------------------------------- */
@@ -210,7 +210,7 @@ int pm_report_format(char *buf, size_t n, int modid, int instid, int seq,
                      const char *loc, double t_epoch, int weight, char phase);
 
 /* ============================ fuente ===================================== */
-int  pm_src_open_tank(PmSrc **out, const char *path);
+int  pm_src_open_traces(PmSrc **out, const char *path);
 int  pm_src_open_store(PmSrc **out, const char *root, const PmStation *sta,
                        int nsta, double t0, double t1);
 int  pm_src_next(PmSrc *s, PmTrace *tr);   /* 1 hay, 0 fin, <0 error */
