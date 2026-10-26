@@ -15,6 +15,7 @@
 #include "bpq_capi.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -105,18 +106,71 @@ int bpq_manual_list(CsnhypodbpManualPick *out, int max)
     return csnhypodbp_manual_list(out, max);
 }
 
+/* qid de una clave; -1 si no empieza por un entero seguido de ':' o fin. */
+static long long key_qid(const char *key)
+{
+    char *end = NULL;
+    long long q;
+
+    if (!key || !key[0]) return -1;
+    q = strtoll(key, &end, 10);
+    if (end == key || (*end != ':' && *end != '\0')) return -1;
+    return (q > 0) ? q : -1;
+}
+
+int bpq_manual_key_matches(const char *file_key, const char *event_key)
+{
+    /* v1 sin clave: se acepta siempre (migracion). */
+    if (!file_key || !file_key[0]) return 1;
+    if (!event_key || !event_key[0]) return 0;
+    if (strcmp(file_key, event_key) == 0) return 1;
+    /* Formato viejo `<qid>:<mod>:<version>`: mismo evento si coincide el qid. */
+    {
+        const long long a = key_qid(file_key), b = key_qid(event_key);
+
+        if (a > 0 && a == b) return 1;
+    }
+    return 0;
+}
+
+int bpq_manual_path_for_event(const char *base, const char *event_key,
+                              char *out, size_t n)
+{
+    char safe[160];
+    size_t i, k, bl;
+
+    if (!base || !base[0] || !event_key || !event_key[0] || !out || n == 0)
+        return -1;
+    for (i = 0, k = 0; event_key[i] && k + 1 < sizeof(safe); i++) {
+        const char c = event_key[i];
+
+        if (c == ':' || c == '/' || c == ' ' || c == '\\') safe[k++] = '_';
+        else safe[k++] = c;
+    }
+    safe[k] = '\0';
+    bl = strlen(base);
+    if (bl > 6 && strcmp(base + bl - 6, ".picks") == 0)
+        snprintf(out, n, "%s.%s", base, safe);
+    else
+        snprintf(out, n, "%s.%s.picks", base, safe);
+    return 0;
+}
+
 int bpq_manual_save(const char *path, const char *event_key)
 {
     CsnhypodbpManualPick all[BPQ_MANUAL_MAX];
     FILE *f;
     int n, i;
 
+    /* Sin evento no se guarda: escribir la lista actual bajo una clave vacia
+     * (o la de otro evento) borraria las picadas de ese evento. */
+    if (!event_key || !event_key[0]) return -2;
     if (!path || !path[0]) return -1;
     mkdir_parents(path);
     f = fopen(path, "w");
     if (!f) return -1;
     n = csnhypodbp_manual_list(all, BPQ_MANUAL_MAX);
-    fprintf(f, "%s %s\n", kHeader, event_key ? event_key : "");
+    fprintf(f, "%s %s\n", kHeader, event_key);
     for (i = 0; i < n && i < BPQ_MANUAL_MAX; i++) {
         /* `t` con 6 decimales: microsegundo, sobra para una picada. */
         fprintf(f, "%s %s %c %.6f\n", all[i].sta, all[i].chan, all[i].phase,
@@ -128,42 +182,44 @@ int bpq_manual_save(const char *path, const char *event_key)
 
 int bpq_manual_load(const char *path, const char *event_key)
 {
+    CsnhypodbpManualPick tmp[BPQ_MANUAL_MAX];
     char line[256];
     int match = 0;                 /* 1 = la clave del archivo es la pedida */
+    int ntmp = 0;
     FILE *f;
 
-    csnhypodbp_manual_clear();
-    if (!path || !path[0] || !event_key || !event_key[0]) return 0;
+    if (!path || !path[0] || !event_key || !event_key[0]) return -2;
     f = fopen(path, "r");
     if (!f) return 0;              /* sin archivo = overlay vacio, no es error */
 
     /* Primera linea: "# ... v2 <clave>"; un encabezado v1 no lleva clave y se
-     * acepta siempre. */
-    if (fgets(line, sizeof(line), f)) {
-        if (line[0] == '#') {
-            const char *v2 = strstr(line, " v2 ");
+     * acepta siempre. Un archivo del evento VACIO (0 bytes) es un overlay
+     * limpiado a proposito: limpia la lista y NO cae al archivo legado. */
+    if (!fgets(line, sizeof(line), f)) {
+        match = 1;
+    } else if (line[0] == '#') {
+        const char *v2 = strstr(line, " v2 ");
 
-            if (v2) {
-                char key[128] = "";
-                size_t k;
+        if (v2) {
+            char key[128] = "";
+            size_t k;
 
-                snprintf(key, sizeof(key), "%s", v2 + 4);
-                k = strlen(key);
-                while (k > 0 && (key[k - 1] == '\n' || key[k - 1] == '\r'))
-                    key[--k] = '\0';
-                match = (strcmp(key, event_key) == 0);
-            } else {
-                match = 1;         /* v1: sin clave */
-            }
+            snprintf(key, sizeof(key), "%s", v2 + 4);
+            k = strlen(key);
+            while (k > 0 && (key[k - 1] == '\n' || key[k - 1] == '\r'))
+                key[--k] = '\0';
+            match = bpq_manual_key_matches(key, event_key);
         } else {
-            /* Formato v1 sin encabezado: la primera linea ya es una picada. */
-            match = 1;
-            rewind(f);
+            match = 1;             /* v1: sin clave */
         }
+    } else {
+        /* Formato v1 sin encabezado: la primera linea ya es una picada. */
+        match = 1;
+        rewind(f);
     }
     if (!match) {
         fclose(f);
-        return 0;                  /* de otro evento: se ignora entero */
+        return -1;                 /* de otro evento: la lista queda intacta */
     }
 
     while (fgets(line, sizeof(line), f)) {
@@ -172,6 +228,7 @@ int bpq_manual_load(const char *path, const char *event_key)
         double t = 0.0;
 
         if (line[0] == '#' || line[0] == '\n') continue;
+        if (ntmp >= BPQ_MANUAL_MAX) continue;
         if (sscanf(line, "%31s %31s %c %lf", sta, chan, &phase, &t) != 4)
             continue;
         if (phase != 'P' && phase != 'S') continue;
@@ -180,8 +237,13 @@ int bpq_manual_load(const char *path, const char *event_key)
         snprintf(p.chan, sizeof(p.chan), "%s", chan);
         p.phase = phase;
         p.t = t;
-        csnhypodbp_manual_add(&p);
+        tmp[ntmp++] = p;
     }
     fclose(f);
-    return 0;
+
+    /* Solo ahora se reemplaza la lista: un archivo de otro evento no deja el
+     * overlay a medias. */
+    csnhypodbp_manual_clear();
+    for (int i = 0; i < ntmp; i++) csnhypodbp_manual_add(&tmp[i]);
+    return 1;
 }

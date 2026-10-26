@@ -89,6 +89,28 @@ static QString solKey(const CsnhypodbpSolution *s)
     return QString::fromLatin1(buf);
 }
 
+/* Pedido de traza para una fila: manda el canal de la P EFECTIVA (una manual
+ * puede estar picada en HHN); el catalogo solo completa lo que falte. Sin esto
+ * el tank pide HHZ y csnmags no encuentra la traza de esa P. */
+static BpqFetchReq fetchReqForRow(const BpqStations *cat,
+                                  const CsnhypodbpStaRow &r)
+{
+    const char *sta = nullptr, *net = nullptr, *chan = nullptr, *loc = nullptr;
+    BpqFetchReq q;
+
+    q.sta = QString::fromUtf8(r.sta);
+    q.net = QString::fromUtf8(r.p.net);
+    q.chan = QString::fromUtf8(r.p.chan);
+    q.loc = QString::fromUtf8(r.p.loc);
+    if (cat && bpq_stations_scnl(cat, r.idx, &sta, &net, &chan, &loc)) {
+        if (q.sta.isEmpty() && sta) q.sta = QString::fromUtf8(sta);
+        if (q.net.isEmpty() && net) q.net = QString::fromUtf8(net);
+        if (q.chan.isEmpty() && chan) q.chan = QString::fromUtf8(chan);
+        if (q.loc.isEmpty() && loc) q.loc = QString::fromUtf8(loc);
+    }
+    return q;
+}
+
 /* Cabeceras de las tablas que aun no tienen modelo propio (fases 3/6). Las de
  * Eventos/Origins viven en la capa C (bpq_event_header/bpq_origin_header), que es
  * donde esta el contrato de paridad con la version GTK. */
@@ -410,9 +432,9 @@ void BpqMainWindow::openData()
     }
 
     /* Overlay de picadas manuales: hermano del ManualStateFile (el `.picks` es
-     * formato propio; el `.events` que usa la GTK no se toca). Se carga cuando
-     * se selecciona el evento, porque las picadas son de UN evento. */
-    m_manualPath = QString::fromUtf8(m_cfg->manual_state_file) + QStringLiteral(".picks");
+     * formato propio; el `.events` que usa la GTK no se toca). Un archivo POR
+     * EVENTO (`<qid>:<otime>`): cambiar de solucion no borra las picadas. */
+    m_manualBase = QString::fromUtf8(m_cfg->manual_state_file) + QStringLiteral(".picks");
 
     /* `locate`: csnloc + refinador corren en su hilo (segundos). El worker no
      * toca el catalogo mas que en lectura (vive lo que la ventana). */
@@ -879,6 +901,7 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
     m_curEv = ev;
     if (evChanged) {
         m_candErr.clear();      /* un error del locate es de otro evento */
+        m_lastLocCounts.clear();
         m_staModel->clearChecks();
     }
 
@@ -888,13 +911,28 @@ void BpqMainWindow::refreshStations(const BpqEvent *ev, bool forceFetch)
         m_pinEvent = nullptr;
     }
 
-    /* El overlay de picadas manuales es de UN evento: al cambiar de evento se
-     * recarga el del nuevo (si su clave no coincide, el archivo se ignora). Si
-     * quedaran las picadas del anterior, aparecerian como 'M' aqui. */
-    if (m_selKey != m_manKey && !m_manualPath.isEmpty()) {
-        (void)bpq_manual_load(m_manualPath.toUtf8().constData(),
-                              m_selKey.toUtf8().constData());
-        m_manKey = m_selKey;
+    /* El overlay de picadas manuales es del EVENTO (`qid:otime`), no de la
+     * solucion elegida: cambiar de Origin dentro del mismo evento NO lo recarga
+     * ni lo borra. Solo se limpia cuando cambia el evento mostrado. */
+    if (m_selEventKey != m_manKey || m_manualPath.isEmpty()) {
+        const QByteArray evkey = m_selEventKey.toUtf8();
+        char pbuf[512] = "";
+
+        bpq_manual_clear();
+        m_manKey.clear();
+        m_manualPath.clear();
+        if (!m_manualBase.isEmpty() && !evkey.isEmpty() &&
+            bpq_manual_path_for_event(m_manualBase.toUtf8().constData(),
+                                      evkey.constData(), pbuf,
+                                      sizeof(pbuf)) == 0) {
+            m_manualPath = QString::fromUtf8(pbuf);
+            /* Primero el archivo del evento; si no existe, el legado unico
+             * (solo si su clave es de este evento; el load lo comprueba). */
+            if (bpq_manual_load(pbuf, evkey.constData()) <= 0)
+                (void)bpq_manual_load(m_manualBase.toUtf8().constData(),
+                                      evkey.constData());
+            m_manKey = m_selEventKey;
+        }
     }
 
     /* La tabla sigue al origen FIJADO; sin pin, a la solucion elegida y si no
@@ -1976,9 +2014,23 @@ void BpqMainWindow::syncTraceRows()
 
 void BpqMainWindow::saveManualPicks()
 {
-    if (m_manualPath.isEmpty()) return;
-    (void)bpq_manual_save(m_manualPath.toUtf8().constData(),
-                          m_manKey.toUtf8().constData());
+    const QByteArray key = m_manKey.toUtf8();
+
+    /* Solo el overlay del evento cargado. Guardar la lista actual bajo otra
+     * clave (por ejemplo tras un cambio de evento cuya carga se rechazo)
+     * borraria las picadas de ese evento. */
+    if (m_manualBase.isEmpty() || key.isEmpty() || m_manKey != m_selEventKey)
+        return;
+    if (m_manualPath.isEmpty()) {
+        char pbuf[512] = "";
+
+        if (bpq_manual_path_for_event(m_manualBase.toUtf8().constData(),
+                                      key.constData(), pbuf,
+                                      sizeof(pbuf)) != 0)
+            return;
+        m_manualPath = QString::fromUtf8(pbuf);
+    }
+    (void)bpq_manual_save(m_manualPath.toUtf8().constData(), key.constData());
 }
 
 /* Filtro de VISTA sobre una traza. `idx` < 0 = Raw (solo demean, para que la
@@ -2261,6 +2313,28 @@ void BpqMainWindow::locateNow()
             }
         }
 
+        /* Preflight: "solo M" con el overlay vacio no debe llegar al refinador
+         * (nlloc respondia MinPhases con el ARC base). Aqui se ve el porque. */
+        {
+            int cp = 0, cs = 0, ca = 0, cm = 0, ct = 0;
+
+            bpq_locate_count_origins(
+                rows.constData(), rows.size(),
+                (const int (*)[2])on.constData(), am, mm, tm,
+                m_cfg->max_dist_km, &cp, &cs, &ca, &cm, &ct);
+            m_lastLocCounts = QStringLiteral("P=%1 S=%2 M=%3 A=%4 T=%5")
+                                  .arg(cp).arg(cs).arg(cm).arg(ca).arg(ct);
+            if (cp + cs <= 0) {
+                m_candErr = QStringLiteral(
+                    "sin picadas para el localizador (%1); revisa A/M/Teo y "
+                    "la puerta de distancia").arg(m_lastLocCounts);
+                statusBar()->showMessage(
+                    QStringLiteral("locate: %1").arg(m_candErr), 0);
+                renderPreview();
+                return;
+            }
+        }
+
     if (m_staCat) {
         QVector<BpqFetchReq> mreq;
 
@@ -2271,16 +2345,9 @@ void BpqMainWindow::locateNow()
                 am, mm, tm, rb, 512);
 
             for (int j = 0; j < nf; j++) {
-                const CsnhypodbpStaRow &r = rows.at(rb[j]);
-                const char *sta = nullptr, *net = nullptr, *chan = nullptr,
-                           *loc = nullptr;
+                const BpqFetchReq q = fetchReqForRow(m_staCat, rows.at(rb[j]));
 
-                if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc))
-                    continue;
-                mreq.append(BpqFetchReq{ QString::fromUtf8(sta),
-                                         QString::fromUtf8(net),
-                                         QString::fromUtf8(chan),
-                                         QString::fromUtf8(loc) });
+                if (!q.sta.isEmpty()) mreq.append(q);
             }
         }
         magReq = mreq;
@@ -2854,6 +2921,15 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         return;
     }
 
+    /* La puerta se mide desde la CANDIDATA (es la solucion que se va a
+     * publicar), no desde la solucion elegida en Origins. Se trabaja sobre una
+     * copia: la tabla visible conserva sus distancias. */
+    QVector<CsnhypodbpStaRow> rows = m_staRows;
+
+    if (m_staCat)
+        (void)bpq_stations_rebase(m_staCat, rows.data(), rows.size(),
+                                  m_cand.lat, m_cand.lon);
+
     /* La candidata trae el origen refinado y SOLO las P del ARC. Las picadas
      * manuales nuevas y las teoricas viven en m_staRows: se reconstruyen en
      * `base` con el mismo ranking M>A>Teo que la tabla. Sin esto csnmags no
@@ -2861,7 +2937,7 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     magA = (m_magChkA && m_magChkA->isChecked()) ? 1 : 0;
     magM = (m_magChkM && m_magChkM->isChecked()) ? 1 : 0;
     magT = (m_magChkT && m_magChkT->isChecked()) ? 1 : 0;
-    if (bpq_magpanel_calc_solution(m_staRows.constData(), m_staRows.size(),
+    if (bpq_magpanel_calc_solution(rows.constData(), rows.size(),
                                    magA, magM, magT, &m_cand, &base) <= 0) {
         statusBar()->showMessage(
             QStringLiteral("magnitudes: ningun origen seleccionado"), 4000);
@@ -2871,7 +2947,7 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
     if (m_staCat && m_magPanel) {
         int rb[512];
         const int nf = bpq_magpanel_fetch_rows(
-            m_magPanel, m_staRows.constData(), m_staRows.size(), kindMask,
+            m_magPanel, rows.constData(), rows.size(), kindMask,
             m_cand.depth, magA, magM, magT, rb, 512);
 
         if (nf <= 0) {
@@ -2897,19 +2973,12 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
             return;
         }
         for (int j = 0; j < nf; j++) {
-            const CsnhypodbpStaRow &r = m_staRows.at(rb[j]);
-            const char *sta = nullptr, *net = nullptr, *chan = nullptr,
-                       *loc = nullptr;
+            const BpqFetchReq q = fetchReqForRow(m_staCat, rows.at(rb[j]));
 
-            if (!bpq_stations_scnl(m_staCat, r.idx, &sta, &net, &chan, &loc))
-                continue;
-            req.append(BpqFetchReq{ QString::fromUtf8(sta),
-                                    QString::fromUtf8(net),
-                                    QString::fromUtf8(chan),
-                                    QString::fromUtf8(loc) });
+            if (!q.sta.isEmpty()) req.append(q);
         }
     }
-    nm = bpq_magpanel_ovr(m_magPanel, m_staRows.constData(), m_staRows.size(),
+    nm = bpq_magpanel_ovr(m_magPanel, rows.constData(), rows.size(),
                           kindMask, buf, 600);
     for (i = 0; i < nm; i++) ovr.append(buf[i]);
 
@@ -4965,6 +5034,13 @@ QString BpqMainWindow::dumpTree() const
                .arg(m_tabs ? m_tabs->currentIndex() : -1)
                .arg(m_subtabs ? m_subtabs->currentIndex() : -1)
                .arg(m_waveJob);
+    out += QStringLiteral("manual key=%1 count=%2 path=%3\n")
+               .arg(m_manKey.isEmpty() ? QStringLiteral("-") : m_manKey)
+               .arg(bpq_manual_count())
+               .arg(m_manualPath.isEmpty() ? QStringLiteral("-") : m_manualPath);
+    out += QStringLiteral("locate counts=%1\n")
+               .arg(m_lastLocCounts.isEmpty() ? QStringLiteral("-")
+                                              : m_lastLocCounts);
     if (m_eventsModel) {
         const int n = qMin(3, m_eventsModel->rowCount());
         for (int r = 0; r < n; r++) {

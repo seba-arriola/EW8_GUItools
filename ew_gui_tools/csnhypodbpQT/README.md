@@ -39,12 +39,13 @@ fontanería de datos que hoy vive dentro de los archivos GTK.
 == tt1d checks=33 fallas=0 ==      # capas .crh: semiespacio, vertical, refractada, interfaz, coste
 == tt1d_hyp checks=47 fallas=0 ==  # CRH/NOD/MUL reales y fixture: RAD1, taper, oeste-positivo, mezcla
 == stations checks=71 fallas=0 ==  # catalogo, distancia/orden, M > A > Teo y P teorica (capas + IASP91)
-== traces checks=70 fallas=0 ==    # canvas: etiquetas de canal, envolvente, escala, gaps, marcas, clic y scroll
+== traces checks=84 fallas=0 ==    # canvas: etiquetas de canal, envolvente, escala, gaps, marcas, guia
 == db checks=31 fallas=0 skips=0 == # parseo UTC, sin/con DB, busqueda real y magnitudes del historial
-== locate checks=61 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm y SCNL del catalogo
+== locate checks=90 fallas=0 ==     # picadas efectivas M>A>Teo, checks, MaxDistKm, SCNL y conteo
 == preview checks=115 fallas=0 ==  # 5 estados, formateo, "-" sin dato y atajos de filtro
 == manual checks=98 fallas=0 ==     # overlay de picadas, persistencia, canales por banda y zoom/span
-== magpanel checks=93 fallas=0 ==   # ventanas, Teo, filtro de tabla, overrides, calculate y canvas
+== manual_state checks=38 fallas=0 == # clave por evento, migracion, save sin clave, archivo vacio y ruta
+== magpanel checks=118 fallas=0 ==   # ventanas, Teo, filtro, tank M/A>Teo, overrides y canvas
 == axis checks=38 fallas=0 ==       # eje comun: fondo/filete/ticks, paso 1-2-5, banda gris y gesto release
 == mww checks=111 fallas=0 ==      # semilla, tabla (rango/parseo), fallo nunca mudo, playera y guardado
 == pin checks=29 fallas=0 ==       # nucleo del pin: set/replace/clear/reconcile y clave de origen
@@ -52,10 +53,10 @@ OK: sin libgtk/libadwaita/libgobject/libgio
 OK: --print-config identico (66 lineas)   # contra csnhypodbp.d y csnhypodbpqt.d
 == integracion checks=16 fallas=0 == # identidad 172, .d propio, startstop, runtime y binario
 == mapa de fondo checks=11 fallas=0 == # MapImageFile: bg real, virtual sin clave, fallo en stderr
-== pin invariants checks=12 fallas=0 == # doble clic, pin en Procesar, candidata por clave
-== traces invariants checks=15 fallas=0 == # render, scroll, teclado en la ventana y magnitudes multicanal
+== pin invariants checks=13 fallas=0 == # doble clic, pin en Procesar, candidata por clave
+== traces invariants checks=23 fallas=0 == # render, scroll, teclado, overlay por evento y magnitudes
 == table ui invariants checks=56 fallas=0 == # proxies, Created, eje, filtro, preview, Teo, checks, cache, tt y calculate
-== ui input checks=57 fallas=0 ==  # scroll, teclado, orden, eje, reset, filtro, Teo, picada/desarme, cache, tt y preview
+== ui input checks=72 fallas=0 ==  # scroll, teclado, orden, eje, reset, filtro, Teo, picada/desarme, guia, rueda, preflight y persistencia
 == pin checks=45 fallas=0 ==       # e2e offscreen: fija, sobrevive refresh/confirmacion, suelta
 == maximize ciclos=5 vivo=1 ==      # test-live: ventana Qt (DISPLAY + EarthWorm)
 ```
@@ -353,10 +354,14 @@ Qué hace cada gesto, y dónde vive el estado:
   ticks cortos de 4 px, etiquetas `HH:MM:SS` de 9 px negras y paso 1-2-5 en múltiplos redondos.
 - La ventana de las trazas vive en `m_winT0`/`m_winLen` (los dos canvas la comparten y el eje la
   sigue). Se reinicia al cambiar de evento, junto con el ancla.
-- El overlay **persiste** en `<ManualStateFile>.picks` (formato propio; el `.events` de la GTK no se
-  toca), con la **clave del evento** en el encabezado: al cambiar de evento se ignora el de otro, y
-  al volver se recupera. Se crean los directorios padre al guardar (el runtime de un binario que no
-  es módulo puede no existir, y sin eso el guardado fallaba en silencio).
+- El overlay **persiste POR EVENTO** en `<ManualStateFile>.picks.<qid>_<otime>` (formato propio; el
+  `.events` de la GTK no se toca), con la **clave del evento** en el encabezado. Cambiar de Origin o
+  que cambie la solución preferida **no** lo recarga ni lo borra; solo se limpia al cambiar de evento.
+  El archivo legado `<ManualStateFile>.picks` se lee como respaldo si su `qid` coincide, y el primer
+  guardado escribe el archivo del evento sin pisar el legado. `bpq_manual_load` **no** limpia la lista
+  cuando la clave es de otro evento (devuelve `-1`), y `bpq_manual_save` rechaza una clave vacía
+  (`-2`). Se crean los directorios padre al guardar (el runtime de un binario que no es módulo puede
+  no existir, y sin eso el guardado fallaba en silencio).
 - El clic en el mapa se resuelve con `bpq_map_hit_test` (tolerancia 10 px de dispositivo).
 
 Prueba sin clics (`BPQ_MODE=--mouse`): manda `QMouseEvent`/`QWheelEvent` **reales** a los tres
@@ -461,13 +466,17 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   contra la tabla nueva.
 - El mensaje de error es el real de la cadena (`timeout`, `ref.err`, ARC inválido) o, si no hay
   picadas, cuántas filas tienen picada, la distancia mínima y cuántas caen dentro de la puerta.
+- **Preflight de origen**: `locateNow` cuenta las picadas que saldrían por fase y origen
+  (`bpq_locate_count_origins`, misma máscara y `MaxDistKm`) y **no lanza la cadena** si el total es 0;
+  el mensaje dice `P=.. S=.. M=.. A=.. T=..`. Así “solo M” con el overlay de otro evento se ve como
+  `M=0 A=3`, no como un `MinPhases` del refinador.
 - La tabla de estaciones tiene **casilla por (estación, fase)** en la columna `station`; el estado
   se conserva por `(sta, fase)` entre rebuilds y se resetea al cambiar de evento. `locateNow` la
   traduce a `pick_on` por `rows[i].idx` (posición en el catálogo).
-- Desviaciones conocidas del prototipo: (1) los re-picks no se guardan en un `ManualStateFile`
-  local — viajan por `PICK_RING` y vuelven a la tabla; (2) el **tank** de ondas se baja por estación
-  con picada P antes de cada corrida (el tank del `locate` y el de `calculate` son independientes),
-  así que una `calculate` sin `locate` previo no tiene base.
+- Desviaciones conocidas del prototipo: (1) los re-picks viven en el overlay local y se publican a
+  `PICK_RING` al **Confirmar**, no en el `.events` de la GTK; (2) el **tank** de ondas se baja por
+  estación con picada P antes de cada corrida (el tank del `locate` y el de `calculate` son
+  independientes), así que una `calculate` sin `locate` previo no tiene base.
 
 ### Magnitudes: tabla, traza procesada y ventanas (fase 6.1)
 
@@ -485,6 +494,16 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   listo, toda estación sin P `M/A` recibe una P **`T`** (`M > A > Teo`) con el SCNL del catálogo:
   la tabla de *Ondas* muestra `stat=Teo`, el canvas la marca con `pColorTheo` y la de magnitudes
   obtiene **ancla y ventana** (`win_src='T'`) sin inventar nada. `bpq_stations_build_resid` ya
+  completa `chan/net/loc` de las manuales con `set_scl` (el de la estación como respaldo).
+- **`calculate` sobre la candidata**: la copia de las filas se **rebasa** con
+  `bpq_stations_rebase` a `m_cand.lat/lon` (la tabla visible conserva sus distancias), la puerta
+  se mide desde la candidata y el tank pide el **canal de la P efectiva** (`fetchReqForRow`), no el
+  del catálogo. `bpq_magpanel_fetch_rows` hace **dos pasadas** (M/A primero, Teo después) para que
+  el tope de 48 trazas no se llene de teóricas y deje fuera una P recién picada.
+- **`hypos.jsonl`**: `csnhypodbp_hypos_write` conserva el `net/chan/loc` de cada picada y usa el
+  tank solo para completar lo que falte (antes escribía `--` si la traza no estaba y `csnmags`
+  descartaba la estación). El error de una corrida sin resultado incluye `[picks=N trazas=M]` y la
+  primera línea de `mags.err`.
   hacía el cálculo; lo que faltaba era inicializar el modelo.
 - **Checks propios de magnitudes**: la barra tiene `A/M/Teo` (`mag_chk_auto/manual/theo`), los tres
   marcados por defecto; son independientes de los del picking (que solo filtran el localizador) y

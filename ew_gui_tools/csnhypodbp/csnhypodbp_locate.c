@@ -365,17 +365,31 @@ int csnhypodbp_hypos_write(const char *path, const CsnhypodbpSolution *sol,
             sol->qid, sol->qid, sol->version, sol->otime,
             sol->lat, sol->lon, sol->depth, sol->nph, sol->rms);
     for (i = 0; i < sol->npicks; i++) {
-        const char *net = "--", *loc = "--";
+        const CsnhypodbpPick *pk = &sol->picks[i];
+        char net[16] = "", loc[16] = "", chan[16] = "";
+
+        /* El SCNL de la picada manda: el tank solo completa lo que falte. Antes
+         * se arrancaba con "--" y, si el tank no tenia la traza (p. ej. una P
+         * manual fuera de las 48), csnmags descartaba la estacion en silencio. */
+        snprintf(net, sizeof(net), "%s", pk->net);
+        snprintf(loc, sizeof(loc), "%s", pk->loc);
+        snprintf(chan, sizeof(chan), "%s", pk->chan);
         for (k = 0; k < ntank; k++) {
-            if (strcmp(tank[k].sta, sol->picks[i].sta) == 0 &&
-                strcmp(tank[k].chan, sol->picks[i].chan) == 0) {
-                net = tank[k].net; loc = tank[k].loc; break;
-            }
+            if (strcmp(tank[k].sta, pk->sta) != 0) continue;
+            if (chan[0] && strcmp(tank[k].chan, chan) != 0) continue;
+            if (!chan[0]) snprintf(chan, sizeof(chan), "%s", tank[k].chan);
+            if (!net[0] || strcmp(net, "--") == 0)
+                snprintf(net, sizeof(net), "%s", tank[k].net);
+            if (!loc[0] || strcmp(loc, "--") == 0)
+                snprintf(loc, sizeof(loc), "%s", tank[k].loc);
+            break;
         }
+        if (!net[0]) snprintf(net, sizeof(net), "%s", "--");
+        if (!loc[0]) snprintf(loc, sizeof(loc), "%s", "--");
         fprintf(fp, "%s{\"sta\":\"%s\",\"net\":\"%s\",\"chan\":\"%s\",\"loc\":\"%s\","
                     "\"phase\":\"%c\",\"t_epoch\":%.3f}",
-                i ? "," : "", sol->picks[i].sta, net, sol->picks[i].chan, loc,
-                sol->picks[i].phase, sol->picks[i].t_pick);
+                i ? "," : "", pk->sta, net, chan, loc,
+                pk->phase, pk->t_pick);
     }
     fprintf(fp, "]}\n");
     fclose(fp);

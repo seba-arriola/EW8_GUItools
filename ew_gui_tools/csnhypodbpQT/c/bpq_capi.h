@@ -523,6 +523,12 @@ int          bpq_stations_build_resid(const BpqStations *c,
                                       const CsnhypodbpManualPick *man, int nman,
                                       CsnhypodbpStaRow *out, int max);
 
+/* Recalcula distancia y orden de una COPIA de las filas contra otro hipocentro
+ * (la candidata del locate). La tabla visible no se toca. */
+int          bpq_stations_rebase(const BpqStations *c,
+                                 CsnhypodbpStaRow *rows, int n,
+                                 double lat, double lon);
+
 /* Filas del canvas de trazas: los CANALES de una estacion en el orden del .d
  * (channelsOrder x componentsOrder). La disponibilidad es por BANDA (los dos
  * primeros caracteres: si hay HHZ se asumen HHN/HHE, que es lo que hace la GTK
@@ -546,11 +552,24 @@ int  bpq_manual_remove(const char *sta, char phase);   /* 1 si habia */
 void bpq_manual_clear(void);
 int  bpq_manual_count(void);
 int  bpq_manual_list(CsnhypodbpManualPick *out, int max);
-/* Persistencia del overlay (texto). El encabezado lleva la CLAVE DEL EVENTO: al
- * cambiar de evento las picadas de otro no deben reaparecer como M. `load` solo
- * aplica el archivo si la clave coincide (o si el archivo no la trae, formato
- * v1 tolerante). 0 OK; archivo ausente = overlay vacio, no es error. */
+/* Persistencia del overlay (texto), POR EVENTO (`<qid>:<otime>`), no por
+ * solucion: cambiar de Origin dentro del mismo evento no debe borrar las
+ * picadas manuales. El formato viejo `<qid>:<mod>:<version>` se acepta si el
+ * qid coincide (migracion); un archivo de otro evento se ignora entero. */
+int  bpq_manual_key_matches(const char *file_key, const char *event_key);
+
+/* Ruta del archivo de un evento: "<base>.<qid>_<otime>" (":" y "/" -> "_").
+ * `base` es el archivo legado (p. ej. .../csnhypodbp_manual.events.picks). */
+int  bpq_manual_path_for_event(const char *base, const char *event_key,
+                               char *out, size_t n);
+
+/* save: 0 = guardado; -2 = clave vacia (NO escribe); -1 = error de E/S. */
 int  bpq_manual_save(const char *path, const char *event_key);
+
+/* load: 1 = cargado (un archivo del evento vacio limpia la lista); 0 =
+ * archivo AUSENTE; -1 = la clave es de otro evento (la lista queda INTACTA);
+ * -2 = argumentos invalidos. Nunca limpia por una clave que no coincide: el
+ * llamador limpia al cambiar de evento. */
 int  bpq_manual_load(const char *path, const char *event_key);
 
 /* --- ventana de las trazas con el raton ----------------------------------- *
@@ -844,6 +863,15 @@ int bpq_locate_build_picks(const BpqStations *st, const CsnhypodbpSolution *base
                            const int (*pick_on)[2],
                            int auto_on, int manual_on, int theo_on,
                            double max_dist_km, CsnhypodbpSolution *out);
+
+/* Conteo de las picadas que saldrian, por fase y origen (misma mascara y
+ * puerta que bpq_locate_build_picks). Devuelve el total; los punteros NULL se
+ * ignoran. Sirve al preflight: "solo M" con 0 manuales debe decir M=0 A=3. */
+int bpq_locate_count_origins(const CsnhypodbpStaRow *rows, int nrows,
+                             const int (*pick_on)[2],
+                             int auto_on, int manual_on, int theo_on,
+                             double max_dist_km,
+                             int *np, int *ns, int *na, int *nm, int *nt);
 
 /* Corre la cadena completa EN EL HILO DEL LLAMADOR (bloquea segundos: la UI la
  * lanza en su worker). Localizador = `cfg->active_locator` (o el primero

@@ -161,31 +161,38 @@ int bpq_magpanel_fetch_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                             int auto_on, int manual_on, int theo_on,
                             int *out_rows, int max)
 {
-    int i, nout = 0;
+    int i, pass, nout = 0;
 
     if (!p || !stas || !out_rows || max <= 0) return 0;
-    for (i = 0; i < n && nout < max; i++) {
-        const CsnhypodbpStaPick *pk = &stas[i].p;
-        int ok = 0, k;
+    /* Dos pasadas: primero las P reales (M/A) y despues las Teo. Si el tanque
+     * se corta en `max`, no se queda con 48 teoricas y deja fuera las picadas
+     * que el operador acaba de marcar a mano. */
+    for (pass = 0; pass < 2; pass++) {
+        for (i = 0; i < n && nout < max; i++) {
+            const CsnhypodbpStaPick *pk = &stas[i].p;
+            const int is_theo = (pk->origin == 'T' || pk->origin == 't');
+            int ok = 0, k;
 
-        if (!pk->present) continue;
-        for (k = 0; k < BPQ_MAG_KINDS && !ok; k++) {
-            CsnhypodbpMagCfg eff;
-            int in_range = 1;
+            if (!pk->present) continue;
+            if (is_theo != (pass == 1)) continue;
+            for (k = 0; k < BPQ_MAG_KINDS && !ok; k++) {
+                CsnhypodbpMagCfg eff;
+                int in_range = 1;
 
-            if (kind_mask && !(kind_mask & (1u << k))) continue;
-            eff_cfg(p, k, &eff);
-            csnhypodbp_magcfg_gate(&eff, k, stas[i].dist_deg, stas[i].dist_km,
-                                   &in_range);
-            if (!in_range) continue;
-            if (!csnhypodbp_magcfg_depth_ok(&eff, k, depth_km)) continue;
-            if (!csnhypodbp_magmarks_allowed(&p->marks, stas[i].sta, k,
-                                             pk->origin, auto_on, manual_on,
-                                             theo_on))
-                continue;
-            ok = 1;
+                if (kind_mask && !(kind_mask & (1u << k))) continue;
+                eff_cfg(p, k, &eff);
+                csnhypodbp_magcfg_gate(&eff, k, stas[i].dist_deg, stas[i].dist_km,
+                                       &in_range);
+                if (!in_range) continue;
+                if (!csnhypodbp_magcfg_depth_ok(&eff, k, depth_km)) continue;
+                if (!csnhypodbp_magmarks_allowed(&p->marks, stas[i].sta, k,
+                                                 pk->origin, auto_on, manual_on,
+                                                 theo_on))
+                    continue;
+                ok = 1;
+            }
+            if (ok) out_rows[nout++] = i;
         }
-        if (ok) out_rows[nout++] = i;
     }
     return nout;
 }

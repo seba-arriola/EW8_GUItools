@@ -203,6 +203,17 @@ int main(void)
         /* Las cuatro: union = 30. */
         ns = bpq_magpanel_fetch_rows(fp, fr, 30, 0u, 30.0, 1, 1, 1, sel, 64);
         CK(ns == 30);
+        /* Con el tope justo, primero las P reales: 24 Teo cercanas no pueden
+         * desplazar a las 6 M/A que el operador acaba de picar. */
+        for (i = 0; i < 24; i++) fr[i].p.origin = 'T';
+        for (i = 24; i < 30; i++) fr[i].p.origin = 'A';
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 0u, 30.0, 1, 1, 1, sel, 6);
+        CK(ns == 6);
+        for (i = 0; i < 6; i++) CK(sel[i] >= 24);
+        /* Sin Teo permitidas, solo las 6 reales. */
+        ns = bpq_magpanel_fetch_rows(fp, fr, 30, 0u, 30.0, 1, 1, 0, sel, 64);
+        CK(ns == 6);
+        for (i = 0; i < 6; i++) CK(sel[i] >= 24);
         /* Ningun origen permitido: no se pide nada. */
         ns = bpq_magpanel_fetch_rows(fp, fr, 30, 1u << 0, 30.0, 0, 0, 0,
                                      sel, 64);

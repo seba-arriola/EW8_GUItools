@@ -184,7 +184,8 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 # ---------------------------------------------------------------------------
 TEST_C   := test_capi_config test_canvas test_rings test_events test_draw_map test_wave \
             test_wavecache test_tt1d test_tt1d_hyp test_stations test_traces test_db \
-            test_locate test_preview test_manual test_magpanel test_axis test_mww test_pin
+            test_locate test_preview test_manual test_manual_state test_magpanel \
+            test_axis test_mww test_pin
 TEST_CXX :=
 PROBE_SRC := tests/probe_capi.cxx
 
@@ -351,6 +352,14 @@ test_manual: tests/test_manual.c $(MANUAL_DEPS) $(CANVAS_DEPS) $(EWLIBS)
 	    $(CANVAS_DEPS) $(EWLIBS) $(PQLIBS) $(CAIRO) -lm
 	@chmod +x $@
 
+# Estado manual por evento: clave, migracion y no borrar al cambiar de solucion.
+test_manual_state: tests/test_manual_state.c $(BUILDDIR)/c_bpq_manual.o \
+                   $(BUILDDIR)/bp_manual.o
+	rm -f $@
+	$(CC) $(CFLAGS) -Itests -o $@ tests/test_manual_state.c \
+	    $(BUILDDIR)/c_bpq_manual.o $(BUILDDIR)/bp_manual.o -lm
+	@chmod +x $@
+
 # Canvas de trazas: reusa el juego completo del lienzo (mapa/perfil/trazas).
 test_traces: tests/test_traces.c $(CANVAS_DEPS) $(EWLIBS)
 	rm -f $@
@@ -451,6 +460,7 @@ check-c: $(TEST_C)
 	@$(THIS_DIR)/test_locate
 	@$(THIS_DIR)/test_preview
 	@$(THIS_DIR)/test_manual
+	@$(THIS_DIR)/test_manual_state
 	@$(THIS_DIR)/test_magpanel
 	@$(THIS_DIR)/test_axis
 	@$(THIS_DIR)/test_mww
@@ -473,6 +483,7 @@ check: qt_check $(TEST_C)
 	@$(THIS_DIR)/test_locate
 	@$(THIS_DIR)/test_preview
 	@$(THIS_DIR)/test_manual
+	@$(THIS_DIR)/test_manual_state
 	@$(THIS_DIR)/test_magpanel
 	@$(THIS_DIR)/test_axis
 	@$(THIS_DIR)/test_mww

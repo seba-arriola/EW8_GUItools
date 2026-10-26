@@ -92,7 +92,7 @@ int main(void)
     CK(bpq_manual_save(path, "933600024:0:1") == 0);
     bpq_manual_clear();
     CK(bpq_manual_count() == 0);
-    CK(bpq_manual_load(path, "933600024:0:1") == 0);
+    CK(bpq_manual_load(path, "933600024:0:1") == 1);
     CK(bpq_manual_count() == 2);
     {
         int n = bpq_manual_list(v, CSNHYPODBP_MANUAL_MAX);
@@ -103,14 +103,15 @@ int main(void)
         CK(s && strcmp(s->chan, "HHZ") == 0);
     }
 
-    /* Otro evento: el archivo se ignora entero (las picadas son de UN evento). */
-    CK(bpq_manual_load(path, "111:0:1") == 0);
-    CK(bpq_manual_count() == 0);
-    /* Sin clave: no se carga nada. */
-    CK(bpq_manual_load(path, NULL) == 0);
-    CK(bpq_manual_count() == 0);
-    CK(bpq_manual_load(path, "") == 0);
-    CK(bpq_manual_count() == 0);
+    /* Otro evento: el load devuelve -1 y NO toca la lista; el llamador limpia
+     * al cambiar de evento (asi una recarga por cambio de solucion no borra). */
+    CK(bpq_manual_load(path, "111:0:1") == -1);
+    CK(bpq_manual_count() == 2);
+    /* Sin clave: argumentos invalidos (-2) y la lista queda intacta. */
+    CK(bpq_manual_load(path, NULL) == -2);
+    CK(bpq_manual_count() == 2);
+    CK(bpq_manual_load(path, "") == -2);
+    CK(bpq_manual_count() == 2);
 
     /* Archivo ausente: overlay vacio y 0 (no es error). */
     bpq_manual_clear();
@@ -129,7 +130,7 @@ int main(void)
             fprintf(f, "PB01 HHZ P 7.5\n");
             fclose(f);
         }
-        CK(bpq_manual_load(path, "K1") == 0);
+        CK(bpq_manual_load(path, "K1") == 1);
         CK(bpq_manual_count() == 1);
         {
             int n = bpq_manual_list(v, CSNHYPODBP_MANUAL_MAX);
@@ -147,7 +148,7 @@ int main(void)
             fprintf(f, "PB02 HHZ S 9.5\n");
             fclose(f);
         }
-        CK(bpq_manual_load(path, "cualquiera") == 0);
+        CK(bpq_manual_load(path, "cualquiera") == 1);
         CK(bpq_manual_count() == 1);
     }
     bpq_manual_clear();

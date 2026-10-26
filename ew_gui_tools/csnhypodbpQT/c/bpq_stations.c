@@ -208,6 +208,47 @@ int bpq_stations_build(const BpqStations *c, const CsnhypodbpSolution *sol,
     return bpq_stations_build_resid(c, sol, sol, NULL, 0, out, max);
 }
 
+/* Recalcula dist_deg/dist_km de las filas contra otro hipocentro (la candidata
+ * del `locate`) y las reordena por distancia. La tabla visible NO se toca: el
+ * llamador pasa una copia; sirve para que la puerta de magnitud no mezcle las
+ * distancias de la solucion elegida con la profundidad de la candidata. */
+int bpq_stations_rebase(const BpqStations *c, CsnhypodbpStaRow *rows, int n,
+                        double lat, double lon)
+{
+    int i;
+
+    if (!c || !c->v || !rows || n <= 0) return 0;
+    for (i = 0; i < n; i++) {
+        const BpqSta *s = NULL;
+
+        if (rows[i].idx >= 0 && rows[i].idx < c->n) {
+            s = &c->v[rows[i].idx];
+        } else {
+            int j;
+
+            for (j = 0; j < c->n; j++)
+                if (strcmp(c->v[j].sta, rows[i].sta) == 0) {
+                    s = &c->v[j];
+                    break;
+                }
+        }
+        if (!s) continue;
+        rows[i].dist_deg = dist_deg(lat, lon, s->lat, s->lon);
+        rows[i].dist_km = rows[i].dist_deg * 111.19;
+    }
+    for (i = 1; i < n; i++) {       /* orden por distancia, estable */
+        const CsnhypodbpStaRow tmp = rows[i];
+        int j = i - 1;
+
+        while (j >= 0 && rows[j].dist_km > tmp.dist_km) {
+            rows[j + 1] = rows[j];
+            j--;
+        }
+        rows[j + 1] = tmp;
+    }
+    return n;
+}
+
 /* Una fila por CANAL de `sta`, en el orden del .d. La disponibilidad es por
  * banda (`HH`): el catalogo trae la vertical y las horizontales se derivan del
  * prefijo, igual que csnhypodbp_station_has_band en la GTK. */

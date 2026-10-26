@@ -168,6 +168,26 @@ int main(void)
                                   (const int (*)[2])on, 1, 1, 1, 0.0, &out) == 3);
     }
 
+    /* --- 4b. conteo por origen (preflight: "solo M" con 0 manuales) -------- */
+    {
+        int on[8][2];
+        int i, cp = 0, cs = 0, ca = 0, cm = 0, ct = 0;
+
+        for (i = 0; i < n; i++) on[rows[i].idx][0] = on[rows[i].idx][1] = 1;
+        CK(bpq_locate_count_origins(rows, n, (const int (*)[2])on, 1, 1, 1,
+                                    0.0, &cp, &cs, &ca, &cm, &ct) == 5);
+        CK(cp == 3 && cs == 2 && cm == 1 && ca == 4 && ct == 0);
+        CK(bpq_locate_count_origins(rows, n, (const int (*)[2])on, 0, 1, 0,
+                                    0.0, &cp, &cs, &ca, &cm, &ct) == 1);
+        CK(cp == 1 && cs == 0 && cm == 1);
+        CK(bpq_locate_count_origins(rows, n, (const int (*)[2])on, 1, 0, 0,
+                                    0.0, &cp, &cs, &ca, &cm, &ct) == 4);
+        CK(cp == 2 && cs == 2 && ca == 4);        /* A P, C P, C S, D S */
+        CK(bpq_locate_count_origins(rows, n, (const int (*)[2])on, 1, 1, 1,
+                                    300.0, &cp, &cs, &ca, &cm, &ct) == 4);
+        CK(cp == 3 && cs == 1 && ca == 3 && cm == 1);  /* la S de D fuera */
+    }
+
     /* --- 5. SCNL completo desde el catalogo -------------------------------- */
     CK(bpq_locate_build_picks(cat, &sol, rows, n, NULL, 1, 1, 1, 0.0, &out) == 5);
     {
@@ -199,6 +219,55 @@ int main(void)
                           NULL, 0, &lo, NULL, err, sizeof(err)) == 0);
         CK(err[0] != '\0');
         CK(lo.sol.npicks == 0);
+    }
+
+    /* --- 6b. rebase a la candidata: distancias y orden -------------------- */
+    CK(bpq_stations_rebase(cat, rows, n, 1.0, 0.0) == n);
+    CK(strcmp(rows[0].sta, "B") == 0 && fabs(rows[0].dist_deg) < 1e-6);
+    CK(fabs(rows[1].dist_deg - 1.0) < 1e-6);
+    CK(fabs(rows[2].dist_deg - 1.0) < 1e-6);
+    CK(fabs(rows[3].dist_deg - 4.0) < 1e-6);
+    CK(bpq_stations_rebase(cat, rows, n, 0.0, 0.0) == n);
+    CK(strcmp(rows[0].sta, "A") == 0 && fabs(rows[0].dist_deg) < 1e-6);
+
+    /* --- 6c. hypos.jsonl conserva el SCNL de la picada ------------------- */
+    {
+        const char *hp = "/tmp/bpq_test_hypos.jsonl";
+        CsnhypodbpSolution hs;
+        CsnhypodbpTankTrace tk[1];
+        char buf[2048] = "";
+        FILE *f;
+        size_t rd;
+
+        memset(&hs, 0, sizeof(hs));
+        hs.qid = 42;
+        hs.version = 1;
+        hs.otime = 1000.0;
+        hs.npicks = 2;
+        hs.nph = 2;
+        set_pick(&hs.picks[0], "A", 'P', 0, 1010.0, "HHZ");
+        set_pick(&hs.picks[1], "B", 'P', 0, 1012.0, "");
+        snprintf(hs.picks[0].net, sizeof(hs.picks[0].net), "PB");
+
+        memset(tk, 0, sizeof(tk));
+        snprintf(tk[0].sta, sizeof(tk[0].sta), "B");
+        snprintf(tk[0].net, sizeof(tk[0].net), "CX");
+        snprintf(tk[0].chan, sizeof(tk[0].chan), "HHZ");
+        snprintf(tk[0].loc, sizeof(tk[0].loc), "--");
+
+        CK(csnhypodbp_hypos_write(hp, &hs, tk, 1) == 0);
+        f = fopen(hp, "r");
+        CK(f != NULL);
+        if (f) {
+            rd = fread(buf, 1, sizeof(buf) - 1, f);
+            buf[rd] = '\0';
+            fclose(f);
+        }
+        /* A: la red de la picada manda (el tank no la tiene). B: sin SCNL, lo
+         * completa el tank por estacion. Nunca "--" si hay un dato real. */
+        CK(strstr(buf, "\"sta\":\"A\",\"net\":\"PB\",\"chan\":\"HHZ\"") != NULL);
+        CK(strstr(buf, "\"sta\":\"B\",\"net\":\"CX\",\"chan\":\"HHZ\"") != NULL);
+        remove(hp);
     }
 
     /* --- 7. magnitudes (fase 6): guardas sin trazas ------------------------ */

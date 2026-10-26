@@ -18,6 +18,8 @@ wave=$here/../c/bpq_wave.c
 mag=$here/../c/bpq_draw_mag.c
 ui=$here/../ui/bpq_mainwindow.cxx
 canvas=$here/../../commonqt/src/canvas.cxx
+locate=$here/../c/bpq_locate.c
+coreloc=$here/../../csnhypodbp/csnhypodbp_locate.c
 
 pass=0
 fail=0
@@ -112,6 +114,37 @@ if grep -q 'bpq_magpanel_fetch_rows' "$ui" &&
     ok "magnitudes: peticion por puerta, sin tope previo de 24"
 else
     bad "calculate sigue pidiendo las 24 primeras sin mirar la puerta"
+fi
+
+# Overlay manual: la clave es el EVENTO (qid:otime), no la solucion elegida.
+# Cambiar de Origin no puede borrar las picadas; guardar exige la misma clave.
+if grep -q 'm_selEventKey != m_manKey' "$ui" &&
+   ! grep -q 'm_selKey != m_manKey' "$ui" &&
+   grep -q 'm_manKey != m_selEventKey' "$ui"; then
+    ok "overlay manual por evento (no por solucion)"
+else
+    bad "el overlay manual sigue atado a la solucion"
+fi
+
+# Preflight del locate: el conteo por origen hace visible "solo M" con 0 M.
+if grep -q 'bpq_locate_count_origins' "$ui" &&
+   grep -q 'bpq_locate_count_origins' "$locate"; then
+    ok "locate: preflight con conteo por origen"
+else
+    bad "el locate no muestra el conteo por origen"
+fi
+
+# Magnitudes: distancias desde la candidata y canal de la P efectiva en el
+# tanque; hypos_write conserva el SCNL de la picada (no lo degrada a "--").
+if grep -q 'bpq_stations_rebase' "$ui" && grep -q 'fetchReqForRow' "$ui"; then
+    ok "magnitudes: rebase a la candidata + canal de la P efectiva"
+else
+    bad "la puerta usa la solucion elegida o el canal del catalogo"
+fi
+if grep -q 'El SCNL de la picada manda' "$coreloc"; then
+    ok "hypos_write conserva el SCNL de la picada"
+else
+    bad "hypos_write vuelve a escribir net/loc en '--'"
 fi
 
 # Teclado: filtro de aplicacion + tabla sin type-ahead.

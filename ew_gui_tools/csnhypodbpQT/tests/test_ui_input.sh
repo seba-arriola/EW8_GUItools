@@ -137,6 +137,8 @@ run_dump_cand
 ck "preview: candidata en rojo"        '^preview grid .* bg=none title_color=#a02020$'
 run_locate BPQ_LOCATE_FAIL=1
 ck "locate: fallo visible, sin candidata vieja" '^locate=0 err="fallo simulado" cand=0$'
+run_locate BPQ_LOCATE_MASK=X
+ck "locate: sin picadas dice el conteo" '^locate=0 err="sin picadas para el localizador \(P=0 S=0 M=0 A=0 T=0\)'
 
 # --- 1d. casillas por fila (P y S independientes) -------------------------
 run_dump picking
@@ -311,6 +313,10 @@ run_pick 0.01,0.50
 ck "clic en la cuneta no desarma"      '^input pick phase=P placed=0 armed=1 manual=[0-9]+'
 run_input BPQ_INPUT_TARGET=waves BPQ_INPUT_KEY=P,Esc
 ck "Esc desarma la picada"             '^input keyseq=P,Esc target=waves armed=0'
+
+# --- 12b. persistencia entre procesos: la picada es del EVENTO --------------
+run_dump picking
+ck "manual: la picada persiste por evento" '^manual key=[^ ]+ count=1 '
 
 # --- 13. cache de ondas y prefetch de vecinas -----------------------------
 run_dump_wc

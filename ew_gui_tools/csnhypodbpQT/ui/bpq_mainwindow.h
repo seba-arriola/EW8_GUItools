@@ -289,6 +289,7 @@ private:
     QString            m_candKey;          /* clave de la solucion de ORIGEN */
     double             m_candSecs = 0.0;
     QString            m_candErr;
+    QString            m_lastLocCounts;    /* P/S y M/A/T del ultimo locate */
     const BpqEvent    *m_curEv = nullptr;   /* evento mostrado (para el locate) */
     BpqPreviewPanel   *m_preview = nullptr;
     CsnhypodbpPreviewVals m_previewVals{};  /* ultimo render (para --dump) */
@@ -296,8 +297,9 @@ private:
     bool               m_prefMagUser = false;
     QCheckBox         *m_chkFix = nullptr;  /* Fix: profundidad fija del refinador */
     QLineEdit         *m_editFix = nullptr;
-    QString            m_manualPath;        /* overlay de picadas manuales */
-    QString            m_manKey;            /* evento al que pertenece el overlay */
+    QString            m_manualBase;        /* archivo legado del overlay */
+    QString            m_manualPath;        /* overlay del evento actual */
+    QString            m_manKey;            /* EVENTO al que pertenece el overlay */
     int                m_lastPubPicks = 0;  /* picadas publicadas en el ultimo Confirm */
 
     QTabWidget      *m_tabs = nullptr;      /* Eventos | Procesar */

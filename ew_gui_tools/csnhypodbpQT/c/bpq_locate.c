@@ -99,6 +99,56 @@ int bpq_locate_build_picks(const BpqStations *st, const CsnhypodbpSolution *base
     return n;
 }
 
+/* Cuenta las picadas que el `locate` enviaria, por fase y origen. Usa la MISMA
+ * mascara y puerta que bpq_locate_build_picks; sirve para el preflight de la
+ * UI: con "solo M" y 0 manuales el mensaje dice M=0 A=3, no un MinPhases del
+ * refinador. */
+int bpq_locate_count_origins(const CsnhypodbpStaRow *rows, int nrows,
+                             const int (*pick_on)[2],
+                             int auto_on, int manual_on, int theo_on,
+                             double max_dist_km,
+                             int *np, int *ns, int *na, int *nm, int *nt)
+{
+    int i, ph, total = 0;
+
+    if (np) *np = 0;
+    if (ns) *ns = 0;
+    if (na) *na = 0;
+    if (nm) *nm = 0;
+    if (nt) *nt = 0;
+    if (!rows || nrows <= 0) return 0;
+
+    for (i = 0; i < nrows; i++) {
+        const CsnhypodbpStaRow *r = &rows[i];
+        const int idx = r->idx >= 0 ? r->idx : 0;
+
+        if (max_dist_km > 0.0 && r->dist_km > max_dist_km) continue;
+        for (ph = 0; ph < 2; ph++) {
+            const CsnhypodbpStaPick *pk = ph ? &r->s : &r->p;
+            int on;
+
+            if (!pk->present) continue;
+            if (pick_on && !pick_on[idx][ph]) continue;
+            switch (pk->origin) {
+            case 'M': case 'm': on = manual_on; break;
+            case 'A': case 'a': on = auto_on; break;
+            case 'T': case 't': on = theo_on; break;
+            default: on = 0; break;
+            }
+            if (!on) continue;
+            total++;
+            if (ph == 0) { if (np) (*np)++; } else { if (ns) (*ns)++; }
+            switch (pk->origin) {
+            case 'M': case 'm': if (nm) (*nm)++; break;
+            case 'A': case 'a': if (na) (*na)++; break;
+            case 'T': case 't': if (nt) (*nt)++; break;
+            default: break;
+            }
+        }
+    }
+    return total;
+}
+
 int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
                    const CsnhypodbpSolution *base, const char *locator,
                    const CsnhypodbpStaRow *rows, int nrows,

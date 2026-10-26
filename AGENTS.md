@@ -157,7 +157,12 @@ hace **`csnloc`** localmente.
     la candidata se liga a la **solución de origen** (no al `mod`/qid que devuelva el ARC offline, que
     llega con `mod=0`) y `Confirm` exige el `mod` real del localizador (162/163/164); la tabla de
     picking tiene **casilla por (estación, fase)** y el canvas una **guía vertical** que sigue al
-    puntero; `Shift+rueda` cambia `tracesPerScreen` 1..3.
+    puntero; `Shift+rueda` cambia `tracesPerScreen` 1..3. El overlay manual se guarda **por evento**
+    (`<ManualStateFile>.picks.<qid>_<otime>`, con el `.picks` legado como respaldo si coincide el
+    `qid`), no por solución: cambiar de Origin no borra las picadas. `locate` cuenta las picadas por
+    origen (`M/A/T`) antes de lanzar la cadena y `calculate` rebasa las distancias a la candidata,
+    pide al tank el canal de la P efectiva, prioriza M/A sobre Teo y conserva el SCNL de cada picada
+    en `hypos.jsonl`.
     La **columna derecha** (a nivel de ventana, compartida por las dos pestañas) tiene dos paneles:
     **planta** (imagen equirectangular + capas `.lines` con el mismo contrato que `csnrv`:
     `MapImageFile`/`OverlayFile`/`OverlayColor`/`OverlayWidth`, zoom con rueda y paneo con arrastre) y
