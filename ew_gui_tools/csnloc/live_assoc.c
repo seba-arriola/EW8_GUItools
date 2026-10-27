@@ -76,17 +76,49 @@ static uint64_t fnv1a(uint64_t h, const void *buf, size_t n)
     return h;
 }
 
-int live_build_arc(const LiveSeed *s, const Pick *picks, int np,
-                   TTModel *tt, const StationList *st,
-                   const LiveAssocCfg *cfg, char *arc, size_t arcn,
-                   LivePickSet *set_out, int *nph_out)
+/* Agrega una fase al ARC deduplicando por (estacion, fase): la ultima gana.
+   Devuelve -1 si no cabe. */
+static int arc_add_pick(CsnhypodbpSolution *sol, int *n,
+                        const char *sta, const char *net, const char *chan,
+                        const char *loc, char phase, double t_epoch)
+{
+    int k, found = -1;
+
+    for (k = 0; k < *n; k++) {
+        if (strcmp(sol->picks[k].sta, sta) == 0 &&
+            sol->picks[k].phase == phase) {
+            found = k;
+            break;
+        }
+    }
+    if (found < 0) {
+        if (*n >= CSNHYPODBP_MAX_PICKS) return -1;
+        found = (*n)++;
+    }
+    memset(&sol->picks[found], 0, sizeof(sol->picks[found]));
+    snprintf(sol->picks[found].sta, sizeof(sol->picks[found].sta), "%s", sta);
+    snprintf(sol->picks[found].net, sizeof(sol->picks[found].net), "%s", net);
+    snprintf(sol->picks[found].chan, sizeof(sol->picks[found].chan), "%s", chan);
+    snprintf(sol->picks[found].loc, sizeof(sol->picks[found].loc), "%s", loc);
+    sol->picks[found].phase = phase;
+    sol->picks[found].t_pick = t_epoch;
+    sol->picks[found].manual = 0;
+    sol->picks[found].residual = NAN;   /* el residual lo produce el motor */
+    return 0;
+}
+
+static int build_arc_impl(const LiveSeed *s,
+                          const CsnhypodbpPick *seed_picks, int nseed,
+                          const Pick *picks, int np,
+                          TTModel *tt, const StationList *st,
+                          const LiveAssocCfg *cfg, char *arc, size_t arcn,
+                          LivePickSet *set_out, int *nph_out)
 {
     CsnhypodbpSolution sol;
     uint64_t h = 1469598103934665603ULL;
     int i, n = 0;
 
-    if (!s || !picks || !tt || !st || !cfg || !arc || arcn < 512)
-        return -1;
+    if (!s || !tt || !st || !cfg || !arc || arcn < 512) return -1;
 
     memset(&sol, 0, sizeof(sol));
     sol.qid     = s->qid;
@@ -99,37 +131,29 @@ int live_build_arc(const LiveSeed *s, const Pick *picks, int np,
     sol.confirmed = 0;
     sol.pref_mag = 0;
 
+    /* 1) Fases del seed: csnloc ya las asocio contra este hipocentro, asi que
+       son el nucleo coherente del ARC. */
+    for (i = 0; i < nseed; i++) {
+        const CsnhypodbpPick *sp = &seed_picks[i];
+
+        if (sp->phase != 'P' && sp->phase != 'S') continue;
+        /* Si la estacion no esta en la metadata el motor la rechazaria: no
+           ocupa sitio en el ARC. */
+        if (Stations_Find(st, sp->sta) < 0) continue;
+        (void)arc_add_pick(&sol, &n, sp->sta, sp->net, sp->chan, sp->loc,
+                           sp->phase, sp->t_pick);
+    }
+
+    /* 2) Picadas del buffer asociadas por tiempo de viaje al seed. */
     for (i = 0; i < np; i++) {
         const Pick *p = &picks[i];
         double resid = NAN;
-        int    k, found = -1;
+        char   phase;
 
         if (live_assoc_pick(s, p, tt, st, cfg, &resid) != 1) continue;
-
-        for (k = 0; k < n; k++) {
-            if (strcmp(sol.picks[k].sta, p->sta) == 0 &&
-                sol.picks[k].phase == p->phase_name[0]) {
-                found = k;
-                break;
-            }
-        }
-        if (found < 0) {
-            if (n >= CSNHYPODBP_MAX_PICKS) continue;
-            found = n++;
-        }
-        memset(&sol.picks[found], 0, sizeof(sol.picks[found]));
-        snprintf(sol.picks[found].sta, sizeof(sol.picks[found].sta),
-                 "%s", p->sta);
-        snprintf(sol.picks[found].net, sizeof(sol.picks[found].net),
-                 "%s", p->net);
-        snprintf(sol.picks[found].chan, sizeof(sol.picks[found].chan),
-                 "%s", p->chan);
-        snprintf(sol.picks[found].loc, sizeof(sol.picks[found].loc),
-                 "%s", p->loc);
-        sol.picks[found].phase = p->phase_name[0] ? p->phase_name[0] : 'P';
-        sol.picks[found].t_pick = p->t_epoch;
-        sol.picks[found].manual = 0;
-        sol.picks[found].residual = NAN;   /* el residual lo produce el motor */
+        phase = p->phase_name[0] ? p->phase_name[0] : 'P';
+        (void)arc_add_pick(&sol, &n, p->sta, p->net, p->chan, p->loc,
+                           phase, p->t_epoch);
     }
 
     if (n <= 0) return -1;
@@ -159,6 +183,72 @@ int live_build_arc(const LiveSeed *s, const Pick *picks, int np,
         set_out->hash = h;
         set_out->n    = n;
     }
+    if (nph_out) *nph_out = n;
+    return 0;
+}
+
+int live_build_arc(const LiveSeed *s, const Pick *picks, int np,
+                   TTModel *tt, const StationList *st,
+                   const LiveAssocCfg *cfg, char *arc, size_t arcn,
+                   LivePickSet *set_out, int *nph_out)
+{
+    return build_arc_impl(s, NULL, 0, picks, np, tt, st, cfg, arc, arcn,
+                          set_out, nph_out);
+}
+
+int live_build_arc_seeded(const LiveSeed *s,
+                          const CsnhypodbpPick *seed_picks, int nseed,
+                          const Pick *picks, int np,
+                          TTModel *tt, const StationList *st,
+                          const LiveAssocCfg *cfg, char *arc, size_t arcn,
+                          LivePickSet *set_out, int *nph_out)
+{
+    if (!seed_picks || nseed <= 0)
+        return build_arc_impl(s, NULL, 0, picks, np, tt, st, cfg, arc, arcn,
+                              set_out, nph_out);
+    return build_arc_impl(s, seed_picks, nseed, picks, np, tt, st, cfg,
+                          arc, arcn, set_out, nph_out);
+}
+
+int live_prune_arc(const char *arc_out, int len_out,
+                   const char *arc_in, int len_in,
+                   double tol_p, double tol_s,
+                   char *arc_pruned, size_t arcn, int *nph_out)
+{
+    CsnhypodbpSolution so, si;
+    int i, j, n = 0;
+
+    if (!arc_out || !arc_in || !arc_pruned) return -1;
+    if (csnhypodbp_parse_solution(arc_out, (size_t)len_out, 163, &so) != 0)
+        return -1;
+    if (csnhypodbp_parse_solution(arc_in, (size_t)len_in, 163, &si) != 0)
+        return -1;
+
+    for (i = 0; i < si.npicks; i++) {
+        double tol = (si.picks[i].phase == 'S') ? tol_s : tol_p;
+        int    keep = 0;
+
+        for (j = 0; j < so.npicks; j++) {
+            if (strcmp(si.picks[i].sta, so.picks[j].sta) != 0) continue;
+            if (si.picks[i].phase != so.picks[j].phase) continue;
+            /* Estacion presente en la salida: sobrevive solo si el motor le
+               asigno un residual dentro de la tolerancia. */
+            if (!isnan(so.picks[j].residual) &&
+                fabs(so.picks[j].residual) <= tol)
+                keep = 1;
+            break;
+        }
+        if (!keep) continue;
+        si.picks[n++] = si.picks[i];
+    }
+
+    if (n <= 0) return -1;
+
+    si.npicks = n;
+    si.nph    = n;
+    si.rms    = 0.0;
+    si.gap    = 0;
+    if (csnhypodbp_arc_build(&si, 0, arc_pruned, arcn) != 0) return -1;
     if (nph_out) *nph_out = n;
     return 0;
 }

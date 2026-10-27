@@ -62,7 +62,8 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_event_ttl test/test_state_recover test/test_event_id \
         test/test_renucleate test/test_refine_depth test/test_pick_s \
         test/test_repick_phase test/test_pick_origin test/test_event_manual \
-        test/test_state_manual test/test_grid_force_depth test/test_trigger_gate
+        test/test_state_manual test/test_grid_force_depth test/test_trigger_gate \
+        test/test_emit_gate
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -104,6 +105,7 @@ check: $(TESTS) ttpred iasp91.tbl iasp91.hed
 	@echo "=== test_event_id ===";         ./test/test_event_id
 	@echo "=== test_renucleate ===";       ./test/test_renucleate
 	@echo "=== test_trigger_gate ===";     ./test/test_trigger_gate
+	@echo "=== test_emit_gate ===";        ./test/test_emit_gate
 	@echo "=== test_refine_depth ===";     ./test/test_refine_depth
 	@echo "=== test_pick_s ===";           ./test/test_pick_s
 	@echo "=== test_repick_phase ===";     ./test/test_repick_phase
@@ -148,6 +150,13 @@ test/test_trigger_gate: test/test_trigger_gate.c event_registry.o backprojection
                         dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \
                         $(TAUOBJS)
 	$(CC) $(CFLAGS) -o $@ test/test_trigger_gate.c event_registry.o \
+	      backprojection.o dbscan.o refine.o gridset.o grid.o ttmodel.o \
+	      stations.o $(TAUOBJS) $(LIBS)
+
+test/test_emit_gate: test/test_emit_gate.c event_registry.o backprojection.o \
+                     dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \
+                     $(TAUOBJS)
+	$(CC) $(CFLAGS) -o $@ test/test_emit_gate.c event_registry.o \
 	      backprojection.o dbscan.o refine.o gridset.o grid.o ttmodel.o \
 	      stations.o $(TAUOBJS) $(LIBS)
 

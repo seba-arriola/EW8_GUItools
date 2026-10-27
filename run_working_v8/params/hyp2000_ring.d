@@ -21,6 +21,15 @@ OutRing         HYPO_RING_REF
 LivePickLookbackSec  300.0
 LivePickResidualSecP 3.0
 LivePickResidualSecS 5.0
+# LiveMaxIter: pasadas de refinamiento por corrida. Si la salida no es valida,
+#   se poda el ARC de entrada con los residuales del de salida (las fases que el
+#   motor no puede explicar se descartan) y se reintenta. Una sola pasada no
+#   arregla un ARC contaminado con picadas de otros sismos. 0 = 1 pasada.
+LiveMaxIter          3
+# LiveEventTTLSec: tras N_retry el evento se detiene, pero se REABRE si llega
+#   una picada nueva y el sismo es mas reciente que esto (s). 0 = sin tope.
+#   Evita que un evento que fallo 5 veces quede sin refinar para siempre.
+LiveEventTTLSec      600.0
 # Metadatos para el tiempo de viaje: estaciones (lat/lon) y modelo tau.
 # StaFile se resuelve contra $EW_PARAMS; TauTable busca <EW_PARAMS>/<modelo>.tbl.
 StaFile         estaciones_107.txt
@@ -48,8 +57,17 @@ VelocityModel   CHILE_POTIN
 # Una solucion con rms=99.99 (centinela de HYPOINVERSE), nph < MinPhases o
 # gap > MaxGapDeg NO se publica ni contamina el seed de la siguiente corrida;
 # cuenta como intento fallido para N_retry.
-MinPhases       4
+#
+# MinPhases 5 = 1 grado de libertad. Con 4 fases y 4 incognitas (t0, lat, lon,
+#   profundidad) el ajuste es exacto y el RMS no informa de nada: por eso un
+#   "rms=1.24 con nph=4" NO es evidencia de buena calidad. Con 5 ya hay 1 gl.
+#
+# MaxGapDeg 360: la red chilena es lineal, asi que los sismos offshore tienen
+#   gap 300-350 por geometria. Medido sobre 359 036 origenes de la BD
+#   (2026-10-27): el RMS mediano no cambia entre 280-360 (0.30 s) y salta a
+#   0.82 a partir de 360. Con 300 se rechazaban soluciones reales.
+MinPhases       5
 MaxRMS          2.0
-MaxGapDeg       300
+MaxGapDeg       360
 # Profundidad fija (km); <0 = libre. La GUI la pasa por corrida.
 # FixedDepthKm  -1.0

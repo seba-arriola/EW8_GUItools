@@ -133,10 +133,13 @@ anterior de grilla única (regresión).
 | `EventMatchTimeSec` | 60.0 | Ventana temporal para el MISMO evento, respecto del ancla (s) |
 | `EventMatchDistKm` | 100.0 | Distancia máxima candidato-ancla para el MISMO evento (km) |
 | `EventMatchVelocityKmS` | 0.0 | 0 = ventana temporal fija; >0 = crece con `d/V` (p. ej. 6.0) |
-| `EventPickTolSec` | 0.1 | Tolerancia de tiempo para considerar que una picada es la misma (overlap) |
+| `EventPickTolSec` | 0.1 | Tolerancia de tiempo para considerar que dos picadas son la misma |
+| `EventMatchSharedPicks` | 3 | Picadas comunes que bastan para el MISMO evento aunque los hipocentros disten más de `EventMatchDistKm`; 0 = off (solo geometría) |
 | `MinPPhases` | 1 | P mínimas de un candidato; 0 = off. Evita gatillar solo con S |
 | `MaxAssocDistKm` | 1000 | Distancia máxima estación-hipocentro para el gatillo; 0 = off |
-| `MaxGapDeg` | 300 | Gap azimutal máximo para gatillar; 0 = off |
+| `MaxGapDeg` | 360 | Gap azimutal máximo para gatillar; 0 = off. 360 = límite geométrico (medido: el RMS no empeora hasta ahí) |
+| `MinEmitPhases` | 5 | Fases mínimas para publicar en el anillo; 0 = off. 5 = 1 grado de libertad |
+| `EmitImproveMinPicks` | 3 | Fases de más para corregir una solución ya publicada (mismo `qid`, v2); 0 = nunca |
 | `AssocWindowSec` | 120.0 | Ventana temporal de picks |
 | `RePickWindowSec` | 10.0 | Re-pick del mismo SCNL **y fase** reemplaza al anterior (P y S coexisten) |
 | `PickTTLSec` | 300.0 | Expiración de picks |

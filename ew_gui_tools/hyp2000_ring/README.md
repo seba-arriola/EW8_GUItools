@@ -71,7 +71,9 @@ Se excluyen del build los `.f` duplicados del vendorizado original.
 | `TauTable` | `iasp91`: modelo tau (`<EW_PARAMS>/<modelo>.tbl/.hed`) |
 | `LivePickLookbackSec` | máximo `t_pick - t0` que se mira hacia adelante (s); el buffer se purga con esto + 60 s |
 | `LivePickResidualSecP` / `LivePickResidualSecS` | tolerancia del residual de asociación P/S (s) |
-| `MinPhases`, `MaxRMS`, `MaxGapDeg` | filtros de calidad de la **salida** (`0` = sin filtro): `nph`, `rms`, `gap` |
+| `LiveMaxIter` | pasadas de refinamiento por corrida: si la salida no es válida se poda el ARC con los residuales del motor y se reintenta (0 = 1 pasada) |
+| `LiveEventTTLSec` | ventana para **reabrir** un evento detenido por `N_retry` cuando llega una picada nueva (s); 0 = sin tope |
+| `MinPhases`, `MaxRMS`, `MaxGapDeg` | filtros de calidad de la **salida** (`0` = sin filtro): `nph`, `rms`, `gap`. `MinPhases 5` = 1 grado de libertad |
 | `FixedDepthKm` | profundidad **fija** (km) de la corrida; `<0` (default) = libre. El módulo emite `ZTR <z> T` después del `.hyp`, así el motor no mueve `z` (`DEPFIXA`). La GUI la pasa por corrida en una copia temporal del `.d`; en modo anillo solo se activa si se escribe en el `.d` |
 
 `hyp2000_ring.hyp` (arranque de HYPOINVERSE): modelo + estaciones + `ZTR` + `DAM`.

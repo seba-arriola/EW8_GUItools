@@ -283,7 +283,7 @@ hace **`csnloc`** localmente.
     Credenciales en `run_working_v8/params/db.env` (`DbEnvFile`). Mapeo campo a campo (ida y vuelta)
     y contrato de orden de las tablas: `docs/DATA-MAPPING.md`; lo que falta decidir:
     `docs/DATA-MAPPING-PENDIENTES.md`. Ver también `docs/HYPODB.md` y `db/README.md`.
-  - `csnloc/`: módulo nativo (C) **asociador**. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`): emite **una sola** primera solución por evento y no versiona; los locators con `live_usage=1` son los que recalculan con todos los picks. La identidad de evento usa un **ancla congelada** (`t0/lat/lon` de la primera solución) y `EventMatchTimeSec`/`EventMatchDistKm` (o una ventana que crece con `EventMatchVelocityKmS`); `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` son las puertas del gatillo (0 = off). Un candidato fuera de la ventana crea evento nuevo aunque comparta picadas (log `overlap`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas y `test_trigger_gate`) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
+  - `csnloc/`: módulo nativo (C) **asociador**. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`): emite **una sola** primera solución por evento y no versiona; los locators con `live_usage=1` son los que recalculan con todos los picks. La identidad de evento usa un **ancla congelada** (`t0/lat/lon` de la primera detección) y es el mismo evento si cae en `EventMatchTimeSec`/`EventMatchDistKm` (o una ventana que crece con `EventMatchVelocityKmS`) **o** si comparte `EventMatchSharedPicks` picadas (`3`, criterio de `scevent`: el ancla preliminar puede estar a 200 km y ser el mismo sismo); `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` (`360`, medido sobre la BD: el RMS no empeora hasta ahí y la red es lineal) son las puertas del gatillo (0 = off). La emisión se **retiene** hasta que la solución es publicable (`MinEmitPhases` `5` = 1 grado de libertad) y una corrección solo se emite con `EmitImproveMinPicks` fases más y el mismo `qid`. Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas y `test_trigger_gate`) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
   - `pickS/`: picker nativo (C) de **onda S**. Lee ondas `TYPE_TRACEBUF2` de
     `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `LEGACY_PICK_RING`, y
     publica picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en
@@ -438,19 +438,29 @@ SeedLink (10.54.217.9:18000)
         └─ pickS / pickml eqt ─► LEGACY_PICK_RING  (sin consumidor: comparar)
 ```
 
-`csnloc` es **sólo el asociador**: emite una primera solución por evento (nunca versiona). El ancla
-de identidad es esa primera solución (`t0/lat/lon` congelados, no el `t0` de la última detección):
-`EventMatchTimeSec`+`EventMatchDistKm` (y `EventMatchVelocityKmS` opcional) definen cuándo un
-candidato es el mismo evento; `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` filtran el gatillo. Un
-candidato fuera de la ventana crea un evento nuevo aunque comparta picadas (se loguea `overlap`).
+`csnloc` es **sólo el asociador**: emite una solución por evento. El ancla de identidad es la
+**primera** detección (`t0/lat/lon` congelados, no el `t0` de la última): es el mismo evento si cae
+en `EventMatchTimeSec`+`EventMatchDistKm` (con `EventMatchVelocityKmS` opcional) **o** si comparte
+`EventMatchSharedPicks` picadas —el ancla preliminar puede estar a 200 km y aun así ser el mismo
+sismo; se midió el 2026-10-27 12:24: dos hipótesis a 199 km con 8 picadas comunes daban dos
+orígenes—. `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` (360: medido, el RMS no empeora hasta ahí;
+la red chilena es lineal y los sismos offshore tienen gap 300-350) filtran el gatillo. La emisión
+se **retiene** hasta que la solución es publicable (`MinEmitPhases` 5, `MaxRMS`, `MaxGapDeg`), de
+modo que la primera solución publicada es la buena; si ya se publicó y llega un candidato con
+`EmitImproveMinPicks` fases más, se emite una corrección con el **mismo `qid`** (único caso en que
+versiona) y las GUIs muestran una sola fila por `(qid, mod)`, la de versión más alta. Un candidato
+fuera de ambos criterios crea un evento nuevo (se loguea `overlap`).
 La tabla de localizadores vive únicamente en `csnhypodbpqt.d` (columnas `binario`, `config`,
 `live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. Los locators con
 `live_usage=1` asocian todas las P/S de `PICK_RING` al hipocentro del seed por **tiempo de viaje**
-(`t0 + tt`, ventana que crece con distancia/profundidad), rehacen el ARC solo con las picadas
-asociadas y publican `HYPO_RING_REF` cada `time_recalc_live`; validan `rms/nph/gap` antes de
-publicar (no emiten `rms=99.99` ni contaminan el seed) y tras `N_retry` intentos sin picadas nuevas
-o sin solución válida dejan de localizar ese evento. El `locate` manual manda todos los picks
-directo al locator elegido (sin `csnloc` intermedio). El ingester `wstore_ingest`
+(`t0 + tt`, ventana que crece con distancia/profundidad), siembran el ARC con **las fases del seed**
+(más las asociadas, dedup por estación+fase) y publican `HYPO_RING_REF` cada `time_recalc_live`;
+validan `rms/nph/gap` antes de publicar (no emiten `rms=99.99` ni contaminan el seed) y, si la
+salida no pasa, **podan** el ARC con los residuales del motor y reintentan hasta `LiveMaxIter`. Tras
+`N_retry` intentos sin picadas nuevas o sin solución válida dejan de localizar ese evento, pero se
+**reabren** si llega una picada nueva dentro de `LiveEventTTLSec` (`N_retry` corta CPU, no sentencia
+el evento). El `locate` manual manda todos los picks directo al locator elegido (sin `csnloc`
+intermedio). El ingester `wstore_ingest`
 lee `SLINK_RING` con su propio cursor y escribe el **store indexado** (`wstore`), fuente primaria de
 ondas de `csnhypodbp` y `csnmags`. **`PICK_RING` es el anillo vivo** y su regla es **un productor
 por fase**: `pick_FP` aporta la **P** y `pickml_iquique` **sólo la S** (`PublishPhases S`, porque

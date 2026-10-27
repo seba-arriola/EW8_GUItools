@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 #include "csnloc.h"
+/* CsnhypodbpPick: fases del seed (ARC). Es C puro, sin GTK ni libpq. */
+#include "../csnhypodbp/csnhypodbp_group.h"
 
 /*
  * live_assoc.c - asociacion de picadas al hipocentro de un evento vivo.
@@ -40,12 +42,32 @@ int live_assoc_pick(const LiveSeed *s, const Pick *p, TTModel *tt,
                     const StationList *st, const LiveAssocCfg *cfg,
                     double *resid_out);
 
-/* Construye el ARC con TODAS las P/S asociadas. No copia las fases viejas
- * del seed. Devuelve 0 y llena arc/nph_out/set_out; -1 si no hay fases. */
+/* Construye el ARC con TODAS las P/S asociadas por tiempo de viaje.
+ * Devuelve 0 y llena arc/nph_out/set_out; -1 si no hay fases. */
 int live_build_arc(const LiveSeed *s, const Pick *picks, int np,
                    TTModel *tt, const StationList *st,
                    const LiveAssocCfg *cfg, char *arc, size_t arcn,
                    LivePickSet *set_out, int *nph_out);
+
+/* Igual, pero siembra el ARC con las fases del seed (que csnloc ya asocio
+ * contra ese hipocentro) y luego agrega las asociadas, dedup por estacion+fase.
+ * Es el nucleo coherente: sin el, una ventana de +-3 s sobre un seed pobre
+ * captura fases de otros sismos y el motor devuelve RMS de decenas de s. */
+int live_build_arc_seeded(const LiveSeed *s,
+                          const CsnhypodbpPick *seed_picks, int nseed,
+                          const Pick *picks, int np,
+                          TTModel *tt, const StationList *st,
+                          const LiveAssocCfg *cfg, char *arc, size_t arcn,
+                          LivePickSet *set_out, int *nph_out);
+
+/* Poda el ARC de ENTRADA con el veredicto del ARC de SALIDA del motor: una
+ * fase sobrevive solo si el motor la uso y su residual quedo dentro de
+ * tol_p/tol_s. Las que el motor descarto (estacion desconocida, no usada)
+ * tambien salen. Devuelve 0 o -1 si no queda nada / no se puede parsear. */
+int live_prune_arc(const char *arc_out, int len_out,
+                   const char *arc_in, int len_in,
+                   double tol_p, double tol_s,
+                   char *arc_pruned, size_t arcn, int *nph_out);
 
 typedef struct {
     int    ok;

@@ -88,6 +88,7 @@ int main(void)
     memset(&cfg, 0, sizeof(cfg));
     cfg.EventMatchTimeSec = 60.0; cfg.EventMatchDistKm = 100.0;
     cfg.EventMatchVelocityKmS = 0.0; cfg.EventPickTolSec = 0.1;
+    cfg.EventMatchSharedPicks = 3;   /* criterio OR: picadas comunes */
     cfg.MinPPhases = 0; cfg.MaxAssocDistKm = 0.0; cfg.MaxGapDeg = 0.0;
     cfg.MaxRMSDegrade = 0.10; cfg.MaxGapDegradeDeg = 10.0;
     cfg.PhaseAssocTolSec = 2.0; cfg.PhaseAssocTolSecS = 4.0;
@@ -211,12 +212,14 @@ int main(void)
         CHECK(reg3.ev[0].version == 1, "ancla: la version sigue en 1");
     }
 
-    /* --- Lejos con picadas compartidas: evento nuevo + log overlap. --- */
+    /* --- Lejos pero con picadas compartidas: MISMO evento (criterio OR).
+       Caso real 2026-10-27 12:24:38: dos hipotesis del mismo sismo separadas
+       199 km con 8 picadas en comun creaban dos ids distintos. --- */
     {
         EventRegistry reg4;
         CSLocParams cfg4 = cfg;
-        Pick w5[CSLOC_MAX_PHASES];
-        int n5 = 0;
+        Pick w5[CSLOC_MAX_PHASES], w6[CSLOC_MAX_PHASES];
+        int n5 = 0, n6 = 0;
         HypoCandidate c5;
         unsigned long id6 = 0; unsigned int v6 = 0;
 
@@ -224,6 +227,7 @@ int main(void)
         EventRegistry_SetLogCallback(logcb);
         cfg4.Debug = 1;
         cfg4.AssociateOnly = 1;
+        cfg4.EventMatchSharedPicks = 3;
         EventRegistry_Init(&reg4);
         w5[n5++] = mk_pick(&st, &tt, 0, tr_lat_g, tr_lon, tr_depth, t0);
         w5[n5++] = mk_pick(&st, &tt, 1, tr_lat_g, tr_lon, tr_depth, t0);
@@ -231,17 +235,31 @@ int main(void)
         c5 = mk_cand(w5, n5, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
         r = EventRegistry_Upsert(&reg4, &c5, w5, n5, &cfg4, &st, &tt, NULL,
                                  4000UL, t0, &id6, &v6, NULL);
-        CHECK(r == 1 && v6 == 1, "overlap: evento inicial v1");
+        CHECK(r == 1 && v6 == 1, "shared: evento inicial v1");
 
+        /* d~222 km (fuera de 100 km) pero las 3 picadas son las mismas. */
         c5 = mk_cand(w5, n5, t0 + 45.0, geoc(tr_lat_geo + 2.0), tr_lon,
                      tr_depth, 0.5, 120.0);
         r = EventRegistry_Upsert(&reg4, &c5, w5, n5, &cfg4, &st, &tt, NULL,
                                  4004UL, t0 + 45.0, &id6, &v6, NULL);
+        CHECK(r == 0, "shared: d~222 km con 3 picadas comunes -> mismo evento");
+        CHECK(reg4.n == 1, "shared: no se crea un id nuevo");
+        CHECK(reg4.ev[0].version == 1, "shared: no emite ni versiona");
+
+        /* Solo 2 picadas comunes: por debajo del umbral -> evento nuevo, y el
+           log lo deja como overlap (no como fusion). */
+        w6[n6++] = mk_pick(&st, &tt, 0, tr_lat_g, tr_lon, tr_depth, t0);
+        w6[n6++] = mk_pick(&st, &tt, 1, tr_lat_g, tr_lon, tr_depth, t0);
+        w6[n6++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0 + 120.0);
+        c5 = mk_cand(w6, n6, t0 + 45.0, geoc(tr_lat_geo + 2.0), tr_lon,
+                     tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg4, &c5, w6, n6, &cfg4, &st, &tt, NULL,
+                                 4004UL, t0 + 45.0, &id6, &v6, NULL);
         CHECK(r == 1 && id6 == 4004UL && v6 == 1,
-              "overlap: lejos con picadas compartidas -> evento nuevo");
-        CHECK(reg4.n == 2, "overlap: dos eventos independientes");
-        CHECK(strstr(g_log, "overlap=3") != NULL,
-              "overlap: el log registra las 3 picadas compartidas");
+              "shared: 2 picadas comunes (< 3) -> evento nuevo");
+        CHECK(reg4.n == 2, "shared: dos eventos independientes");
+        CHECK(strstr(g_log, "overlap=2") != NULL,
+              "shared: el log registra overlap=2");
 
         EventRegistry_SetLogCallback(NULL);
     }

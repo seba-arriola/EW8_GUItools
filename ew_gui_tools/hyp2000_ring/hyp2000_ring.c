@@ -80,6 +80,8 @@ static double LivePickResidualSecS = 5.0;
 static int    LiveUsage = 0;
 static int    LiveRecalcSec = 20;
 static int    LiveNRetry = 5;
+static int    LiveMaxIter = 3;         /* podas por corrida (0 = 1 pasada)   */
+static double LiveEventTTLSec = 600.0; /* ventana para reabrir un done (s)   */
 
 static SHM_INFO      InRegion, OutRegion, PickRegion, ConfRegion;
 static long          InKey = 0, OutKey = 0, PickKey = 0, ConfKey = 0;
@@ -106,9 +108,19 @@ typedef struct {
     int                  seed_prio;   /* 0=csnloc, 1=refinada, 2=confirmada */
     int                  last_npicks;
     uint64_t             last_hash;   /* (sta,phase,t) de las asociadas    */
+    unsigned long        last_pick_seq; /* para reabrir un done            */
+    int                  reopens;     /* reaperturas consumidas            */
     CsnhypodbpSolution   seed;        /* ultima solucion preferida         */
 } LiveEvent;
+
+/* Tope de reaperturas por evento: N_retry corta el gasto, pero un enjambre no
+   debe reactivar el motor sin fin. Una confirmada (prio 2) siempre reabre. */
+#define LIVE_MAX_REOPEN 3
 static LiveEvent LiveEv[LIVE_EV_MAX];
+
+/* Contador global de picadas aceptadas en el buffer: un salto significa que
+   llego evidencia nueva y un evento detenido por N_retry puede reabrirse. */
+static unsigned long g_pick_seq = 0;
 
 /* Region (bbox) opcional, del GridFile. */
 static int    HaveGrid = 0;
@@ -158,6 +170,8 @@ static int read_config(const char *file)
         else if (k_its("LivePickLookbackSec")) LivePickLookbackSec = k_val();
         else if (k_its("LivePickResidualSecP")) LivePickResidualSecP = k_val();
         else if (k_its("LivePickResidualSecS")) LivePickResidualSecS = k_val();
+        else if (k_its("LiveMaxIter"))          LiveMaxIter = k_int();
+        else if (k_its("LiveEventTTLSec"))      LiveEventTTLSec = k_val();
         else if (k_its("HeartBeatInt")) HeartbeatInt = k_int();
         else if (k_its("LogFile"))      LogFile = k_int();
         else if (k_its("Debug"))        Debug = k_int();
@@ -581,12 +595,15 @@ static void live_seed(const char *arc, int len)
     if (csnhypodbp_parse_solution(arc, (size_t)len, 163, &sol) != 0) return;
     ev = live_find(sol.qid);
 
-    /* Un seed de csnloc NUNCA pisa una solucion refinada (prio 1) ni una
-       confirmada (prio 2), ni reinicia un evento que ya se detuvo. */
-    if (ev && (ev->seed_prio > 0 || ev->done)) {
+    /* Una confirmada (prio 2) no se pisa nunca. Un seed de csnloc solo
+       actualiza si trae MAS fases que el vigente: asi una correccion v2 del
+       asociador (mismo qid) si entra, y un seed repetido no reinicia el
+       trabajo. */
+    if (ev && (ev->seed_prio >= 2 || sol.nph <= ev->seed.nph)) {
         if (Debug >= 1)
-            logit("t", "hyp2000_ring: semilla ev=%d ignorada (prio=%d done=%d)\n",
-                  sol.qid, ev->seed_prio, ev->done);
+            logit("t", "hyp2000_ring: semilla ev=%d ignorada (prio=%d nph=%d "
+                       "vs %d)\n",
+                  sol.qid, ev->seed_prio, sol.nph, ev->seed.nph);
         return;
     }
     if (!ev) {
@@ -604,6 +621,7 @@ static void live_seed(const char *arc, int len)
     ev->last_run = 0;          /* fuerza la primera corrida */
     ev->last_npicks = 0;
     ev->last_hash = 0;
+    ev->last_pick_seq = g_pick_seq;
     if (Debug >= 1)
         logit("t", "hyp2000_ring: semilla ev=%d nph=%d\n", sol.qid, sol.nph);
 }
@@ -630,6 +648,8 @@ static void live_prefer(const char *arc, int len, int mod)
     ev->last_run = 0;
     ev->last_npicks = 0;
     ev->last_hash = 0;
+    ev->last_pick_seq = g_pick_seq;
+    ev->reopens = 0;           /* confirmada: puede reabrir siempre */
     ev->seed_prio = 2;         /* confirmada: maxima prioridad */
     if (Debug >= 1)
         logit("t", "hyp2000_ring: preferida ev=%d nph=%d\n", sol.qid, sol.nph);
@@ -642,6 +662,7 @@ static void live_add_pick(const char *msg, int len)
     if (PickSCNL_Parse(msg, len, &p) != 0) return;
     if (p.manual) return;      /* el vivo usa solo automaticas */
     PickBuffer_AddOrReplace(&LivePicks, &p);
+    g_pick_seq++;              /* evidencia nueva: puede reabrir un done */
 }
 
 /* Construye el ARC con TODAS las P/S asociadas por tiempo de viaje al seed.
@@ -659,9 +680,10 @@ static int live_build(LiveEvent *ev, char *arc, size_t arcn,
     s.lon     = ev->seed.lon;
     s.depth   = ev->seed.depth;
 
-    return live_build_arc(&s, LivePicks.items, LivePicks.n, &LiveTT,
-                          &LiveStations, &LiveAssoc, arc, arcn,
-                          set_out, np_out);
+    return live_build_arc_seeded(&s, ev->seed.picks, ev->seed.npicks,
+                                 LivePicks.items, LivePicks.n, &LiveTT,
+                                 &LiveStations, &LiveAssoc, arc, arcn,
+                                 set_out, np_out);
 }
 
 static int live_event_retry(LiveEvent *ev)
@@ -679,14 +701,36 @@ static void live_tick(time_t now)
 
     for (i = 0; i < LIVE_EV_MAX; i++) {
         LiveEvent *ev = &LiveEv[i];
-        char arc[MAX_ARC], out[MAX_ARC];
+        char arc[MAX_ARC], out[MAX_ARC], pruned[MAX_ARC];
         LivePickSet set;
         LiveLocCheck chk;
         CsnhypodbpSolution refined;
-        int np = 0, out_len = 0, fresh, valid = 0;
+        int np = 0, out_len = 0, fresh, valid = 0, iter;
         const char *why = "sin localizacion";
 
-        if (!ev->active || ev->done) continue;
+        if (!ev->active) continue;
+
+        /* N_retry corta el gasto de CPU, NO sentencia el evento: si llego
+           evidencia nueva (una picada mas) y el sismo es reciente, se reabre.
+           Antes un evento que fallaba 5 veces no volvia a localizarse nunca,
+           aunque despues llegaran 30 picadas suyas. */
+        if (ev->done) {
+            if (g_pick_seq != ev->last_pick_seq &&
+                (LiveEventTTLSec <= 0.0 ||
+                 (double)now - ev->otime <= LiveEventTTLSec) &&
+                (ev->seed_prio >= 2 || ev->reopens < LIVE_MAX_REOPEN)) {
+                ev->done = 0;
+                ev->no_new = 0;
+                ev->reopens++;
+                ev->last_pick_seq = g_pick_seq;
+                ev->last_run = 0;      /* no esperar RecalcSec para reintentar */
+                logit("t", "hyp2000_ring: ev=%d reabierto (picadas nuevas, "
+                           "%d/%d)\n", ev->qid, ev->reopens, LIVE_MAX_REOPEN);
+            } else {
+                continue;
+            }
+        }
+
         if (ev->last_run != 0.0 && (double)now - ev->last_run < LiveRecalcSec)
             continue;
 
@@ -694,6 +738,7 @@ static void live_tick(time_t now)
         memset(&chk, 0, sizeof(chk));
         if (live_build(ev, arc, sizeof(arc), &set, &np) != 0) {
             ev->last_run = (double)now;
+            ev->last_pick_seq = g_pick_seq;   /* el fallo consume lo ya visto */
             ev->no_new++;
             if (live_event_retry(ev))
                 logit("t", "hyp2000_ring: ev=%d sin picadas asociadas tras %d "
@@ -706,6 +751,7 @@ static void live_tick(time_t now)
                 np != ev->last_npicks;
         if (!fresh) {
             ev->last_run = (double)now;   /* el intento tambien espera RecalcSec */
+            ev->last_pick_seq = g_pick_seq;
             ev->no_new++;
             if (live_event_retry(ev))
                 logit("t", "hyp2000_ring: ev=%d sin picadas nuevas tras %d "
@@ -713,20 +759,55 @@ static void live_tick(time_t now)
             continue;
         }
 
-        if (hypo_locate(arc, (int)strlen(arc), out, &out_len) == 0 &&
-            out_len > 0) {
+        /* Refinamiento ITERATIVO: si la salida no es valida, se poda el ARC de
+           entrada con el veredicto del motor (los residuales del ARC de
+           salida) y se reintenta. Una sola pasada no puede arreglar un ARC con
+           fases espurias: medido el 2026-10-27, 39 fases asociadas por tt
+           daban RMS 14.5 y el evento se perdia. Con poda, las fases que el
+           motor no puede explicar salen y la solucion converge o se descarta
+           limpiamente. */
+        for (iter = 0; iter < (LiveMaxIter > 0 ? LiveMaxIter : 1); iter++) {
+            valid = 0;
+            why = "sin localizacion";
+
+            if (hypo_locate(arc, (int)strlen(arc), out, &out_len) != 0 ||
+                out_len <= 0)
+                break;
+
             out_len = arc_rewrite_id(out, out_len, arc, (int)strlen(arc));
+            if (out_len <= 0) {
+                why = "ARC no reescrito";
+                break;
+            }
+
             if (live_check_arc(out, out_len, &LiveCheck, &chk) == 0 &&
                 chk.ok &&
                 csnhypodbp_parse_solution(out, (size_t)out_len, 163,
                                           &refined) == 0) {
                 if (in_region(refined.lat, refined.lon)) {
                     valid = 1;
-                } else {
-                    why = "fuera de region";
+                    break;
                 }
+                why = "fuera de region";
             } else {
                 why = chk.why[0] ? chk.why : "salida invalida";
+            }
+
+            /* Podar y reintentar, salvo en la ultima iteracion. */
+            if (iter + 1 >= (LiveMaxIter > 0 ? LiveMaxIter : 1)) break;
+            {
+                int np2 = 0;
+
+                if (live_prune_arc(out, out_len, arc, (int)strlen(arc),
+                                   LivePickResidualSecP, LivePickResidualSecS,
+                                   pruned, sizeof(pruned), &np2) != 0)
+                    break;              /* nada sobrevive: no insistir */
+                if (np2 >= np) break;   /* no podo nada: no insistir */
+                snprintf(arc, sizeof(arc), "%s", pruned);
+                np = np2;
+                if (Debug >= 1)
+                    logit("t", "hyp2000_ring: ev=%d poda it=%d -> %d fases\n",
+                          ev->qid, iter + 1, np);
             }
         }
 
@@ -745,13 +826,19 @@ static void live_tick(time_t now)
             ev->version++;
             if (ev->seed_prio < 2) ev->seed_prio = 1;
             ev->last_run = (double)now;
-            ev->last_npicks = np;
+            /* Par COHERENTE con el hash: set.n es el conjunto pre-poda, que es
+               el que se reconstruye en el siguiente tick. Guardar el np podado
+               hacia que `fresh` fuera siempre 1 (hash igual, np distinto) y el
+               evento se republicara cada RecalcSec sin picadas nuevas. */
+            ev->last_npicks = set.n;
             ev->last_hash = set.hash;
+            ev->last_pick_seq = g_pick_seq;   /* lo ya usado no reabre */
             ev->no_new = 0;
         } else {
             /* No se publica ni se contamina el seed: la siguiente corrida
              * parte de la ultima solucion VALIDA (o del seed inicial). */
             ev->last_run = (double)now;
+            ev->last_pick_seq = g_pick_seq;
             ev->no_new++;
             logit("t", "hyp2000_ring: LOC invalida ev=%d asoc=%d %s "
                        "(nph=%d gap=%.0f rms=%.2f)\n",

@@ -48,6 +48,31 @@ if grep -q 'live_check_arc' "$src" && grep -q 'live_check_arc' "$check"; then
 else
     bad "no valida la salida del refinador"
 fi
+if grep -q 'live_build_arc_seeded' "$assoc" && grep -q 'live_build_arc_seeded' "$src"; then
+    ok "el ARC se siembra con las fases del seed (nucleo coherente)"
+else
+    bad "el ARC no incluye las fases del seed"
+fi
+if grep -q 'live_prune_arc' "$assoc" && grep -q 'live_prune_arc' "$src"; then
+    ok "poda iterativa por residual del ARC de salida"
+else
+    bad "no hay poda iterativa: una salida invalida no se puede corregir"
+fi
+if grep -q 'LiveMaxIter' "$d" && grep -q 'LiveMaxIter' "$src"; then
+    ok "LiveMaxIter declarado y leido"
+else
+    bad "falta LiveMaxIter"
+fi
+if grep -q 'g_pick_seq' "$src" && grep -q 'reabierto' "$src"; then
+    ok "un evento detenido se reabre con picadas nuevas"
+else
+    bad "done sigue siendo permanente"
+fi
+if grep -q 'LiveEventTTLSec' "$d" && grep -q 'LiveEventTTLSec' "$src"; then
+    ok "LiveEventTTLSec acota la reapertura"
+else
+    bad "falta LiveEventTTLSec"
+fi
 if grep -q 'LiveNRetry' "$src" && grep -q 'no_new' "$src"; then
     ok "N_retry corta los intentos sin picadas nuevas o sin solucion valida"
 else

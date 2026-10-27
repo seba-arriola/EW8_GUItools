@@ -8,7 +8,8 @@ pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "ok   $*"; }
 bad() { fail=$((fail + 1)); echo "FALLA $*"; }
 
-for key in MinPPhases MaxAssocDistKm MaxGapDeg; do
+for key in MinPPhases MaxAssocDistKm MaxGapDeg EventMatchSharedPicks \
+           MinEmitPhases EmitImproveMinPicks; do
     if grep -q "$key" "$src" && grep -q "$key" "$d"; then
         ok "$key declarado y aplicado"
     else

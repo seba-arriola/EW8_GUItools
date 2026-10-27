@@ -205,10 +205,15 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
         e->groups[gi].owner = e;
     }
 
-    /* 2) Deduplicar por (qid, mod, version). */
+    /* 2) Deduplicar por (qid, mod, confirmed): la version mas alta manda y la
+       fila se reemplaza en sitio. Antes era por version, asi que cada
+       refinamiento dejaba una fila mas en Origins; ahora una correccion v2 de
+       csnloc (o un refinamiento de hyp2000) se ve como UNA sola solucion.
+       El snapshot confirmado convive con la fila viva. */
     for (j = 0; j < e->groups[gi].nsols; j++) {
         const CsnhypodbpSolution *s = &e->groups[gi].sols[j];
-        if (s->qid == sol->qid && s->mod == sol->mod && s->version == sol->version) {
+        if (s->qid == sol->qid && s->mod == sol->mod &&
+            s->confirmed == sol->confirmed) {
             found = j;
             break;
         }
@@ -226,6 +231,10 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
          * su origin.creation_time; el camino vivo sella la recepcion. */
         g->meta[found].created = (created > 0.0) ? created : (double)time(NULL);
     } else {
+        /* Una version vieja (re-feed desordenado del anillo) no retrocede la
+           solucion vigente. */
+        if (sol->version < e->groups[gi].sols[found].version)
+            return 0;
         e->groups[gi].sols[found] = *sol;
         /* Un re-feed del anillo no puede pisar la hora de creacion de la BD. */
         if (created > 0.0) e->groups[gi].meta[found].created = created;

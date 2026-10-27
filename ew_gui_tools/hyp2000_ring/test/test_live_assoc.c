@@ -44,7 +44,7 @@ int main(void)
     double tp = 0.0, ts = 0.0, resid = 0.0;
     char arc[8192];
     LivePickSet set;
-    int nph = 0;
+    int nph = 0, i;
 
     if (!dir || !dir[0]) dir = "../../run_working_v8/params";
     if (TTModel_Init(&tt, dir, "iasp91", 0.0, 180.0, 0.5) != 0) {
@@ -202,6 +202,87 @@ int main(void)
     CHECK(live_retry_exhausted(4, 5) == 0, "4 de 5 intentos: continua");
     CHECK(live_retry_exhausted(5, 5) == 1, "5 de 5 intentos: se detiene");
     CHECK(live_retry_exhausted(1, 0) == 1, "N_retry=0: se detiene al primer fallo");
+
+    /* --- 6. ARC sembrado: las fases del seed son el nucleo del ARC --- */
+    {
+        StationList st3;
+        CsnhypodbpPick sp[3];
+        char arcs[8192];
+        LivePickSet ss;
+        int ns = 0;
+
+        memset(&st3, 0, sizeof(st3));
+        st3.n = 3;
+        memset(sp, 0, sizeof(sp));
+        for (i = 0; i < 3; i++) {
+            snprintf(st3.st[i].sta, sizeof(st3.st[i].sta), "TS%d", i);
+            st3.st[i].lat = 0.0;
+            st3.st[i].lon = (double)i;
+            st3.lat_geoc_sta[i] = 0.0;
+
+            snprintf(sp[i].sta, sizeof(sp[i].sta), "TS%d", i);
+            snprintf(sp[i].net, sizeof(sp[i].net), "CX");
+            snprintf(sp[i].chan, sizeof(sp[i].chan), "HHZ");
+            sp[i].phase = 'P';
+            sp[i].t_pick = seed.t0 + tp + 0.5 * (double)i;
+            sp[i].residual = NAN;
+        }
+
+        memset(&ss, 0, sizeof(ss));
+        CHECK(live_build_arc_seeded(&seed, sp, 3, NULL, 0, &tt, &st3, &cfg,
+                                    arcs, sizeof(arcs), &ss, &ns) == 0,
+              "ARC sembrado se construye sin picadas del buffer");
+        CHECK(ns == 3, "el ARC lleva las 3 fases del seed");
+    }
+
+    /* --- 7. Poda: el veredicto del motor manda --- */
+    {
+        CsnhypodbpSolution in, so;
+        char ain[8192], aout[8192], apr[8192];
+        int n2 = 0;
+
+        memset(&in, 0, sizeof(in));
+        in.qid = 1;
+        in.otime = 1000.0;
+        in.lat = -20.0;
+        in.lon = -70.0;
+        in.depth = 10.0;
+        in.npicks = 4;
+        for (i = 0; i < 4; i++) {
+            snprintf(in.picks[i].sta, sizeof(in.picks[i].sta), "TS%d", i);
+            snprintf(in.picks[i].chan, sizeof(in.picks[i].chan), "HHZ");
+            in.picks[i].phase = 'P';
+            in.picks[i].t_pick = 1010.0 + (double)i;
+            in.picks[i].residual = NAN;
+        }
+        in.nph = 4;
+        CHECK(csnhypodbp_arc_build(&in, 0, ain, sizeof(ain)) == 0,
+              "ARC de entrada con 4 fases");
+
+        /* El motor uso solo 3: TS1 con residual 4 s y TS3 descartada. */
+        so = in;
+        so.npicks = 3;
+        so.nph = 3;
+        so.picks[0].residual = 0.2;
+        so.picks[1].residual = 4.0;
+        so.picks[2].residual = 0.1;
+        CHECK(csnhypodbp_arc_build(&so, 0, aout, sizeof(aout)) == 0,
+              "ARC de salida con 3 fases y residuales");
+
+        CHECK(live_prune_arc(aout, (int)strlen(aout), ain, (int)strlen(ain),
+                             3.0, 5.0, apr, sizeof(apr), &n2) == 0 && n2 == 2,
+              "poda: sobreviven solo las 2 con residual <= 3 s");
+        {
+            CsnhypodbpSolution pr;
+
+            CHECK(csnhypodbp_parse_solution(apr, strlen(apr), 163, &pr) == 0,
+                  "ARC podado parseable");
+            CHECK(pr.npicks == 2 &&
+                  strcmp(pr.picks[0].sta, "TS0") == 0 &&
+                  strcmp(pr.picks[1].sta, "TS2") == 0,
+                  "poda: quedan TS0 y TS2 (fuera TS1 por residual y TS3 por descartada)");
+        }
+    }
 
     TTModel_Free(&tt);
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }

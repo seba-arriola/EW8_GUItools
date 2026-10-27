@@ -953,8 +953,12 @@ int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
     snprintf(szVer, sizeof(szVer), "%u", sol.version);
     szEstado[0] = sol.manual ? 'M' : 'A'; szEstado[1] = '\0';
 
-    /* Upsert de la fila de solucion, clave (qid, mod, version, confirmed): el
-       snapshot confirmado convive con la fila viva de la misma version. */
+    /* Upsert de la fila de solucion, clave (qid, mod, confirmed): una version
+       nueva del MISMO modulo reemplaza la fila en sitio. Antes se deduplicaba
+       por version, asi que cada refinamiento dejaba una fila mas en Origins;
+       con esto una correccion v2 de csnloc (o un refinamiento de hyp2000) se
+       ve como UNA sola solucion, la vigente. El snapshot confirmado (byte 174
+       del ARC) sigue conviviendo con la fila viva. */
     {
         guint n = g_list_model_get_n_items(G_LIST_MODEL(g_store_hypo));
         guint i;
@@ -963,8 +967,17 @@ int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
             int rq = 0, rm = 0, rv = 0;
             int rc = r ? GPOINTER_TO_INT(g_object_get_data(G_OBJECT(r), "confirmed")) : 0;
             if (r) g_object_get(r, "qid", &rq, "mod", &rm, "qver", &rv, NULL);
-            if (r && rq == sol.qid && rm == mod && rv == (int)sol.version &&
-                rc == confirmed) { row = r; g_object_unref(r); break; }
+            if (r && rq == sol.qid && rm == mod && rc == confirmed) {
+                /* Misma (qid, mod, confirmed): manda la version vigente. Un
+                   re-feed desordenado del anillo no debe crear otra fila. */
+                if ((int)sol.version < rv) {
+                    g_object_unref(r);
+                    return 0;
+                }
+                row = r;
+                g_object_unref(r);
+                break;
+            }
             if (r) g_object_unref(r);
         }
     }

@@ -57,9 +57,12 @@ static void set_defaults(CSLocParams *c)
     c->EventMatchDistKm  = 100.0;
     c->EventMatchVelocityKmS = 0.0;   /* 0 = ventana fija */
     c->EventPickTolSec = 0.1;
+    c->EventMatchSharedPicks = 3;     /* 0 = solo geometria */
     c->MinPPhases = 1;
     c->MaxAssocDistKm = 1000.0;
-    c->MaxGapDeg = 300.0;
+    c->MaxGapDeg = 360.0;
+    c->MinEmitPhases = 5;         /* 1 grado de libertad */
+    c->EmitImproveMinPicks = 3;   /* correccion solo si +3 fases */
 
     c->AssocWindowSec = 120.0;
     c->RePickWindowSec = 10.0;
@@ -149,9 +152,12 @@ static int read_config(const char *file, CSLocParams *c)
         else if (k_its("EventMatchDistKm"))  c->EventMatchDistKm = k_val();
         else if (k_its("EventMatchVelocityKmS")) c->EventMatchVelocityKmS = k_val();
         else if (k_its("EventPickTolSec"))   c->EventPickTolSec = k_val();
+        else if (k_its("EventMatchSharedPicks")) c->EventMatchSharedPicks = k_int();
         else if (k_its("MinPPhases"))        c->MinPPhases = k_int();
         else if (k_its("MaxAssocDistKm"))    c->MaxAssocDistKm = k_val();
         else if (k_its("MaxGapDeg"))         c->MaxGapDeg = k_val();
+        else if (k_its("MinEmitPhases"))     c->MinEmitPhases = k_int();
+        else if (k_its("EmitImproveMinPicks")) c->EmitImproveMinPicks = k_int();
         else if (k_its("AssocWindowSec")) c->AssocWindowSec = k_val();
         else if (k_its("RePickWindowSec")) c->RePickWindowSec = k_val();
         else if (k_its("PickTTLSec"))   c->PickTTLSec = k_val();
@@ -354,9 +360,12 @@ static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
  * Dedup de eventos entre grillas.                                            *
  *                                                                            *
  * Las grillas de distinta resolucion que cubren el mismo sismo producen       *
- * eventos casi coincidentes. Se ordenan por evidencia y se descarta un        *
- * evento si ya hay uno aceptado dentro de EventMatchTimeSec/EventMatchDistKm. *
- * El criterio de "mejor" prioriza mas fases, luego la grilla mas fina.        *
+ * eventos casi coincidentes, y una misma grilla puede dar una hipotesis       *
+ * pobre (pocas fases, gap grande) y otra buena del mismo sismo. Se ordenan    *
+ * por evidencia y se descarta un evento si ya hay uno aceptado que sea el     *
+ * mismo: por geometria (EventMatch*) O por picadas compartidas               *
+ * (EventMatchSharedPicks). El criterio de "mejor" prioriza mas fases, luego   *
+ * la grilla mas fina.                                                        *
  * ------------------------------------------------------------------------- */
 static int event_better(const HypoCandidate *a, const HypoCandidate *b)
 {
@@ -366,6 +375,7 @@ static int event_better(const HypoCandidate *a, const HypoCandidate *b)
 }
 
 static int DedupEvents(const HypoCandidate *in, int n,
+                       const Pick *window, int nwin,
                        const CSLocParams *cfg,
                        HypoCandidate *out, int max_out)
 {
@@ -393,6 +403,17 @@ static int DedupEvents(const HypoCandidate *in, int n,
             if (CSLoc_EventMatch(cfg, in[idx].t0, in[idx].lat, in[idx].lon,
                                  out[j].t0, out[j].lat, out[j].lon,
                                  NULL, NULL)) {
+                dup = 1;
+                break;
+            }
+            /* Mismo sismo aunque los hipocentros disten mas de la ventana:
+               si comparten suficientes picadas, el segundo es la misma
+               deteccion con otra hipotesis (gana la de mas fases, que ya
+               se proceso antes por el orden). */
+            if (cfg->EventMatchSharedPicks > 0 &&
+                CSLoc_SharedPicks(&in[idx], &out[j], window, nwin,
+                                  cfg->EventPickTolSec) >=
+                    cfg->EventMatchSharedPicks) {
                 dup = 1;
                 break;
             }
@@ -576,7 +597,8 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
     if (nall <= 0) { free(events); return; }
 
     t0 = now_mono();
-    nev = DedupEvents(events, nall, &ctx->cfg, cand, CSLOC_MAX_EVENTS);
+    nev = DedupEvents(events, nall, window, nwin, &ctx->cfg, cand,
+                      CSLOC_MAX_EVENTS);
     g_t_dedup += now_mono() - t0;
     free(events);
     if (nev <= 0) return;

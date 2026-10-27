@@ -36,7 +36,9 @@ MinPhases       4
 MaxRMS          2.0
 # Gap azimutal maximo (grados) de la SALIDA; 0 = sin filtro. Una solucion con
 # rms=99.99 (centinela de NLLoc), nph<MinPhases o gap>MaxGapDeg no se publica.
-MaxGapDeg       300
+# 360 = limite geometrico: la red chilena es lineal y los sismos offshore
+# tienen gap 300-350 por geometria, no por mala calidad (ver csnloc.d).
+MaxGapDeg       360
 # Profundidad fija (km); <0 = libre. NLLoc la emula con una ventana z de
 # +/- FixDepthSpacingKm/2 (la GUI la pasa por corrida).
 # FixedDepthKm    -1.0

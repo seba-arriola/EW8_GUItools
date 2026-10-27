@@ -219,17 +219,29 @@ int main(void)
         ck_cell(ev, 10, "4.1-7", __LINE__);      /* Mb */
     }
 
-    /* --- 7. la manual gana a la automatica aunque tenga menos fases --- */
+    /* --- 7. una version nueva del MISMO mod reemplaza la fila, no la duplica:
+       la tabla Origins muestra UNA solucion por (qid, mod) y la manual v2
+       sustituye a la automatica v1. --- */
     make_sol(&s, 500, 162, 1, 20, 0.1, 0, 'M');
     CK(bpq_events_feed_arc(e, &s) == 0);
-    make_sol(&s, 500, 162, 2, 3, 0.9, 1, 'M');   /* manual, peor en todo */
+    make_sol(&s, 500, 162, 2, 3, 0.9, 1, 'M');   /* manual, v2 del mismo mod */
     CK(bpq_events_feed_arc(e, &s) == 0);
     {
         const BpqEvent *ev = bpq_events_at(e, 3);
-        CK(bpq_event_nsols(ev) == 2);
-        CK(bpq_event_preferred(ev) == 1);        /* la manual */
+        CK(bpq_event_nsols(ev) == 1);            /* una fila por (qid, mod) */
+        CK(bpq_event_preferred(ev) == 0);        /* la v2 es la unica */
+        ck_cell(ev, 14, "M", __LINE__);          /* y es manual */
+        ck_cell(ev, 13, "2", __LINE__);          /* version vigente = 2 */
+    }
+
+    /* --- 7b. una version vieja no retrocede la solucion vigente --- */
+    make_sol(&s, 500, 162, 1, 20, 0.1, 0, 'M');
+    CK(bpq_events_feed_arc(e, &s) == 0);
+    {
+        const BpqEvent *ev = bpq_events_at(e, 3);
+        CK(bpq_event_nsols(ev) == 1);
+        ck_cell(ev, 13, "2", __LINE__);          /* sigue en v2 */
         ck_cell(ev, 14, "M", __LINE__);
-        ck_cell(ev, 13, "2", __LINE__);
     }
 
     /* --- 8. created: la BD manda su hora y el re-feed no la pisa --- */

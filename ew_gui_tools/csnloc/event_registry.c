@@ -138,6 +138,49 @@ int EventRegistry_SharedPicks(const EventRecord *e, const Pick *window,
     return n;
 }
 
+/* Picadas comunes entre DOS candidatos de la misma ventana. Se usa en el
+   dedup entre grillas: dos hipotesis del mismo sismo comparten picadas
+   aunque la grilla gruesa y la fina den hipocentros separados. */
+int CSLoc_SharedPicks(const HypoCandidate *a, const HypoCandidate *b,
+                      const Pick *window, int nwin, double tol_sec)
+{
+    int i, j, n = 0;
+
+    if (!a || !b || !window || nwin <= 0) return 0;
+    for (i = 0; i < a->nphases; i++) {
+        int pi = a->phase_idx[i];
+        const Pick *p;
+
+        if (pi < 0 || pi >= nwin) continue;
+        p = &window[pi];
+        for (j = 0; j < b->nphases; j++) {
+            int pj = b->phase_idx[j];
+
+            if (pj < 0 || pj >= nwin) continue;
+            if (same_sta_phase(&window[pj], p) &&
+                fabs(window[pj].t_epoch - p->t_epoch) <= tol_sec) {
+                n++;
+                break;
+            }
+        }
+    }
+    return n;
+}
+
+/* Una solucion es publicable si tiene fases suficientes y no viola los topes
+   de RMS/gap. Las puertas de gatillo de csnloc.c ya filtran antes; esto es la
+   ultima palabra antes de escribir en el anillo, y es lo que permite RETENER
+   una primera deteccion pobre en vez de publicarla. */
+int CSLoc_Emittable(const HypoCandidate *c, const CSLocParams *cfg)
+{
+    if (!c || !cfg) return 0;
+    if (c->nphases <= 0) return 0;
+    if (cfg->MinEmitPhases > 0 && c->nphases < cfg->MinEmitPhases) return 0;
+    if (cfg->MaxRMS > 0.0 && c->rms_sec > cfg->MaxRMS) return 0;
+    if (cfg->MaxGapDeg > 0.0 && c->gap_deg > cfg->MaxGapDeg) return 0;
+    return 1;
+}
+
 /* Para el log de overlap: maximo de picadas compartidas contra CUALQUIER
    evento (aunque no matchee en tiempo/distancia). Devuelve el conteo y el
    indice del evento con mas coincidencias. */
@@ -158,9 +201,14 @@ static int max_shared_any(const EventRegistry *r, const HypoCandidate *c,
     return best;
 }
 
-/* Busca el evento activo mas cercano al candidato (tiempo + distancia).
-   Devuelve 1 y el indice si hay match. shared_out recibe las picadas que
-   comparte con ese evento (para diagnostico). */
+/* Busca el evento activo que corresponde al candidato. Es el mismo evento si
+   la geometria cae en la ventana (CSLoc_EventMatch) O si comparte al menos
+   EventMatchSharedPicks picadas. El criterio geometrico siempre gana al de
+   picadas: el score de un match por picadas se suma a SHARED_SCORE_PENALTY
+   para que nunca desplace a uno geometrico.
+   Devuelve 1 y el indice. shared_out recibe las picadas compartidas. */
+#define SHARED_SCORE_PENALTY 1000.0
+
 int EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
                             const Pick *window, int nwin,
                             const CSLocParams *cfg, int *idx_out,
@@ -172,29 +220,39 @@ int EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
     if (!r || !c || !cfg) return 0;
     for (i = 0; i < r->n; i++) {
         const EventRecord *e = &r->ev[i];
-        double dt, d, tmax, score;
-        int    shared;
+        double dt = 0.0, d = 0.0, tmax, score;
+        int    shared, geo;
 
-        if (!CSLoc_EventMatch(cfg, c->t0, c->lat, c->lon,
-                              e->t0, e->lat, e->lon, &dt, &d))
-            continue;
-
-        tmax = cfg->EventMatchTimeSec;
-        if (cfg->EventMatchVelocityKmS > 0.0)
-            tmax += d / cfg->EventMatchVelocityKmS;
-
-        score = (tmax > 0.0) ? (dt / tmax) : 0.0;
-        score *= score;
-        if (cfg->EventMatchDistKm > 0.0) {
-            double dd = d / cfg->EventMatchDistKm;
-            score += dd * dd;
-        }
+        geo = CSLoc_EventMatch(cfg, c->t0, c->lat, c->lon,
+                               e->t0, e->lat, e->lon, &dt, &d);
 
         shared = (window && nwin > 0)
                      ? EventRegistry_SharedPicks(e, window, nwin,
                                                  c->phase_idx, c->nphases,
                                                  cfg->EventPickTolSec)
                      : 0;
+
+        if (!geo && !(cfg->EventMatchSharedPicks > 0 &&
+                      shared >= cfg->EventMatchSharedPicks))
+            continue;
+
+        if (geo) {
+            tmax = cfg->EventMatchTimeSec;
+            if (cfg->EventMatchVelocityKmS > 0.0)
+                tmax += d / cfg->EventMatchVelocityKmS;
+
+            score = (tmax > 0.0) ? (dt / tmax) : 0.0;
+            score *= score;
+            if (cfg->EventMatchDistKm > 0.0) {
+                double dd = d / cfg->EventMatchDistKm;
+                score += dd * dd;
+            }
+        } else {
+            /* Solo picadas: penalizado para ceder ante cualquier geometrico;
+               entre estos gana el que mas picadas comparte. */
+            score = SHARED_SCORE_PENALTY + (double)(c->nphases - shared);
+            if (score < SHARED_SCORE_PENALTY) score = SHARED_SCORE_PENALTY;
+        }
 
         if (score < best - 1e-9 ||
             (fabs(score - best) <= 1e-9 && shared > best_shared)) {
@@ -462,8 +520,15 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
         e->t0_detect = c->t0;       /* legado; no se usa para el match */
         seed_phases(e, c, window, nwin);
         store_hypo(e, c);
-        e->version = 1;
-        e->emitted = 1;
+
+        /* Retencion: el evento existe para el dedup/TTL desde ya, pero solo se
+           publica cuando la solucion es publicable. Un trigger de 3-4 fases
+           con gap 280 espera a madurar en la ventana siguiente en vez de
+           convertirse en la solucion definitiva del sismo. */
+        if (CSLoc_Emittable(c, cfg)) {
+            e->version = 1;
+            e->emitted = 1;
+        }
 
         /* Comparte picadas con un evento lejano: se permite el evento nuevo
            (caso "muy distinto"), pero se deja rastro para diagnostico. */
@@ -475,6 +540,16 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                      TT_GreatCircleDeg(c->lat, c->lon,
                                        r->ev[ov_idx].lat,
                                        r->ev[ov_idx].lon) * 111.195);
+
+        if (!e->emitted) {
+            log_decision(cfg, "csnloc: [ev %lu] NUEVO retenido lat=%.3f "
+                              "lon=%.3f z=%.1f nph=%d rms=%.2f gap=%.0f "
+                              "(no publicable: MinEmitPhases=%d)\n",
+                         e->id, e->lat, e->lon, e->depth_km,
+                         e->nphases, e->rms_sec, e->gap_deg,
+                         cfg->MinEmitPhases);
+            return 0;
+        }
 
         log_decision(cfg, "csnloc: [ev %lu] nuevo v1 lat=%.3f lon=%.3f z=%.1f "
                           "nph=%d rms=%.2f gap=%.0f\n",
@@ -517,9 +592,28 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                          TT_GreatCircleDeg(c->lat, c->lon,
                                            e->lat, e->lon) * 111.195);
 
-        /* Asociador: la primera solucion ya se emitio; no se refina, no se
-         * poda y no se versiona. El evento se conserva para el dedup/TTL. */
-        if (cfg->AssociateOnly && e->emitted) return 0;
+        /* Asociador: la solucion ya se emitio; no se refina ni se poda. Se
+           corrige con el MISMO id solo si el candidato trae claramente mas
+           fases (EmitImproveMinPicks) y es publicable: el caso de un ancla
+           preliminar pobre que madura en la ventana siguiente. El ancla pasa
+           al hipocentro corregido para no volver a duplicar. */
+        if (cfg->AssociateOnly && e->emitted) {
+            if (cfg->EmitImproveMinPicks < 1) return 0;
+            if (CSLoc_Emittable(c, cfg) &&
+                c->nphases >= e->nphases + cfg->EmitImproveMinPicks) {
+                log_warn("csnloc: [ev %lu] correccion v%u -> v%u "
+                         "(nph %d -> %d, gap %.0f -> %.0f)\n",
+                         e->id, e->version, e->version + 1,
+                         e->nphases, c->nphases, e->gap_deg, c->gap_deg);
+                e->version++;
+                store_hypo(e, c);
+                if (id_out)  *id_out = e->id;
+                if (ver_out) *ver_out = e->version;
+                if (manual_out) *manual_out = e->has_manual;
+                return 1;
+            }
+            return 0;
+        }
 
         if (!changed) return 0;   /* sin picks nuevos: no hacer nada */
 
@@ -572,6 +666,15 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                                   "nuevas=%d)\n",
                              e->id, e->npruned - npruned_before, nnew);
                 renucleate(e, st, tt, grids, cfg);
+            }
+
+            /* Si aun no se habia publicado (retenido) y sigue sin ser
+               publicable, no se emite: se actualiza el registro y se espera. */
+            if (!e->emitted && !CSLoc_Emittable(&h, cfg)) {
+                log_decision(cfg, "csnloc: [ev %lu] sigue retenido (nph=%d "
+                                  "rms=%.2f gap=%.0f)\n",
+                             e->id, e->nphases, e->rms_sec, e->gap_deg);
+                return 0;
             }
 
             e->version++;

@@ -16,18 +16,22 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
 
 ## Automatismo
 
-- `csnloc` es **solo el asociador**: emite **una** primera solución por evento a
-  `HYPO_RING` (versión 1) y no vuelve a emitir para el mismo evento. El ancla de
-  identidad es la primera solución (`t0/lat/lon` congelados); `EventMatchTimeSec`
-  y `EventMatchDistKm` definen la ventana. Un candidato fuera de ella crea un
-  evento nuevo, aunque comparta picadas (se loguea `overlap`). `MinPPhases`,
-  `MaxAssocDistKm` y `MaxGapDeg` filtran el gatillo.
-- `hyp2000_ring` con `live_usage=1` lee la semilla de `HYPO_RING`, asocia todos
-  los P/S de `PICK_RING` por **tiempo de viaje** (`t0 + tt`) y rehace el ARC
-  cada `time_recalc_live`. La ventana crece con la distancia/profundidad. Valida
-  `rms/nph/gap` de la salida: no publica `rms=99.99` ni contamina el seed. Tras
-  `N_retry` intentos sin picadas nuevas o sin solución válida, deja de localizar
-  ese evento. `HYPO_RING_REF2` (confirmada) es el seed preferido.
+- `csnloc` es **solo el asociador**: emite **una** solución por evento a
+  `HYPO_RING`. El ancla de identidad es la primera detección (`t0/lat/lon`
+  congelados); es el mismo evento si cae en `EventMatchTimeSec`/`EventMatchDistKm`
+  **o** si comparte `EventMatchSharedPicks` picadas (el ancla preliminar puede
+  estar a 200 km del hipocentro real). `MinPPhases`, `MaxAssocDistKm` y
+  `MaxGapDeg` (360, medido) filtran el gatillo. La emisión se **retiene** hasta
+  que la solución es publicable (`MinEmitPhases` 5), y una corrección con el
+  mismo `qid` solo se emite si llega `EmitImproveMinPicks` fases más.
+- `hyp2000_ring` con `live_usage=1` lee la semilla de `HYPO_RING`, siembra el ARC
+  con las fases del seed y asocia todos los P/S de `PICK_RING` por **tiempo de
+  viaje** (`t0 + tt`), rehaciéndolo cada `time_recalc_live`. La ventana crece con
+  la distancia/profundidad. Valida `rms/nph/gap` de la salida: si falla, poda el
+  ARC con los residuales del motor y reintenta (`LiveMaxIter`); no publica
+  `rms=99.99` ni contamina el seed. Tras `N_retry` intentos sin novedad deja de
+  localizar ese evento, pero se reabre si llega una picada nueva dentro de
+  `LiveEventTTLSec`. `HYPO_RING_REF2` (confirmada) es el seed preferido.
 - `nlloc_ring` con `live_usage=0` (la tabla actual) **no** procesa el anillo: se
   usa solo por el `locate` manual/offline. Su salida también se valida
   (`rms/nph/gap`) antes de publicarse. `NllIntervalSec`/`NllTTLSec` siguen

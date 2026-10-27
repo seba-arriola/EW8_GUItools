@@ -82,12 +82,25 @@ typedef struct {
     double EventMatchDistKm;         /* distancia maxima (km)              */
     double EventMatchVelocityKmS;    /* 0 = fija; >0 = crece con la dist.  */
     double EventPickTolSec;          /* tolerancia de picada compartida (s)*/
+    /* Segundo criterio de identidad, en OR con el geometrico: dos soluciones
+       que comparten >= EventMatchSharedPicks picadas (misma estacion+fase,
+       |dt| <= EventPickTolSec) son el MISMO evento aunque sus hipocentros
+       disten mas de EventMatchDistKm. Es el criterio de scevent (>= 3) y
+       evita que un ancla preliminar mala cree un id nuevo para el mismo
+       sismo. 0 = off (solo geometria, comportamiento anterior). */
+    int    EventMatchSharedPicks;
 
     /* Gatillo (0 = off). Solo afecta a la asociacion de csnloc; los
        localizadores reciben despues todas las picadas asociadas. */
     int    MinPPhases;               /* P minimas de un candidato          */
     double MaxAssocDistKm;           /* dist. max. estacion-hipocentro (km) */
     double MaxGapDeg;                /* gap azimutal maximo (grados)       */
+
+    /* Emision. Un evento se crea siempre (para el dedup), pero solo viaja al
+       anillo cuando la solucion es publicable: asi la primera y unica
+       solucion de csnloc es la buena y no hace falta corregirla. */
+    int    MinEmitPhases;            /* fases minimas para publicar (0=off) */
+    int    EmitImproveMinPicks;      /* +N fases para corregir una emitida  */
 
     /* Asociacion */
     double AssocWindowSec;     /* ventana temporal de picks        */
@@ -418,6 +431,15 @@ int  EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
 int  EventRegistry_SharedPicks(const EventRecord *e, const Pick *window,
                                int nwin, const int *phase_idx, int nph,
                                double tol_sec);
+/* Picadas comunes entre DOS candidatos (misma estacion+fase, |dt| <= tol_sec).
+   Lo usa el dedup de la misma pasada: dos candidatos que comparten picadas
+   son el mismo sismo aunque sus hipocentros esten lejos. */
+int  CSLoc_SharedPicks(const HypoCandidate *a, const HypoCandidate *b,
+                       const Pick *window, int nwin, double tol_sec);
+/* 1 si la solucion merece viajar al anillo: nph >= MinEmitPhases (0=off),
+   rms <= MaxRMS y gap <= MaxGapDeg (0=off cada uno). El registro la conserva
+   igualmente para el dedup y el TTL. */
+int  CSLoc_Emittable(const HypoCandidate *c, const CSLocParams *cfg);
 int  EventRegistry_Accept(const EventRecord *prev, const HypoCandidate *c,
                           const CSLocParams *cfg);   /* 1 = aceptar version */
 int  EventRegistry_AddPhase(EventRecord *e, const Pick *p,
