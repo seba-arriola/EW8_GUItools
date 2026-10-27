@@ -339,8 +339,10 @@ static int arc_in_scl(const char *in, int in_len, const char *sta, char phase,
 }
 
 /* Reescribe el ARC de salida de NLLoc: copia qid/version del ARC de csnloc
-   (para que csnhypodbp agrupe el refinado con el evento de csnloc) y normaliza
-   longitudes (header -> 197, fases -> 114). Devuelve la nueva longitud. */
+   (para que csnhypodbp agrupe el refinado con el evento) y lo emite con el
+   layout canonico: L1 197, L2 "$1" 197, y por fase 114 + continuacion 114
+   ("$1" en 104-105), cerrado por el terminador. Las lineas "$" del ARC del
+   motor no son fases. Devuelve la nueva longitud. */
 static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
 {
     static char tmp[MAX_ARC];
@@ -357,62 +359,89 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
     if (in_len >= 182) { memcpy(v178, arc_in + 178, 4); v178[4] = '\0'; }
     if (in_len >= EWGUI_ARC_MANUAL_OFF + 1) manual = arc_in[EWGUI_ARC_MANUAL_OFF];
 
-    while (p < end && tlen < MAX_ARC - 260) {
+    while (p < end && tlen + 2 * 115 + 116 < MAX_ARC) {
         const char *nl = memchr(p, '\n', (size_t)(end - p));
         int l = nl ? (int)(nl - p) : (int)(end - p);
-        int is_header, want;
+        char line[200];
+
         if (l > 0 && p[l-1] == '\r') l--;
         if (l <= 0) { if (nl) { p = nl + 1; continue; } break; }
 
-        is_header = first;
-        want = is_header ? 197 : 114;
-        if (l < want) {
-            memcpy(tmp + tlen, p, (size_t)l);
-            memset(tmp + tlen + l, ' ', (size_t)(want - l));
-            l = want;
-        } else {
-            memcpy(tmp + tlen, p, (size_t)l);
-        }
-        if (is_header) {
-            memcpy(tmp + tlen + 136, qid, 10);
-            tmp[tlen + 161] = v161;
-            memcpy(tmp + tlen + 178, v178, 4);
-            tmp[tlen + EWGUI_ARC_MANUAL_OFF] = manual;
+        memset(line, ' ', sizeof(line));
+
+        if (first) {
+            memcpy(line, p, (size_t)(l < 197 ? l : 197));
+            memcpy(line + 136, qid, 10);
+            line[161] = v161;
+            memcpy(line + 178, v178, 4);
+            line[EWGUI_ARC_MANUAL_OFF] = manual;
             {
                 int vi;
                 for (vi = 0; vi < EWGUI_ARC_VMODEL_LEN && g_sel_model[vi]; vi++)
-                    tmp[tlen + EWGUI_ARC_VMODEL_OFF + vi] = g_sel_model[vi];
+                    line[EWGUI_ARC_VMODEL_OFF + vi] = g_sel_model[vi];
             }
             /* NLLoc escribe 'E' para el este y BLANCO para el oeste
                (NLLocLib.c:12965); csnloc/csnhypodbp usan 'W'. Normalizamos. */
-            if (tmp[tlen + 26] != 'E') tmp[tlen + 26] = 'W';
+            if (line[26] != 'E') line[26] = 'W';
+            memcpy(tmp + tlen, line, 197); tlen += 197; tmp[tlen++] = '\n';
+
+            /* Linea 2 "$1": resumen obligatorio del ARC archive-2000. */
+            memset(line, ' ', sizeof(line));
+            line[0] = '$'; line[1] = '1';
+            memcpy(tmp + tlen, line, 197); tlen += 197; tmp[tlen++] = '\n';
             first = 0;
-        } else if (l >= 34) {
-            /* El estandar Y2K de la linea de fase pone el tiempo en centesimas
-               enteras (SSCCC, sin punto); csnloc/csnhypodbp usan SS.ss. */
-            char sec[6], buf[8];
-            memcpy(sec, tmp + tlen + 29, 5); sec[5] = '\0';
-            if (!strchr(sec, '.')) {
-                int cs = atoi(sec);
-                snprintf(buf, sizeof(buf), "%05.2f", cs / 100.0);
-                memcpy(tmp + tlen + 29, buf, 5);
-            }
-            /* Red / COMP3 / LOC del ARC de ENTRADA: NLLoc los deja en blanco. */
+        } else if (p[0] != '$' && l >= 34 &&
+                   (p[14] == 'P' || p[14] == 'S')) {
+            /* Fase. Normaliza el tiempo a SS.ss y rescata red/COMP3/LOC del
+               ARC de ENTRADA: NLLoc los deja en blanco (NLLocLib.c:13171). */
+            memcpy(line, p, (size_t)(l < 114 ? l : 114));
             {
-                char sta[6], net[3], chan[4], loc[3];
-                memcpy(sta, tmp + tlen, 5); sta[5] = '\0';
-                if (arc_in_scl(arc_in, in_len, sta, tmp[tlen + 14],
-                               net, chan, loc)) {
-                    memcpy(tmp + tlen + 5,   net,  2);
-                    memcpy(tmp + tlen + 9,   chan, 3);
-                    memcpy(tmp + tlen + 111, loc,  2);
+                char sec[6], buf[8];
+                memcpy(sec, line + 29, 5); sec[5] = '\0';
+                if (!strchr(sec, '.')) {
+                    int cs = atoi(sec);
+                    snprintf(buf, sizeof(buf), "%05.2f", cs / 100.0);
+                    memcpy(line + 29, buf, 5);
                 }
             }
+            {
+                char sta[6], net[3], chan[4], loc[3];
+
+                memcpy(sta, line, 5); sta[5] = '\0';
+                if (arc_in_scl(arc_in, in_len, sta, line[14],
+                               net, chan, loc)) {
+                    memcpy(line + 5,   net,  2);
+                    memcpy(line + 9,   chan, 3);
+                    memcpy(line + 111, loc,  2);
+                }
+            }
+            {
+                char cont[200];
+
+                /* La continuacion lleva el MISMO SCNL que la fase, que ya se
+                   rescato del ARC de entrada (NLLoc deja red/canal/loc en
+                   blanco). Construirla desde `p` la dejaria sin SCNL. */
+                memset(cont, ' ', sizeof(cont));
+                memcpy(cont, line, 5);
+                memcpy(cont + 5, line + 5, 2);
+                memcpy(cont + 9, line + 9, 3);
+                cont[104] = '$'; cont[105] = '1';
+                memcpy(cont + 111, line + 111, 2);
+
+                memcpy(tmp + tlen, line, 114); tlen += 114; tmp[tlen++] = '\n';
+                memcpy(tmp + tlen, cont, 114); tlen += 114; tmp[tlen++] = '\n';
+            }
         }
-        tmp[tlen + l] = '\n';
-        tlen += l + 1;
+        /* Cualquier otra linea ('$', terminador) se descarta. */
+
         if (!nl) break;
         p = nl + 1;
+    }
+
+    /* ---- terminador de fases ---- */
+    if (tlen + 115 < MAX_ARC) {
+        memset(tmp + tlen, ' ', 114);
+        tlen += 114; tmp[tlen++] = '\n';
     }
     memcpy(arc, tmp, (size_t)tlen);
     arc[tlen] = '\0';

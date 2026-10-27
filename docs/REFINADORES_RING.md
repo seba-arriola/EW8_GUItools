@@ -31,7 +31,13 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
   ARC con los residuales del motor y reintenta (`LiveMaxIter`); no publica
   `rms=99.99` ni contamina el seed. Tras `N_retry` intentos sin novedad deja de
   localizar ese evento, pero se reabre si llega una picada nueva dentro de
-  `LiveEventTTLSec`. `HYPO_RING_REF2` (confirmada) es el seed preferido.
+  `LiveEventTTLSec`. `HYPO_RING_REF2` (confirmada) es el seed preferido. El ARC
+  que se le entrega al motor (y el que publica) lleva el **layout canónico**
+  completo —cabecera, línea `$1`, y por fase la fase de 114 más su continuación
+  con `$1` en 104-105—: `hyphs.for:222` lee siempre la línea 2 como resumen y,
+  sin ella, el motor muere con `Sequential READ ... after EOF` (`status=0x200`).
+  Lo emite `csnhypodbp_arc_build`; los rewriters de los dos refinadores
+  descartan las líneas `$` del ARC del motor y reemiten ese layout.
 - `nlloc_ring` con `live_usage=0` (la tabla actual) **no** procesa el anillo: se
   usa solo por el `locate` manual/offline. Su salida también se valida
   (`rms/nph/gap`) antes de publicarse. `NllIntervalSec`/`NllTTLSec` siguen

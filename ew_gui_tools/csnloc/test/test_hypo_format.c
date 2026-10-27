@@ -1,6 +1,9 @@
 /*
  * Test de FormatHYP2000ARC: verifica el layout exacto del ARC HYP2000ARC
- * (linea 1 de 162 chars + "$1" + lineas de fase de 114 chars + linea final).
+ * (linea 1 de 197 chars + linea "$1" de 197 + por fase una linea de 114 y su
+ * continuacion de 114 con "$1" en 104-105 + terminador de 114 espacios).
+ * Es el contrato que tambien debe cumplir csnhypodbp_arc_build: HYPOINVERSE
+ * lee la linea 2 como resumen (hyphs.for:222) y, si falta, aborta.
  */
 #include <stdio.h>
 #include <string.h>
@@ -96,6 +99,36 @@ int main(void)
     CHECK(nl2 && nl2[1 + 14] == 'P', "fase P");
     CHECK(nl2 && strncmp(nl2 + 1 + 17, "20260309163756.00", 17) == 0,
           "hora de fase + 20s");
+
+    /* Continuacion por fase ("$1" en 104), bloque S y terminador: el motor
+       consume DOS lineas por fase cuando JCP=5 (hyphs.for:597) y termina con
+       una linea de estaciones en blanco. */
+    {
+        const char *c1 = nl3 ? nl3 + 1 : NULL;
+        const char *c1e = c1 ? strchr(c1, '\n') : NULL;
+        const char *s2, *s2e, *c2, *c2e, *term, *terme;
+
+        CHECK(c1e && (c1e - c1) == 114, "continuacion de la fase mide 114");
+        CHECK(c1 && c1[104] == '$' && c1[105] == '1', "continuacion con $1 en 104");
+        CHECK(c1 && strncmp(c1, "BO03 ", 5) == 0, "continuacion con su estacion");
+        CHECK(c1 && c1[14] == ' ', "la continuacion no lleva fase");
+
+        s2 = c1e ? c1e + 1 : NULL;
+        s2e = s2 ? strchr(s2, '\n') : NULL;
+        CHECK(s2e && (s2e - s2) == 114, "segunda fase mide 114");
+        CHECK(s2 && s2[14] == 'S' && s2[16] == '4', "S con LSWT=4");
+        CHECK(s2 && s2[46] == 'S' && s2[49] == '0', "S con su bloque canonico");
+
+        c2 = s2e ? s2e + 1 : NULL;
+        c2e = c2 ? strchr(c2, '\n') : NULL;
+        CHECK(c2e && (c2e - c2) == 114, "continuacion de la S mide 114");
+        CHECK(c2 && c2[104] == '$' && c2[105] == '1', "continuacion S con $1");
+
+        term = c2e ? c2e + 1 : NULL;
+        terme = term ? strchr(term, '\n') : NULL;
+        CHECK(terme && (terme - term) == 114, "terminador de 114 espacios");
+        CHECK(terme && terme[1] == '\0', "nada tras el terminador");
+    }
 
     /* BMTYPI (columna 123 = offset 122): la magnitud preferida que elige la GUI
        llega en el 13.er token de la picada; sin eleccion queda en blanco. */

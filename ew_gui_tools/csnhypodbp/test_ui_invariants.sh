@@ -44,7 +44,8 @@ ck  "tabla: fuente 0.75em"                    '\.sta-table \{ font-size: 0.75em'
 ck  "tabla: borde del marco"                 '\.detail-frame \{ border'                    csnhypodbp_main.c
 ck  "tabla: SCNL de la estacion en la fila"  'StaArray\[i\]\.szChannel'                    csnhypodbp_gui.c
 ck  "localizador: picadas con red y canal"   'sin canal o sin red'                         csnhypodbp_locate.c
-ck  "localizador: ARC con red y loc"         'sol->picks\[i\]\.net\[0\]'                   csnhypodbp_group.c
+ck  "localizador: ARC con red"               'pk->net\[0\]'                                csnhypodbp_group.c
+ck  "localizador: ARC con loc"               'pk->loc\[0\]'                                csnhypodbp_group.c
 ck  "residuales: cada solucion guarda sus picadas" 'event_sol_set_picks'                    csnhypodbp_ws.c
 ck  "residuales: se liberan las picadas"      'event_sol_free'                              csnhypodbp_ws.c
 ck  "residuales: la elegida trae sus picadas" 'csnhypodbp_event_sol_picks\(row'             csnhypodbp_gui.c

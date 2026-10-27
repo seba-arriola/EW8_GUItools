@@ -965,6 +965,24 @@ primero al store algo que ya no está).
   `common/tests/test_arc_layout.sh` (`make -C ew_gui_tools/common check`). Síntoma de la regresión:
   `hyp2000_ring` deja de refinar **en masa** (`LOC termino anormalmente (status=0x200)`), también en
   el camino del anillo.
+- **El ARC de entrada a HYPOINVERSE necesita DOS líneas por fase y la línea `$1`**: `hyphs.for:222`
+  hace `READ (14,1001,END=80) STR2` **siempre** que el formato es archive (`hyfile.for` decide
+  `JCP=3`/`5` por la línea 2: `$1` → ITYPE=10), así que la línea 2 es obligatoria y por cada fase el
+  motor consume la fase (114) **y** su continuación (114 con `$1` en 104-105). `csnhypodbp_arc_build`
+  emitía solo la cabecera y una línea por fase: el motor leía la primera fase como resumen y moría
+  con `Fortran runtime error: Sequential READ or WRITE not allowed after EOF marker` en `hyphs.for:222`
+  (`WEXITSTATUS=2` → el log del módulo lo muestra como `status=0x200`), **sin ninguna pista en su log**:
+  el mensaje de gfortran va al stderr del hijo, que `startstop` comparte (`startstop_console.log`).
+  Además la hora de fase va como `SS.cc` (`F5.2` del motor): `SSmmm` (`22000`) se lee **220.00 s** y
+  arruina el ajuste, y la S necesita peso `4` (`LPWT`/`LSWT`) y su tiempo también en 41-45 o el motor
+  la trata como P (`hyloc.for:204/211`). `csnhypodbp_arc_build` replica ahora el layout de
+  `FormatHYP2000ARC` (`csnloc/hypo_out.c`). Invariantes: asserts de layout en
+  `csnhypodbp/test_locate.c`, `csnloc/test/test_hypo_format.c` y
+  `hyp2000_ring/test/test_fixdepth.sh` (reconstruye un ARC real con el builder y exige que el motor
+  no aborte). Los rewriters `arc_rewrite_id` de `hyp2000_ring`/`nlloc_ring` descartan las líneas `$`
+  del ARC del motor y reemiten el layout completo. Con el mensaje de anillo (64 KB) caben ~188 fases
+  —las mismas que ya admite `csnloc` (`arc[65536]`, `FormatHYP2000ARC`)—: un ARC mayor no puede viajar
+  por `HYPO_RING`, así que el builder devuelve `-1` en vez de emitir algo que el anillo rechazaría.
 - **El esquema tiene columnas que ningún código escribe (siempre NULL)**: `origin.latitude_uncertainty`,
   `origin.longitude_uncertainty`, `origin.depth_uncertainty`, `origin.time_uncertainty`,
   `origin.error_ellipse`, `pick.polarity` y `pick.probability`. El ARC que circula

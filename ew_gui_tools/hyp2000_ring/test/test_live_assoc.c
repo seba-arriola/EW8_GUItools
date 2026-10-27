@@ -233,6 +233,34 @@ int main(void)
                                     arcs, sizeof(arcs), &ss, &ns) == 0,
               "ARC sembrado se construye sin picadas del buffer");
         CHECK(ns == 3, "el ARC lleva las 3 fases del seed");
+
+        /* Estaciones que NO estan en LiveStations: se conservan. El motor las
+           salta con "SKIP PHASE CARD", pero descartarlas aqui puede dejar el
+           ARC por debajo del minimo y el evento se pierde sin intentarlo. */
+        {
+            CsnhypodbpPick sx[2];
+            int nx = 0;
+
+            memset(sx, 0, sizeof(sx));
+            snprintf(sx[0].sta, sizeof(sx[0].sta), "ZZ01");
+            snprintf(sx[0].net, sizeof(sx[0].net), "CX");
+            snprintf(sx[0].chan, sizeof(sx[0].chan), "HHZ");
+            sx[0].phase = 'P';
+            sx[0].t_pick = seed.t0 + tp + 1.0;
+            sx[0].residual = NAN;
+            snprintf(sx[1].sta, sizeof(sx[1].sta), "ZZ02");
+            snprintf(sx[1].net, sizeof(sx[1].net), "CX");
+            snprintf(sx[1].chan, sizeof(sx[1].chan), "HHN");
+            sx[1].phase = 'S';
+            sx[1].t_pick = seed.t0 + tp + 2.0;
+            sx[1].residual = NAN;
+
+            memset(&ss, 0, sizeof(ss));
+            CHECK(live_build_arc_seeded(&seed, sx, 2, NULL, 0, &tt, &st3, &cfg,
+                                        arcs, sizeof(arcs), &ss, &nx) == 0,
+                  "seed con estaciones fuera de LiveStations se construye");
+            CHECK(nx == 2, "esas fases no se descartan (el motor las salta)");
+        }
     }
 
     /* --- 7. Poda: el veredicto del motor manda --- */

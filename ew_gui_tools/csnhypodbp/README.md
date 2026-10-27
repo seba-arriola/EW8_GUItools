@@ -234,7 +234,11 @@ Detalles de la cadena que importan si vuelve a fallar:
   red que el `.sta` necesita) en `build_row_for` y otra vez al armar `job->base`. Si aun así queda
   alguna sin canal/red, el `locate` **falla con un mensaje explícito** en vez de dar un
   `sin localizacion` mudo. El ARC que arma `Confirm` (`csnhypodbp_arc_build`) y las picadas manuales
-  (`emit_pick_scnl`) ya llevan el SCNL completo, y `ManualStateFile` lo persiste.
+  (`emit_pick_scnl`) ya llevan el SCNL completo, y `ManualStateFile` lo persiste. `arc_build` emite el
+  **layout canónico completo** (cabecera + línea `$1` + fase/continuación por fase + terminador):
+  sin la línea `$1` HYPOINVERSE muere al leer el ARC (`Sequential READ ... after EOF`, `status=0x200`),
+  y sin la continuación por fase no lee la S. El `locate` manual y el modo vivo de `hyp2000_ring`
+  comparten ese builder.
 - **Los residuales de la solución elegida se ven sin pulsar `locate`**: cada solución del grupo
   guarda sus propias picadas (`EventSol.picks`, con su residual) y al seleccionarla en la tabla
   *Origins* pasan a ser la fuente del `res` de la tabla de *Ondas* (`csnhypodbp_resid_source`:

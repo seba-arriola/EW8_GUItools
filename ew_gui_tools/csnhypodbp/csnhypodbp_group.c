@@ -7,6 +7,7 @@
 #include "csnhypodbp_group.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -467,7 +468,20 @@ int csnhypodbp_preferred_index(const CsnhypodbpSolMeta *sols, int n)
 }
 
 /* ------------------------------------------------------------------------- */
-/* ARC Y2K desde una solucion (cabecera + todas sus fases). */
+/* ARC Y2K desde una solucion.                                               */
+/*                                                                           */
+/* El layout NO es libre: HYPOINVERSE lee la linea 2 como resumen SIEMPRE    */
+/* (hyphs.for:222, `READ (14,1001,END=80) STR2`) y hyfile.for decide el      */
+/* formato por ella (`$1` -> ITYPE=10/JCP=5). Sin la linea `$1` el motor     */
+/* toma la primera fase por resumen, desalinea el conteo y muere con         */
+/* "Sequential READ ... after EOF" (WEXITSTATUS=2). Por eso el ARC se emite  */
+/* exactamente como FormatHYP2000ARC (csnloc/hypo_out.c):                    */
+/*   L1 197 | L2 197 `$1` | (fase 114 + continuacion 114) x N | terminador.  */
+/*                                                                           */
+/* La hora de fase va como SS.cc (F5.2 del motor), no como SSmmm: `22000`    */
+/* se lee 220.00 s y arruina el ajuste. La S lleva peso 4 y su tiempo tambien */
+/* en las columnas canonicas 41-49; con peso 0 HYPOINVERSE la mete por la    */
+/* rama P y nunca por la S (hyloc.for:204/211).                              */
 /* ------------------------------------------------------------------------- */
 static void put_at(char *dst, const char *s, size_t n)
 {
@@ -478,7 +492,7 @@ static void put_at(char *dst, const char *s, size_t n)
 
 int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, size_t outn)
 {
-    char hdr[200], t[64];
+    char hdr[200], pl[130], t[64];
     size_t n = 0;
     int i;
     time_t sec;
@@ -519,31 +533,83 @@ int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, s
 
     memcpy(out + n, hdr, 197); n += 197; out[n++] = '\n';
 
+    /* Linea 2 `$1`: obligatoria (ver cabecera). Marca el ARC como archive-2000
+       con shadow y es la que el motor lee como resumen del evento. */
+    if (n + 198 >= outn) return -1;
+    {
+        char l2[200];
+        memset(l2, ' ', sizeof(l2));
+        l2[0] = '$'; l2[1] = '1';
+        memcpy(out + n, l2, 197); n += 197; out[n++] = '\n';
+    }
+
     for (i = 0; i < sol->npicks; i++) {
-        char pl[130];
-        time_t ps = (time_t)sol->picks[i].t_pick;
-        double pf = sol->picks[i].t_pick - (double)ps;
+        const CsnhypodbpPick *pk = &sol->picks[i];
+        /* Centesimas ANTES de descomponer: redondear al escribir daria "60.00"
+           para 59.995..59.999 (segundo invalido). Redondeando el epoch, gmtime
+           hace el acarreo de segundo/minuto/hora. */
+        double tt = floor(pk->t_pick * 100.0 + 0.5) / 100.0;
+        time_t ps = (time_t)tt;
+        double frac = tt - (double)ps;
         struct tm *ptm = gmtime(&ps);
+        double psec;
+        char phase = pk->phase;
+        int  is_s = (phase == 'S');
+        const char *loc = pk->loc[0] ? pk->loc : "--";
+        const char *net = pk->net[0] ? pk->net : "--";
+
         if (!ptm) continue;
+        if (phase != 'P' && phase != 'S') continue;
+        /* fase + continuacion + terminador tienen que caber. */
+        if (n + 2 * 115 + 115 >= outn) return -1;
+
+        psec = (double)ptm->tm_sec + frac;
         memset(pl, ' ', sizeof(pl));
-        put_at(pl + 0, sol->picks[i].sta, 5);
-        put_at(pl + 5, sol->picks[i].net[0] ? sol->picks[i].net : "--", 2);
-        put_at(pl + 9, sol->picks[i].chan, 3);
-        pl[14] = sol->picks[i].phase;
-        snprintf(t, sizeof(t), "%04d%02d%02d%02d%02d%02d%03d",
+        put_at(pl + 0, pk->sta, 5);
+        put_at(pl + 5, net, 2);
+        put_at(pl + 9, pk->chan, 3);
+        pl[14] = phase;
+        pl[15] = ' ';
+        pl[16] = is_s ? '4' : '0';   /* LSWT/LPWT; S=4 o el motor la trata como P */
+        snprintf(t, sizeof(t), "%04d%02d%02d%02d%02d%05.2f",
                  ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday,
-                 ptm->tm_hour, ptm->tm_min, (int)ptm->tm_sec, (int)(pf * 1000.0 + 0.5));
+                 ptm->tm_hour, ptm->tm_min, psec);
         memcpy(pl + 17, t, 17);
-        if (!isnan(sol->picks[i].residual)) {
+        if (is_s) {
+            /* Tiempo S en sus columnas canonicas (41-45) + remark KSRK (46) y
+               LSWT (49); sin esto hyphs.for:552 anula el remark y la S no
+               entra al calculo. */
+            char secbuf[8];
+            snprintf(secbuf, sizeof(secbuf), "%05.2f", psec);
+            memcpy(pl + 41, secbuf, 5);
+            pl[46] = 'S';
+            pl[47] = ' ';
+            pl[49] = '0';
+        }
+        if (!isnan(pk->residual)) {
             /* Residual Y2K: P en [34,37], S en [50,53] (entero x100). */
-            int off = (sol->picks[i].phase == 'S') ? 50 : 34;
-            snprintf(t, sizeof(t), "%4ld", lround(sol->picks[i].residual * 100.0));
+            int off = is_s ? 50 : 34;
+            snprintf(t, sizeof(t), "%4ld", lround(pk->residual * 100.0));
             put_at(pl + off, t, 4);
         }
-        if (n + 115 >= outn) break;
-        put_at(pl + 111, sol->picks[i].loc[0] ? sol->picks[i].loc : "--", 2);
+        put_at(pl + 111, loc, 2);
+        memcpy(out + n, pl, 114); n += 114; out[n++] = '\n';
+
+        /* Continuacion de la fase (`$1` en 104): una por fase. El motor la lee
+           como shadow cuando JCP=5. */
+        memset(pl, ' ', sizeof(pl));
+        put_at(pl + 0, pk->sta, 5);
+        put_at(pl + 5, net, 2);
+        put_at(pl + 9, pk->chan, 3);
+        pl[104] = '$'; pl[105] = '1';
+        put_at(pl + 111, loc, 2);
         memcpy(out + n, pl, 114); n += 114; out[n++] = '\n';
     }
+
+    /* ---- linea final vacia (terminador de fases) ---- */
+    if (n + 115 >= outn) return -1;
+    memset(pl, ' ', sizeof(pl));
+    memcpy(out + n, pl, 114); n += 114; out[n++] = '\n';
     out[n] = '\0';
     return 0;
 }

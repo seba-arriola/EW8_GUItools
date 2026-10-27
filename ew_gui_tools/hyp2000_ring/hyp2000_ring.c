@@ -315,8 +315,12 @@ static void arc_parse_id(const char *arc, int len,
 }
 
 /* Reescribe el ARC de salida: copia qid/version del ARC de entrada (para que
-   csnhypodbp agrupe el refinado con el evento de csnloc) y normaliza
-   longitudes (header -> 197, fases -> 114). Devuelve la nueva longitud. */
+   csnhypodbp agrupe el refinado con el evento de csnloc) y lo emite con el
+   layout canonico que HYPOINVERSE exige: L1 197, L2 "$1" 197, y por fase una
+   linea de 114 + su continuacion de 114 ("$1" en 104-105), cerrado por el
+   terminador. Las lineas "$" del ARC del motor no son fases y se descartan:
+   si se copiaran, el ARC tendria mas lineas de fase de las que declara.
+   Devuelve la nueva longitud. */
 static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
 {
     static char tmp[MAX_ARC];
@@ -333,49 +337,71 @@ static int arc_rewrite_id(char *arc, int len, const char *arc_in, int in_len)
     if (in_len >= 182) { memcpy(v178, arc_in + 178, 4); v178[4] = '\0'; }
     if (in_len >= EWGUI_ARC_MANUAL_OFF + 1) manual = arc_in[EWGUI_ARC_MANUAL_OFF];
 
-    while (p < end && tlen < MAX_ARC - 260) {
+    while (p < end && tlen + 2 * 115 + 116 < MAX_ARC) {
         const char *nl = memchr(p, '\n', (size_t)(end - p));
         int l = nl ? (int)(nl - p) : (int)(end - p);
-        int is_header, want;
+        char line[200];
+
         if (l > 0 && p[l-1] == '\r') l--;
         if (l <= 0) { if (nl) { p = nl + 1; continue; } break; }
 
-        is_header = first;
-        want = is_header ? 197 : 114;
-        if (l < want) {
-            memcpy(tmp + tlen, p, (size_t)l);
-            memset(tmp + tlen + l, ' ', (size_t)(want - l));
-            l = want;
-        } else {
-            memcpy(tmp + tlen, p, (size_t)l);
-        }
-        if (is_header) {
-            memcpy(tmp + tlen + 136, qid, 10);
-            tmp[tlen + 161] = v161;
-            memcpy(tmp + tlen + 178, v178, 4);
-            tmp[tlen + EWGUI_ARC_MANUAL_OFF] = manual;
+        memset(line, ' ', sizeof(line));
+
+        if (first) {
+            memcpy(line, p, (size_t)(l < 197 ? l : 197));
+            memcpy(line + 136, qid, 10);
+            line[161] = v161;
+            memcpy(line + 178, v178, 4);
+            line[EWGUI_ARC_MANUAL_OFF] = manual;
             {
                 int vi;
                 for (vi = 0; vi < EWGUI_ARC_VMODEL_LEN && VelocityModel[vi]; vi++)
-                    tmp[tlen + EWGUI_ARC_VMODEL_OFF + vi] = VelocityModel[vi];
+                    line[EWGUI_ARC_VMODEL_OFF + vi] = VelocityModel[vi];
             }
+            memcpy(tmp + tlen, line, 197); tlen += 197; tmp[tlen++] = '\n';
+
+            /* Linea 2 "$1": resumen obligatorio del ARC archive-2000. */
+            memset(line, ' ', sizeof(line));
+            line[0] = '$'; line[1] = '1';
+            memcpy(tmp + tlen, line, 197); tlen += 197; tmp[tlen++] = '\n';
             first = 0;
-        } else if (l >= 34) {
-            /* El estandar Y2K de la linea de fase pone el tiempo en centesimas
-               enteras (SSCCC, sin punto, offset 29-33); csnloc/csnhypodbp usan
-               SS.ss. Normalizamos para que csnhypodbp lo parsee. */
-            char sec[6], buf[8];
-            memcpy(sec, tmp + tlen + 29, 5); sec[5] = '\0';
-            if (!strchr(sec, '.')) {
-                int cs = atoi(sec);
-                snprintf(buf, sizeof(buf), "%05.2f", cs / 100.0);
-                memcpy(tmp + tlen + 29, buf, 5);
+        } else if (p[0] != '$' && l >= 34 &&
+                   (p[14] == 'P' || p[14] == 'S')) {
+            /* Fase. Normaliza el tiempo a SS.ss (el estandar Y2K lo pone en
+               centesimas enteras SSCCC y csnhypodbp espera el punto). */
+            memcpy(line, p, (size_t)(l < 114 ? l : 114));
+            {
+                char sec[6], buf[8];
+                memcpy(sec, line + 29, 5); sec[5] = '\0';
+                if (!strchr(sec, '.')) {
+                    int cs = atoi(sec);
+                    snprintf(buf, sizeof(buf), "%05.2f", cs / 100.0);
+                    memcpy(line + 29, buf, 5);
+                }
             }
+            memcpy(tmp + tlen, line, 114); tlen += 114; tmp[tlen++] = '\n';
+
+            /* Continuacion de la fase ("$1" en 104-105). */
+            memset(line, ' ', sizeof(line));
+            memcpy(line, p, (size_t)(l < 5 ? l : 5));
+            if (l > 5) memcpy(line + 5, p + 5, (size_t)((l < 7 ? l : 7) - 5));
+            if (l > 9) memcpy(line + 9, p + 9, (size_t)((l < 12 ? l : 12) - 9));
+            line[104] = '$'; line[105] = '1';
+            if (l > 111) memcpy(line + 111, p + 111,
+                                (size_t)((l < 113 ? l : 113) - 111));
+            memcpy(tmp + tlen, line, 114); tlen += 114; tmp[tlen++] = '\n';
         }
-        tmp[tlen + l] = '\n';
-        tlen += l + 1;
+        /* Cualquier otra linea ('$', terminador) se descarta: el layout se
+           reconstruye entero. */
+
         if (!nl) break;
         p = nl + 1;
+    }
+
+    /* ---- terminador de fases ---- */
+    if (tlen + 115 < MAX_ARC) {
+        memset(tmp + tlen, ' ', 114);
+        tlen += 114; tmp[tlen++] = '\n';
     }
     memcpy(arc, tmp, (size_t)tlen);
     arc[tlen] = '\0';
@@ -803,6 +829,9 @@ static void live_tick(time_t now)
                                    pruned, sizeof(pruned), &np2) != 0)
                     break;              /* nada sobrevive: no insistir */
                 if (np2 >= np) break;   /* no podo nada: no insistir */
+                /* Con menos de MinPhases no hay grados de libertad: el motor
+                   volveria a fallar. */
+                if (np2 < LiveCheck.min_phases) break;
                 snprintf(arc, sizeof(arc), "%s", pruned);
                 np = np2;
                 if (Debug >= 1)
@@ -855,12 +884,10 @@ static void live_tick(time_t now)
 /* ------------------------------------------------------------------------- */
 int main(int argc, char **argv)
 {
-    MSG_LOGO     reclogo, logo;
+    MSG_LOGO     reclogo;
     MSG_LOGO     getlogo[1];
     long         recsize;
     unsigned char msg[MAX_MSG];
-    char         arc_out[MAX_ARC];
-    int          out_len;
     time_t       timeLastBeat;
     pid_t        MyPid = getpid();
 

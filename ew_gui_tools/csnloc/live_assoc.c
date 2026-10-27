@@ -84,6 +84,11 @@ static int arc_add_pick(CsnhypodbpSolution *sol, int *n,
 {
     int k, found = -1;
 
+    /* Una fase con estacion o canal en blanco es el TERMINADOR para el motor
+       (hyphs.for:430): cortaria la lectura del resto y el evento se perderia.
+       No entra nunca, venga del seed o del buffer. */
+    if (!sta || !sta[0] || !chan || !chan[0]) return -1;
+
     for (k = 0; k < *n; k++) {
         if (strcmp(sol->picks[k].sta, sta) == 0 &&
             sol->picks[k].phase == phase) {
@@ -132,14 +137,14 @@ static int build_arc_impl(const LiveSeed *s,
     sol.pref_mag = 0;
 
     /* 1) Fases del seed: csnloc ya las asocio contra este hipocentro, asi que
-       son el nucleo coherente del ARC. */
+       son el nucleo coherente del ARC. NO se filtran por LiveStations: una
+       estacion fuera de la lista de metadata no rompe al motor (la salta con
+       "SKIP PHASE CARD"), pero descartarla aqui puede dejar el ARC por debajo
+       del minimo para localizar. Medido: un seed de 6 fases quedaba en 3. */
     for (i = 0; i < nseed; i++) {
         const CsnhypodbpPick *sp = &seed_picks[i];
 
         if (sp->phase != 'P' && sp->phase != 'S') continue;
-        /* Si la estacion no esta en la metadata el motor la rechazaria: no
-           ocupa sitio en el ARC. */
-        if (Stations_Find(st, sp->sta) < 0) continue;
         (void)arc_add_pick(&sol, &n, sp->sta, sp->net, sp->chan, sp->loc,
                            sp->phase, sp->t_pick);
     }

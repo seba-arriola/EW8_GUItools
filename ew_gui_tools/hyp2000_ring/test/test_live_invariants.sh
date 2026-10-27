@@ -73,6 +73,16 @@ if grep -q 'LiveEventTTLSec' "$d" && grep -q 'LiveEventTTLSec' "$src"; then
 else
     bad "falta LiveEventTTLSec"
 fi
+if grep -q 'live_build_arc_seeded' "$assoc" && ! grep -q 'Stations_Find(st, sp->sta)' "$assoc"; then
+    ok "el seed no se filtra por LiveStations (puede dejar el ARC sin minimo)"
+else
+    bad "el seed se filtra por LiveStations"
+fi
+if grep -q 'np2 < LiveCheck.min_phases' "$src"; then
+    ok "la poda no reintenta por debajo de MinPhases (sin grados de libertad)"
+else
+    bad "la poda puede dejar el ARC sin grados de libertad"
+fi
 if grep -q 'LiveNRetry' "$src" && grep -q 'no_new' "$src"; then
     ok "N_retry corta los intentos sin picadas nuevas o sin solucion valida"
 else

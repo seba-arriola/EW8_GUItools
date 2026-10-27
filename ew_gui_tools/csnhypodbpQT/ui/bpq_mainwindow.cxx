@@ -2663,7 +2663,7 @@ void BpqMainWindow::renderPreview()
  * incorpora al store local como snapshot confirmado (sin esperar al anillo). */
 void BpqMainWindow::confirmCandidate()
 {
-    char arc[8192] = "";
+    char arc[65536] = "";
     int rc = -2;
     int fed = 0;
     int magn = 0;
@@ -3635,7 +3635,7 @@ bool BpqMainWindow::runMagCalcForTest()
  * (`--locate`) y confirma, para ver el ARC y la publicacion sin clics. */
 bool BpqMainWindow::runConfirmForTest()
 {
-    char arc[8192] = "";
+    char arc[65536] = "";
     int built;
 
     if (!m_candValid) {

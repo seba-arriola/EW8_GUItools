@@ -97,9 +97,14 @@ El módulo ya fija por evento `PHS`/`ARC`/`SUM`/`COP 5`/`CAR 3`.
 hyp2000_ring <ruta>/hyp2000_ring.d <arc_entrada> > out.arc
 ```
 
-Refina y escribe el ARC a stdout, **normalizado** (header 197 / fases 114) y con
+Refina y escribe el ARC a stdout, **normalizado** con el layout canónico
+(cabecera 197, línea `$1` 197, y por fase la línea de 114 **más** su
+continuación de 114 con `$1` en 104-105, cerrado por el terminador) y con
 el `qid` y la versión de `csnloc` **copiados** al header de salida (para que
-`csnhypodbp` agrupe el refinado con el mismo evento). El motor HYPOINVERSE imprime
+`csnhypodbp` agrupe el refinado con el mismo evento). Ese layout no es cosmético:
+HYPOINVERSE lee la línea 2 como resumen (`hyphs.for:222`); sin ella lee la
+primera fase como resumen y muere con `Sequential READ ... after EOF`
+(`status=0x200`). El motor HYPOINVERSE imprime
 además su resumen por stdout, así que el ARC queda al final. La salida también se
 valida (`rms/nph/gap`): si no pasa, el módulo sale con código 2 y no escribe ARC.
 

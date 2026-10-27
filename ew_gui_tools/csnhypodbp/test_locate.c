@@ -197,6 +197,49 @@ int main(void)
         in.picks[1].phase = 'S'; in.picks[1].t_pick = 1600000020.0;
         in.picks[1].residual = -0.10;
         assert(csnhypodbp_arc_build(&in, 1, arc, sizeof(arc)) == 0);
+
+        /* Layout canonico (el unico que HYPOINVERSE digiere): L1 197,
+           L2 197 "$1", y por fase 114 + continuacion 114 "$1" en 104-105,
+           cerrado por el terminador de 114 espacios. */
+        {
+            const char *p1 = arc;
+            const char *p2 = strchr(p1, '\n');
+            const char *f1, *f1e, *c1, *c1e, *f2, *f2e, *c2, *c2e, *term, *terme;
+
+            assert(p2 && (p2 - p1) == 197);
+            assert(p2[1] == '$' && p2[2] == '1');
+            f1 = p2 + 1;
+            c1e = strchr(f1, '\n');
+            assert(c1e && (c1e - f1) == 197);          /* fin de L2 */
+            f1 = c1e + 1;
+            f1e = strchr(f1, '\n');
+            assert(f1e && (f1e - f1) == 114);
+            assert(f1[14] == 'P');
+            assert(f1[16] == '0');                     /* LPWT: P = 0 */
+            assert(f1[31] == '.');                     /* hora SS.cc, no SSmmm */
+            assert(strncmp(f1 + 17, "20200913122650", 14) == 0);
+            c1 = f1e + 1;
+            c1e = strchr(c1, '\n');
+            assert(c1e && (c1e - c1) == 114);
+            assert(c1[104] == '$' && c1[105] == '1');
+            assert(strncmp(c1, "GO01", 4) == 0);
+            f2 = c1e + 1;
+            f2e = strchr(f2, '\n');
+            assert(f2e && (f2e - f2) == 114);
+            assert(f2[14] == 'S');
+            assert(f2[16] == '4');                     /* LSWT: S = 4 */
+            assert(f2[31] == '.');
+            assert(f2[46] == 'S' && f2[49] == '0');    /* bloque S canonico */
+            c2 = f2e + 1;
+            c2e = strchr(c2, '\n');
+            assert(c2e && (c2e - c2) == 114);
+            assert(c2[104] == '$' && c2[105] == '1');
+            term = c2e + 1;
+            terme = strchr(term, '\n');
+            assert(terme && (terme - term) == 114);
+            assert(terme[1] == '\0');                  /* nada tras el terminador */
+        }
+
         assert(csnhypodbp_parse_solution(arc, strlen(arc), 162, &out) == 0);
         assert(out.qid == 987654);
         assert(out.version == 7);
@@ -216,6 +259,32 @@ int main(void)
         /* El residual viaja en el ARC (round-trip). */
         assert(fabs(out.picks[0].residual - 0.25) < 1e-6);
         assert(fabs(out.picks[1].residual - (-0.10)) < 1e-6);
+    }
+
+    /* --- acarreo de centesimas: 12:26:59.999 no puede escribirse 12:26:60.00 --- */
+    {
+        CsnhypodbpSolution in, out;
+        char arc[4096];
+        const char *f;
+
+        memset(&in, 0, sizeof(in));
+        in.qid = 42; in.version = 1; in.otime = 1600000000.0;
+        in.lat = -33.0; in.lon = -70.0; in.depth = 10.0;
+        in.nph = 1; in.npicks = 1;
+        snprintf(in.picks[0].sta, 8, "GO01");
+        snprintf(in.picks[0].chan, 8, "HHZ");
+        snprintf(in.picks[0].net, 4, "C1");
+        in.picks[0].phase = 'P';
+        in.picks[0].t_pick = 1600000019.999;   /* 12:26:59.999 -> 12:27:00.00 */
+        assert(csnhypodbp_arc_build(&in, 0, arc, sizeof(arc)) == 0);
+        f = strchr(arc, '\n');
+        f = f ? strchr(f + 1, '\n') : NULL;    /* fin de la linea $1 */
+        f = f ? f + 1 : NULL;                  /* linea de fase */
+        assert(f && strncmp(f + 17, "20200913122700", 14) == 0);
+        assert(f[31] == '.');
+        assert(csnhypodbp_parse_solution(arc, strlen(arc), 162, &out) == 0);
+        assert(out.npicks == 1);
+        assert(fabs(out.picks[0].t_pick - 1600000020.0) < 0.005);
     }
 
     /* --- confirmation_arc: snapshot que va al anillo de confirmaciones --- */

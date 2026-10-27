@@ -60,6 +60,28 @@ nph="$(grep -c . "$tmp/input.arc" || true)"
 [ "$nph" -ge 4 ] || { echo "FAIL: ARC de entrada con $nph fases"; cat "$tmp/csnloc.err"; exit 1; }
 echo "ok  : ARC de entrada con $nph fases"
 
+# 2b) Regresion del layout (fallo 2026-10-27): el mismo ARC pasado por
+# csnhypodbp_arc_build debe conservar el contrato que HYPOINVERSE exige:
+# L1 197, L2 197 "$1", por fase 114 + continuacion 114 ("$1" en 104) y
+# terminador. Sin la linea $1 el motor lee la primera fase como resumen y
+# aborta con "Sequential READ ... after EOF" (hyphs.for:222, status 0x200).
+REBUILD="$MOD/test/rebuild_arc"
+[ -x "$REBUILD" ] || { echo "FAIL: falta $REBUILD (make check-offline)"; exit 1; }
+"$REBUILD" < "$tmp/input.arc" > "$tmp/rebuilt.arc" \
+    || { echo "FAIL: rebuild_arc fallo"; exit 1; }
+awk '
+  { n = length($0)
+    if (NR == 1 && n != 197) { printf "L1=%d\n", n; exit 1 }
+    if (NR == 2 && (n != 197 || substr($0, 1, 2) != "$1")) { printf "L2=%d\n", n; exit 2 }
+    if (NR > 2 && n != 114) { printf "L%d=%d\n", NR, n; exit 3 }
+    if (NR > 2 && NR % 2 == 0 && substr($0, 105, 2) != "$1") { printf "cont L%d\n", NR; exit 4 }
+  }' "$tmp/rebuilt.arc" \
+    || { echo "FAIL: layout del ARC reconstruido"; exit 1; }
+npk_re="$(awk 'NR>2 && NR%2==1 && substr($0,15,1) ~ /[PS]/ {n++} END {print n+0}' \
+          "$tmp/rebuilt.arc")"
+[ "$npk_re" -ge 4 ] || { echo "FAIL: ARC reconstruido con $npk_re fases"; exit 1; }
+echo "ok  : ARC reconstruido con layout canonico ($npk_re fases)"
+
 # 3) hyp2000_ring offline con profundidad fija. Se corre desde $tmp con rutas
 # absolutas para que logit_init (que usa el nombre del .d) escriba su log.
 cp "$PARAMS/hyp2000_ring.d" "$tmp/fix.d"
@@ -82,6 +104,18 @@ echo "DIS 0 0.0 5.0 10.0" >> "$HYP_TMP"
 rc_fix=0
 ( cd "$tmp" && EW_LOG="$tmp/log" "$BIN" fix.d "$tmp/input.arc" \
     > "$tmp/out.arc" 2>"$tmp/ref.err" ) || rc_fix=$?
+
+# 3b) Mismo motor y misma config con el ARC reconstruido: no debe abortar.
+# (Puede no localizar si el fixture es pobre; lo que se exige es que lo LEA.)
+rc_re=0
+( cd "$tmp" && EW_LOG="$tmp/log" "$BIN" fix.d "$tmp/rebuilt.arc" \
+    > "$tmp/out_re.arc" 2>"$tmp/ref_re.err" ) || rc_re=$?
+if grep -q "Fortran runtime error" "$tmp/ref_re.err"; then
+    echo "FAIL: el motor aborto leyendo el ARC reconstruido"
+    cat "$tmp/ref_re.err"
+    exit 1
+fi
+echo "ok  : el motor lee el ARC reconstruido sin abortar (rc=$rc_re)"
 
 # 4) La prueba determinista: el motor acepta el comando que fija la profundidad.
 logfix="$(ls "$tmp"/log/fix_*.log 2>/dev/null | head -1 || true)"

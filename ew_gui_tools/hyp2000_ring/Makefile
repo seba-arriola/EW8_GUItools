@@ -81,8 +81,14 @@ check: test_live_assoc
 
 # Prueba real offline (necesita EW_PARAMS + csnloc compilado).
 .PHONY: check-offline
-check-offline: $(TARGET)
+check-offline: $(TARGET) test/rebuild_arc
 	bash ./test/test_fixdepth.sh
+
+# Puente ARC real -> builder canonico (ver test/rebuild_arc.c).
+test/rebuild_arc: test/rebuild_arc.c ../csnhypodbp/csnhypodbp_group.o \
+                  ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -Itest -o $@ test/rebuild_arc.c \
+	      ../csnhypodbp/csnhypodbp_group.o $(LIBS)
 
 clean:
 	-$(MAKE) -C hypoinverse clean
