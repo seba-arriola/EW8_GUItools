@@ -233,7 +233,9 @@ hace **`csnloc`** localmente.
     que un snapshot nuevo no mueva la vista).
   - `csntvpQT/`: **port Qt6 de `csntvp`** (prototipo en etapa 1: convive con el GTK en
     `startstop_unix.d` y se depura en paralelo). Visor de trazas en vivo (`SLINK_RING`,
-    `TYPE_TRACEBUF2`) con HOLD, picado manual P/S y **`.d` propio** `csntvpqt.d`
+    `TYPE_TRACEBUF2`) con HOLD y picado manual P/S **armado con `p`/`s`** (por defecto **ninguna**
+    fase: el clic no pica; `Esc` cancela y soltar HOLD también desarma, y el modo es **persistente**
+    hasta entonces, no de un solo tiro) y **`.d` propio** `csntvpqt.d`
     (`MOD_CSNTVPQT` **175**): el eco de una picada se deduplica por `(mod,inst,seq)`
     (`csntvp_data.c:371-381`), así que compartir id haría que el port pisara los slots locales del
     GTK (y al revés); ver la trampa en §7. El `.d` es copia del GTK y **sólo** puede diferir en
@@ -251,8 +253,11 @@ hace **`csnloc`** localmente.
     10 s sin paquetes). `--print-config` es **nuevo en la familia** (el GTK no lo tenía), el log es
     `$EW_LOG/csntvpQT_<fecha>.log` (nombre del **proceso**; sin `EW_LOG` escribible baja a consola)
     y `tests/test_ui.sh` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen con un fixture
-    de 3 estaciones `HHZ/HHN/HHE` (mínimo ≤ 700×800, clic→tiempo < 1 ms, clean/reload). `make check`
-    cubre unitarios C + config + invariantes + integración; `test-live` arranca contra el stack.
+    de 3 estaciones `HHZ/HHN/HHE` (mínimo ≤ 700×800, clic→tiempo < 1 ms, clean/reload). Cada pista se
+    **normaliza por su propio `env_max_abs` de la ventana visible** (`alto_pista·0.425`, como
+    `csntvp_gui.c:378-381`); el `scale` del StaFile es de paridad de formato y **no** entra en el
+    dibujo (el GTK lo guarda en `dScreenScale` y no lo lee nunca), lo que fija `tests/test_norm.c`.
+    `make check` cubre unitarios C + config + invariantes + integración; `test-live` arranca contra el stack.
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
     PostgreSQL (esquema QuakeML simplificado, `db/schema.sql`). Entradas: `HYPO_RING` (csnloc 162)
     y `HYPO_RING_REF` (hyp2000 163 / nlloc 164, distinguidos por el `mod` del logo) + `PICK_RING`
