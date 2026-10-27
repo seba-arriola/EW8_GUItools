@@ -27,6 +27,7 @@
 #include "kom.h"
 #include "earthworm.h"
 #include "transport.h"
+#include "../csnhypodbp/csnhypodbp_locator.h"
 
 #include "nlloc_depth.h"
 #include <ewgui/arc_layout.h>
@@ -75,6 +76,7 @@ static double FixDepthSpacingKm = 0.1;   /* km entre los 2 nodos z */
 static int   NllIntervalSec = 300;   /* 0 = sin rate-limit (procesa cada version) */
 static int   NllTTLSec      = 1800;  /* olvidar un evento sin versiones nuevas */
 static int   NllMaxPending  = 64;
+static int   LiveUsage      = 0;     /* de csnhypodbpqt.d */
 
 /* Volumen de busqueda: si la plantilla lo deja pequeno/fijo, NLLoc devuelve la
    solucion pegada al borde. Estas claves reescriben TRANS y LOCGRID. */
@@ -1020,6 +1022,20 @@ int main(int argc, char **argv)
 
     if (argc < 2 || argc > 3) { fprintf(stderr, "Uso: nlloc_ring <config.d> [arcfile]\n"); return 1; }
     if (read_config(argv[1]) != 0) return 1;
+    {
+        CsnhypodbpLocator locs[8];
+        int n = 0;
+
+        if (csnhypodbp_locator_load_default(locs, &n, 8) == 0) {
+            int k = csnhypodbp_locator_find(locs, n, "nlloc_ring");
+            if (k >= 0) LiveUsage = locs[k].live_usage;
+        }
+    }
+    if (LiveUsage) {
+        fprintf(stderr, "nlloc_ring: live_usage=1 aun no soportado; "
+                        "use el modo offline/manual\n");
+        LiveUsage = 0;
+    }
     if (OutRoot[0] == '\0' ||
         (nbands == 0 && FallbackCtl[0] == '\0' &&
          (ControlFile[0] == '\0' || TtimeRoot[0] == '\0'))) {
@@ -1109,6 +1125,10 @@ int main(int argc, char **argv)
         if (time(NULL) - timeLastBeat >= HeartbeatInt) {
             timeLastBeat = time(NULL);
             status(TypeHeartbeat, 0);
+        }
+        if (!LiveUsage) {          /* locator sólo manual/offline */
+            sleep_ew(200);
+            continue;
         }
         if (tport_getmsg(&InRegion, getlogo, 1, &reclogo, &recsize,
                          (char *)msg, MAX_MSG - 1) == GET_OK) {

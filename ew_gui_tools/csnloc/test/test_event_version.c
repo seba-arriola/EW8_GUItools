@@ -149,6 +149,32 @@ int main(void)
         CHECK(reg.n == 2, "registro con 2 eventos");
     }
 
+    /* --- Asociador: SOLO la primera solucion, aunque lleguen fases nuevas --- */
+    {
+        EventRegistry reg2;
+        CSLocParams cfg2 = cfg;
+        Pick w3[CSLOC_MAX_PHASES];
+        int n3 = 0;
+        HypoCandidate c3;
+        unsigned long id4 = 0; unsigned int v4 = 0;
+
+        cfg2.AssociateOnly = 1;
+        EventRegistry_Init(&reg2);
+        w3[n3++] = mk_pick(&st, &tt, 0, tr_lat_g, tr_lon, tr_depth, t0);
+        w3[n3++] = mk_pick(&st, &tt, 1, tr_lat_g, tr_lon, tr_depth, t0);
+        w3[n3++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
+        c3 = mk_cand(w3, n3, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg2, &c3, w3, n3, &cfg2, &st, &tt, NULL,
+                                 2000UL, &id4, &v4, NULL);
+        CHECK(r == 1 && v4 == 1, "asociador: primera solucion v1");
+        w3[n3++] = mk_pick(&st, &tt, 3, tr_lat_g, tr_lon, tr_depth, t0);
+        c3 = mk_cand(w3, n3, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
+        r = EventRegistry_Upsert(&reg2, &c3, w3, n3, &cfg2, &st, &tt, NULL,
+                                 2000UL, &id4, &v4, NULL);
+        CHECK(r == 0, "asociador: fase nueva NO emite");
+        CHECK(reg2.ev[0].version == 1, "asociador: version queda en 1");
+    }
+
     TTModel_Free(&tt);
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_event_version\n");

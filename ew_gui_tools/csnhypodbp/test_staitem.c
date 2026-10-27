@@ -58,8 +58,8 @@ int main(void)
 
     CHECK(prop_is(p, "stat", "M"), "stat de la P = M");
     CHECK(prop_is(s, "stat", "A"), "stat de la S = A");
-    CHECK(prop_is(p, "res", "-0.012"), "res de la P formateado %+.3f");
-    CHECK(prop_is(s, "res", "+0.300"), "res de la S formateado %+.3f");
+    CHECK(prop_is(p, "res", "-0.01"), "res de la P formateado %+.2f");
+    CHECK(prop_is(s, "res", "+0.30"), "res de la S formateado %+.2f");
 
     CHECK(prop_bool(p, "has-pick") == 1 && prop_bool(s, "has-pick") == 1, "has-pick");
     g_object_unref(p);

@@ -43,6 +43,7 @@ public:
 
 signals:
     void eventsChanged();
+    void magReceived(const BpqMagMsg &m);
     void errorOccurred(const QString &msg);
     void quitRequested();
 

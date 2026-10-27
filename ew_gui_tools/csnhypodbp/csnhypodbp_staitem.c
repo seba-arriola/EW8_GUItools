@@ -114,7 +114,7 @@ CsnhypodbpStaItem *csnhypodbp_sta_item_new(const CsnhypodbpStaRow *r, int phase)
     if (r->dist_km > 0.0) snprintf(dist, sizeof(dist), "%.0f", r->dist_km);
     if (p->present) {
         snprintf(stat, sizeof(stat), "%s", origin_text(p->origin));
-        if (!isnan(p->resid)) snprintf(res, sizeof(res), "%+.3f", p->resid);
+        if (!isnan(p->resid)) snprintf(res, sizeof(res), "%+.2f", p->resid);
     }
 
     return g_object_new(CSNHYPODBP_TYPE_STA_ITEM,

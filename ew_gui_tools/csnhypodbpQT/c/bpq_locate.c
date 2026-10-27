@@ -177,6 +177,7 @@ int bpq_locate_run(const BpqConfig *cfg, const BpqStations *st,
     np = bpq_locate_build_picks(st, base, rows, nrows, pick_on,
                                 auto_on, manual_on, theo_on,
                                 cfg->max_dist_km, &sol);
+    out->sent = (np > 0) ? np : 0;
     if (np < 0) {
         if (err && errn) snprintf(err, errn, "locate: argumentos invalidos");
         return 0;

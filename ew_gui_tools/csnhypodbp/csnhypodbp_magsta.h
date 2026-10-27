@@ -11,6 +11,10 @@
 #ifndef CSNHYPODBP_MAGSTA_H
 #define CSNHYPODBP_MAGSTA_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include "csnhypodbp_magrow.h"
 
 #define CSNHYPODBP_MAGSTA_RING 4
@@ -40,5 +44,9 @@ void csnhypodbp_magsta_put(CsnhypodbpMagStaStore *s, int qid, int mod, int slot,
  * copio (0 si no esta). */
 int csnhypodbp_magsta_take(const CsnhypodbpMagStaStore *s, int qid, int mod,
                            int slot, CsnhypodbpMagIn *out, int max);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

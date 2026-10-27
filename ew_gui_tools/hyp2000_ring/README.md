@@ -4,15 +4,21 @@ Módulo EarthWorm **de anillo** que refina hipocentros con **HYPOINVERSE-2000**.
 A diferencia de `hyp2000_mgr` (que recibe los ARC por *pipe*, dentro de la cadena
 *sausage* `eqassemble → eqbuf → eqcoda → eqverify`), este módulo:
 
-- **lee** los `TYPE_HYP2000ARC` directamente de `HYPO_RING` (la salida de `csnloc`);
+- **lee** la semilla `TYPE_HYP2000ARC` de `HYPO_RING` (1.ª solución de `csnloc`);
+- **lee** todos los `TYPE_PICK_SCNL` de `PICK_RING` y, si `live_usage=1`, rehace
+  el ARC con la solución preferida + todos los picks cada `time_recalc_live`;
 - **escribe** el ARC refinado en `HYPO_RING_REF`;
 - **no** usa `pipe`, `eqassemble`, `eqbuf`, `eqcoda` ni `eqverify`.
 
 ```
-HYPO_RING (ARC de csnloc) ──► hyp2000_ring ──► HYPO_RING_REF (ARC refinado)
-                                   │
-                                   └─ hypoinverse (librería enlazada)
+HYPO_RING (semilla) ──┐
+PICK_RING (picks) ────┼─► hyp2000_ring ─► HYPO_RING_REF (ARC refinado)
+HYPO_RING_REF2 ───────┘        │
+                               └─ hypoinverse (librería enlazada)
 ```
+
+`HYPO_RING_REF2` aporta la solución confirmada/preferida. Si no hay picks
+nuevos, tras `N_retry` intentos deja de localizar ese evento.
 
 ## Compilar
 

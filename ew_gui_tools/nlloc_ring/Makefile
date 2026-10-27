@@ -4,7 +4,7 @@
 # Enlaza el motor vendorizado en nlloc/ (libnlloc.a). Autocontenido.
 
 CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
-         -I../common/include -D_LINUX -D_REENTRANT
+         -I../common/include -I../csnhypodbp -D_LINUX -D_REENTRANT
 
 LIBS   = -lm -lpthread
 
@@ -25,8 +25,14 @@ install: $(TARGET)
 $(NLLLIB):
 	$(MAKE) -C nlloc
 
-$(TARGET): nlloc_ring.o nlloc_depth.o $(NLLLIB)
-	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(NLLLIB) $(EWLIBS) $(LIBS)
+LOCATOR_OBJ = ../csnhypodbp/csnhypodbp_locator.o
+
+../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
+                                    ../csnhypodbp/csnhypodbp_locator.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET): nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(NLLLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(NLLLIB) $(EWLIBS) $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Profundidad fija (emulada): reescritura pura de LOCGRID / LOCSEARCH.

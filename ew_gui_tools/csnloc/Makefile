@@ -8,13 +8,17 @@
 # Los headers iasplib.h/ttlim.h viven en este directorio y se resuelven por
 # include con comillas (busqueda relativa al .c), por eso NO se agrega -I.
 CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
-         -I../common/include -D_LINUX -D_REENTRANT
+         -I../common/include -I../csnhypodbp -D_LINUX -D_REENTRANT
 
 LIBS = -lm -lpthread
 
 OBJS = csnloc.o pick_scln.o pick_buffer.o stations.o ttmodel.o grid.o \
        gridset.o backprojection.o dbscan.o refine.o hypo_out.o \
-       event_registry.o state.o
+       event_registry.o state.o ../csnhypodbp/csnhypodbp_locator.o
+
+../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
+                                    ../csnhypodbp/csnhypodbp_locator.h
+	$(CC) $(CFLAGS) -c -o $@ $<
 
 # taulib_csnloc.c es una copia local del motor IASP91 con el PATCH NULL-safe
 # de strstr/strchr (bug de 64 bits que corrompia memoria al sustituir fases).

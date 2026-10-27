@@ -21,6 +21,7 @@
 #include <pthread.h>
 
 #include "csnloc.h"
+#include "csnhypodbp_locator.h"
 #include <kom.h>
 #include <earthworm.h>
 
@@ -79,6 +80,7 @@ static void set_defaults(CSLocParams *c)
     strcpy(c->AgencyID, "CL");
     strcpy(c->Author, "csnloc");
     c->EventTTLSec = 300.0;
+    c->AssociateOnly = 1;   /* asociador: una sola solucion por evento */
 
     c->MaxRMSDegrade = 0.10;
     c->MaxGapDegradeDeg = 10.0;
@@ -794,6 +796,19 @@ int main(int argc, char **argv)
     memset(&ctx, 0, sizeof(ctx));
     set_defaults(&ctx.cfg);
     if (read_config(argv[1], &ctx.cfg) < 0) return 1;
+
+    /* La tabla vive SOLO en $EW_PARAMS/csnhypodbpqt.d. El asociador emite una
+     * sola solucion por evento; `live_usage=1` habilita ademas el rol de
+     * locator (versionado), no el asociador. */
+    {
+        CsnhypodbpLocator locs[8];
+        int nloc = 0;
+        if (csnhypodbp_locator_load_default(locs, &nloc, 8) == 0) {
+            int k = csnhypodbp_locator_find(locs, nloc, "csnloc");
+            if (k >= 0)
+                ctx.cfg.AssociateOnly = locs[k].live_usage ? 0 : 1;
+        }
+    }
 
     ctx.Offline    = (argc == 3);
     ctx.OfflineOut = stdout;

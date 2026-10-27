@@ -214,7 +214,7 @@ CANVAS_DEPS = $(BUILDDIR)/c_bpq_canvas.o $(BUILDDIR)/c_bpq_map.o \
                $(BUILDDIR)/bp_mapview.o $(BUILDDIR)/bp_profile.o \
                $(BUILDDIR)/bp_view.o $(BUILDDIR)/bp_trace.o \
                $(BUILDDIR)/bp_traces.o \
-               $(BUILDDIR)/bp_magview.o $(BUILDDIR)/bp_magcfg.o \
+               $(BUILDDIR)/bp_magview.o \
                $(BUILDDIR)/bp_magmarks.o \
                $(BUILDDIR)/c_bpq_draw_ball.o $(BUILDDIR)/c_bpq_mww.o \
                $(BUILDDIR)/bp_mww_over.o $(BUILDDIR)/bp_mwwerr.o $(DB_DEPS) \
@@ -232,7 +232,7 @@ test_canvas: tests/test_canvas.c $(CANVAS_DEPS)
 # Anillos + mensajes: necesita rw_mag.o (wr_mag_scnl/rd_mag) y libew_mt.a (GetKey).
 # Slots del nucleo que arrastran locate (confirmation_arc) y preview (mag_split).
 RINGS_DEPS := $(BUILDDIR)/c_bpq_rings.o $(BUILDDIR)/c_bpq_emit.o \
-              $(BUILDDIR)/c_bpq_magmsg.o \
+              $(BUILDDIR)/c_bpq_magmsg.o $(BUILDDIR)/bp_magchan.o \
               $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_trace.o $(BUILDDIR)/bp_magrow.o \
               $(BUILDDIR)/bp_locate.o $(BUILDDIR)/bp_locator.o $(BUILDDIR)/bp_statable.o \
               $(BUILDDIR)/bp_magmarks.o $(BUILDDIR)/bp_fixdepth.o \
@@ -247,16 +247,17 @@ test_rings: tests/test_rings.c $(RINGS_DEPS)
 
 # Store de eventos: nucleos de agrupacion + formato UTC (search.c).
 test_events: tests/test_events.c $(BUILDDIR)/c_bpq_events.o \
-             $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_search.o
+             $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_search.o $(BUILDDIR)/bp_locator.o
 	rm -f $@
 	$(CC) $(CFLAGS) -Itests -o $@ tests/test_events.c \
 	    $(BUILDDIR)/c_bpq_events.o $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_search.o \
-	    -lm
+	    $(BUILDDIR)/bp_locator.o -lm
 	@chmod +x $@
 
 # Historial/busqueda: nucleo de BD de common (libpq) + el store de eventos.
 DB_DEPS := $(BUILDDIR)/c_bpq_db.o $(BUILDDIR)/c_bpq_events.o \
-           $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_search.o \
+           $(BUILDDIR)/bp_group.o $(BUILDDIR)/bp_search.o $(BUILDDIR)/bp_locator.o \
+           $(BUILDDIR)/bp_magrow.o $(BUILDDIR)/bp_magcfg.o \
            $(BUILDDIR)/cw_ewgui_db.o $(BUILDDIR)/cw_ewgui_db_ids.o
 
 test_db: tests/test_db.c $(DB_DEPS)

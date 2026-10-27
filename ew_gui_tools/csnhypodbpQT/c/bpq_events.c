@@ -51,8 +51,12 @@ static const char *mod_label(const BpqEvents *e, int mod)
 {
     static char buf[16];
     int i;
-    for (i = 0; i < e->cfg.n_modlabels; i++)
-        if (e->cfg.modlabels[i].id == mod) return e->cfg.modlabels[i].label;
+    for (i = 0; i < e->cfg.n_locators; i++)
+        if (csnhypodbp_locator_mod(&e->cfg.locators[i]) == mod)
+            return e->cfg.locators[i].name;
+    if (mod == 162) return "csnloc";
+    if (mod == 163) return "hyp2000_ring";
+    if (mod == 164) return "nlloc_ring";
     snprintf(buf, sizeof(buf), "%d", mod);
     return buf;
 }
@@ -234,6 +238,9 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
     e->groups[gi].meta[found].nph       = sol->nph;
     e->groups[gi].meta[found].rms       = sol->rms;
     e->groups[gi].meta[found].otime     = sol->otime;
+    snprintf(e->groups[gi].meta[found].origin_id,
+             sizeof(e->groups[gi].meta[found].origin_id), "%s",
+             sol->origin_id);
 
     /* 4) La clave del grupo acumula la union de picadas. */
     csnhypodbp_group_union(&e->keys[gi], sol->picks, sol->npicks,

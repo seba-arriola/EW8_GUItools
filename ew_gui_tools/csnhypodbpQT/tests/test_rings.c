@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <rw_mag.h>
 
@@ -152,6 +153,10 @@ static void test_mag_parse(void)
             BpqMagMsg mm;
             memcpy(before, chan, (size_t)n + 1);
             CK(bpq_magmsg_parse(chan, (size_t)n, &mm) == 0);
+            CK(mm.nvals == 8);
+            CK(strcmp(mm.vals[0].sta, "PB00") == 0);
+            CK(strcmp(mm.vals[0].chan, "HHZ") == 0);
+            CK(fabs(mm.vals[0].mag - 3.0) < 1e-9);
             CK(memcmp(before, chan, (size_t)n + 1) == 0);
         }
     }

@@ -80,7 +80,7 @@ static BpqConfig make_cfg(void)
     c.group_max_solutions = 100;
     snprintf(c.modlabels[0].label, sizeof(c.modlabels[0].label), "%s", "csnloc");
     c.modlabels[0].id = 162;
-    snprintf(c.modlabels[1].label, sizeof(c.modlabels[1].label), "%s", "hyp2000");
+    snprintf(c.modlabels[1].label, sizeof(c.modlabels[1].label), "%s", "hyp2000_ring");
     c.modlabels[1].id = 163;
     c.n_modlabels = 2;
     return c;
@@ -121,7 +121,7 @@ int main(void)
         CK(bpq_event_preferred(ev) == 1);
 
         ck_cell(ev, 7, "0000000100", __LINE__);
-        ck_cell(ev, 12, "hyp2000", __LINE__);
+        ck_cell(ev, 12, "hyp2000_ring", __LINE__);
         ck_cell(ev, 13, "1", __LINE__);
         ck_cell(ev, 14, "A", __LINE__);
         ck_cell(ev, 6, "12", __LINE__);
@@ -145,7 +145,7 @@ int main(void)
             bpq_origin_cell(ev, 0, 0, buf, sizeof(buf));
             ck_str(buf, "csnloc", __LINE__);
             bpq_origin_cell(ev, 1, 0, buf, sizeof(buf));
-            ck_str(buf, "hyp2000", __LINE__);
+            ck_str(buf, "hyp2000_ring", __LINE__);
             bpq_origin_cell(ev, 1, 2, buf, sizeof(buf));
             ck_str(buf, "A", __LINE__);
             bpq_origin_cell(ev, 0, 3, buf, sizeof(buf));

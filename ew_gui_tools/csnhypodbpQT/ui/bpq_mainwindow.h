@@ -24,6 +24,7 @@
 
 #include "bpq_capi.h"
 #include "bpq_pin.h"
+#include "csnhypodbp_magsta.h"
 
 class BpqEventsModel;
 class BpqOriginsModel;
@@ -102,6 +103,7 @@ private:
     /* Ajusta las columnas y ensancha el panel de la tabla lo justo para que no
      * haga falta scroll horizontal. */
     void fitProcesarTable(QTableView *view, QSplitter *split);
+    void fitEventTables();
     /* Estacion actual unica para picking y magnitudes. */
     void selectStation(const QString &sta);
     void syncStationViews();
@@ -161,6 +163,7 @@ private:
     void magLeft();
     void applyMagGate();                     /* cajas de la puerta -> panel */
     void setMagKind(int kind);               /* radio ML/Mwp/Mb/Ms */
+    void onMagReceived(const BpqMagMsg &m);  /* TYPE_MAGNITUDE con estaciones */
     /* --- panel Mww (fase 6.3) --- */
     void seedMww();                          /* solucion+magnitud -> semilla */
     void startMww();                         /* Calculate (hilo propio) */
@@ -331,6 +334,7 @@ private:
     QByteArray                m_magStaLabel; /* `sta` estable para el canvas */
     BpqMagCtx                 m_magCtx{};
     int                       m_magKind = 0;
+    CsnhypodbpMagStaStore     m_magSta;        /* TYPE_MAGNITUDE por estacion */
     int                       m_magDragGrab = 0;
     double                    m_magDragX = 0.0;      /* px de dispositivo */
     double                    m_magDragPressT = 0.0;

@@ -218,6 +218,9 @@ static QTableView *make_view(const QString &cls)
     v->setAlternatingRowColors(false);
     v->horizontalHeader()->setSectionsClickable(true);
     v->horizontalHeader()->setStretchLastSection(true);
+    /* El ancho de las columnas no debe inflar el minimo de la ventana
+     * (WSLg/maximizar): el viewport scrollea si hace falta. */
+    v->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
     /* Anchos acotados: una tabla que pida mucho ancho infla el minimo de la
      * ventana (trampa T6 de WSLg). */
     v->setMinimumWidth(180);
@@ -238,6 +241,7 @@ BpqMainWindow::BpqMainWindow(const BpqConfig *cfg, QWidget *parent)
 {
     setWindowTitle(QStringLiteral("CSNhypodbpQT - Hypocenter database picker (EW8/Qt)"));
     resize(1100, 750);
+    csnhypodbp_magsta_init(&m_magSta);
     /* FilterPhase del .d: el dialogo Filters… lo puede cambiar en memoria. */
     m_phaseZero = cfg && cfg->filtercfg.phase_zero != 0;
     buildUi();
@@ -637,6 +641,7 @@ void BpqMainWindow::openData()
         m_syncOrigins = true;
         m_originsModel->setEvent(ev);
         reapplySort(m_originsProxy);
+        fitEventTables();
         const QString keep = bpq_pin_active(&m_pin)
                                  ? QString::fromLatin1(bpq_pin_key(&m_pin))
                                  : QString();
@@ -801,6 +806,9 @@ void BpqMainWindow::openData()
         m_worker = new BpqRingWorker(m_rings, m_events, this);
         connect(m_worker, &BpqRingWorker::eventsChanged,
                 this, &BpqMainWindow::refreshFromStore);
+        connect(m_worker, &BpqRingWorker::magReceived, this,
+                [this](const BpqMagMsg &m) { onMagReceived(m); },
+                Qt::DirectConnection);
         connect(m_worker, &BpqRingWorker::quitRequested,
                 this, []() { QCoreApplication::quit(); });
         connect(m_worker, &BpqRingWorker::errorOccurred, this,
@@ -1355,6 +1363,14 @@ void BpqMainWindow::fitProcesarTable(QTableView *view, QSplitter *split)
     if (need >= avail) return;  /* no cabe ni con todo el panel: scroll */
     rest = avail - need;
     split->setSizes(QList<int>() << need << rest);
+}
+
+/* Eventos: ancho minimo = max(cabecera, texto mas largo) + padding. Sin
+ * anchos hardcodeados; el scroll horizontal es la valvula si no cabe. */
+void BpqMainWindow::fitEventTables()
+{
+    if (m_eventsView)  ewguiqt::fit_columns(m_eventsView, 10);
+    if (m_originsView) ewguiqt::fit_columns(m_originsView, 10);
 }
 
 /* Unico camino de cambio de estacion: m_selSta manda en los dos canvas. */
@@ -2510,12 +2526,19 @@ void BpqMainWindow::locateFinished(quint64 job, bool ok, BpqLocateOut *out,
             if (src) m_candKey = solKey(src);
         }
         {
-            char buf[256];
-            std::snprintf(buf, sizeof(buf),
-                          "locate: lat %.4f  lon %.4f  prof %.1f km  nph %d  "
-                          "rms %.2f s  (%.0f s)",
-                          m_cand.lat, m_cand.lon, m_cand.depth,
-                          m_cand.nph, m_cand.rms, secs);
+            char buf[320];
+            if (out->sent > 0)
+                std::snprintf(buf, sizeof(buf),
+                              "locate: enviadas %d picadas, ARC %d fases  "
+                              "lat %.4f  lon %.4f  prof %.1f km  rms %.2f s  (%.0f s)",
+                              out->sent, m_cand.nph, m_cand.lat, m_cand.lon,
+                              m_cand.depth, m_cand.rms, secs);
+            else
+                std::snprintf(buf, sizeof(buf),
+                              "locate: lat %.4f  lon %.4f  prof %.1f km  nph %d  "
+                              "rms %.2f s  (%.0f s)",
+                              m_cand.lat, m_cand.lon, m_cand.depth,
+                              m_cand.nph, m_cand.rms, secs);
             statusBar()->showMessage(QString::fromUtf8(buf), 0);
         }
         /* Residuales del localizador en la tabla, sin volver a pedir ondas. */
@@ -2805,6 +2828,21 @@ void BpqMainWindow::discardCandidate()
 
 /* --- magnitudes (fase 6.1) ------------------------------------------------ */
 
+/* TYPE_MAGNITUDE con la tabla por estacion: se cachea por (qid, mod, slot).
+ * El slot es la magnitud de red; `renderMagnitudes` toma la activa. */
+void BpqMainWindow::onMagReceived(const BpqMagMsg &m)
+{
+    int slot = -1;
+
+    if (!std::strcmp(m.type, "ML") || !std::strcmp(m.type, "Ml"))   slot = 0;
+    else if (!std::strcmp(m.type, "Mwp") || !std::strcmp(m.type, "MWP")) slot = 1;
+    else if (!std::strcmp(m.type, "Mb") || !std::strcmp(m.type, "MB"))   slot = 2;
+    else if (!std::strcmp(m.type, "Ms") || !std::strcmp(m.type, "MS"))   slot = 3;
+    if (slot < 0 || m.nvals <= 0) return;
+    csnhypodbp_magsta_put(&m_magSta, m.qid, m.mod, slot, m.vals, m.nvals);
+    renderMagnitudes();
+}
+
 /* Un solo camino de pintado de la sub-pestana: filas (nucleo magrow + ventanas
  * del panel), canvas de la estacion actual y linea de estado. */
 void BpqMainWindow::renderMagnitudes()
@@ -2824,6 +2862,44 @@ void BpqMainWindow::renderMagnitudes()
          * `stat` y el recuento "en uso" dirian que ninguna entra, aunque si
          * entren (el nucleo puro no conoce las trazas en memoria). */
         QVector<CsnhypodbpStaRow> rowsIn = m_staRows;
+        CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];
+        int nval = 0, nst = 0;
+        double red = NAN;
+        const CsnhypodbpSolution *sol = nullptr;
+        int pi = pinnedSolutionIndex();
+
+        if (pi < 0) pi = (m_mapCtx.selected >= 0) ? m_mapCtx.selected : m_pref;
+        if (m_curEv && pi >= 0 && pi < m_npts)
+            sol = bpq_event_sol(m_curEv, m_ptSol[pi]);
+        if (sol) {
+            nval = csnhypodbp_magsta_take(&m_magSta, sol->qid, sol->mod,
+                                          m_magKind, vals,
+                                          CSNHYPODBP_MAGSTA_MAX);
+            if (nval == 0 && m_db) {
+                const CsnhypodbpSolMeta *meta =
+                    bpq_event_sol_meta(m_curEv, m_ptSol[pi]);
+
+                if (meta && meta->origin_id[0])
+                    nval = bpq_db_mag_stations(m_db, meta->origin_id,
+                                               m_magKind, vals,
+                                               CSNHYPODBP_MAGSTA_MAX);
+            }
+            {
+                char txt[32] = "";
+                bpq_origin_cell(m_curEv, m_ptSol[pi], 11 + m_magKind,
+                                txt, sizeof(txt));
+                csnhypodbp_mag_split(txt, &red, &nst);
+            }
+            /* Si el origen no trae la red de esa magnitud, la candidata del
+             * locate puede tenerla. */
+            if (!std::isfinite(red) && m_candValid) {
+                const char *cm = (m_magKind == 0) ? m_candMag.ml
+                               : (m_magKind == 1) ? m_candMag.mwp
+                               : (m_magKind == 2) ? m_candMag.mb
+                                                  : m_candMag.ms;
+                csnhypodbp_mag_split(cm, &red, &nst);
+            }
+        }
 
         for (CsnhypodbpStaRow &r : rowsIn) {
             const char *sta = nullptr, *net = nullptr, *chan = nullptr,
@@ -2835,8 +2911,8 @@ void BpqMainWindow::renderMagnitudes()
         }
         m_magRows.resize(rowsIn.size());
         n = bpq_magpanel_rows(m_magPanel, rowsIn.constData(), rowsIn.size(),
-                              nullptr, 0, NAN, m_magRows.data(),
-                              m_magRows.size());
+                              nval > 0 ? vals : nullptr, nval, red,
+                              m_magRows.data(), m_magRows.size());
     }
     m_magRows.resize(n);
     /* La TABLA oculta las estaciones fuera de la puerta de la magnitud activa
@@ -4433,6 +4509,7 @@ void BpqMainWindow::refreshFromStore()
      * cambiarla y no queremos perder el evento (ni el pin) por eso. */
     const QString keep = m_selEventKey;
     m_eventsModel->refresh();
+    fitEventTables();
     if (m_eventsModel->rowCount() == 0) {
         bpq_pin_clear(&m_pin);
         m_pinEvent = nullptr;
@@ -4453,6 +4530,7 @@ void BpqMainWindow::refreshFromStore()
 
     const QModelIndex idx = m_eventsProxy->mapFromSource(m_eventsModel->index(src, 0));
     if (idx.isValid()) m_eventsView->selectRow(idx.row());
+    fitEventTables();
 }
 
 void BpqMainWindow::loadTestArc()

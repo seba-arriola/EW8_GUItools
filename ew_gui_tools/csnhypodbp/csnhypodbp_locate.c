@@ -511,84 +511,6 @@ int csnhypodbp_arc_extract(const char *logtext, char *out, size_t outn)
     return have ? 0 : -1;
 }
 
-static void put_at(char *dst, const char *s, size_t n)
-{
-    size_t l = strlen(s);
-    if (l >= n) memcpy(dst, s, n);
-    else { memcpy(dst, s, l); memset(dst + l, ' ', n - l); }
-}
-
-int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual, char *out, size_t outn)
-{
-    char hdr[200], t[64];
-    size_t n = 0;
-    int i;
-    time_t sec;
-    double frac;
-    struct tm *tm;
-    if (!sol || !out || outn < 512) return -1;
-    memset(hdr, ' ', sizeof(hdr));
-
-    sec = (time_t)sol->otime;
-    frac = sol->otime - (double)sec;
-    tm = gmtime(&sec);
-    if (!tm) return -1;
-    snprintf(t, sizeof(t), "%04d%02d%02d%02d%02d%02d%02d",
-             tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-             tm->tm_hour, tm->tm_min, (int)tm->tm_sec, (int)(frac * 100.0 + 0.5));
-    memcpy(hdr, t, 16);
-    {
-        double a = fabs(sol->lat); int d = (int)a;
-        snprintf(t, sizeof(t), "%02d%c%04d", d, sol->lat < 0 ? 'S' : 'N',
-                 (int)((a - d) * 60.0 * 100.0 + 0.5));
-        memcpy(hdr + 16, t, 7);
-    }
-    {
-        double a = fabs(sol->lon); int d = (int)a;
-        snprintf(t, sizeof(t), "%03d%c%04d", d, sol->lon < 0 ? 'W' : 'E',
-                 (int)((a - d) * 60.0 * 100.0 + 0.5));
-        memcpy(hdr + 23, t, 8);
-    }
-    snprintf(t, sizeof(t), "%05d", (int)(sol->depth * 100.0 + 0.5)); memcpy(hdr + 31, t, 5);
-    snprintf(t, sizeof(t), "%03d", sol->nph); memcpy(hdr + 39, t, 3);
-    snprintf(t, sizeof(t), "%03d", sol->gap); memcpy(hdr + 42, t, 3);
-    snprintf(t, sizeof(t), "%04d", (int)(sol->rms * 100.0 + 0.5)); memcpy(hdr + 48, t, 4);
-    snprintf(t, sizeof(t), "%010d", sol->qid); memcpy(hdr + 136, t, 10);
-    hdr[161] = (char)('0' + (int)(sol->version % 10));
-    hdr[EWGUI_ARC_MANUAL_OFF] = manual ? EWGUI_ARC_MANUAL_CHAR : EWGUI_ARC_AUTO_CHAR;
-    snprintf(t, sizeof(t), "%04u", sol->version); memcpy(hdr + 178, t, 4);
-
-    memcpy(out + n, hdr, 197); n += 197; out[n++] = '\n';
-
-    for (i = 0; i < sol->npicks; i++) {
-        char pl[130];
-        time_t ps = (time_t)sol->picks[i].t_pick;
-        double pf = sol->picks[i].t_pick - (double)ps;
-        struct tm *ptm = gmtime(&ps);
-        if (!ptm) continue;
-        memset(pl, ' ', sizeof(pl));
-        put_at(pl + 0, sol->picks[i].sta, 5);
-        put_at(pl + 5, sol->picks[i].net[0] ? sol->picks[i].net : "--", 2);
-        put_at(pl + 9, sol->picks[i].chan, 3);
-        pl[14] = sol->picks[i].phase;
-        snprintf(t, sizeof(t), "%04d%02d%02d%02d%02d%02d%03d",
-                 ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday,
-                 ptm->tm_hour, ptm->tm_min, (int)ptm->tm_sec, (int)(pf * 1000.0 + 0.5));
-        memcpy(pl + 17, t, 17);
-        if (!isnan(sol->picks[i].residual)) {
-            /* Residual Y2K: P en [34,37], S en [50,53] (entero x100). */
-            int off = (sol->picks[i].phase == 'S') ? 50 : 34;
-            snprintf(t, sizeof(t), "%4ld", lround(sol->picks[i].residual * 100.0));
-            put_at(pl + off, t, 4);
-        }
-        if (n + 115 >= outn) break;
-        put_at(pl + 111, sol->picks[i].loc[0] ? sol->picks[i].loc : "--", 2);
-        memcpy(out + n, pl, 114); n += 114; out[n++] = '\n';
-    }
-    out[n] = '\0';
-    return 0;
-}
-
 int csnhypodbp_confirmation_arc(const CsnhypodbpSolution *sol, char *out,
                                 size_t outn)
 {
@@ -1122,7 +1044,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     char jsonl[65536], runerr[256];
     const CsnhypodbpLocator *csn, *sel;
     char csn_bin[512], csn_cfg[512], sel_bin[512], sel_cfg[512], mags_bin[512];
-    int rc, have_workdir = 0;
+    int rc, have_workdir = 0, direct = 0;
     char *arcp;
 
     if (err && errlen) err[0] = '\0';
@@ -1149,6 +1071,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                                csn_bin, sizeof(csn_bin), csn_cfg, sizeof(csn_cfg));
     csnhypodbp_locator_resolve(sel, ew_home, ew_version, ew_params,
                                sel_bin, sizeof(sel_bin), sel_cfg, sizeof(sel_cfg));
+    direct = (strcmp(sel->name, "csnloc") != 0);
     snprintf(mags_bin, sizeof(mags_bin), "%s/%s/bin/csnmags",
              ew_home ? ew_home : "", ew_version ? ew_version : "");
 
@@ -1181,6 +1104,29 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
                 goto fail;
             }
         }
+    }
+
+    if (direct) {
+        CsnhypodbpSolution seed = *base;
+        int i, malos = 0;
+
+        for (i = 0; i < base->npicks; i++)
+            if (!base->picks[i].sta[0] || !base->picks[i].chan[0] ||
+                !base->picks[i].net[0]) malos++;
+        if (malos) {
+            if (err) snprintf(err, errlen,
+                              "%d de %d picadas sin canal o sin red: el ARC de la solucion base los perdio",
+                              malos, base->npicks);
+            goto fail;
+        }
+        seed.nph = seed.npicks;
+        seed.rms = 0.0;
+        seed.gap = 0;
+        if (csnhypodbp_arc_build(&seed, seed.manual, buf, sizeof(buf)) != 0) {
+            if (err) snprintf(err, errlen, "no construyo el ARC desde la solucion");
+            goto fail;
+        }
+        goto have_arc;
     }
 
     /* 1) picks (con SCNL completo: sin canal NI red HYPOINVERSE rechaza TODAS
@@ -1248,6 +1194,7 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
     /* Candidato provisional para la UI: csnloc ya termino; el refinador sigue. */
     if (on_stage) on_stage(out, stage_ud);
 
+have_arc:
     /* 4) refinador (si el elegido no es csnloc) */
     if (strcmp(sel->name, "csnloc") != 0) {
         FILE *af;
@@ -1262,9 +1209,10 @@ int csnhypodbp_locate_run(const CsnhypodbpLocator *list, int nlist, const char *
             goto fail;
         }
 
-        /* El refinador arranca desde la solucion elegida (epicentro/profundidad
-           y qid); las fases siguen siendo las de csnloc. */
-        arc_seed_base(buf, base);
+        /* csnloc: el refinador arranca desde la solucion elegida y conserva
+         * las fases asociadas. Directo: el ARC ya se construyo con la solucion
+         * actual y todas las picadas; no se re-siembra. */
+        if (!direct) arc_seed_base(buf, base);
         af = fopen(arcf, "w");
         if (!af) { if (err) snprintf(err, errlen, "no escribo el ARC"); goto fail; }
         fputs(buf, af); fclose(af);

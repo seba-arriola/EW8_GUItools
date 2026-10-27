@@ -37,14 +37,14 @@ ck  "tabla: casilla lee g_pick_on[] en el bind" 'g_pick_on\[idx\]\[ph\]'        
 ck  "tabla: sin scroll horizontal"            'sw_list\), GTK_POLICY_NEVER'                 csnhypodbp_main.c
 ck  "tabla: la fila S ya no se esconde"      'gtk_widget_set_visible\(lbl, TRUE\)'         csnhypodbp_main.c
 ck  "tabla: casilla del pick vacia si falta"  '\(has && idx >= 0'                          csnhypodbp_main.c
-ck  "tabla: residual formateado %+.3f"       '%\+\.3f'                                     csnhypodbp_staitem.c
+ck  "tabla: residual formateado %+.2f"       '%\+\.2f'                                     csnhypodbp_staitem.c
 ck  "tabla: origen Teo"                      '"Teo"'                                       csnhypodbp_staitem.c
 ck  "tabla: clic derecho por celda"          'on_sta_cell_right_click'                     csnhypodbp_main.c
 ck  "tabla: fuente 0.75em"                    '\.sta-table \{ font-size: 0.75em'            csnhypodbp_main.c
 ck  "tabla: borde del marco"                 '\.detail-frame \{ border'                    csnhypodbp_main.c
 ck  "tabla: SCNL de la estacion en la fila"  'StaArray\[i\]\.szChannel'                    csnhypodbp_gui.c
 ck  "localizador: picadas con red y canal"   'sin canal o sin red'                         csnhypodbp_locate.c
-ck  "localizador: ARC con red y loc"         'sol->picks\[i\]\.net\[0\]'                   csnhypodbp_locate.c
+ck  "localizador: ARC con red y loc"         'sol->picks\[i\]\.net\[0\]'                   csnhypodbp_group.c
 ck  "residuales: cada solucion guarda sus picadas" 'event_sol_set_picks'                    csnhypodbp_ws.c
 ck  "residuales: se liberan las picadas"      'event_sol_free'                              csnhypodbp_ws.c
 ck  "residuales: la elegida trae sus picadas" 'csnhypodbp_event_sol_picks\(row'             csnhypodbp_gui.c

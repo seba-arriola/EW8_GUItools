@@ -538,6 +538,27 @@ int main(void)
         CK(strstr(st, "en uso") != NULL);
     }
 
+    /* La tabla muestra la magnitud activa: vals por estacion + red. */
+    {
+        CsnhypodbpMagIn v[1];
+
+        memset(v, 0, sizeof(v));
+        snprintf(v[0].sta, sizeof(v[0].sta), "PB01");
+        v[0].mag = 3.25;
+        bpq_magpanel_set_kind(p, 1);
+        n = bpq_magpanel_rows(p, stas, 2, v, 1, 3.0, rows, 16);
+        CK(n == 2);
+        CK(fabs(rows[0].mag - 3.25) < 1e-9);
+        CK(fabs(rows[0].res - 0.25) < 1e-9);
+        CK(strcmp(csnhypodbp_magrow_stat_text(&rows[0]), "A") == 0);
+        {
+            char txt[32];
+
+            csnhypodbp_magrow_mag_text(&rows[0], txt, sizeof(txt));
+            CK(strcmp(txt, "3.25") == 0);
+        }
+    }
+
     bpq_magpanel_free(p);
     (void)err;
 

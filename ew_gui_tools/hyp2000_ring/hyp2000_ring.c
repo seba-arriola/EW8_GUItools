@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <math.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <errno.h>
@@ -31,6 +32,10 @@
 #include "earthworm.h"
 #include "transport.h"
 #include <ewgui/arc_layout.h>
+
+#include "../csnloc/csnloc.h"
+#include "../csnhypodbp/csnhypodbp_group.h"
+#include "../csnhypodbp/csnhypodbp_locator.h"
 
 #ifndef INST_WILDCARD
 #define INST_WILDCARD 0
@@ -51,6 +56,8 @@ extern void hypoinv_wrapper(const char *cmd, int *ret);
 /* ------------------------------------------------------------------------- */
 static char  MyModName[MAX_STR]   = "MOD_HYP2000_RING";
 static char  InRingName[MAX_STR]  = "HYPO_RING";
+static char  InPickRingName[MAX_STR] = "PICK_RING";
+static char  ConfRingName[MAX_STR] = "HYPO_RING_REF2";
 static char  OutRingName[MAX_STR] = "HYPO_RING_REF";
 static char  CommandFile[MAX_STR] = "";
 static char  WorkDir[MAX_STR]     = "";
@@ -63,11 +70,32 @@ static int   Debug        = 0;
 static int   MinPhases    = 0;      /* 0 = sin filtro */
 static double MaxRMS      = 0.0;    /* 0 = sin filtro */
 static double FixedDepthKm = -1.0;  /* <0 = profundidad libre */
+static double LivePickWindowSec = 60.0;
+static int    LiveUsage = 0;
+static int    LiveRecalcSec = 20;
+static int    LiveNRetry = 5;
 
-static SHM_INFO      InRegion, OutRegion;
-static long          InKey = 0, OutKey = 0;
+static SHM_INFO      InRegion, OutRegion, PickRegion, ConfRegion;
+static long          InKey = 0, OutKey = 0, PickKey = 0, ConfKey = 0;
 static unsigned char MyInstId, MyModId;
-static unsigned char TypeHyp2000Arc, TypeHeartbeat, TypeError;
+static unsigned char TypeHyp2000Arc, TypeHeartbeat, TypeError, TypePickSCNL;
+
+/* Cola de picks automaticos y eventos vivos. */
+static PickBuffer LivePicks;
+#define LIVE_EV_MAX 8
+typedef struct {
+    int                  active;
+    int                  done;
+    int                  qid;
+    double               otime;
+    double               last_run;
+    unsigned             version;
+    int                  no_new;
+    int                  last_npicks;
+    double               last_maxt;
+    CsnhypodbpSolution   seed;     /* ultima solucion preferida */
+} LiveEvent;
+static LiveEvent LiveEv[LIVE_EV_MAX];
 
 /* Region (bbox) opcional, del GridFile. */
 static int    HaveGrid = 0;
@@ -105,7 +133,9 @@ static int read_config(const char *file)
 
         if      (k_its("MyModuleId"))   { str = k_str(); if (str) strncpy(MyModName, str, sizeof(MyModName)-1); }
         else if (k_its("InRing"))       { str = k_str(); if (str) strncpy(InRingName, str, sizeof(InRingName)-1); }
+        else if (k_its("InPickRing"))   { str = k_str(); if (str) strncpy(InPickRingName, str, sizeof(InPickRingName)-1); }
         else if (k_its("OutRing"))      { str = k_str(); if (str) strncpy(OutRingName, str, sizeof(OutRingName)-1); }
+        else if (k_its("LivePickWindowSec")) LivePickWindowSec = k_val();
         else if (k_its("HeartBeatInt")) HeartbeatInt = k_int();
         else if (k_its("LogFile"))      LogFile = k_int();
         else if (k_its("Debug"))        Debug = k_int();
@@ -123,6 +153,26 @@ static int read_config(const char *file)
     }
     k_close();
     return 0;
+}
+
+/* La tabla de localizadores vive SOLO en $EW_PARAMS/csnhypodbpqt.d. No se
+ * declara en este .d: se lee por convencion y se toma la fila del binario. */
+static void load_live_config(void)
+{
+    CsnhypodbpLocator locs[8];
+    int n = 0;
+
+    if (csnhypodbp_locator_load_default(locs, &n, 8) != 0) return;
+    {
+        int i = csnhypodbp_locator_find(locs, n, "hyp2000_ring");
+
+        if (i >= 0) {
+            LiveUsage = locs[i].live_usage;
+            LiveRecalcSec = locs[i].time_recalc_live > 0
+                                ? locs[i].time_recalc_live : 20;
+            LiveNRetry = locs[i].n_retry;
+        }
+    }
 }
 
 /* ------------------------------------------------------------------------- */
@@ -479,6 +529,208 @@ static int mkdir_p(const char *path)
 }
 
 /* ------------------------------------------------------------------------- */
+/* Locator vivo: semilla de csnloc + TODOS los picks automaticos.            */
+/* ------------------------------------------------------------------------- */
+static LiveEvent *live_find(int qid)
+{
+    int i;
+    for (i = 0; i < LIVE_EV_MAX; i++)
+        if (LiveEv[i].active && LiveEv[i].qid == qid) return &LiveEv[i];
+    return NULL;
+}
+
+static LiveEvent *live_new(int qid)
+{
+    int i;
+    for (i = 0; i < LIVE_EV_MAX; i++)
+        if (!LiveEv[i].active) return &LiveEv[i];
+    for (i = 0; i < LIVE_EV_MAX; i++)
+        if (LiveEv[i].done) return &LiveEv[i];
+    /* Reutiliza el mas viejo si se lleno. */
+    return &LiveEv[0];
+}
+
+static void live_seed(const char *arc, int len)
+{
+    CsnhypodbpSolution sol;
+    LiveEvent *ev;
+
+    if (csnhypodbp_parse_solution(arc, (size_t)len, 163, &sol) != 0) return;
+    ev = live_find(sol.qid);
+    if (!ev) {
+        ev = live_new(sol.qid);
+        memset(ev, 0, sizeof(*ev));
+        ev->active = 1;
+        ev->qid = sol.qid;
+        ev->version = 0;
+    }
+    ev->seed = sol;
+    ev->otime = sol.otime;
+    ev->done = 0;
+    ev->no_new = 0;
+    ev->last_run = 0;          /* fuerza la primera corrida */
+    ev->last_npicks = 0;
+    ev->last_maxt = 0.0;
+    if (Debug >= 1)
+        logit("t", "hyp2000_ring: semilla ev=%d nph=%d\n", sol.qid, sol.nph);
+}
+
+/* Solucion preferida: confirmada a mano (`HYPO_RING_REF2`). Sustituye a la
+ * semilla de csnloc (o a la ultima refinada) y fuerza una corrida inmediata. */
+static void live_prefer(const char *arc, int len, int mod)
+{
+    CsnhypodbpSolution sol;
+    LiveEvent *ev;
+
+    if (csnhypodbp_parse_solution(arc, (size_t)len, mod, &sol) != 0) return;
+    ev = live_find(sol.qid);
+    if (!ev) {
+        ev = live_new(sol.qid);
+        memset(ev, 0, sizeof(*ev));
+        ev->active = 1;
+        ev->qid = sol.qid;
+    }
+    ev->seed = sol;
+    ev->otime = sol.otime;
+    ev->done = 0;
+    ev->no_new = 0;
+    ev->last_run = 0;
+    ev->last_npicks = 0;
+    ev->last_maxt = 0.0;
+    if (Debug >= 1)
+        logit("t", "hyp2000_ring: preferida ev=%d nph=%d\n", sol.qid, sol.nph);
+}
+
+static void live_add_pick(const char *msg, int len)
+{
+    Pick p;
+
+    if (PickSCNL_Parse(msg, len, &p) != 0) return;
+    if (p.manual) return;      /* el vivo usa solo automaticas */
+    PickBuffer_AddOrReplace(&LivePicks, &p);
+}
+
+/* Construye el ARC con la solucion preferida + todas las picadas del evento. */
+static int live_build(LiveEvent *ev, char *arc, size_t arcn,
+                      int *np_out, double *maxt_out)
+{
+    CsnhypodbpSolution s = ev->seed;
+    int i, n = s.npicks;
+    double maxt = 0.0;
+
+    for (i = 0; i < LivePicks.n; i++) {
+        const Pick *p = &LivePicks.items[i];
+        int k, found = -1;
+
+        if (p->manual) continue;
+        if (fabs(p->t_epoch - ev->otime) > LivePickWindowSec) continue;
+        if (p->t_epoch > maxt) maxt = p->t_epoch;
+        for (k = 0; k < n; k++) {
+            if (strcmp(s.picks[k].sta, p->sta) == 0 &&
+                s.picks[k].phase == p->phase_name[0]) {
+                found = k;
+                break;
+            }
+        }
+        if (found < 0) {
+            if (n >= CSNHYPODBP_MAX_PICKS) continue;
+            found = n++;
+        }
+        memset(&s.picks[found], 0, sizeof(s.picks[found]));
+        snprintf(s.picks[found].sta, sizeof(s.picks[found].sta), "%s", p->sta);
+        snprintf(s.picks[found].net, sizeof(s.picks[found].net), "%s", p->net);
+        snprintf(s.picks[found].chan, sizeof(s.picks[found].chan), "%s", p->chan);
+        snprintf(s.picks[found].loc, sizeof(s.picks[found].loc), "%s", p->loc);
+        s.picks[found].phase = p->phase_name[0] ? p->phase_name[0] : 'P';
+        s.picks[found].t_pick = p->t_epoch;
+        s.picks[found].manual = 0;
+        s.picks[found].residual = NAN;
+    }
+    if (n <= 0) return -1;
+    s.npicks = n;
+    s.nph = n;
+    s.rms = 0.0;
+    s.gap = 0;
+    s.version = ev->version + 1;
+    if (csnhypodbp_arc_build(&s, s.manual, arc, arcn) != 0) return -1;
+    *np_out = n;
+    if (maxt_out) *maxt_out = maxt;
+    return 0;
+}
+
+static void live_tick(time_t now)
+{
+    int i;
+
+    for (i = 0; i < LIVE_EV_MAX; i++) {
+        LiveEvent *ev = &LiveEv[i];
+        char arc[MAX_ARC], out[MAX_ARC];
+        int np = 0, out_len = 0;
+        double maxt = 0.0;
+        int fresh;
+
+        if (!ev->active || ev->done) continue;
+        if (ev->last_run != 0.0 && (double)now - ev->last_run < LiveRecalcSec)
+            continue;
+        if (live_build(ev, arc, sizeof(arc), &np, &maxt) != 0) {
+            ev->last_run = (double)now;
+            ev->no_new++;
+            if ((LiveNRetry <= 0 && ev->no_new >= 1) ||
+                (LiveNRetry > 0 && ev->no_new >= LiveNRetry))
+                ev->done = 1;
+            continue;
+        }
+
+        fresh = (ev->last_run == 0.0) ||
+                np != ev->last_npicks ||
+                maxt > ev->last_maxt + 1e-3;
+        if (!fresh) {
+            ev->last_run = (double)now;   /* el intento tambien espera RecalcSec */
+            ev->no_new++;
+            if ((LiveNRetry <= 0 && ev->no_new >= 1) ||
+                (LiveNRetry > 0 && ev->no_new >= LiveNRetry)) {
+                ev->done = 1;
+                logit("t", "hyp2000_ring: ev=%d sin picadas nuevas tras %d "
+                           "intentos; se detiene\n", ev->qid, ev->no_new);
+            }
+            continue;
+        }
+
+        if (hypo_locate(arc, (int)strlen(arc), out, &out_len) == 0 && out_len > 0) {
+            MSG_LOGO logo;
+            CsnhypodbpSolution refined;
+
+            out_len = arc_rewrite_id(out, out_len, arc, (int)strlen(arc));
+            logo.instid = MyInstId;
+            logo.mod = MyModId;
+            logo.type = TypeHyp2000Arc;
+            if (tport_putmsg(&OutRegion, &logo, (long)out_len, out) == PUT_OK)
+                log_result("hyp2000_ring", arc, (int)strlen(arc), out, out_len, 0);
+            if (csnhypodbp_parse_solution(out, (size_t)out_len, 163, &refined) == 0) {
+                ev->seed = refined;
+                ev->otime = refined.otime;
+            }
+            ev->version++;
+            ev->last_run = (double)now;
+            ev->last_npicks = np;
+            ev->last_maxt = maxt;
+            ev->no_new = 0;
+        } else {
+            /* El refinador no dio solucion: cuenta como intento fallido (no
+             * martillear cada 200 ms) y aplica el mismo N_retry. */
+            ev->last_run = (double)now;
+            ev->no_new++;
+            if ((LiveNRetry <= 0 && ev->no_new >= 1) ||
+                (LiveNRetry > 0 && ev->no_new >= LiveNRetry)) {
+                ev->done = 1;
+                logit("t", "hyp2000_ring: ev=%d sin solucion tras %d intentos; "
+                           "se detiene\n", ev->qid, ev->no_new);
+            }
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------- */
 /* main                                                                      */
 /* ------------------------------------------------------------------------- */
 int main(int argc, char **argv)
@@ -497,6 +749,7 @@ int main(int argc, char **argv)
         return 1;
     }
     if (read_config(argv[1]) != 0) return 1;
+    load_live_config();
 
     if (CommandFile[0] == '\0') {
         fprintf(stderr, "hyp2000_ring: falta CommandFile\n"); return 1;
@@ -557,14 +810,34 @@ int main(int argc, char **argv)
     /* Anillos. */
     tport_attach(&InRegion, InKey);
     tport_attach(&OutRegion, OutKey);
+    if (LiveUsage) {
+        PickKey = GetKey(InPickRingName);
+        if (PickKey == -1) {
+            logit("et", "hyp2000_ring: anillo de picks invalido <%s>; vivo off\n",
+                  InPickRingName);
+            LiveUsage = 0;
+        } else {
+            tport_attach(&PickRegion, PickKey);
+        }
+        if (GetType("TYPE_PICK_SCNL", &TypePickSCNL) != 0) LiveUsage = 0;
+        ConfKey = GetKey(ConfRingName);
+        if (ConfKey != -1) tport_attach(&ConfRegion, ConfKey);
+    }
 
     /* Region opcional. */
     if (GridFile[0] != '\0') load_grid_bbox(GridFile);
 
     /* Arranque del motor. */
     if (hypo_startup() != 0) { logit("et", "hyp2000_ring: arranque de hypoinverse fallo\n"); return 1; }
+    if (LiveUsage) {
+        PickBuffer_Init(&LivePicks, CSLOC_MAX_PICKS, 10.0);
+        logit("t", "hyp2000_ring: vivo live_usage=1 recalc=%ds n_retry=%d picks=%s\n",
+              LiveRecalcSec, LiveNRetry, InPickRingName);
+    }
     logit("t", "hyp2000_ring: iniciado (in=%s out=%s cmd=%s workdir=%s)\n",
           InRingName, OutRingName, CommandFile, WorkDir[0] ? WorkDir : ".");
+    if (!LiveUsage)
+        logit("t", "hyp2000_ring: live_usage=0; modo vivo desactivado\n");
 
     getlogo[0].instid = INST_WILDCARD;
     getlogo[0].mod    = MOD_WILDCARD;
@@ -580,59 +853,60 @@ int main(int argc, char **argv)
             status(TypeHeartbeat, 0);
         }
 
-        if (tport_getmsg(&InRegion, getlogo, 1, &reclogo, &recsize,
-                         (char *)msg, MAX_MSG - 1) != GET_OK) {
-            sleep_ew(200);
-            continue;
-        }
-        msg[recsize] = '\0';
+        if (LiveUsage) {
+            MSG_LOGO picklogo[1];
+            MSG_LOGO plogo;
 
-        /* Filtros de calidad. */
-        {
-            double lat, lon, z, rms, gap;
-            int    nph;
-            if (arc_header((char *)msg, (int)recsize, &lat, &lon, &z, &nph, &rms, &gap) != 0) {
-                logit("et", "hyp2000_ring: ARC malformado (len=%ld)\n", recsize);
-                continue;
-            }
-            if (MinPhases > 0 && nph < MinPhases) {
-                if (Debug >= 1) logit("t", "hyp2000_ring: descartado nph=%d < %d\n", nph, MinPhases);
-                continue;
-            }
-            if (MaxRMS > 0.0 && rms > MaxRMS) {
-                if (Debug >= 1) logit("t", "hyp2000_ring: descartado rms=%.2f > %.2f\n", rms, MaxRMS);
-                continue;
-            }
-            if (!in_region(lat, lon)) {
-                if (Debug >= 1) logit("t", "hyp2000_ring: fuera de region lat=%.3f lon=%.3f\n", lat, lon);
-                continue;
-            }
-        }
+            picklogo[0].instid = INST_WILDCARD;
+            picklogo[0].mod    = MOD_WILDCARD;
+            picklogo[0].type   = TypePickSCNL;
 
-        out_len = 0;
-        {
-            struct timespec ts0, ts1;
-            long dt_ms;
-            clock_gettime(CLOCK_MONOTONIC, &ts0);
-            if (hypo_locate((char *)msg, (int)recsize, arc_out, &out_len) == 0 && out_len > 0) {
-                out_len = arc_rewrite_id(arc_out, out_len, (char *)msg, (int)recsize);
-                clock_gettime(CLOCK_MONOTONIC, &ts1);
-                dt_ms = (ts1.tv_sec - ts0.tv_sec) * 1000L
-                      + (ts1.tv_nsec - ts0.tv_nsec) / 1000000L;
-                logo.instid = MyInstId;
-                logo.mod    = MyModId;
-                logo.type   = TypeHyp2000Arc;
-                if (tport_putmsg(&OutRegion, &logo, (long)out_len, arc_out) != PUT_OK)
-                    logit("et", "hyp2000_ring: fallo escribiendo ARC refinado\n");
-                else {
-                    log_result("hyp2000_ring", (char *)msg, (int)recsize, arc_out, out_len, dt_ms);
+            if (tport_getmsg(&PickRegion, picklogo, 1, &plogo, &recsize,
+                             (char *)msg, MAX_MSG - 1) == GET_OK) {
+                msg[recsize] = '\0';
+                live_add_pick((char *)msg, (int)recsize);
+            }
+
+            if (tport_getmsg(&InRegion, getlogo, 1, &reclogo, &recsize,
+                             (char *)msg, MAX_MSG - 1) == GET_OK) {
+                double lat, lon, z, rms, gap;
+                int    nph;
+
+                msg[recsize] = '\0';
+                if (arc_header((char *)msg, (int)recsize, &lat, &lon, &z,
+                               &nph, &rms, &gap) != 0) {
+                    logit("et", "hyp2000_ring: ARC malformado (len=%ld)\n", recsize);
+                } else if (MinPhases > 0 && nph < MinPhases) {
                     if (Debug >= 1)
-                        logit("t", "hyp2000_ring: ARC refinado (%d bytes) -> %s\n", out_len, OutRingName);
+                        logit("t", "hyp2000_ring: semilla descartada nph=%d < %d\n",
+                              nph, MinPhases);
+                } else if (!in_region(lat, lon)) {
+                    if (Debug >= 1)
+                        logit("t", "hyp2000_ring: semilla fuera de region\n");
+                } else {
+                    live_seed((char *)msg, (int)recsize);
                 }
             }
+
+            if (ConfKey != -1 &&
+                tport_getmsg(&ConfRegion, getlogo, 1, &reclogo, &recsize,
+                             (char *)msg, MAX_MSG - 1) == GET_OK) {
+                msg[recsize] = '\0';
+                live_prefer((char *)msg, (int)recsize, (int)reclogo.mod);
+            }
+
+            live_tick(time(NULL));
+            PickBuffer_Prune(&LivePicks, (double)time(NULL), 300.0);
         }
+
+        sleep_ew(200);
     }
 
+    if (LiveUsage) {
+        tport_detach(&PickRegion);
+        if (ConfKey != -1) tport_detach(&ConfRegion);
+        PickBuffer_Free(&LivePicks);
+    }
     tport_detach(&InRegion);
     tport_detach(&OutRegion);
     logit("t", "hyp2000_ring: terminando\n");

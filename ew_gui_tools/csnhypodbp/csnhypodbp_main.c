@@ -265,18 +265,19 @@ int  g_sds_enabled = 1;
 char g_sds_root[512] = "/mnt/sds/archive";
 int  g_sds_fallback_hours = 168;
 
-/* Etiquetas de modulo origen: config "ModuleLabel <id> <nombre>". */
-#define MAX_MODLABELS 16
-typedef struct { int id; char label[24]; } MOD_LABEL;
-static MOD_LABEL g_modlabels[MAX_MODLABELS];
-static int       g_nmodlabels = 0;
-
+/* Etiqueta del modulo origen: se deriva del binario de la tabla de
+ * localizadores (csnhypodbpqt.d); no hay ModuleLabel en el .d. */
 const char *ModLabel(int mod)
 {
     static char buf[16];
     int i;
-    for (i = 0; i < g_nmodlabels; i++)
-        if (g_modlabels[i].id == mod) return g_modlabels[i].label;
+    for (i = 0; i < g_nlocators; i++)
+        if (csnhypodbp_locator_mod(&g_locators[i]) == mod)
+            return g_locators[i].name;
+    /* Fallback para origenes historicos de la BD si la tabla no esta. */
+    if (mod == 162) return "csnloc";
+    if (mod == 163) return "hyp2000_ring";
+    if (mod == 164) return "nlloc_ring";
     snprintf(buf, sizeof(buf), "%d", mod);
     return buf;
 }
@@ -349,15 +350,6 @@ int ReadConfig(char *configfile) {
         else if (k_its("DbHistoryHours")) { g_db_hours = k_int(); }
         else if (k_its("StoreRoot")) { str = k_str(); if (str) snprintf(g_store_root, sizeof(g_store_root), "%s", str); }
         else if (k_its("FetchThreads")) { g_fetch_threads = k_int(); if (g_fetch_threads < 1) g_fetch_threads = 1; }
-        else if (k_its("ModuleLabel")) {
-            int mid = k_int(); str = k_str();
-            if (str && g_nmodlabels < MAX_MODLABELS) {
-                g_modlabels[g_nmodlabels].id = mid;
-                strncpy(g_modlabels[g_nmodlabels].label, str, sizeof(g_modlabels[0].label) - 1);
-                g_modlabels[g_nmodlabels].label[sizeof(g_modlabels[0].label) - 1] = '\0';
-                g_nmodlabels++;
-            }
-        }
         else if (k_its("channelsOrder")) {
             char buf[128]; k_rest_join(buf, sizeof(buf));
             if (buf[0]) snprintf(g_channels_order, sizeof(g_channels_order), "%s", buf);
@@ -386,9 +378,16 @@ int ReadConfig(char *configfile) {
                       CSNHYPODBP_TRACES_PER_SCREEN_MAX, g_traces_per_screen);
         }
         else if (k_its("locator")) {
-            char *nm = k_str(), *bn = k_str(), *cf = k_str();
-            if (nm && bn && cf)
-                csnhypodbp_locator_add(g_locators, &g_nlocators, MAX_LOCATORS, nm, bn, cf);
+            /* locator <bin> <cfg> <live_usage> <time_recalc_live> <N_retry> */
+            char *bn = k_str(), *cf = k_str(), *ls = k_str();
+            char *rs = k_str(), *ns = k_str();
+            if (bn && cf)
+                csnhypodbp_locator_add_full(g_locators, &g_nlocators,
+                                            MAX_LOCATORS, bn, cf,
+                                            ls ? atoi(ls) : 0,
+                                            rs ? atoi(rs) : 0,
+                                            ns ? atoi(ns) : 0);
+            (void)k_err();
         }
         else if (k_its("ManualStateFile")) { str = k_str(); if (str) snprintf(g_manual_state_file, sizeof(g_manual_state_file), "%s", str); }
         else if (k_its("LocatorTimeoutSec")) { g_locator_timeout_sec = k_int(); }
@@ -537,7 +536,12 @@ int ReadConfig(char *configfile) {
         fprintf(stderr, "Aviso: no se pudo leer MagConfigFile <%s>; se usan los "
                         "defaults de magnitud\n", MagConfigFile);
     for (i = 0; i < ncommand; i++) if (!init[i]) nmiss++;
-    k_close(); return (nmiss > 0) ? -1 : 0;
+    k_close();
+    /* La tabla de localizadores vive SOLO en csnhypodbpqt.d. La GTK no la
+     * duplica en su .d: si no declaro `locator`, la carga de ahi. */
+    if (g_nlocators == 0)
+        csnhypodbp_locator_load_default(g_locators, &g_nlocators, MAX_LOCATORS);
+    return (nmiss > 0) ? -1 : 0;
 }
 
 /* --- Modos headless (patron de csnrv): no arrancan GTK ni se conectan a EW --- */

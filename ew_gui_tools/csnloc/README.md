@@ -1,7 +1,10 @@
 # csnloc — Asociación de fases + localización rápida
 
-Módulo Earthworm nativo (C) de asociación de fases y primera localización
-**localmente** (sin asociador externo).
+Módulo Earthworm nativo (C) **asociador**: genera una primera solución por
+evento y la publica como semilla. No versiona ni re-localiza eventos ya
+emitidos. Los locators con `live_usage=1` (tabla de `csnhypodbpqt.d`) son los
+que recalculan con todos los picks. Si se pone `csnloc live_usage=1`, además
+actúa como locator versionando; el asociador sigue emitiendo una sola vez.
 
 - **Entrada:** `PICK_RING`, mensajes `TYPE_PICK_SCNL` (tipo 8).
 - **Salida:** `HYPO_RING`, mensajes `TYPE_HYP2000ARC` con el layout del ARC

@@ -5,7 +5,7 @@
 # Autocontenido, como csnloc: no depende de src/ de EarthWorm.
 
 CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
-         -I../common/include -D_LINUX -D_REENTRANT
+         -I../common/include -I../csnloc -I../csnhypodbp -D_LINUX -D_REENTRANT
 
 LIBS   = -lm -lpthread
 
@@ -26,8 +26,26 @@ install: $(TARGET)
 $(HYPOLIB):
 	$(MAKE) -C hypoinverse
 
-$(TARGET): hyp2000_ring.o $(HYPOLIB)
-	$(CC) $(CFLAGS) -o $(TARGET) hyp2000_ring.o $(HYPOLIB) $(EWLIBS) \
+LIVE_OBJS = ../csnhypodbp/csnhypodbp_group.o \
+            ../csnhypodbp/csnhypodbp_locator.o \
+            ../csnloc/pick_scln.o ../csnloc/pick_buffer.o
+
+../csnhypodbp/csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c \
+                                  ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
+                                    ../csnhypodbp/csnhypodbp_locator.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/pick_scln.o: ../csnloc/pick_scln.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/pick_buffer.o: ../csnloc/pick_buffer.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET): hyp2000_ring.o $(LIVE_OBJS) $(HYPOLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) hyp2000_ring.o $(LIVE_OBJS) $(HYPOLIB) $(EWLIBS) \
 	      -lgfortran $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
@@ -35,6 +53,7 @@ $(TARGET): hyp2000_ring.o $(HYPOLIB)
 .PHONY: check
 check:
 	sh ./test/test_fixdepth_invariants.sh
+	sh ./test/test_live_invariants.sh
 
 # Prueba real offline (necesita EW_PARAMS + csnloc compilado).
 .PHONY: check-offline

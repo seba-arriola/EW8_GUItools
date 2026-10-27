@@ -104,6 +104,11 @@ typedef struct {
     char   Author[32];
     double EventTTLSec;
 
+    /* Asociador: emite SOLO la primera solucion de cada evento. El rol de
+     * locator en vivo (si live_usage=1) es el que versiona; el asociador
+     * nunca itera. */
+    int    AssociateOnly;
+
     /* Versionado dinamico de eventos */
     double MaxRMSDegrade;          /* empeoramiento RMS tolerado (fraccion) */
     double MaxGapDegradeDeg;       /* empeoramiento de gap tolerado (grados) */

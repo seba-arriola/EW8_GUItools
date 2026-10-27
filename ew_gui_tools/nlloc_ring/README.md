@@ -7,6 +7,11 @@ escribe el ARC refinado en `HYPO_RING_REF` (el **mismo** anillo que
 `hyp2000_ring`; `csnhypodbp` los distingue por módulo origen). **No** usa la
 cadena *sausage*.
 
+Con `live_usage=0` (valor por defecto en `csnhypodbpqt.d`) el proceso vivo queda
+inactivo: se usa **sólo** por el `locate` manual/offline de la GUI. Para
+activarlo en tiempo real habría que implementar el mismo modo de picks que
+`hyp2000_ring`; hoy no se hace.
+
 ```
 HYPO_RING (ARC de csnloc) ──► nlloc_ring ──► HYPO_RING_REF (ARC refinado)
                                    │

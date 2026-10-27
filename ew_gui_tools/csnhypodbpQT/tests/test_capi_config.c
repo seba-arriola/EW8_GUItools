@@ -275,13 +275,13 @@ int main(int argc, char **argv)
     CHECK_DBL(c->colors_s.manual[1], 0.6, 1e-9);
     CHECK(c->colors_s.has_auto == 0);
 
-    /* ModuleLabel */
-    CHECK(c->n_modlabels == 3);
-    if (c->n_modlabels == 3) {
-        CHECK(c->modlabels[0].id == 162);
-        CHECK_STR(c->modlabels[0].label, "csnloc");
-        CHECK(c->modlabels[2].id == 164);
-        CHECK_STR(c->modlabels[2].label, "nlloc");
+    /* La tabla de locators sustituye a ModuleLabel. */
+    CHECK(c->n_modlabels == 0);
+    if (c->n_locators == 3) {
+        CHECK(c->locators[0].live_usage == 0);
+        CHECK(c->locators[1].live_usage == 1);
+        CHECK(c->locators[1].time_recalc_live == 20);
+        CHECK(c->locators[1].n_retry == 5);
     }
 
     /* magcfg se lee de csnmags.d (mismo cwd=params): defaults sensatos */

@@ -450,11 +450,11 @@ static int reuse_event(EwGuiDb *d, const char *qid, double otime, char *eid,
 
 int bpq_mod_for_locator(const char *locator)
 {
-    if (!locator) return 162;
+    if (!locator) return 0;
     if (strcmp(locator, "csnloc") == 0) return 162;
     if (strcmp(locator, "hyp2000_ring") == 0) return 163;
     if (strcmp(locator, "nlloc_ring") == 0) return 164;
-    return 162;
+    return 0;
 }
 
 int bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,

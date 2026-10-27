@@ -372,6 +372,10 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
         e->last_update_epoch = c->t0;
         e->t0_detect = c->t0;
 
+        /* Asociador: la primera solucion ya se emitio; no se refina, no se
+         * poda y no se versiona. El evento se conserva para el dedup/TTL. */
+        if (cfg->AssociateOnly && e->emitted) return 0;
+
         if (!changed) return 0;   /* sin picks nuevos: no hacer nada */
 
         /* Re-localizar con el conjunto acumulado. */

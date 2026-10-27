@@ -248,7 +248,7 @@ hace **`csnloc`** localmente.
     Credenciales en `run_working_v8/params/db.env` (`DbEnvFile`). Mapeo campo a campo (ida y vuelta)
     y contrato de orden de las tablas: `docs/DATA-MAPPING.md`; lo que falta decidir:
     `docs/DATA-MAPPING-PENDIENTES.md`. Ver también `docs/HYPODB.md` y `db/README.md`.
-  - `csnloc/`: módulo nativo (C) de asociación de fases + localización rápida. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
+  - `csnloc/`: módulo nativo (C) **asociador**. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`): emite **una sola** primera solución por evento y no versiona; los locators con `live_usage=1` son los que recalculan con todos los picks. Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
   - `pickS/`: picker nativo (C) de **onda S**. Lee ondas `TYPE_TRACEBUF2` de
     `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `LEGACY_PICK_RING`, y
     publica picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en
@@ -393,16 +393,23 @@ SeedLink (10.54.217.9:18000)
         │  pick_FP (P) + pickml iquique (S)
         ├────────────────────► PICK_RING ──► csntvp / csnhypodbp (re-picks manuales)
         │                          │
-        │                          └─ csnloc (asociador + localizador local) ─┐
-        │                                                                     ▼
-        │            HYPO_RING (TYPE_HYP2000ARC) ──► csnmags  (ML/Mwp/Mb/Ms)  [store]
-        │                                          ──► csnhypodbp  (GUI)      [store]
-        │                                          ──► csnrv       (vista regional)
+        │                          ├─ csnloc (asociador: 1.ª solución) ─► HYPO_RING
+        │                          └─ hyp2000_ring (live_usage=1) ───────► HYPO_RING_REF
+        │                                     (todos los picks, N s)
+        │            HYPO_RING_REF (163/164) ──► csnmags  (ML/Mwp/Mb/Ms)  [store]
+        │            HYPO_RING     (162)     ──► csnmags_raw
+        │            HYPO_RING/REF           ──► csnhypodbp / csnrv
         │
         └─ pickS / pickml eqt ─► LEGACY_PICK_RING  (sin consumidor: comparar)
 ```
 
-`csnloc` hace la asociación de fases y la localización **localmente**. El ingester `wstore_ingest`
+`csnloc` es **sólo el asociador**: emite una primera solución por evento (nunca versiona).
+La tabla de localizadores vive únicamente en `csnhypodbpqt.d` (columnas `binario`, `config`,
+`live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. Los locators con
+`live_usage=1` reciben todos los picks automáticos de `PICK_RING`, rehacen el ARC con la última
+solución preferida y publican `HYPO_RING_REF` cada `time_recalc_live`; tras `N_retry` intentos sin
+picadas nuevas dejan de localizar ese evento. El `locate` manual manda todos los picks directo al
+locator elegido (sin `csnloc` intermedio). El ingester `wstore_ingest`
 lee `SLINK_RING` con su propio cursor y escribe el **store indexado** (`wstore`), fuente primaria de
 ondas de `csnhypodbp` y `csnmags`. **`PICK_RING` es el anillo vivo** y su regla es **un productor
 por fase**: `pick_FP` aporta la **P** y `pickml_iquique` **sólo la S** (`PublishPhases S`, porque

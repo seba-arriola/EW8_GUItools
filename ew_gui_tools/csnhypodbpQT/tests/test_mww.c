@@ -159,8 +159,8 @@ int main(void)
     CK(bpq_mod_for_locator("csnloc") == 162);
     CK(bpq_mod_for_locator("hyp2000_ring") == 163);
     CK(bpq_mod_for_locator("nlloc_ring") == 164);
-    CK(bpq_mod_for_locator(NULL) == 162);
-    CK(bpq_mod_for_locator("otro") == 162);
+    CK(bpq_mod_for_locator(NULL) == 0);
+    CK(bpq_mod_for_locator("otro") == 0);
 
     /* --- 6. playera: sin mecanismo dibuja el aviso, no basura ------------- */
     {

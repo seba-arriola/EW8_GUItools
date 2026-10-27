@@ -115,7 +115,7 @@ QVariant BpqStationsModel::data(const QModelIndex &ix, int role) const
                                            : QStringLiteral("-");
         case ColRes:
             if (!pk.present || !std::isfinite(pk.resid)) return QString();
-            return QString::number(pk.resid, 'f', 1);
+            return QString::asprintf("%+.2f", pk.resid);
         default: break;
         }
         return QVariant();

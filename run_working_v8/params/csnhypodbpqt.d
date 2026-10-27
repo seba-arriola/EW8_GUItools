@@ -25,11 +25,15 @@ componentsOrder Z N E
 # Trazas por pantalla en la pestaña picking: 1, 2 o 3 (solo esos valores; el
 # resto de canales de la estación queda debajo y se alcanza con la rueda).
 tracesPerScreen 1
-# locator <nombre> <binario> <config.d> (sin '/' se resuelven contra
-# $EW_HOME/$EW_VERSION/bin y $EW_PARAMS).
-locator         csnloc       csnloc       csnloc.d
-locator         hyp2000_ring hyp2000_ring hyp2000_ring.d
-locator         nlloc_ring   nlloc_ring   nlloc_ring.d
+# Tabla UNICA de localizadores. El nombre es el basename del binario.
+# <bin>/<cfg> sin '/' se resuelven contra $EW_HOME/$EW_VERSION/bin y $EW_PARAMS.
+# live_usage: 0 = sólo manual/offline; 1 = además locator en vivo.
+# time_recalc_live: segundos entre recálculos del locator vivo.
+# N_retry: intentos sin picadas nuevas antes de dejar de localizar el evento.
+# key     nombre_binario  archivo_config  live_usage  time_recalc_live  N_retry
+locator   csnloc          csnloc.d        0           0                 0
+locator   hyp2000_ring    hyp2000_ring.d  1           20                5
+locator   nlloc_ring      nlloc_ring.d    0           0                 5
 # Estado propio de la GUI (soluciones manuales de locate+confirm): relativo a
 # $EW_PARAMS y dentro de SU carpeta — runtime, no versionado
 # (run_working_v8/csnhypodbpqt/); el modulo la crea si falta.
@@ -93,11 +97,6 @@ StaLta          t 0.5 10.0 3.0 1.5
 #sColor         009900   # S manual
 #sColorAuto     66C266   # S automatica (default: sColor aclarado 40%)
 #sColorTheo     B3E0B3   # S teorica    (default: sColor aclarado 70%)
-
-# Etiquetas de modulo origen para la columna "Mod" (id -> nombre).
-ModuleLabel     162  csnloc
-ModuleLabel     163  hyp2000
-ModuleLabel     164  nlloc
 
 # Fuente de ondas: el store indexado (wstore_ingest -> StoreRoot) para lo
 # reciente y el archivo SDS para lo antiguo (ver Sds* abajo).

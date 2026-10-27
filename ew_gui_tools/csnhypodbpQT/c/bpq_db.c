@@ -13,6 +13,7 @@
  * por el hilo de la GUI, igual que en la version GTK.
  */
 #include "bpq_capi.h"
+#include "csnhypodbp_magcfg.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -163,6 +164,7 @@ static void sol_from_origin(BpqDb *d, const char *event_id,
     sol->nph = o->station_count;
     sol->rms = o->standard_error;
     sol->gap = (int)(o->azimuthal_gap + 0.5);
+    snprintf(sol->origin_id, sizeof(sol->origin_id), "%s", o->origin_id);
 
     if (d->db) {
         EwGuiPickRow *pk = NULL;
@@ -330,4 +332,54 @@ int bpq_db_search(BpqDb *db, const BpqConfig *cfg, BpqEvents *store,
     free(ids);
     ewguidb_rows_free(ev);
     return added;
+}
+
+/* Magnitudes por estacion de un origen concreto. Prefiere la magnitud manual
+ * (CSNMan) del mismo tipo; si no, la automatica. La conversion de filas la
+ * hace el mismo nucleo puro que la GTK. */
+int bpq_db_mag_stations(BpqDb *db, const char *origin_id, int kind,
+                        CsnhypodbpMagIn *out, int max)
+{
+    EwGuiMagRow *mg = NULL;
+    int nm = 0, i, best = -1, n = 0;
+    const char *want;
+
+    if (!db || !db->db || !origin_id || !origin_id[0] || !out || max <= 0)
+        return 0;
+    want = csnhypodbp_magcfg_name(kind);
+    if (!want || !want[0]) return 0;
+    if (ewguidb_query_magnitudes(db->db, origin_id, &mg, &nm) < 0 || !mg) {
+        ewguidb_rows_free(mg);
+        return 0;
+    }
+    for (i = 0; i < nm; i++) {
+        if (strcmp(mg[i].magnitude_type, want) != 0) continue;
+        if (best < 0 || strcmp(mg[i].calculation_method, "CSNMan") == 0) {
+            best = i;
+            if (strcmp(mg[i].calculation_method, "CSNMan") == 0) break;
+        }
+    }
+    if (best >= 0) {
+        EwGuiStaMagRow *st = NULL;
+        int ns = 0;
+
+        if (ewguidb_query_station_magnitudes(db->db, mg[best].magnitude_id,
+                                             &st, &ns) >= 0 && st && ns > 0) {
+            CsnhypodbpMagDbRow *rows =
+                (CsnhypodbpMagDbRow *)calloc((size_t)ns, sizeof(*rows));
+
+            if (rows) {
+                for (i = 0; i < ns; i++) {
+                    rows[i].channel = st[i].channel;
+                    rows[i].read_amplitude = st[i].read_amplitude;
+                    rows[i].calculated_magnitude = st[i].calculated_magnitude;
+                }
+                n = csnhypodbp_magrow_from_db(out, max, rows, ns);
+                free(rows);
+            }
+        }
+        ewguidb_rows_free(st);
+    }
+    ewguidb_rows_free(mg);
+    return n;
 }

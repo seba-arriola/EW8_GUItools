@@ -47,13 +47,19 @@ Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
 - Columnas nuevas visibles: **`Mod`** (etiqueta del módulo) y **`Ver`**
   (versión). El `PickCache` también se indexa por `(qid, módulo)` para no mezclar
   las fases de un módulo con las del otro.
-- Etiquetas configurables en `csnhypodbp.d`:
+- La tabla de localizadores vive **sólo** en `csnhypodbpqt.d`; el `Mod` muestra
+  el nombre del binario. `csnhypodbp.d` no la duplica:
   ```
   InRing HYPO_RING_REF
-  ModuleLabel 162 csnloc
-  ModuleLabel 163 hyp2000
-  ModuleLabel 164 nlloc
+  # key     nombre_binario  archivo_config  live_usage  time_recalc_live  N_retry
+  locator   csnloc          csnloc.d        0           0                 0
+  locator   hyp2000_ring    hyp2000_ring.d  1           20                5
+  locator   nlloc_ring      nlloc_ring.d    0           0                 5
   ```
+  `csnloc` como asociador emite **una sola** solución inicial por evento; no
+  versiona. Los locators con `live_usage=1` rehacen el ARC con todos los picks
+  automáticos y la última solución preferida, y se detienen tras `N_retry`
+  intentos sin picadas nuevas.
 
 ## Logs de análisis
 
@@ -80,9 +86,9 @@ Para analizar: `grep ' LOC ' run_working_v8/log/hyp2000_ring_*.log`.
 
 | Módulo | `.d` | Claves relevantes |
 |---|---|---|
-| `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS` |
+| `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `InPickRing PICK_RING`, `OutRing HYPO_RING_REF`, `LivePickWindowSec`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS` |
 | `nlloc_ring` | `nlloc_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `OutRoot`, `WorkDir`, `GridFile`, `ModelBand` (repetible), `ModelFallback`, `TransOrigin`, `LocGrid`, `NllIntervalSec`, `NllTTLSec`, `NllMaxPending` |
-| `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `ConfRing HYPO_RING_REF2`, `ModuleLabel` |
+| `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `InRingRaw HYPO_RING`, `ConfRing HYPO_RING_REF2`; la tabla de locators se lee de `csnhypodbpqt.d` |
 
 `HYPO_RING_REF2` es el **anillo de confirmaciones**: `csnhypodbp` publica ahí el ARC de cada solución
 confirmada a mano y `hypodb_ingest` lo consume (`hypodb.d`: `InRingConf HYPO_RING_REF2`) para

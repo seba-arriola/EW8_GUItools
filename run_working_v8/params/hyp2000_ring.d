@@ -5,7 +5,11 @@
 
 MyModuleId      MOD_HYP2000_RING
 InRing          HYPO_RING
+InPickRing      PICK_RING
 OutRing         HYPO_RING_REF
+# Ventana temporal para reunir los picks del evento (s). No debe cubrir dos
+# sismos: el TTL del buffer (300 s) es otra cosa.
+LivePickWindowSec 60.0
 HeartBeatInt    30
 LogFile         1
 Debug           1

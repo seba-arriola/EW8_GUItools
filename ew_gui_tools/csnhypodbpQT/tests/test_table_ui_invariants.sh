@@ -89,6 +89,18 @@ if grep -q 'setStretchLastSection(false)' "$table"; then
 else
     bad "fit_columns no desactiva stretchLastSection"
 fi
+if grep -q 'fit_columns(m_eventsView' "$ui" &&
+   grep -q 'fit_columns(m_originsView' "$ui" &&
+   grep -q 'fitEventTables' "$ui"; then
+    ok "Eventos y Origins ajustan sus anchos al contenido"
+else
+    bad "Eventos/Origins no usan fit_columns"
+fi
+if grep -q 'setColumnWidth' "$ui" || grep -q 'resizeColumnsToContents' "$ui"; then
+    bad "hay anchos hardcodeados/ResizeToContents en la UI"
+else
+    ok "sin anchos hardcodeados en la UI"
+fi
 
 # 5) Eje unico y reset de zoom sin pila.
 if grep -q 'bpq_axis_paint' "$traces" && grep -q 'bpq_axis_paint' "$mag"; then

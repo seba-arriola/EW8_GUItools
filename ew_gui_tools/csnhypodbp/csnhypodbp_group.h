@@ -42,6 +42,9 @@ typedef struct {
     char     pref_mag;  /* tipo preferido del ARC (BMTYPI): L/W/B/S, 0 = ninguna */
     int      npicks;
     CsnhypodbpPick picks[CSNHYPODBP_MAX_PICKS];
+    /* id de origen de la BD (`E<qid>-<otime>:<mod>:<version>`), si se cargo de
+     * ahi; vacio en las soluciones que llegan por anillo. */
+    char     origin_id[64];
 } CsnhypodbpSolution;
 
 /* Clave de grupo: en la practica la UNION de las picadas de sus miembros. */
@@ -54,6 +57,10 @@ typedef struct {
 /* --- Parseo del ARC (offset 0-based, ver csnhypodbp_ws.c) --- */
 int csnhypodbp_parse_solution(const char *msg, size_t len, int mod,
                               CsnhypodbpSolution *out);
+
+/* Escribe un ARC Y2K con la cabecera de `sol` y TODAS sus fases. */
+int csnhypodbp_arc_build(const CsnhypodbpSolution *sol, int manual,
+                         char *out, size_t outn);
 
 /* --- Firma / comparacion de picadas --- */
 int      csnhypodbp_pick_match(const CsnhypodbpPick *a, const CsnhypodbpPick *b,
@@ -94,6 +101,7 @@ typedef struct {
     double   rms;
     double   otime;
     double   created;    /* epoch: creacion en la BD / insercion en la GUI */
+    char     origin_id[64]; /* id de la BD; vacio en soluciones de anillo */
 } CsnhypodbpSolMeta;
 
 /* Confirmada mas reciente si hay confirmadas; si no, manual mas reciente; si

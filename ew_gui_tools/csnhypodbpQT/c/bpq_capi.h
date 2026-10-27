@@ -646,6 +646,7 @@ int          bpq_stations_scnl(const BpqStations *c, int idx, const char **sta,
 typedef struct {
     CsnhypodbpSolution sol;
     CsnhypodbpMagOut   mag;
+    int                sent;   /* picadas construidas antes del refinador */
 } BpqLocateOut;
 
 /* Rellena un CsnhypodbpTrace con las muestras CRUDAS de la traza (el trace
@@ -940,6 +941,8 @@ typedef struct {
     int  nsta;              /* MAG_INFO.nstations */
     char type[8];           /* "ML"/"Mwp"/"Mb"/"Ms" */
     char algorithm[16];
+    CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];
+    int  nvals;
 } BpqMagMsg;
 
 typedef void (*BpqArcFn) (const CsnhypodbpSolution *sol, const char *raw,
@@ -1029,6 +1032,9 @@ int    bpq_db_load_recent(BpqDb *db, const BpqConfig *cfg, BpqEvents *store,
 int    bpq_db_search(BpqDb *db, const BpqConfig *cfg, BpqEvents *store,
                      double t_min, double t_max, int limit,
                      char *err, size_t errn);
+/* Magnitudes por estacion de un origen y una magnitud (ML/Mwp/Mb/Ms). */
+int    bpq_db_mag_stations(BpqDb *db, const char *origin_id, int kind,
+                           CsnhypodbpMagIn *out, int max);
 
 /* "YYYY-MM-DD HH:MM:SS" o ISO con 'T' (UTC) -> epoch. 0 OK, -1 formato. */
 int    bpq_db_parse_utc(const char *txt, double *epoch);

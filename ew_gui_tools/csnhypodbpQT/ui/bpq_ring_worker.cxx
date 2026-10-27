@@ -117,6 +117,7 @@ void BpqRingWorker::deliverMag(const BpqMagMsg *m)
 {
     m_nmag++;
     bpq_events_feed_mag(m_events, m);
+    if (m) emit magReceived(*m);
 }
 
 void BpqRingWorker::deliverPick(const CsnhypodbpTracePick *p)

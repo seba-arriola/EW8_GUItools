@@ -80,7 +80,8 @@ filter_cfg() {
     sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' \
         -e '/^[[:space:]]*MyModuleId[[:space:]]/d' \
         -e '/^[[:space:]]*ManualStateFile[[:space:]]/d' \
-        -e '/^[[:space:]]*MwwWorkDir[[:space:]]/d' "$1" |
+        -e '/^[[:space:]]*MwwWorkDir[[:space:]]/d' \
+        -e '/^[[:space:]]*locator[[:space:]]/d' "$1" |
         sed -e 's/[[:space:]][[:space:]]*/ /g' -e 's/^ //' -e 's/ $//'
 }
 
@@ -98,6 +99,33 @@ if [ -f "$cfg" ] && [ -f "$cfg_gtk" ]; then
     fi
     rm -f "$a" "$b"
     trap - EXIT INT TERM
+fi
+
+# --- 2b. tabla unica de locators (csnhypodbpqt.d) ---------------------------
+if [ -f "$cfg" ]; then
+    nloc=$(grep -c '^[[:space:]]*locator[[:space:]]' "$cfg" 2>/dev/null || true)
+    if [ "$nloc" = "3" ] &&
+       grep -qE '^[[:space:]]*locator[[:space:]]+csnloc[[:space:]]+csnloc\.d[[:space:]]+0[[:space:]]+0[[:space:]]+0' "$cfg" &&
+       grep -qE '^[[:space:]]*locator[[:space:]]+hyp2000_ring[[:space:]]+hyp2000_ring\.d[[:space:]]+1[[:space:]]+20[[:space:]]+5' "$cfg" &&
+       grep -qE '^[[:space:]]*locator[[:space:]]+nlloc_ring[[:space:]]+nlloc_ring\.d[[:space:]]+0[[:space:]]+0[[:space:]]+5' "$cfg"; then
+        ok "tabla unica de locators (csnloc/hyp2000_ring/nlloc_ring)"
+    else
+        bad "csnhypodbpqt.d no tiene la tabla de 6 columnas esperada"
+    fi
+    for f in "$cfg_gtk" "$here/../../../run_working_v8/params/csnloc.d" \
+             "$here/../../../run_working_v8/params/hyp2000_ring.d" \
+             "$here/../../../run_working_v8/params/nlloc_ring.d"; do
+        if [ -f "$f" ] && grep -qE '^[[:space:]]*(locator|LocatorTable|ModuleLabel)[[:space:]]' "$f"; then
+            bad "$(basename "$f") declara locators/etiquetas: debe leer csnhypodbpqt.d"
+        fi
+    done
+    if grep -qE '^[[:space:]]*InPickRing[[:space:]]+PICK_RING' "$here/../../../run_working_v8/params/hyp2000_ring.d" &&
+       grep -qE '^[[:space:]]*OutRing[[:space:]]+HYPO_RING_REF' "$here/../../../run_working_v8/params/hyp2000_ring.d" &&
+       grep -qE '^[[:space:]]*OutRing[[:space:]]+HYPO_RING' "$here/../../../run_working_v8/params/csnloc.d"; then
+        ok "anillos: csnloc->HYPO_RING, hyp2000 PICK_RING->HYPO_RING_REF"
+    else
+        bad "anillos del pipeline no coinciden"
+    fi
 fi
 
 # --- 3. startstop -----------------------------------------------------------

@@ -269,16 +269,6 @@ BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
             c->fetch_threads = k_int();
             if (c->fetch_threads < 1) c->fetch_threads = 1;
         }
-        else if (k_its("ModuleLabel")) {
-            int mid = k_int();
-            str = k_str();
-            if (str && c->n_modlabels < BPQ_MAX_MODLABELS) {
-                c->modlabels[c->n_modlabels].id = mid;
-                snprintf(c->modlabels[c->n_modlabels].label,
-                         sizeof(c->modlabels[0].label), "%s", str);
-                c->n_modlabels++;
-            }
-        }
         else if (k_its("channelsOrder")) {
             char buf[128];
             k_rest_join(buf, sizeof(buf));
@@ -306,10 +296,16 @@ BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
                         CSNHYPODBP_TRACES_PER_SCREEN_MAX, c->traces_per_screen);
         }
         else if (k_its("locator")) {
-            char *nm = k_str(), *bn = k_str(), *cf = k_str();
-            if (nm && bn && cf)
-                csnhypodbp_locator_add(c->locators, &c->n_locators, BPQ_MAX_LOCATORS,
-                                       nm, bn, cf);
+            /* locator <bin> <cfg> <live_usage> <time_recalc_live> <N_retry> */
+            char *bn = k_str(), *cf = k_str(), *ls = k_str();
+            char *rs = k_str(), *ns = k_str();
+            if (bn && cf)
+                csnhypodbp_locator_add_full(c->locators, &c->n_locators,
+                                            BPQ_MAX_LOCATORS, bn, cf,
+                                            ls ? atoi(ls) : 0,
+                                            rs ? atoi(rs) : 0,
+                                            ns ? atoi(ns) : 0);
+            (void)k_err();
         }
         else if (k_its("ManualStateFile")) {
             str = k_str(); if (str) set_str(c->manual_state_file, sizeof(c->manual_state_file), str);
@@ -495,6 +491,12 @@ BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
 
     for (i = 0; i < ncommand; i++) if (!init[i]) nmiss++;
     k_close();
+
+    /* La tabla de locators vive SOLO en csnhypodbpqt.d. Si este .d no la
+     * declara (p. ej. el GTK csnhypodbp.d), se carga de ahi. */
+    if (c->n_locators == 0)
+        csnhypodbp_locator_load_default(c->locators, &c->n_locators,
+                                        BPQ_MAX_LOCATORS);
 
     /* Los globals de csnhypodbp_sds.c reflejan la config (single-thread: la
      * carga ocurre antes de arrancar hilos). */

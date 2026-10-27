@@ -15,6 +15,8 @@
 
 #include <rw_mag.h>
 
+#include "csnhypodbp_magchan.h"
+
 /* Imagtype de EarthWorm por nombre de magnitud (ws.c:1754-1761). */
 static int mag_imagtype(const char *type)
 {
@@ -56,6 +58,27 @@ int bpq_magmsg_parse(const char *raw, size_t len, BpqMagMsg *out)
     out->nsta    = mag.nstations;
     snprintf(out->type, sizeof(out->type), "%s", mag.szmagtype);
     snprintf(out->algorithm, sizeof(out->algorithm), "%s", mag.algorithm);
+
+    /* Entradas por estacion: el mismo parser seguro que usa la GTK. */
+    {
+        MAG_CHAN_INFO *ch = NULL;
+        int nch = csnhypodbp_magchan_parse(raw, len, &ch);
+
+        if (nch > 0 && ch) {
+            int i, n = (nch < CSNHYPODBP_MAGSTA_MAX) ? nch : CSNHYPODBP_MAGSTA_MAX;
+
+            for (i = 0; i < n; i++) {
+                snprintf(out->vals[i].sta, sizeof(out->vals[i].sta), "%s", ch[i].sta);
+                snprintf(out->vals[i].chan, sizeof(out->vals[i].chan), "%s", ch[i].comp);
+                out->vals[i].mag = ch[i].mag;
+                out->vals[i].amp = ch[i].Amp1;
+                out->vals[i].period = ch[i].Period1;
+                out->vals[i].manual = 0;
+            }
+            out->nvals = n;
+        }
+        free(ch);
+    }
     return 0;
 }
 
