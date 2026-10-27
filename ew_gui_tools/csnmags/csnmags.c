@@ -92,6 +92,7 @@ typedef struct {
     double mag;
     double amp;
     double per;
+    int    prio;      /* 1 = ancla P; 0 = solo S (no ancla de ML/Mb/Mwp) */
 } MagStaMag;
 
 typedef struct {
@@ -105,6 +106,8 @@ typedef struct {
     MagStaMag sm[MT_N][MAG_MAX_STA];
     double net[MT_N];
     int    used[MT_N];
+    int    drop_s[MT_N];   /* estaciones ignoradas por no tener P */
+    int    ml_vert;        /* estaciones ML que usaron la vertical (diagn.) */
     double err[MT_N];
     int    calc[MT_N];
     time_t last_update;
@@ -160,7 +163,8 @@ static MagEvent *event_get(MagCtx *c, const char *key)
 
 static void event_register(MagCtx *c, MagEvent *ev, int type,
                            const char *sta, const char *net, const char *loc,
-                           const char *chan, double mag, double amp, double per)
+                           const char *chan, double mag, double amp, double per,
+                           int prio)
 {
     int i, *n = &ev->nsta[type];
     MagStaMag *s;
@@ -168,7 +172,9 @@ static void event_register(MagCtx *c, MagEvent *ev, int type,
     for (i = 0; i < *n; i++) {
         if (strcmp(ev->sm[type][i].sta, sta) == 0) {
             s = &ev->sm[type][i];
-            s->mag = mag; s->amp = amp; s->per = per;
+            /* La P manda sobre la S; nunca se pisa una P con una S. */
+            if (prio < s->prio) return;
+            s->mag = mag; s->amp = amp; s->per = per; s->prio = prio;
             snprintf(s->chan, sizeof(s->chan), "%s", chan ? chan : "");
             return;
         }
@@ -179,17 +185,36 @@ static void event_register(MagCtx *c, MagEvent *ev, int type,
     snprintf(s->net, sizeof(s->net), "%s", net ? net : "");
     snprintf(s->loc, sizeof(s->loc), "%s", loc ? loc : "");
     snprintf(s->chan, sizeof(s->chan), "%s", chan ? chan : "");
-    s->mag = mag; s->amp = amp; s->per = per;
+    s->mag = mag; s->amp = amp; s->per = per; s->prio = prio;
     (*n)++;
 }
 
 static void event_update_net(MagEvent *ev, int type, const MagConfig *cfg)
 {
     double vals[MAG_MAX_STA];
-    int i, n = ev->nsta[type];
-    for (i = 0; i < n; i++) vals[i] = ev->sm[type][i].mag;
-    if (n == 0) { ev->calc[type] = 0; return; }
-    ev->net[type] = mag_net(vals, n, cfg->use_median, cfg->trunc_k,
+    int i, k = 0, drops = 0, n = ev->nsta[type];
+    int minsta = (type == MT_ML) ? cfg->ml_min_sta
+               : (type == MT_MWP) ? cfg->mwp_min_sta
+               : (type == MT_MB) ? cfg->mb_min_sta : cfg->ms_min_sta;
+
+    /* ML/Mb/Mwp se anclan en P. Ms puede usar P o S (su ventana es otra). */
+    for (i = 0; i < n; i++) {
+        int use = (type == MT_MS) ? 1 : (ev->sm[type][i].prio > 0);
+
+        if (!use) { drops++; continue; }
+        if (k != i) ev->sm[type][k] = ev->sm[type][i];
+        vals[k++] = ev->sm[type][k].mag;
+    }
+    ev->nsta[type] = k;
+    ev->drop_s[type] = drops;
+
+    if (k == 0 || k < minsta) {
+        ev->calc[type] = 0;
+        ev->used[type] = 0;
+        ev->net[type] = 0.0;
+        return;
+    }
+    ev->net[type] = mag_net(vals, k, cfg->use_median, cfg->trunc_k,
                             &ev->err[type], &ev->used[type]);
     ev->calc[type] = (ev->net[type] > 0.0) ? 1 : 0;
 }
@@ -440,9 +465,10 @@ static ComputeFn g_fn[MT_N] = { compute_ml, compute_mwp, compute_mb, compute_ms 
 static const int g_imag[MT_N] = { IMAG_ML, IMAG_MWP, IMAG_MB, IMAG_MS };
 
 static void process_station_type(MagCtx *c, MagEvent *ev, const MagStation *st,
-                                 int type, double pick_t, const char *loc)
+                                 int type, double pick_t, const char *loc,
+                                 char phase)
 {
-    int ok = 0; double mag = 0.0, amp = 0.0, per = 0.0;
+    int ok = 0, prio; double mag = 0.0, amp = 0.0, per = 0.0;
     char chan[8] = "";
     MagGate gate = (type == MT_ML) ? c->cfg.ml :
                    (type == MT_MWP) ? c->cfg.mwp :
@@ -450,8 +476,12 @@ static void process_station_type(MagCtx *c, MagEvent *ev, const MagStation *st,
     if (!gate.enabled) return;
     g_fn[type](c, ev, st, pick_t, loc, &ok, &mag, &amp, &per, chan,
                sizeof(chan));
-    if (ok && mag > 0.0)
-        event_register(c, ev, type, st->sta, st->net, loc, chan, mag, amp, per);
+    if (!ok || mag <= 0.0) return;
+
+    prio = (phase == 'P' || phase == 'p') ? 1 : 0;
+    if (type == MT_ML && chan[2] == 'Z') ev->ml_vert++;
+    event_register(c, ev, type, st->sta, st->net, loc, chan, mag, amp, per,
+                   prio);
 }
 
 /* Devuelve la magnitud de un evento para el tipo dado (0 si no calculada). */
@@ -469,12 +499,15 @@ static void offline_run(MagCtx *c, const char *hypofile, const char *trace, FILE
         int p, type;
         MagEvent *ev = event_get(c, h.event_id);
         ev->t0 = h.t0; ev->lat = h.lat; ev->lon = h.lon; ev->depth = h.depth_km;
+        ev->ml_vert = 0;   /* diagnostico por version, no acumulado */
 
         for (p = 0; p < h.nphases; p++) {
             int sidx = mag_sta_find(&c->stas, h.ph[p].sta, h.ph[p].net, h.ph[p].chan, h.ph[p].loc);
             if (sidx < 0) continue;
             for (type = 0; type < MT_N; type++)
-                process_station_type(c, ev, &c->stas.st[sidx], type, h.ph[p].t_epoch, h.ph[p].loc);
+                process_station_type(c, ev, &c->stas.st[sidx], type,
+                                     h.ph[p].t_epoch, h.ph[p].loc,
+                                     h.ph[p].phase[0]);
         }
         for (type = 0; type < MT_N; type++) event_update_net(ev, type, &c->cfg);
 
@@ -556,6 +589,7 @@ static int parse_arc(MagCtx *c, const char *msg, int mod, MagEvent **evout)
         snprintf(ev->event_id, sizeof(ev->event_id), "%s", event_id);
         ev->t0 = epoch_from_str(otime, NULL);
         ev->lat = eq_lat; ev->lon = eq_lon; ev->depth = 10.0;
+        ev->ml_vert = 0;   /* diagnostico por version, no acumulado */
         *evout = ev;
     }
 
@@ -582,7 +616,8 @@ static int parse_arc(MagCtx *c, const char *msg, int mod, MagEvent **evout)
                 pt = epoch_from_str(pts, pts + 12);
                 if (pt < (*evout)->t0) pt = (*evout)->t0;   /* saneado mínimo */
                 for (int type = 0; type < MT_N; type++)
-                    process_station_type(c, *evout, &c->stas.st[sidx], type, pt, loc);
+                    process_station_type(c, *evout, &c->stas.st[sidx], type,
+                                         pt, loc, line[14]);
                 got = 1;
             }
         }
@@ -648,6 +683,12 @@ static void ring_run(MagCtx *c)
                       ev->net[MT_MB], ev->used[MT_MB],
                       ev->net[MT_MS], ev->used[MT_MS],
                       ev->net[MT_MWP], ev->used[MT_MWP], pt, pref);
+                if (ev->drop_s[MT_ML] || ev->drop_s[MT_MWP] ||
+                    ev->drop_s[MT_MB] || ev->ml_vert)
+                    logit("t", "CSNmags_Red: [ID %s] sinP ML=%d Mwp=%d Mb=%d "
+                               "ml_vertical=%d (solo diagnostico)\n",
+                          ev->event_id, ev->drop_s[MT_ML], ev->drop_s[MT_MWP],
+                          ev->drop_s[MT_MB], ev->ml_vert);
                 logo.instid = c->MyInstId; logo.mod = c->MyModId; logo.type = c->TypeMagnitude;
                 for (type = 0; type < MT_N; type++) {
                     if (ev->calc[type] && ev->used[type] > 0) {

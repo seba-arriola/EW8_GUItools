@@ -41,13 +41,38 @@ RePickWindowSec   10.0             # re-pick mismo SCNL reemplaza
 PickTTLSec        300.0            # expiración de picks
 T0ToleranceSec    2.0              # tolerancia del stacking de t0 (s)
 
-# --- Deduplicación de eventos ---
-# Claves que existen en el codigo pero NO estaban en este .d (corrian a default).
-# A 100 km se fusionaban eventos cercanos: medido sobre 388 eventos, bajarlo a 50
-# sube el <=25 km de 236 a 258, el <=50 de 356 a 368 y la mediana de 21.8 a 20.4 km
-# (medido en calibración). A 200 km se PIERDEN eventos.
-EventDedupSec     30.0
-EventDedupKm      50.0
+# --- Identidad de evento y gatillo ---
+# El ancla es la PRIMERA solución del evento (t0/lat/lon) y NO se mueve con
+# las detecciones posteriores. Si un candidato cae dentro de esta ventana se
+# considera el MISMO evento: no se emite otra solución ni se versiona. Si cae
+# fuera, es un evento nuevo (aunque comparta alguna picada: se registra
+# `overlap` en el log para diagnosticar el gatillo).
+#
+# EventMatchTimeSec: ventana temporal base (s) respecto del ancla.
+# EventMatchDistKm:  distancia máxima (km) entre candidato y ancla.
+# EventMatchVelocityKmS: 0 = ventana temporal fija. >0 = la ventana crece con
+#   la distancia: tmax = EventMatchTimeSec + d[km]/EventMatchVelocityKmS.
+#   (Equivale a una ventana de tiempo de viaje; 6.0 km/s es una Vp típica.)
+# EventPickTolSec: tolerancia (s) para considerar que una picada del candidato
+#   es la misma picada de un evento ya emitido (solo diagnóstico de overlap).
+EventMatchTimeSec     60.0
+EventMatchDistKm      100.0
+EventMatchVelocityKmS 0.0
+EventPickTolSec       0.1
+
+# Gatillo de csnloc (solo asociación; los localizadores reciben después todas
+# las picadas asociadas). 0 desactiva cada puerta.
+#
+# MinPPhases: P mínimas de un candidato. 0 = off; 1 = exige al menos una P.
+#   Evita que un evento se gatille solo con S (telesismos, ruido).
+MinPPhases            1
+# MaxAssocDistKm: no usar estaciones más lejanas que esto para el gatillo.
+#   0 = off; 1000 = red local/regional. No limita lo que recibe el locator.
+MaxAssocDistKm        1000
+# MaxGapDeg: no gatillar si el gap azimutal empeora esto. 0 = off; 300 = red
+#   razonablemente distribuida. Los eventos offshore pueden necesitar más.
+MaxGapDeg             300
+
 DBSCAN_Eps        60.0             # epsilon de clustering (km / km/s)
 DBSCAN_MinPts     3
 BackProjThreshold 0.0              # 0 = automático (50% del máximo)

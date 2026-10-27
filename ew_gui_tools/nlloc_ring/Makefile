@@ -4,7 +4,7 @@
 # Enlaza el motor vendorizado en nlloc/ (libnlloc.a). Autocontenido.
 
 CFLAGS = -O2 -g -Wall -I$(EW_HOME)/$(EW_VERSION)/include \
-         -I../common/include -I../csnhypodbp -D_LINUX -D_REENTRANT
+         -I../common/include -I../csnhypodbp -I../csnloc -D_LINUX -D_REENTRANT
 
 LIBS   = -lm -lpthread
 
@@ -26,13 +26,17 @@ $(NLLLIB):
 	$(MAKE) -C nlloc
 
 LOCATOR_OBJ = ../csnhypodbp/csnhypodbp_locator.o
+CHECK_OBJ   = ../csnloc/live_check.o
 
 ../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
                                     ../csnhypodbp/csnhypodbp_locator.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGET): nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(NLLLIB)
-	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(NLLLIB) $(EWLIBS) $(LIBS)
+../csnloc/live_check.o: ../csnloc/live_check.c ../csnloc/live_assoc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET): nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(CHECK_OBJ) $(NLLLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(CHECK_OBJ) $(NLLLIB) $(EWLIBS) $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Profundidad fija (emulada): reescritura pura de LOCGRID / LOCSEARCH.
@@ -44,6 +48,7 @@ test/test_locsearch: test/test_locsearch.c nlloc_depth.c nlloc_depth.h
 
 .PHONY: check check-offline
 check: test/test_fixdepth test/test_locsearch
+	sh ./test/test_output_invariants.sh
 	./test/test_fixdepth
 	./test/test_locsearch
 

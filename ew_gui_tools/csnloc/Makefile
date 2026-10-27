@@ -62,7 +62,7 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_event_ttl test/test_state_recover test/test_event_id \
         test/test_renucleate test/test_refine_depth test/test_pick_s \
         test/test_repick_phase test/test_pick_origin test/test_event_manual \
-        test/test_state_manual test/test_grid_force_depth
+        test/test_state_manual test/test_grid_force_depth test/test_trigger_gate
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -82,6 +82,7 @@ check-grids: test/test_grid_parse test/test_gridset_load test/test_grid_force_de
 
 # Ejecuta la bateria completa.
 check: $(TESTS) ttpred iasp91.tbl iasp91.hed
+	@echo "=== gate invariants ===";      sh ./test/test_gate_invariants.sh
 	@echo "=== test_pick_parse ===";       ./test/test_pick_parse
 	@echo "=== test_repick ===";           ./test/test_repick
 	@echo "=== test_dbscan ===";           ./test/test_dbscan
@@ -102,6 +103,7 @@ check: $(TESTS) ttpred iasp91.tbl iasp91.hed
 	@echo "=== test_state_recover ===";    ./test/test_state_recover
 	@echo "=== test_event_id ===";         ./test/test_event_id
 	@echo "=== test_renucleate ===";       ./test/test_renucleate
+	@echo "=== test_trigger_gate ===";     ./test/test_trigger_gate
 	@echo "=== test_refine_depth ===";     ./test/test_refine_depth
 	@echo "=== test_pick_s ===";           ./test/test_pick_s
 	@echo "=== test_repick_phase ===";     ./test/test_repick_phase
@@ -141,6 +143,13 @@ test/test_ttp: ttpred
 test/test_hypo_format: test/test_hypo_format.c hypo_out.o stations.o pick_scln.o
 	$(CC) $(CFLAGS) -o $@ test/test_hypo_format.c hypo_out.o stations.o \
 	      pick_scln.o $(LIBS)
+
+test/test_trigger_gate: test/test_trigger_gate.c event_registry.o backprojection.o \
+                        dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \
+                        $(TAUOBJS)
+	$(CC) $(CFLAGS) -o $@ test/test_trigger_gate.c event_registry.o \
+	      backprojection.o dbscan.o refine.o gridset.o grid.o ttmodel.o \
+	      stations.o $(TAUOBJS) $(LIBS)
 
 test/test_synth_locate: test/test_synth_locate.c backprojection.o dbscan.o \
                         refine.o grid.o ttmodel.o stations.o $(TAUOBJS)

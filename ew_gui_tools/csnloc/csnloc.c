@@ -52,8 +52,14 @@ static void set_defaults(CSLocParams *c)
     c->n_gridfiles = 0;
     c->GridActivationMinPicks = 3;
     c->GridActivationMarginDeg = 1.0;
-    c->EventDedupSec = 30.0;
-    c->EventDedupKm  = 100.0;
+
+    c->EventMatchTimeSec = 60.0;
+    c->EventMatchDistKm  = 100.0;
+    c->EventMatchVelocityKmS = 0.0;   /* 0 = ventana fija */
+    c->EventPickTolSec = 0.1;
+    c->MinPPhases = 1;
+    c->MaxAssocDistKm = 1000.0;
+    c->MaxGapDeg = 300.0;
 
     c->AssocWindowSec = 120.0;
     c->RePickWindowSec = 10.0;
@@ -139,8 +145,13 @@ static int read_config(const char *file, CSLocParams *c)
         else if (k_its("LocalGrid"))    { str = k_str(); add_gridfile(c, str, GRID_LEVEL_LOCAL); }
         else if (k_its("GridActivationMinPicks")) c->GridActivationMinPicks = k_int();
         else if (k_its("GridActivationMarginDeg")) c->GridActivationMarginDeg = k_val();
-        else if (k_its("EventDedupSec")) c->EventDedupSec = k_val();
-        else if (k_its("EventDedupKm"))  c->EventDedupKm = k_val();
+        else if (k_its("EventMatchTimeSec")) c->EventMatchTimeSec = k_val();
+        else if (k_its("EventMatchDistKm"))  c->EventMatchDistKm = k_val();
+        else if (k_its("EventMatchVelocityKmS")) c->EventMatchVelocityKmS = k_val();
+        else if (k_its("EventPickTolSec"))   c->EventPickTolSec = k_val();
+        else if (k_its("MinPPhases"))        c->MinPPhases = k_int();
+        else if (k_its("MaxAssocDistKm"))    c->MaxAssocDistKm = k_val();
+        else if (k_its("MaxGapDeg"))         c->MaxGapDeg = k_val();
         else if (k_its("AssocWindowSec")) c->AssocWindowSec = k_val();
         else if (k_its("RePickWindowSec")) c->RePickWindowSec = k_val();
         else if (k_its("PickTTLSec"))   c->PickTTLSec = k_val();
@@ -344,7 +355,7 @@ static void emit_hypo(CSLocCtx *ctx, const HypoCandidate *h,
  *                                                                            *
  * Las grillas de distinta resolucion que cubren el mismo sismo producen       *
  * eventos casi coincidentes. Se ordenan por evidencia y se descarta un        *
- * evento si ya hay uno aceptado a menos de EventDedupSec y EventDedupKm.      *
+ * evento si ya hay uno aceptado dentro de EventMatchTimeSec/EventMatchDistKm. *
  * El criterio de "mejor" prioriza mas fases, luego la grilla mas fina.        *
  * ------------------------------------------------------------------------- */
 static int event_better(const HypoCandidate *a, const HypoCandidate *b)
@@ -359,9 +370,6 @@ static int DedupEvents(const HypoCandidate *in, int n,
                        HypoCandidate *out, int max_out)
 {
     int    *order, i, j, nout = 0;
-    double tmax = (cfg->EventDedupSec >= 0.0) ? cfg->EventDedupSec : 30.0;
-    double dmax_deg = ((cfg->EventDedupKm > 0.0) ? cfg->EventDedupKm : 100.0)
-                      / 111.195;
 
     if (n <= 0 || max_out <= 0) return 0;
     order = (int *)malloc(sizeof(int) * (size_t)n);
@@ -382,9 +390,9 @@ static int DedupEvents(const HypoCandidate *in, int n,
         int idx = order[i];
         int dup = 0;
         for (j = 0; j < nout; j++) {
-            if (fabs(in[idx].t0 - out[j].t0) > tmax) continue;
-            if (TT_GreatCircleDeg(in[idx].lat, in[idx].lon,
-                                  out[j].lat, out[j].lon) <= dmax_deg) {
+            if (CSLoc_EventMatch(cfg, in[idx].t0, in[idx].lat, in[idx].lon,
+                                 out[j].t0, out[j].lat, out[j].lon,
+                                 NULL, NULL)) {
                 dup = 1;
                 break;
             }
@@ -469,6 +477,10 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
     HypoCandidate *events;
     int           nwin, nev, nall = 0, i, gi, lev;
     double        t0;
+
+    /* Expirar ANTES de asociar: libera slots del registro (16) para que un
+       evento nuevo no se descarte cuando el registro esta lleno. */
+    EventRegistry_Expire(&ctx->events, now_epoch, ctx->cfg.EventTTLSec);
 
     /* El DBSCAN reparte sus filas entre hilos; el resultado no depende del
        numero (cada celda de la matriz es una funcion pura de los datos). */
@@ -588,6 +600,34 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
         if (cand[i].nphases < ctx->cfg.MinPhasesPerEvent) continue;
         if (ctx->cfg.MaxRMS > 0.0 && cand[i].rms_sec > ctx->cfg.MaxRMS) continue;
 
+        /* Gatillo: P minima y gap maximo aqui; MaxAssocDistKm se aplica al
+           reclamar picks en AssembleCandidates. 0 desactiva cada puerta. */
+        if (ctx->cfg.MinPPhases > 0) {
+            int k, np = 0;
+
+            for (k = 0; k < cand[i].nphases; k++) {
+                int pi = cand[i].phase_idx[k];
+
+                if (pi >= 0 && pi < nwin && window[pi].phase == CSLOC_PHASE_P)
+                    np++;
+            }
+            if (np < ctx->cfg.MinPPhases) {
+                logit("t", "csnloc: candidato descartado nP=%d < %d "
+                           "(lat=%.3f lon=%.3f z=%.1f)\n",
+                      np, ctx->cfg.MinPPhases, cand[i].lat, cand[i].lon,
+                      cand[i].depth_km);
+                continue;
+            }
+        }
+        if (ctx->cfg.MaxGapDeg > 0.0 && cand[i].gap_deg > ctx->cfg.MaxGapDeg) {
+            logit("t", "csnloc: candidato descartado gap=%.0f > %.0f "
+                       "(lat=%.3f lon=%.3f z=%.1f nph=%d)\n",
+                  cand[i].gap_deg, ctx->cfg.MaxGapDeg,
+                  cand[i].lat, cand[i].lon, cand[i].depth_km,
+                  cand[i].nphases);
+            continue;
+        }
+
         /* El registro decide si es un evento nuevo o una actualizacion de uno
            existente, y si hay que emitir (fases nuevas que mejoran). El ID de
            un evento nuevo es id_base + seq (seq no se reutiliza). */
@@ -595,8 +635,8 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
         if (!EventRegistry_Upsert(&ctx->events, &cand[i], window, nwin,
                                   &ctx->cfg, &ctx->stations, &ctx->tt,
                                   &ctx->grids,
-                                  ctx->id_base + ctx->seq, &id_out, &ver_out,
-                                  &manual_out)) {
+                                  ctx->id_base + ctx->seq, now_epoch,
+                                  &id_out, &ver_out, &manual_out)) {
             g_t_registry += now_mono() - t0;
             continue;
         }
@@ -669,9 +709,6 @@ static void process_window(CSLocCtx *ctx, double now_epoch)
             logit("t", "%s\n", buf);
         }
     }
-
-    /* Expirar eventos sin actividad reciente. */
-    EventRegistry_Expire(&ctx->events, now_epoch, ctx->cfg.EventTTLSec);
 
     /* Persistir el estado (solo modo anillo; offline es determinista). */
     if (!ctx->Offline && ctx->state_path[0])

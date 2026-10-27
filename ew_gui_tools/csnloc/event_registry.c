@@ -36,6 +36,18 @@ static void log_decision(const CSLocParams *cfg, const char *fmt, ...)
     g_log_cb(buf);
 }
 
+/* Avisos que NO dependen de Debug: overlap entre eventos y registro lleno. */
+static void log_warn(const char *fmt, ...)
+{
+    char    buf[512];
+    va_list ap;
+    if (!g_log_cb) return;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    g_log_cb(buf);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Helpers                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -72,27 +84,129 @@ void EventRegistry_Init(EventRegistry *r)
     r->n = 0;
 }
 
-/* Busca un evento activo que corresponda al candidato (tiempo + distancia).
-   Devuelve 1 y el indice si hay match. Reutiliza el criterio de DedupEvents. */
-int EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
-                            const CSLocParams *cfg, int *idx_out)
+/* Criterio unico de "mismo evento". El ancla es la primera solucion del
+   evento (e->t0/lat/lon); NO se usa el t0 de la ultima deteccion. */
+int CSLoc_EventMatch(const CSLocParams *cfg,
+                     double t0a, double lata, double lona,
+                     double t0b, double latb, double lonb,
+                     double *dt_out, double *d_km_out)
 {
-    double tmax = (cfg->EventDedupSec >= 0.0) ? cfg->EventDedupSec : 30.0;
-    double dmax_deg = ((cfg->EventDedupKm > 0.0) ? cfg->EventDedupKm : 100.0)
-                      / 111.195;
-    int i;
+    double dt, d_km, tmax;
 
-    if (!r || !c) return 0;
-    for (i = 0; i < r->n; i++) {
-        const EventRecord *e = &r->ev[i];
-        /* Comparar contra el t0 de deteccion (no el refinado, que se mueve). */
-        if (fabs(c->t0 - e->t0_detect) > tmax) continue;
-        if (TT_GreatCircleDeg(c->lat, c->lon, e->lat, e->lon) <= dmax_deg) {
-            if (idx_out) *idx_out = i;
-            return 1;
+    if (!cfg) return 0;
+    dt   = fabs(t0a - t0b);
+    d_km = TT_GreatCircleDeg(lata, lona, latb, lonb) * 111.195;
+
+    if (dt_out)   *dt_out = dt;
+    if (d_km_out) *d_km_out = d_km;
+
+    /* Distancia 0 se interpreta como "sin ventana espacial": nunca marca
+       el mismo evento. El .d siempre debe declarar un valor > 0. */
+    if (cfg->EventMatchDistKm <= 0.0) return 0;
+
+    tmax = cfg->EventMatchTimeSec;
+    if (cfg->EventMatchVelocityKmS > 0.0)
+        tmax += d_km / cfg->EventMatchVelocityKmS;
+
+    return (dt <= tmax && d_km <= cfg->EventMatchDistKm) ? 1 : 0;
+}
+
+/* Cuenta picadas del candidato que ya estan en el evento por estacion+fase
+   y |dt| <= tol_sec. No compara red/canal/loc (el ARC puede traer otro canal
+   para la misma estacion). */
+int EventRegistry_SharedPicks(const EventRecord *e, const Pick *window,
+                              int nwin, const int *phase_idx, int nph,
+                              double tol_sec)
+{
+    int i, j, n = 0;
+
+    if (!e || !window || !phase_idx || nph <= 0) return 0;
+    for (i = 0; i < nph; i++) {
+        int pi = phase_idx[i];
+        const Pick *p;
+
+        if (pi < 0 || pi >= nwin) continue;
+        p = &window[pi];
+        for (j = 0; j < e->nphases_stored; j++) {
+            if (same_sta_phase(&e->phases[j], p) &&
+                fabs(e->phases[j].t_epoch - p->t_epoch) <= tol_sec) {
+                n++;
+                break;
+            }
         }
     }
-    return 0;
+    return n;
+}
+
+/* Para el log de overlap: maximo de picadas compartidas contra CUALQUIER
+   evento (aunque no matchee en tiempo/distancia). Devuelve el conteo y el
+   indice del evento con mas coincidencias. */
+static int max_shared_any(const EventRegistry *r, const HypoCandidate *c,
+                          const Pick *window, int nwin,
+                          const CSLocParams *cfg, int *idx_out)
+{
+    int i, best = 0, best_i = -1;
+
+    if (!r || !c || !window || nwin <= 0) return 0;
+    for (i = 0; i < r->n; i++) {
+        int n = EventRegistry_SharedPicks(&r->ev[i], window, nwin,
+                                          c->phase_idx, c->nphases,
+                                          cfg->EventPickTolSec);
+        if (n > best) { best = n; best_i = i; }
+    }
+    if (idx_out) *idx_out = best_i;
+    return best;
+}
+
+/* Busca el evento activo mas cercano al candidato (tiempo + distancia).
+   Devuelve 1 y el indice si hay match. shared_out recibe las picadas que
+   comparte con ese evento (para diagnostico). */
+int EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
+                            const Pick *window, int nwin,
+                            const CSLocParams *cfg, int *idx_out,
+                            int *shared_out)
+{
+    double best = 1e18;
+    int    i, best_i = -1, best_shared = 0;
+
+    if (!r || !c || !cfg) return 0;
+    for (i = 0; i < r->n; i++) {
+        const EventRecord *e = &r->ev[i];
+        double dt, d, tmax, score;
+        int    shared;
+
+        if (!CSLoc_EventMatch(cfg, c->t0, c->lat, c->lon,
+                              e->t0, e->lat, e->lon, &dt, &d))
+            continue;
+
+        tmax = cfg->EventMatchTimeSec;
+        if (cfg->EventMatchVelocityKmS > 0.0)
+            tmax += d / cfg->EventMatchVelocityKmS;
+
+        score = (tmax > 0.0) ? (dt / tmax) : 0.0;
+        score *= score;
+        if (cfg->EventMatchDistKm > 0.0) {
+            double dd = d / cfg->EventMatchDistKm;
+            score += dd * dd;
+        }
+
+        shared = (window && nwin > 0)
+                     ? EventRegistry_SharedPicks(e, window, nwin,
+                                                 c->phase_idx, c->nphases,
+                                                 cfg->EventPickTolSec)
+                     : 0;
+
+        if (score < best - 1e-9 ||
+            (fabs(score - best) <= 1e-9 && shared > best_shared)) {
+            best = score;
+            best_shared = shared;
+            best_i = i;
+        }
+    }
+    if (best_i < 0) return 0;
+    if (idx_out)    *idx_out = best_i;
+    if (shared_out) *shared_out = best_shared;
+    return 1;
 }
 
 /* Politica de aceptacion: 1 si la solucion nueva mejora o no empeora mas alla
@@ -210,7 +324,7 @@ void EventRegistry_Expire(EventRegistry *r, double now, double ttl_sec)
 
     if (!r) return;
     for (i = 0; i < r->n; i++) {
-        if ((now - r->ev[i].last_update_epoch) > ttl_sec) continue;
+        if ((now - r->ev[i].last_update_wall) > ttl_sec) continue;
         r->ev[k++] = r->ev[i];
     }
     r->n = k;
@@ -316,28 +430,52 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                          const Pick *window, int nwin, const CSLocParams *cfg,
                          const StationList *st, TTModel *tt,
                          const GridSet *grids,
-                         unsigned long id_base, unsigned long *id_out,
+                         unsigned long id_base, double now_epoch,
+                         unsigned long *id_out,
                          unsigned int *ver_out, int *manual_out)
 {
-    int idx = -1;
+    int idx = -1, shared = 0;
 
     if (!r || !c) return 0;
 
-    if (!EventRegistry_FindMatch(r, c, cfg, &idx)) {
+    if (!EventRegistry_FindMatch(r, c, window, nwin, cfg, &idx, &shared)) {
         /* Evento nuevo: crear con las fases del candidato. */
         EventRecord *e;
-        if (r->n >= CSLOC_MAX_EVENTS) return 0;
+        int ov_idx = -1, ov_shared;
+
+        if (r->n >= CSLOC_MAX_EVENTS) {
+            log_warn("csnloc: registro lleno (%d); evento descartado\n",
+                     CSLOC_MAX_EVENTS);
+            return 0;
+        }
+
+        /* El overlap se mide contra los eventos YA existentes: el nuevo aun
+           no esta en el registro (si no, se compararia consigo mismo). */
+        ov_shared = max_shared_any(r, c, window, nwin, cfg, &ov_idx);
+
         e = &r->ev[r->n++];
         memset(e, 0, sizeof(*e));
         e->id = id_base;
         e->version = 0;
         e->emitted = 0;
-        e->last_update_epoch = c->t0;
-        e->t0_detect = c->t0;
+        e->last_update_wall = now_epoch;
+        e->t0_detect = c->t0;       /* legado; no se usa para el match */
         seed_phases(e, c, window, nwin);
         store_hypo(e, c);
         e->version = 1;
         e->emitted = 1;
+
+        /* Comparte picadas con un evento lejano: se permite el evento nuevo
+           (caso "muy distinto"), pero se deja rastro para diagnostico. */
+        if (ov_shared > 0 && ov_idx >= 0)
+            log_warn("csnloc: [ev %lu] overlap=%d con ev %lu "
+                     "(dt=%.1f s d=%.0f km); evento nuevo\n",
+                     e->id, ov_shared, r->ev[ov_idx].id,
+                     fabs(c->t0 - r->ev[ov_idx].t0),
+                     TT_GreatCircleDeg(c->lat, c->lon,
+                                       r->ev[ov_idx].lat,
+                                       r->ev[ov_idx].lon) * 111.195);
+
         log_decision(cfg, "csnloc: [ev %lu] nuevo v1 lat=%.3f lon=%.3f z=%.1f "
                           "nph=%d rms=%.2f gap=%.0f\n",
                      e->id, e->lat, e->lon, e->depth_km,
@@ -368,9 +506,16 @@ int EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
             }
         }
 
-        /* El evento sigue vivo mientras se detecte. */
-        e->last_update_epoch = c->t0;
-        e->t0_detect = c->t0;
+        /* El evento sigue vivo mientras se detecte. El ancla (t0/lat/lon) NO
+           se toca: t0_detect quedo congelado en la creacion y no se usa. */
+        e->last_update_wall = now_epoch;
+
+        if (shared > 0)
+            log_decision(cfg, "csnloc: [ev %lu] match shared=%d "
+                              "(dt=%.1f s d=%.0f km)\n",
+                         e->id, shared, fabs(c->t0 - e->t0),
+                         TT_GreatCircleDeg(c->lat, c->lon,
+                                           e->lat, e->lon) * 111.195);
 
         /* Asociador: la primera solucion ya se emitio; no se refina, no se
          * poda y no se versiona. El evento se conserva para el dedup/TTL. */

@@ -15,6 +15,8 @@
 
 #include "iasplib.h"
 
+#include <unistd.h>
+
 #ifndef RAD
 #define RAD 0.017453292519943
 #endif
@@ -116,8 +118,9 @@ int TTModel_Init(TTModel *m, const char *tau_dir, const char *model,
                  double dmin, double dmax, double dstep)
 {
     FILE  *err, *tbl = NULL;
-    int    i, ret = 0;
+    int    i, ret = 0, moved = 0;
     char   modnam[64];
+    char   cwd[1024];
 
     if (!m || !model) return -1;
     memset(m, 0, sizeof(*m));
@@ -138,7 +141,14 @@ int TTModel_Init(TTModel *m, const char *tau_dir, const char *model,
         if (!m->tt[i]) { TTModel_Free(m); return -1; }
     }
 
-    /* taulib abre <model>.hed/.tbl desde el cwd. */
+    /* taulib abre <model>.hed/.tbl desde el cwd y usa nombres cortos
+       (szFile[32]); se entra temporalmente en tau_dir y se restaura. */
+    if (tau_dir && tau_dir[0]) {
+        if (!getcwd(cwd, sizeof(cwd))) return -1;
+        if (chdir(tau_dir) != 0) return -1;
+        moved = 1;
+    }
+
     err = fopen("/dev/null", "w");
     if (!err) err = stderr;
 
@@ -146,6 +156,13 @@ int TTModel_Init(TTModel *m, const char *tau_dir, const char *model,
     modnam[sizeof(modnam) - 1] = '\0';
 
     tabin(&tbl, modnam, err);              /* carga .hed + .tbl            */
+
+    if (moved && chdir(cwd) != 0) {
+        if (tbl) fclose(tbl);
+        if (err != stderr) fclose(err);
+        TTModel_Free(m);
+        return -1;
+    }
 
     /* De cada nodo (profundidad, distancia) se toma la primera llegada de la
        rama directa P y de la rama directa S (fill_depth_row), ignorando las
@@ -157,7 +174,6 @@ int TTModel_Init(TTModel *m, const char *tau_dir, const char *model,
 
     if (tbl) fclose(tbl);
     fclose(err);
-    (void)tau_dir;
     return ret;
 }
 

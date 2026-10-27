@@ -34,7 +34,7 @@ int main(void)
     a.ev[0].depth_km = 30.0; a.ev[0].nphases = 2;
     a.ev[0].rms_sec = 0.4; a.ev[0].gap_deg = 120.0; a.ev[0].dmin_km = 50.0;
     a.ev[0].score = 1.0; a.ev[0].grid_level = GRID_LEVEL_LOCAL;
-    a.ev[0].last_update_epoch = 1.8e9 + 10.0; a.ev[0].emitted = 1;
+    a.ev[0].last_update_wall = 1.8e9 + 10.0; a.ev[0].emitted = 1;
     a.ev[0].phases[0] = mk("BO03", CSLOC_PHASE_P, 1.8e9 + 20.0);
     a.ev[0].residual[0] = 0.1;
     a.ev[0].phases[1] = mk("GO01", CSLOC_PHASE_S, 1.8e9 + 40.0);

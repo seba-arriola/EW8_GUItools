@@ -28,6 +28,7 @@
 #include "earthworm.h"
 #include "transport.h"
 #include "../csnhypodbp/csnhypodbp_locator.h"
+#include "../csnloc/live_assoc.h"
 
 #include "nlloc_depth.h"
 #include <ewgui/arc_layout.h>
@@ -70,6 +71,7 @@ static int   LogFile      = 1;
 static int   Debug        = 0;
 static int   MinPhases    = 0;
 static double MaxRMS      = 0.0;
+static double MaxGapDeg   = 300.0;   /* 0 = sin filtro */
 /* Profundidad fija (NLLoc no la soporta nativa): ventana z de 2 nodos. */
 static double FixedDepthKm     = -1.0;   /* <0 = busqueda libre */
 static double FixDepthSpacingKm = 0.1;   /* km entre los 2 nodos z */
@@ -153,6 +155,7 @@ static int read_config(const char *file)
         else if (k_its("GridFile"))     { str = k_str(); if (str) strncpy(GridFile, str, sizeof(GridFile)-1); }
         else if (k_its("MinPhases"))    MinPhases = k_int();
         else if (k_its("MaxRMS"))       MaxRMS = k_val();
+        else if (k_its("MaxGapDeg"))    MaxGapDeg = k_val();
         else if (k_its("FixedDepthKm")) FixedDepthKm = k_val();
         else if (k_its("FixDepthSpacingKm")) FixDepthSpacingKm = k_val();
         else if (k_its("NllIntervalSec")) NllIntervalSec = k_int();
@@ -816,6 +819,26 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
         ARC_WHY("ARC de salida vacio <%s>", arcname);
         if (Debug >= 1) logit("t", "nlloc_ring: ARC de salida vacio <%s>\n", arcname);
         free(nllarc); return -1;
+    }
+
+    /* El ARC de NLLoc puede traer rms=99.99 (centinela de fallo) o nph/gap
+       absurdos. No se publica una solucion invalida: el mismo criterio que
+       hyp2000_ring vivo. No cambia live_usage (nlloc sigue manual/offline). */
+    {
+        LiveLocCheckCfg lc;
+        LiveLocCheck    chk;
+
+        memset(&lc, 0, sizeof(lc));
+        lc.min_phases  = MinPhases;
+        lc.max_rms     = MaxRMS;
+        lc.max_gap_deg = MaxGapDeg;
+        if (live_check_arc(nllarc, (int)n, &lc, &chk) != 0 || !chk.ok) {
+            ARC_WHY("salida NLLoc invalida: %s", chk.why);
+            if (Debug >= 1)
+                logit("t", "nlloc_ring: salida invalida (%s)\n", chk.why);
+            free(nllarc);
+            return -1;
+        }
     }
 
     memcpy(arc_out, nllarc, n);

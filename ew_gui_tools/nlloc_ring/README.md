@@ -50,10 +50,10 @@ se compila como `libnlloc.a` a partir de los mismos objetos que usa
 | `OutRoot` | raíz de salida de NLLoc |
 | `WorkDir` | carpeta PROPIA del módulo (`../nlloc_ring`): ahí van `obs.nll`, `nll_ring.in` y `<OutRoot>.*` (crea `loc/` si falta). Las grillas de tiempos y las plantillas de control se referencian por ruta ABSOLUTA en `ModelBand`/`TtimeRoot`/`ControlFile` (sólo lectura) |
 | `GridFile` | `.grid` de `csnloc` (opcional): solo refina eventos en su bbox |
-| `MinPhases`, `MaxRMS` | filtros de calidad |
+| `MinPhases`, `MaxRMS`, `MaxGapDeg` | filtros de calidad de entrada **y** de la salida: una solución con `rms=99.99` (centinela de NLLoc), `nph < MinPhases` o `gap > MaxGapDeg` no se publica |
 | `FixedDepthKm` | profundidad **fija** (km); `<0` (default) = libre. NLLoc no la soporta nativa: se emula con `LOCGRID` de 2 nodos en z centrados en el valor y `LOCSEARCH OCT … init_num_cells_z=1` (receta oficial). La solución queda dentro de ±`FixDepthSpacingKm`/2, **no** en un valor exacto |
 | `FixDepthSpacingKm` | separación entre los 2 nodos z de la emulación (km, default 0.1 ⇒ ±0.05 km). `<=0` se sustituye por 0.1 con aviso |
-| `NllIntervalSec` | rate-limit: recalcula como mucho cada N s **por evento** (`0` = cada versión) |
+| `NllIntervalSec` | rate-limit del modo vivo (no usado con `live_usage=0`; `0` = cada versión) |
 | `NllTTLSec` | olvida un evento sin versiones nuevas tras N s |
 | `NllMaxPending` | máximo de eventos pendientes en la tabla |
 
@@ -105,13 +105,12 @@ Puntos verificados (importantes):
 
 ## Rate-limit por evento
 
-NLLoc es caro, así que el módulo **no** recalcula en cada versión: guarda el
-último ARC de cada evento (`qid`) y lo relanza como mucho cada `NllIntervalSec`,
-siempre sobre la **versión más reciente** recibida. El bucle corre cada ~200 ms,
-así que el disparo ocurre por temporizador aunque no lleguen mensajes. Un evento
-nuevo se calcula de inmediato; los que no reciben versiones nuevas durante
-`NllTTLSec` se descartan de la tabla. Con `NllIntervalSec 0` se procesa cada
-versión (comportamiento antiguo).
+Con `live_usage=0` (la tabla actual) este camino **no se usa**: el módulo no
+procesa `HYPO_RING` en vivo y se invoca solo por el `locate` manual/offline.
+El código conserva la tabla de pendientes y `NllIntervalSec`/`NllTTLSec` para
+una eventual habilitación de `live_usage=1`, que **no está implementada**: si se
+pusiera en 1, el módulo avisa y fuerza 0. En ese modo hipotético guardaría el
+último ARC por `qid` y relanzaría NLLoc como mucho cada `NllIntervalSec`.
 
 ## Log de resultados
 

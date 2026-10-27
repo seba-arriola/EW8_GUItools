@@ -16,14 +16,16 @@ int main(int argc, char **argv)
     if (!f) { perror(path); return 1; }
     fprintf(f,
             "{\"event\":1,\"id\":1,\"version\":1,\"t0\":%.3f,"
-            "\"lat\":-33.2000,\"lon\":-71.2000,\"depth_km\":10.0,\"nphases\":2,"
+            "\"lat\":-33.2000,\"lon\":-71.2000,\"depth_km\":10.0,\"nphases\":3,"
             "\"phases\":["
             "{\"sta\":\"TST1\",\"net\":\"C1\",\"chan\":\"HHZ\",\"loc\":\"--\","
             "\"phase\":\"P\",\"t_epoch\":%.3f,\"residual\":0.1,\"weight\":0},"
+            "{\"sta\":\"TST1\",\"net\":\"C1\",\"chan\":\"HHN\",\"loc\":\"--\","
+            "\"phase\":\"S\",\"t_epoch\":%.3f,\"residual\":0.1,\"weight\":0},"
             "{\"sta\":\"TST2\",\"net\":\"C1\",\"chan\":\"HHZ\",\"loc\":\"--\","
-            "\"phase\":\"P\",\"t_epoch\":%.3f,\"residual\":-0.1,\"weight\":0}"
+            "\"phase\":\"S\",\"t_epoch\":%.3f,\"residual\":-0.1,\"weight\":0}"
             "]}\n",
-            T0, T0 + 5.0, T0 + 8.0);
+            T0, T0 + 5.0, T0 + 9.0, T0 + 8.0);
     fclose(f);
     return 0;
 }

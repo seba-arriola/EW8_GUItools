@@ -93,6 +93,7 @@ run_working_v8/params/db.env
 /ew_8.0/bin/csnhypodbpQT
 /ew_8.0/bin/csnrvQT
 /ew_8.0/bin/csnstaevdispQT
+/ew_8.0/bin/csntvpQT
 # --- 4. Ejecutables generados por los Makefiles (sin extensión) -------------
 /ew_gui_tools/csnloc/csnloc
 /ew_gui_tools/csnloc/csnloc_asan
@@ -106,6 +107,8 @@ run_working_v8/params/db.env
 /ew_gui_tools/csnrv/csnrv
 /ew_gui_tools/csnrvQT/csnrvQT
 /ew_gui_tools/csnstaevdispQT/csnstaevdispQT
+/ew_gui_tools/csntvpQT/csntvpQT
+/ew_gui_tools/csntvpQT/build/
 /ew_gui_tools/csntvp/csntvp
 /ew_gui_tools/csntvp/test_filter
 /ew_gui_tools/csnstaevdisp/csnstaevdisp

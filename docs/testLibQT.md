@@ -1586,6 +1586,8 @@ absolutas), y **debe versionarse**: §1 falla mientras quede sin trackear en `pa
 - Ampliar `diag.sh` (lista cerrada) para `config csnhypodbpqt`.
 - Añadir el prototipo a `AGENTS.md` / `docs/` (lo hará quien decida adoptarlo).
 - Migrar `csnrv`, `csntvp`, `csnstaevdisp`, `ew_controller` a Qt.
+  **Estado actual**: `csnrvQT`, `csnstaevdispQT` y `ew_controllerQT` sustituyen a sus GTK; `csntvpQT`
+  es el prototipo (etapa 1: convive con `csntvp` y usa `.d` propio `csntvpqt.d`, `MOD_CSNTVPQT` 175).
 - ~~Tocar `common` para crear una variante `libewgui_core.a` sin GTK~~ **Superado por D5**
   (ver §17): la infraestructura Qt compartida vive en `ew_gui_tools/commonqt/`
   (`libewguiqt.a`), hermana de `common/`, sin tocarla. El port de `ew_controller`

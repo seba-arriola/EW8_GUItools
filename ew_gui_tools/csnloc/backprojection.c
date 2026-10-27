@@ -325,6 +325,11 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
                     if (predict_tt(tt, st, &picks[p], cl[cc].lat, cl[cc].lon,
                                    cl[cc].depth_km, &tpred, &delta) != 0)
                         continue;
+                    /* Gatillo: no usar estaciones mas lejanas que
+                       MaxAssocDistKm (0 = sin tope). */
+                    if (cfg->MaxAssocDistKm > 0.0 &&
+                        delta * KM_PER_DEG > cfg->MaxAssocDistKm)
+                        continue;
                     resid = picks[p].t_epoch - (cl[cc].t0 + tpred);
                     if (fabs(resid) > res_tol) continue;
                     for (k = 0; k < nclaimed; k++) {
@@ -339,6 +344,16 @@ int AssembleCandidates(const HypoCandidate *cand, int ncand,
                 }
 
                 if (nclaimed < cfg->MinPhasesPerEvent) continue;
+                /* Gatillo: exigir MinPPhases fases P (0 = off). Se comprueba
+                   antes de asignar owner[] para que los picks queden libres
+                   para otra hipotesis. */
+                if (cfg->MinPPhases > 0) {
+                    int np = 0;
+
+                    for (k = 0; k < nclaimed; k++)
+                        if (picks[claimed[k]].phase == CSLOC_PHASE_P) np++;
+                    if (np < cfg->MinPPhases) continue;
+                }
                 for (k = 0; k < nclaimed; k++) owner[claimed[k]] = cc;
             }
 

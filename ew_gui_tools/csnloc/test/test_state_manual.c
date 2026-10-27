@@ -31,7 +31,7 @@ int main(void)
     a.ev[0].version = 2;
     a.ev[0].t0 = 1.9e9; a.ev[0].lat = -20.0; a.ev[0].lon = -70.0;
     a.ev[0].depth_km = 25.0; a.ev[0].nphases = 2;
-    a.ev[0].last_update_epoch = 1.9e9;
+    a.ev[0].last_update_wall = 1.9e9;
     a.ev[0].phases[0] = mk("BO03", CSLOC_PHASE_P, 1.9e9 + 20.0, 0);
     a.ev[0].residual[0] = 0.1;
     a.ev[0].phases[1] = mk("GO01", CSLOC_PHASE_S, 1.9e9 + 40.0, 1);

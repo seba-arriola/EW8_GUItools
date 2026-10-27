@@ -212,7 +212,7 @@ hace **`csnloc`** localmente.
     proceso**: `csnhypodbpQT` paga la misma trampa y lo fija en `ui/main.cxx`; su `--dump` publica
     `bg=<ancho>x<alto>` y el invariante es `csnhypodbpQT/tests/test_map_background.sh` (`bg=0x0`
     = lienzo virtual, con el motivo del fallo en `stderr`).
-  - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`).
+  - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`). **Port Qt en `csntvpQT/`** (corre en paralelo con su propio `.d`, ver más abajo).
   - `csnstaevdisp/`: visor de estaciones y eventos (mapa equirectangular, triángulos de estación coloreados por elevación, círculos de sismo escalados por magnitud). Usa la BD hipocentral (historial) y `HYPO_RING` (en vivo). Mismo contrato de mapa base que `csnrv` (`MapImageFile`: equirectangular 2:1 de mundo completo, sin alpha) y misma **capa de líneas** (`OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide`, ver `common/tools/OVERLAYS.md`); test headless `make test-config`.
   - `csnstaevdispQT/`: **port Qt6 de `csnstaevdisp`** (paridad completa: triángulos por
     elevación, círculos por magnitud, leyenda, `Export view...`, `Dark mode`, `Events number`,
@@ -231,6 +231,28 @@ hace **`csnloc`** localmente.
     (`BIN=csnstaevdispQT`), y `test_ui` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen
     (5 estaciones, 3 sismos y 2 capas de fixture, mínimo ≤ 700×800, zoom ×1.2 anclado, arrastre y
     que un snapshot nuevo no mueva la vista).
+  - `csntvpQT/`: **port Qt6 de `csntvp`** (prototipo en etapa 1: convive con el GTK en
+    `startstop_unix.d` y se depura en paralelo). Visor de trazas en vivo (`SLINK_RING`,
+    `TYPE_TRACEBUF2`) con HOLD, picado manual P/S y **`.d` propio** `csntvpqt.d`
+    (`MOD_CSNTVPQT` **175**): el eco de una picada se deduplica por `(mod,inst,seq)`
+    (`csntvp_data.c:371-381`), así que compartir id haría que el port pisara los slots locales del
+    GTK (y al revés); ver la trampa en §7. El `.d` es copia del GTK y **sólo** puede diferir en
+    `MyModuleId`, `zColor`, `nColor`, `eColor` (lo gatea `tests/test_integration.sh`). Añade la
+    **coloración por componente** (`zColor`/`nColor`/`eColor`; sin declarar heredan de
+    `waveformsColor`, y con el `stations_to_view.sta` actual —141 filas todas `HHZ`— sólo se ve al
+    añadir horizontales). Reparto `c/` (C puro: `tvq_config`, `tvq_sta`, `tvq_trace`, `tvq_env`,
+    `tvq_pick`, `tvq_emit`, `tvq_ring`, `tvq_purge`, `tvq_paint`, `tvq_axis`, `tvq_core`,
+    `tvq_logit`) + `c/tvq_capi.h` como **única** frontera C→C++ + `ui/` (sólo `<Qt…>`,
+    `ewguiqt/*` y `tvq_capi.h`). **cairo vive sólo en `c/`** (trazas y eje → BGRA) y el parser de
+    `TYPE_PICK_SCNL` **no se copia**: se compila `../csntvp/csntvp_util.c`, así que el formato de la
+    picada no puede derivar del GTK. El lienzo es **del tamaño del viewport** con una `QScrollBar`
+    (no `n_sta·alto_pista` px: 141×66 sería un BGRA de 44 MB repintado a 2 Hz) y el reparto de
+    vistas caduca como en el GTK (`t_right = ahora − 2 s`, congelado en HOLD y `STALE DATA` a los
+    10 s sin paquetes). `--print-config` es **nuevo en la familia** (el GTK no lo tenía), el log es
+    `$EW_LOG/csntvpQT_<fecha>.log` (nombre del **proceso**; sin `EW_LOG` escribible baja a consola)
+    y `tests/test_ui.sh` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen con un fixture
+    de 3 estaciones `HHZ/HHN/HHE` (mínimo ≤ 700×800, clic→tiempo < 1 ms, clean/reload). `make check`
+    cubre unitarios C + config + invariantes + integración; `test-live` arranca contra el stack.
   - `hypodb/`: **ingester** (C, headless) que lee los anillos hipocentrales y los escribe en
     PostgreSQL (esquema QuakeML simplificado, `db/schema.sql`). Entradas: `HYPO_RING` (csnloc 162)
     y `HYPO_RING_REF` (hyp2000 163 / nlloc 164, distinguidos por el `mod` del logo) + `PICK_RING`
@@ -248,7 +270,7 @@ hace **`csnloc`** localmente.
     Credenciales en `run_working_v8/params/db.env` (`DbEnvFile`). Mapeo campo a campo (ida y vuelta)
     y contrato de orden de las tablas: `docs/DATA-MAPPING.md`; lo que falta decidir:
     `docs/DATA-MAPPING-PENDIENTES.md`. Ver también `docs/HYPODB.md` y `db/README.md`.
-  - `csnloc/`: módulo nativo (C) **asociador**. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`): emite **una sola** primera solución por evento y no versiona; los locators con `live_usage=1` son los que recalculan con todos los picks. Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
+  - `csnloc/`: módulo nativo (C) **asociador**. Entrada `PICK_RING` (`TYPE_PICK_SCNL`), salida `HYPO_RING` (`TYPE_HYP2000ARC`): emite **una sola** primera solución por evento y no versiona; los locators con `live_usage=1` son los que recalculan con todos los picks. La identidad de evento usa un **ancla congelada** (`t0/lat/lon` de la primera solución) y `EventMatchTimeSec`/`EventMatchDistKm` (o una ventana que crece con `EventMatchVelocityKmS`); `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` son las puertas del gatillo (0 = off). Un candidato fuera de la ventana crea evento nuevo aunque comparta picadas (log `overlap`). Config `csnloc.d` con **grillas anidadas** (global/regional/local, cada una en un archivo `.grid`; ver `csnloc/README.md`); tests con `make check` (unitarios, incluye grillas y `test_trigger_gate`) y `make check-offline` (modo offline determinista). Además del modo anillo admite un **modo offline** `csnloc <csnloc.d> <picksfile>` (reloj virtual, un JSON por evento). Ver `csnloc/README.md`.
   - `pickS/`: picker nativo (C) de **onda S**. Lee ondas `TYPE_TRACEBUF2` de
     `SLINK_RING` (horizontales `HH?`/`BH?`) y picks P de `LEGACY_PICK_RING`, y
     publica picks S (`TYPE_PICK_SCNL` con 11.º token de fase `S`) en
@@ -391,7 +413,7 @@ SeedLink (10.54.217.9:18000)
         ▼
    SLINK_RING ──────────────► wstore_ingest ──► csnhypodbp (fallback)
         │  pick_FP (P) + pickml iquique (S)
-        ├────────────────────► PICK_RING ──► csntvp / csnhypodbp (re-picks manuales)
+        ├────────────────────► PICK_RING ──► csntvp / csntvpQT / csnhypodbp (re-picks manuales)
         │                          │
         │                          ├─ csnloc (asociador: 1.ª solución) ─► HYPO_RING
         │                          └─ hyp2000_ring (live_usage=1) ───────► HYPO_RING_REF
@@ -403,13 +425,19 @@ SeedLink (10.54.217.9:18000)
         └─ pickS / pickml eqt ─► LEGACY_PICK_RING  (sin consumidor: comparar)
 ```
 
-`csnloc` es **sólo el asociador**: emite una primera solución por evento (nunca versiona).
+`csnloc` es **sólo el asociador**: emite una primera solución por evento (nunca versiona). El ancla
+de identidad es esa primera solución (`t0/lat/lon` congelados, no el `t0` de la última detección):
+`EventMatchTimeSec`+`EventMatchDistKm` (y `EventMatchVelocityKmS` opcional) definen cuándo un
+candidato es el mismo evento; `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` filtran el gatillo. Un
+candidato fuera de la ventana crea un evento nuevo aunque comparta picadas (se loguea `overlap`).
 La tabla de localizadores vive únicamente en `csnhypodbpqt.d` (columnas `binario`, `config`,
 `live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. Los locators con
-`live_usage=1` reciben todos los picks automáticos de `PICK_RING`, rehacen el ARC con la última
-solución preferida y publican `HYPO_RING_REF` cada `time_recalc_live`; tras `N_retry` intentos sin
-picadas nuevas dejan de localizar ese evento. El `locate` manual manda todos los picks directo al
-locator elegido (sin `csnloc` intermedio). El ingester `wstore_ingest`
+`live_usage=1` asocian todas las P/S de `PICK_RING` al hipocentro del seed por **tiempo de viaje**
+(`t0 + tt`, ventana que crece con distancia/profundidad), rehacen el ARC solo con las picadas
+asociadas y publican `HYPO_RING_REF` cada `time_recalc_live`; validan `rms/nph/gap` antes de
+publicar (no emiten `rms=99.99` ni contaminan el seed) y tras `N_retry` intentos sin picadas nuevas
+o sin solución válida dejan de localizar ese evento. El `locate` manual manda todos los picks
+directo al locator elegido (sin `csnloc` intermedio). El ingester `wstore_ingest`
 lee `SLINK_RING` con su propio cursor y escribe el **store indexado** (`wstore`), fuente primaria de
 ondas de `csnhypodbp` y `csnmags`. **`PICK_RING` es el anillo vivo** y su regla es **un productor
 por fase**: `pick_FP` aporta la **P** y `pickml_iquique` **sólo la S** (`PublishPhases S`, porque
@@ -554,7 +582,7 @@ csnhypodbp csnhypodbp.d            # 4. estructura general: <binario> <binario>.
 
 **Avisos que ahorran tiempo**
 
-- **Un módulo GUI no arranca sin `DISPLAY`** (`csnhypodbp`, `csnrv`, `csntvp`, `csnstaevdisp`,
+- **Un módulo GUI no arranca sin `DISPLAY`** (`csnhypodbp`, `csnrv`, `csntvp`, `csntvpQT`, `csnstaevdisp`,
   `ew_controller`): lánzalos desde una terminal de tu sesión gráfica (en WSLg, `:0`). `csnloc`,
   `pickS`, `pickml`, `csnmags`, `hypodb_ingest`, `wstore_ingest`, `hyp2000_ring`, `nlloc_ring` son
   headless.
@@ -687,10 +715,20 @@ primero al store algo que ya no está).
 - **`awk`/`mawk` y `LC_NUMERIC`**: con un locale no-C (p. ej. `es_CL.UTF-8`), `mawk` deja de
   interpretar `3.3807` como número y compara como **string** (`"3.3807" >= "180"` es *true*).
   Fuerza `LC_ALL=C` (o `LC_NUMERIC=C`) en cualquier script que use `awk` para comparar números.
-- **Display X**: los módulos GUI (`csntvp`, `csnhypodbp`, `csnrv`) requieren un `DISPLAY` funcional
+- **Display X**: los módulos GUI (`csntvp`, `csntvpQT`, `csnhypodbp`, `csnrv`) requieren un `DISPLAY` funcional
   (WSLg `:0` funciona al lanzarlos desde una sesión con acceso X). La validación de configuración
   **no** lo necesita: `--print-config`/`--check-profiles`/`--check-overlays` corren antes de crear la
   aplicación (`csnhypodbp_main.c`: el flag se resuelve antes de `adw_application_new`).
+- **Dos GUIs con el MISMO `MyModuleId` se pisan el eco de las picadas**: `csntvp` reconoce sus
+  propias picadas por `(mod,inst,seq)` y actualiza el slot local en vez de duplicarlo
+  (`csntvp_data.c:371-381`), y `seq` empieza en 0 en cada proceso. Dos instancias con el mismo
+  `MyModuleId` (p. ej. el GTK y el port Qt corriendo ambos con `MOD_CSNTVP`) harían que una picada
+  del port con `seq=7` sobrescribiera en la ventana GTK una picada local con `seq=7` de **otra**
+  estación y otro tiempo (no corrompe el anillo: corrompe la vista). Por eso `csntvpQT` usa
+  `MOD_CSNTVPQT` **175** y `.d` propio (`csntvpqt.d`), y el `Process` del GTK sigue apuntando a
+  `csntvp.d`. No hay ningún chequeo de id duplicado entre procesos vivos
+  (`docs/testLibQT.md:650-651`): la separación la garantiza el `.d` y la gatea
+  `csntvpQT/tests/test_integration.sh` (whitelist de claves y `.base` con el id 175).
 - **GTK4 en WSLg: backend y ventanas**: `ew8_gtk_env.sh` (fuente única) fija `GSK_RENDERER=cairo`
   (avisos libEGL/MESA) y **no fuerza `GDK_BACKEND`**: usa el backend por defecto (Wayland si hay
   `WAYLAND_DISPLAY`, si no X11). Motivo: con x11 los popovers funcionaban pero la ventana **no se
@@ -703,7 +741,10 @@ primero al store algo que ya no está).
 - **`GtkDropDown` en WSLg/Wayland (bug #1299)**: el popup aparece **detrás** de la ventana y no
   cierra al elegir. Por eso los selectores **no** usan `GtkDropDown`: `ew_controller` abre una
   **ventana modal con la lista** (Accept/Cancel), y `csnhypodbp`/`csntvp` (filtro/orden, pocas
-  opciones) usan **radios** `GtkCheckButton`.
+  opciones) usan **radios** `GtkCheckButton`. En los ports Qt el menú es un `QMenuBar` **nativo**
+  (`csnrvQT`/`csnstaevdispQT`/`csnhypodbpQT`/`csntvpQT`) y los selectores son **diálogos modales**
+  (`QInputDialog`/`QColorDialog`), nunca `QComboBox`; lo prohíbe
+  `csntvpQT/tests/test_ui_invariants.sh` §5.
 - **Menú ☰ del headerbar (misma familia que #1299)**: `GtkMenuButton`+`GMenuModel` crea un
   `GtkPopoverMenu` (superficie `xdg_popup`); bajo WSLg/Wayland se usaba una vez, quedaba detrás
   de la ventana y dejaba la UI anómala. Por eso **ningún** módulo lo usa: el ☰ es un `GtkButton`

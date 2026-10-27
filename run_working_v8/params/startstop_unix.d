@@ -168,3 +168,6 @@
  Process	  "csnstaevdispQT csnstaevdisp.d"
  Class/Priority    OTHER 0
 #
+ Process	  "csntvpQT csntvpqt.d"
+ Class/Priority    OTHER 0
+#

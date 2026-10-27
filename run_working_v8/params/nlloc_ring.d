@@ -34,6 +34,9 @@ GridFile        grids/chile_regional.grid
 
 MinPhases       4
 MaxRMS          2.0
+# Gap azimutal maximo (grados) de la SALIDA; 0 = sin filtro. Una solucion con
+# rms=99.99 (centinela de NLLoc), nph<MinPhases o gap>MaxGapDeg no se publica.
+MaxGapDeg       300
 # Profundidad fija (km); <0 = libre. NLLoc la emula con una ventana z de
 # +/- FixDepthSpacingKm/2 (la GUI la pasa por corrida).
 # FixedDepthKm    -1.0

@@ -71,8 +71,23 @@ typedef struct {
     int    n_gridfiles;
     int    GridActivationMinPicks;   /* picks para activar una grilla fina */
     double GridActivationMarginDeg;  /* margen de activacion por cercania  */
-    double EventDedupSec;            /* dedup de eventos entre grillas (s) */
-    double EventDedupKm;             /* dedup de eventos entre grillas (km)*/
+
+    /* Identidad de evento. El ancla es la PRIMERA solucion del evento
+       (t0/lat/lon congelados): no se usa el t0 de la ultima deteccion.
+       Es el mismo evento si |dt| <= EventMatchTimeSec (+ d/V si
+       EventMatchVelocityKmS>0) y la distancia <= EventMatchDistKm.
+       EventPickTolSec es la tolerancia de tiempo para considerar que una
+       picada del candidato es la MISMA picada de un evento ya emitido. */
+    double EventMatchTimeSec;        /* ventana temporal base (s)          */
+    double EventMatchDistKm;         /* distancia maxima (km)              */
+    double EventMatchVelocityKmS;    /* 0 = fija; >0 = crece con la dist.  */
+    double EventPickTolSec;          /* tolerancia de picada compartida (s)*/
+
+    /* Gatillo (0 = off). Solo afecta a la asociacion de csnloc; los
+       localizadores reciben despues todas las picadas asociadas. */
+    int    MinPPhases;               /* P minimas de un candidato          */
+    double MaxAssocDistKm;           /* dist. max. estacion-hipocentro (km) */
+    double MaxGapDeg;                /* gap azimutal maximo (grados)       */
 
     /* Asociacion */
     double AssocWindowSec;     /* ventana temporal de picks        */
@@ -184,12 +199,15 @@ typedef struct {
 typedef struct {
     unsigned long id;              /* ID base persistente                  */
     unsigned int  version;         /* ultima version emitida (0 = ninguna) */
-    double t0, lat, lon, depth_km;
-    double t0_detect;              /* t0 del candidato que lo detecto      */
+    double t0, lat, lon, depth_km;  /* ancla congelada de la 1.ª solucion  */
+    double t0_detect;              /* legado: t0 del candidato que lo creo;
+                                      solo se conserva en el state, NO se usa
+                                      para el match                          */
     int    nphases;
     double rms_sec, gap_deg, dmin_km, score;
     int    grid_level;
-    double last_update_epoch;      /* para TTL                             */
+    double last_update_wall;       /* epoch wall-clock de la ultima
+                                      deteccion; base del TTL               */
     int    emitted;                /* 1 si ya se emitio alguna version     */
     int    has_manual;             /* 1 si alguna fase es manual           */
 
@@ -380,8 +398,26 @@ int  RefineHypo(HypoCandidate *h, const StationList *st, const Pick *picks,
 void EventRegistry_Init(EventRegistry *r);
 /* Callback de trazas (Debug>=1). csnloc.c lo conecta a logit(); en tests NULL. */
 void EventRegistry_SetLogCallback(void (*cb)(const char *msg));
+/* Criterio unico de "mismo evento" (lo usan DedupEvents y FindMatch).
+   Devuelve 1 si (t0a,lata,lona) y (t0b,latb,lonb) caen dentro de la ventana
+   EventMatchTimeSec (+ d/EventMatchVelocityKmS) y de EventMatchDistKm.
+   dt_out/d_km_out pueden ser NULL. */
+int  CSLoc_EventMatch(const CSLocParams *cfg,
+                      double t0a, double lata, double lona,
+                      double t0b, double latb, double lonb,
+                      double *dt_out, double *d_km_out);
+/* Devuelve 1 y el indice del mejor match (menor dt/tmax y distancia).
+   shared_out recibe cuantas picadas del candidato coinciden con el evento
+   (misma estacion+fase+tiempo dentro de EventPickTolSec). */
 int  EventRegistry_FindMatch(const EventRegistry *r, const HypoCandidate *c,
-                             const CSLocParams *cfg, int *idx_out);
+                             const Pick *window, int nwin,
+                             const CSLocParams *cfg, int *idx_out,
+                             int *shared_out);
+/* Cuenta picadas del candidato que ya estan en el evento por estacion+fase
+   y |dt| <= EventPickTolSec. */
+int  EventRegistry_SharedPicks(const EventRecord *e, const Pick *window,
+                               int nwin, const int *phase_idx, int nph,
+                               double tol_sec);
 int  EventRegistry_Accept(const EventRecord *prev, const HypoCandidate *c,
                           const CSLocParams *cfg);   /* 1 = aceptar version */
 int  EventRegistry_AddPhase(EventRecord *e, const Pick *p,
@@ -394,7 +430,8 @@ int  EventRegistry_Upsert(EventRegistry *r, const HypoCandidate *c,
                           const Pick *window, int nwin, const CSLocParams *cfg,
                           const StationList *st, TTModel *tt,
                           const GridSet *grids,
-                          unsigned long id_base, unsigned long *id_out,
+                          unsigned long id_base, double now_epoch,
+                          unsigned long *id_out,
                           unsigned int *ver_out, int *manual_out);
 
 /* state.c */

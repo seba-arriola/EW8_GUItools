@@ -30,6 +30,7 @@ ew_gui_tools/common/tools/worktree_bootstrap.sh . --check   # tiene que dar OK
 source ./ew8_unix.sh
 make -C ew_gui_tools/common
 for d in wavestore csnloc csnwphase csnmags pickS csntvp csnrv csnstaevdisp ew_controller \
+         csnrvQT csnstaevdispQT ew_controllerQT csntvpQT \
          hypodb hyp2000_ring nlloc_ring csnhypodbp; do make -C ew_gui_tools/$d || break; done
 sh ew_gui_tools/common/tools/check_install.sh -v   # 16/16 OK
 

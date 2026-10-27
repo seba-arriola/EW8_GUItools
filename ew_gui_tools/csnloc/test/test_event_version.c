@@ -16,6 +16,11 @@
 #include "../csnloc.h"
 
 static int fails = 0;
+static char g_log[4096];
+static void logcb(const char *m)
+{
+    if (strlen(g_log) + strlen(m) + 1 < sizeof(g_log)) strcat(g_log, m);
+}
 #define CHECK(cond, msg) do { if (!(cond)) { printf("FAIL: %s\n", msg); fails++; } \
                               else printf("ok  : %s\n", msg); } while (0)
 
@@ -81,7 +86,9 @@ int main(void)
     tr_lat_g = geoc(tr_lat_geo);
 
     memset(&cfg, 0, sizeof(cfg));
-    cfg.EventDedupSec = 30.0; cfg.EventDedupKm = 100.0;
+    cfg.EventMatchTimeSec = 60.0; cfg.EventMatchDistKm = 100.0;
+    cfg.EventMatchVelocityKmS = 0.0; cfg.EventPickTolSec = 0.1;
+    cfg.MinPPhases = 0; cfg.MaxAssocDistKm = 0.0; cfg.MaxGapDeg = 0.0;
     cfg.MaxRMSDegrade = 0.10; cfg.MaxGapDegradeDeg = 10.0;
     cfg.PhaseAssocTolSec = 2.0; cfg.PhaseAssocTolSecS = 4.0;
     cfg.PhaseResidualMaxSec = 3.0; cfg.PhaseResidualMaxSecS = 5.0;
@@ -97,7 +104,7 @@ int main(void)
     window[nwin++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
     c = mk_cand(window, 3, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id1, &v1, NULL);
+                             1000UL, t0, &id1, &v1, NULL);
     CHECK(r == 1 && v1 == 1, "evento nuevo emite version 1");
     CHECK(id1 == 1000UL, "id base asignado");
     CHECK(reg.n == 1, "registro con 1 evento");
@@ -105,14 +112,14 @@ int main(void)
 
     /* --- Mismo evento, misma ventana -> sin cambios, no emite --- */
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id2, &v2, NULL);
+                             1000UL, t0, &id2, &v2, NULL);
     CHECK(r == 0, "sin picks nuevos no emite");
 
     /* --- Llega una fase nueva (4a estacion) -> version 2, mismo id --- */
     window[nwin++] = mk_pick(&st, &tt, 3, tr_lat_g, tr_lon, tr_depth, t0);
     c = mk_cand(window, 4, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
     r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                             1000UL, &id2, &v2, NULL);
+                             1000UL, t0, &id2, &v2, NULL);
     CHECK(r == 1 && v2 == 2, "fase nueva emite version 2");
     CHECK(id2 == id1, "mismo id en la actualizacion");
     CHECK(reg.ev[0].nphases_stored == 4, "4 fases acumuladas");
@@ -127,7 +134,7 @@ int main(void)
         window[0].t_epoch += 2.0;
         c = mk_cand(window, 4, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
         r = EventRegistry_Upsert(&reg, &c, window, nwin, &cfg, &st, &tt, NULL,
-                                 1000UL, &id2, &v2, NULL);
+                                 1000UL, t0, &id2, &v2, NULL);
         CHECK(r == 0, "C2: re-pick que empeora no emite");
         CHECK(reg.ev[0].version == v_before, "C2: version no incrementa");
     }
@@ -144,7 +151,7 @@ int main(void)
         w2[n2++] = mk_pick(&st, &tt, 2, geoc(-30.0), -72.0, 20.0, t2);
         c2 = mk_cand(w2, 3, t2, geoc(-30.0), -72.0, 20.0, 0.5, 120.0);
         r = EventRegistry_Upsert(&reg, &c2, w2, n2, &cfg, &st, &tt, NULL,
-                                 1001UL, &id3, &v3, NULL);
+                                 1001UL, t2, &id3, &v3, NULL);
         CHECK(r == 1 && id3 == 1001UL && v3 == 1, "evento distinto -> id nuevo");
         CHECK(reg.n == 2, "registro con 2 eventos");
     }
@@ -165,14 +172,78 @@ int main(void)
         w3[n3++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
         c3 = mk_cand(w3, n3, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
         r = EventRegistry_Upsert(&reg2, &c3, w3, n3, &cfg2, &st, &tt, NULL,
-                                 2000UL, &id4, &v4, NULL);
+                                 2000UL, t0, &id4, &v4, NULL);
         CHECK(r == 1 && v4 == 1, "asociador: primera solucion v1");
         w3[n3++] = mk_pick(&st, &tt, 3, tr_lat_g, tr_lon, tr_depth, t0);
         c3 = mk_cand(w3, n3, t0, tr_lat_g, tr_lon, tr_depth, 0.4, 110.0);
         r = EventRegistry_Upsert(&reg2, &c3, w3, n3, &cfg2, &st, &tt, NULL,
-                                 2000UL, &id4, &v4, NULL);
+                                 2000UL, t0, &id4, &v4, NULL);
         CHECK(r == 0, "asociador: fase nueva NO emite");
         CHECK(reg2.ev[0].version == 1, "asociador: version queda en 1");
+    }
+
+    /* --- Ancla estable: dt=45 s y d~89 km es el MISMO evento (no emite).
+       Con el criterio viejo (t0_detect movil + 30 s) esto creaba otro id. --- */
+    {
+        EventRegistry reg3;
+        CSLocParams cfg3 = cfg;
+        Pick w4[CSLOC_MAX_PHASES];
+        int n4 = 0;
+        HypoCandidate c4;
+        unsigned long id5 = 0; unsigned int v5 = 0;
+
+        cfg3.AssociateOnly = 1;
+        EventRegistry_Init(&reg3);
+        w4[n4++] = mk_pick(&st, &tt, 0, tr_lat_g, tr_lon, tr_depth, t0);
+        w4[n4++] = mk_pick(&st, &tt, 1, tr_lat_g, tr_lon, tr_depth, t0);
+        w4[n4++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
+        c4 = mk_cand(w4, n4, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg3, &c4, w4, n4, &cfg3, &st, &tt, NULL,
+                                 3000UL, t0, &id5, &v5, NULL);
+        CHECK(r == 1 && v5 == 1, "ancla: evento inicial v1");
+
+        c4 = mk_cand(w4, n4, t0 + 45.0, geoc(tr_lat_geo + 0.8), tr_lon,
+                     tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg3, &c4, w4, n4, &cfg3, &st, &tt, NULL,
+                                 3004UL, t0 + 45.0, &id5, &v5, NULL);
+        CHECK(r == 0, "ancla: dt=45 s d~89 km es el MISMO evento (no emite)");
+        CHECK(reg3.n == 1, "ancla: no se crea un id nuevo");
+        CHECK(reg3.ev[0].version == 1, "ancla: la version sigue en 1");
+    }
+
+    /* --- Lejos con picadas compartidas: evento nuevo + log overlap. --- */
+    {
+        EventRegistry reg4;
+        CSLocParams cfg4 = cfg;
+        Pick w5[CSLOC_MAX_PHASES];
+        int n5 = 0;
+        HypoCandidate c5;
+        unsigned long id6 = 0; unsigned int v6 = 0;
+
+        memset(g_log, 0, sizeof(g_log));
+        EventRegistry_SetLogCallback(logcb);
+        cfg4.Debug = 1;
+        cfg4.AssociateOnly = 1;
+        EventRegistry_Init(&reg4);
+        w5[n5++] = mk_pick(&st, &tt, 0, tr_lat_g, tr_lon, tr_depth, t0);
+        w5[n5++] = mk_pick(&st, &tt, 1, tr_lat_g, tr_lon, tr_depth, t0);
+        w5[n5++] = mk_pick(&st, &tt, 2, tr_lat_g, tr_lon, tr_depth, t0);
+        c5 = mk_cand(w5, n5, t0, tr_lat_g, tr_lon, tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg4, &c5, w5, n5, &cfg4, &st, &tt, NULL,
+                                 4000UL, t0, &id6, &v6, NULL);
+        CHECK(r == 1 && v6 == 1, "overlap: evento inicial v1");
+
+        c5 = mk_cand(w5, n5, t0 + 45.0, geoc(tr_lat_geo + 2.0), tr_lon,
+                     tr_depth, 0.5, 120.0);
+        r = EventRegistry_Upsert(&reg4, &c5, w5, n5, &cfg4, &st, &tt, NULL,
+                                 4004UL, t0 + 45.0, &id6, &v6, NULL);
+        CHECK(r == 1 && id6 == 4004UL && v6 == 1,
+              "overlap: lejos con picadas compartidas -> evento nuevo");
+        CHECK(reg4.n == 2, "overlap: dos eventos independientes");
+        CHECK(strstr(g_log, "overlap=3") != NULL,
+              "overlap: el log registra las 3 picadas compartidas");
+
+        EventRegistry_SetLogCallback(NULL);
     }
 
     TTModel_Free(&tt);

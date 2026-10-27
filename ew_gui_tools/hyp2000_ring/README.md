@@ -5,10 +5,18 @@ A diferencia de `hyp2000_mgr` (que recibe los ARC por *pipe*, dentro de la caden
 *sausage* `eqassemble → eqbuf → eqcoda → eqverify`), este módulo:
 
 - **lee** la semilla `TYPE_HYP2000ARC` de `HYPO_RING` (1.ª solución de `csnloc`);
-- **lee** todos los `TYPE_PICK_SCNL` de `PICK_RING` y, si `live_usage=1`, rehace
-  el ARC con la solución preferida + todos los picks cada `time_recalc_live`;
+- **lee** todos los `TYPE_PICK_SCNL` de `PICK_RING` y, si `live_usage=1`, asocia
+  cada P/S al hipocentro del seed por **tiempo de viaje** (`t0 + tt`) y rehace el
+  ARC solo con las picadas asociadas, cada `time_recalc_live`;
 - **escribe** el ARC refinado en `HYPO_RING_REF`;
 - **no** usa `pipe`, `eqassemble`, `eqbuf`, `eqcoda` ni `eqverify`.
+
+El seed aporta **solo el hipocentro** (t0/lat/lon/depth); las fases viejas del
+seed **no** se copian. La ventana de asociación crece con la distancia y la
+profundidad (`LivePickResidualSecP/S`), así que un evento profundo con P-S > 60 s
+no pierde la P. La salida se valida (`rms/nph/gap`) antes de publicar: una
+solución con `rms=99.99` no se emite ni contamina el seed. Tras `N_retry`
+intentos sin picadas nuevas o sin solución válida, deja de localizar el evento.
 
 ```
 HYPO_RING (semilla) ──┐
@@ -54,11 +62,16 @@ Se excluyen del build los `.f` duplicados del vendorizado original.
 |---|---|
 | `MyModuleId` | ID en `earthworm.d` (`MOD_HYP2000_RING`) |
 | `InRing` / `OutRing` | `HYPO_RING` / `HYPO_RING_REF` |
+| `InPickRing` | `PICK_RING`: solo se usa si `live_usage=1` |
 | `HeartBeatInt`, `LogFile`, `Debug`, `SourceCode` | como el resto de módulos |
 | `CommandFile` | fichero `.hyp` de arranque de HYPOINVERSE |
 | `WorkDir` | carpeta PROPIA del módulo (`../hyp2000_ring`): ahí escribe `arcIn`/`arcOut`; el módulo la crea si falta. Las entradas (`.hyp`/`.sta`/`.crh`) viven en `params/` y se referencian como `../params/...` |
 | `GridFile` | `.grid` de `csnloc` (opcional): solo se refinan eventos en su bbox |
-| `MinPhases`, `MaxRMS` | filtros de calidad (`0` = sin filtro) |
+| `StaFile` | `estaciones_107.txt` (resuelto contra `$EW_PARAMS`): lat/lon para el tiempo de viaje |
+| `TauTable` | `iasp91`: modelo tau (`<EW_PARAMS>/<modelo>.tbl/.hed`) |
+| `LivePickLookbackSec` | máximo `t_pick - t0` que se mira hacia adelante (s); el buffer se purga con esto + 60 s |
+| `LivePickResidualSecP` / `LivePickResidualSecS` | tolerancia del residual de asociación P/S (s) |
+| `MinPhases`, `MaxRMS`, `MaxGapDeg` | filtros de calidad de la **salida** (`0` = sin filtro): `nph`, `rms`, `gap` |
 | `FixedDepthKm` | profundidad **fija** (km) de la corrida; `<0` (default) = libre. El módulo emite `ZTR <z> T` después del `.hyp`, así el motor no mueve `z` (`DEPFIXA`). La GUI la pasa por corrida en una copia temporal del `.d`; en modo anillo solo se activa si se escribe en el `.d` |
 
 `hyp2000_ring.hyp` (arranque de HYPOINVERSE): modelo + estaciones + `ZTR` + `DAM`.
@@ -85,7 +98,8 @@ hyp2000_ring <ruta>/hyp2000_ring.d <arc_entrada> > out.arc
 Refina y escribe el ARC a stdout, **normalizado** (header 197 / fases 114) y con
 el `qid` y la versión de `csnloc` **copiados** al header de salida (para que
 `csnhypodbp` agrupe el refinado con el mismo evento). El motor HYPOINVERSE imprime
-además su resumen por stdout, así que el ARC queda al final.
+además su resumen por stdout, así que el ARC queda al final. La salida también se
+valida (`rms/nph/gap`): si no pasa, el módulo sale con código 2 y no escribe ARC.
 
 ## Log de resultados
 

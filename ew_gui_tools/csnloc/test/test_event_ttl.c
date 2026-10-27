@@ -17,9 +17,9 @@ int main(void)
 
     EventRegistry_Init(&reg);
 
-    reg.ev[0].id = 1000; reg.ev[0].last_update_epoch = 1000.0;
-    reg.ev[1].id = 1001; reg.ev[1].last_update_epoch = 1200.0;
-    reg.ev[2].id = 1002; reg.ev[2].last_update_epoch = 1400.0;
+    reg.ev[0].id = 1000; reg.ev[0].last_update_wall = 1000.0;
+    reg.ev[1].id = 1001; reg.ev[1].last_update_wall = 1200.0;
+    reg.ev[2].id = 1002; reg.ev[2].last_update_wall = 1400.0;
     reg.n = 3;
 
     /* now=1500, ttl=300: el evento 0 (1000) expira (500>300);

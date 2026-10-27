@@ -28,7 +28,9 @@ $(HYPOLIB):
 
 LIVE_OBJS = ../csnhypodbp/csnhypodbp_group.o \
             ../csnhypodbp/csnhypodbp_locator.o \
-            ../csnloc/pick_scln.o ../csnloc/pick_buffer.o
+            ../csnloc/pick_scln.o ../csnloc/pick_buffer.o \
+            ../csnloc/ttmodel.o ../csnloc/stations.o ../csnloc/live_assoc.o \
+            ../csnloc/live_check.o ../csnloc/taulib_csnloc.o
 
 ../csnhypodbp/csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c \
                                   ../csnhypodbp/csnhypodbp_group.h
@@ -44,16 +46,38 @@ LIVE_OBJS = ../csnhypodbp/csnhypodbp_group.o \
 ../csnloc/pick_buffer.o: ../csnloc/pick_buffer.c ../csnloc/csnloc.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+../csnloc/ttmodel.o: ../csnloc/ttmodel.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/stations.o: ../csnloc/stations.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/live_assoc.o: ../csnloc/live_assoc.c ../csnloc/live_assoc.h \
+                        ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/live_check.o: ../csnloc/live_check.c ../csnloc/live_assoc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/taulib_csnloc.o: ../csnloc/taulib_csnloc.c ../csnloc/taulib_compat.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 $(TARGET): hyp2000_ring.o $(LIVE_OBJS) $(HYPOLIB)
 	$(CC) $(CFLAGS) -o $(TARGET) hyp2000_ring.o $(LIVE_OBJS) $(HYPOLIB) $(EWLIBS) \
 	      -lgfortran $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
+# Contrato de live_assoc: P/S por tiempo de viaje + validacion de salida.
+test_live_assoc: test/test_live_assoc.c $(LIVE_OBJS)
+	$(CC) $(CFLAGS) -Itest -o $@ test/test_live_assoc.c $(LIVE_OBJS) $(LIBS)
+	@chmod +x $@
+
 # Invariantes de fuente (sin motor): la clave se lee y ZTR va tras el .hyp.
 .PHONY: check
-check:
+check: test_live_assoc
 	sh ./test/test_fixdepth_invariants.sh
 	sh ./test/test_live_invariants.sh
+	./test_live_assoc
 
 # Prueba real offline (necesita EW_PARAMS + csnloc compilado).
 .PHONY: check-offline

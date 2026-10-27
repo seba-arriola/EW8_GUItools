@@ -31,4 +31,11 @@ if ! grep -qE '"ML":[0-9]' test/tmp/out1.jsonl; then
     exit 1
 fi
 
+# TST1 tiene P y S; TST2 solo S. El ancla de ML es la P: nML debe ser 1.
+if ! grep -q '"nML":1' test/tmp/out1.jsonl; then
+    echo "test_offline: FALLO - la S contó como ancla de ML (nML != 1)"
+    cat test/tmp/out1.jsonl
+    exit 1
+fi
+
 echo "test_offline OK"

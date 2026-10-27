@@ -96,8 +96,17 @@ Comportamiento:
   bbox + `GridActivationMarginDeg`.
 - **Ensamblado por grilla + dedup**: cada grilla activa nuclea y ensambla por
   separado (las nucleaciones de resoluciones distintas no son comparables);
-  luego los eventos se deduplican por `EventDedupSec`/`EventDedupKm`
+  luego los eventos se deduplican por `EventMatchTimeSec`/`EventMatchDistKm`
   priorizando más fases y la grilla más fina.
+- **Identidad de evento**: el ancla es la **primera** solución (`t0/lat/lon`
+  congelados), no el `t0` de la última detección. Si un candidato cae dentro de
+  la ventana se considera el mismo evento y no se emite otra solución; si cae
+  fuera se crea un evento nuevo aunque comparta picadas (se registra `overlap`
+  en el log con `Debug>=1`). `EventMatchVelocityKmS>0` hace que la ventana
+  temporal crezca con la distancia (`tmax = EventMatchTimeSec + d/V`).
+- **Gatillo**: `MinPPhases`, `MaxAssocDistKm` y `MaxGapDeg` filtran la
+  asociación de `csnloc`. Son solo del gatillo: los localizadores reciben
+  después todas las P/S que asocien por tiempo de viaje.
 - El JSON del modo offline incluye `grid_level` (0 = global, 1 = regional,
   2 = local).
 
@@ -121,8 +130,13 @@ anterior de grilla única (regresión).
 | `GlobalGrid` / `RegionalGrid` / `LocalGrid` | (ninguna) | Archivo `.grid` de una grilla del nivel indicado (clave **repetible**; de gruesa a fina) |
 | `GridActivationMinPicks` | 3 | Picks de estaciones asociadas para activar una grilla local |
 | `GridActivationMarginDeg` | 1.0 | Margen (grados) para activar una local por cercanía a un evento más grueso |
-| `EventDedupSec` | 30.0 | Dedup de eventos entre grillas (s) |
-| `EventDedupKm` | 100.0 | Dedup de eventos entre grillas (km) |
+| `EventMatchTimeSec` | 60.0 | Ventana temporal para el MISMO evento, respecto del ancla (s) |
+| `EventMatchDistKm` | 100.0 | Distancia máxima candidato-ancla para el MISMO evento (km) |
+| `EventMatchVelocityKmS` | 0.0 | 0 = ventana temporal fija; >0 = crece con `d/V` (p. ej. 6.0) |
+| `EventPickTolSec` | 0.1 | Tolerancia de tiempo para considerar que una picada es la misma (overlap) |
+| `MinPPhases` | 1 | P mínimas de un candidato; 0 = off. Evita gatillar solo con S |
+| `MaxAssocDistKm` | 1000 | Distancia máxima estación-hipocentro para el gatillo; 0 = off |
+| `MaxGapDeg` | 300 | Gap azimutal máximo para gatillar; 0 = off |
 | `AssocWindowSec` | 120.0 | Ventana temporal de picks |
 | `RePickWindowSec` | 10.0 | Re-pick del mismo SCNL **y fase** reemplaza al anterior (P y S coexisten) |
 | `PickTTLSec` | 300.0 | Expiración de picks |

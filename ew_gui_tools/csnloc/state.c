@@ -8,7 +8,11 @@
  *                                                                            *
  * Formato de texto plano, una linea por evento:                              *
  *   E <id> <version> <t0> <lat> <lon> <depth> <nphases> <rms> <gap> <dmin>   *
- *     <score> <grid_level> <last_update> <emitted> <nstored> <npruned>       *
+ *     <score> <grid_level> <last_update_wall> <emitted> <nstored> <npruned>  *
+ *     <t0_detect>                                                            *
+ *   (<last_update_wall> es epoch wall-clock de la ultima deteccion; los      *
+ *    state viejos traen ahi el t0 del candidato, que es un valor cercano y    *
+ *    solo afecta al TTL tras el reinicio).                                    *
  *   P <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <residual> <man>   *
  *   X <sta> <net> <chan> <loc> <phase> <t_epoch> <weight> <man>              *
  *   (<man> = 0 automatica / 1 manual; opcional al leer por compatibilidad).   *
@@ -36,7 +40,7 @@ int State_Save(const char *path, const EventRegistry *r)
                     "%d %.3f %d %d %d %.3f\n",
                 e->id, e->version, e->t0, e->lat, e->lon, e->depth_km,
                 e->nphases, e->rms_sec, e->gap_deg, e->dmin_km, e->score,
-                e->grid_level, e->last_update_epoch, e->emitted,
+                e->grid_level, e->last_update_wall, e->emitted,
                 e->nphases_stored, e->npruned, e->t0_detect);
 
         for (j = 0; j < e->nphases_stored; j++) {
@@ -86,7 +90,7 @@ int State_Load(const char *path, EventRegistry *r)
                        &e->id, &e->version, &e->t0, &e->lat, &e->lon,
                        &e->depth_km, &e->nphases, &e->rms_sec, &e->gap_deg,
                        &e->dmin_km, &e->score, &e->grid_level,
-                       &e->last_update_epoch, &e->emitted,
+                       &e->last_update_wall, &e->emitted,
                        &e->nphases_stored, &e->npruned, &e->t0_detect) == 17) {
                 /* Los contadores se reconstruyen con las lineas P/X. */
                 e->nphases_stored = 0;

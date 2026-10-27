@@ -16,14 +16,22 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
 
 ## Automatismo
 
-- `csnloc` emite un ARC a `HYPO_RING` **solo cuando la solución mejora**
-  (`event_registry.c`), con un `qid` de evento y una versión creciente.
-- `hyp2000_ring` reacciona a **cada** versión y refina (es barato).
-- `nlloc_ring` **no** recalcula en cada versión: guarda el último ARC por `qid` y
-  relanza NLLoc como mucho cada `NllIntervalSec` (por defecto 300 s), siempre
-  sobre la versión más reciente. El bucle corre cada ~200 ms, así que dispara por
-  temporizador aunque no lleguen mensajes. `NllTTLSec` (1800 s) descarta eventos
-  sin novedades. `NllIntervalSec 0` = procesar cada versión.
+- `csnloc` es **solo el asociador**: emite **una** primera solución por evento a
+  `HYPO_RING` (versión 1) y no vuelve a emitir para el mismo evento. El ancla de
+  identidad es la primera solución (`t0/lat/lon` congelados); `EventMatchTimeSec`
+  y `EventMatchDistKm` definen la ventana. Un candidato fuera de ella crea un
+  evento nuevo, aunque comparta picadas (se loguea `overlap`). `MinPPhases`,
+  `MaxAssocDistKm` y `MaxGapDeg` filtran el gatillo.
+- `hyp2000_ring` con `live_usage=1` lee la semilla de `HYPO_RING`, asocia todos
+  los P/S de `PICK_RING` por **tiempo de viaje** (`t0 + tt`) y rehace el ARC
+  cada `time_recalc_live`. La ventana crece con la distancia/profundidad. Valida
+  `rms/nph/gap` de la salida: no publica `rms=99.99` ni contamina el seed. Tras
+  `N_retry` intentos sin picadas nuevas o sin solución válida, deja de localizar
+  ese evento. `HYPO_RING_REF2` (confirmada) es el seed preferido.
+- `nlloc_ring` con `live_usage=0` (la tabla actual) **no** procesa el anillo: se
+  usa solo por el `locate` manual/offline. Su salida también se valida
+  (`rms/nph/gap`) antes de publicarse. `NllIntervalSec`/`NllTTLSec` siguen
+  disponibles para el modo manual. `live_usage=1` no está implementado.
 
 ## Etiquetado del mensaje
 
@@ -57,9 +65,10 @@ Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
   locator   nlloc_ring      nlloc_ring.d    0           0                 5
   ```
   `csnloc` como asociador emite **una sola** solución inicial por evento; no
-  versiona. Los locators con `live_usage=1` rehacen el ARC con todos los picks
-  automáticos y la última solución preferida, y se detienen tras `N_retry`
-  intentos sin picadas nuevas.
+  versiona. Los locators con `live_usage=1` asocian todas las P/S por tiempo de
+  viaje al hipocentro del seed, rehacen el ARC y se detienen tras `N_retry`
+  intentos sin picadas nuevas o sin solución válida. La tabla es la única fuente:
+  `csnloc.d`, `hyp2000_ring.d` y `nlloc_ring.d` no declaran locators.
 
 ## Logs de análisis
 
@@ -86,7 +95,7 @@ Para analizar: `grep ' LOC ' run_working_v8/log/hyp2000_ring_*.log`.
 
 | Módulo | `.d` | Claves relevantes |
 |---|---|---|
-| `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `InPickRing PICK_RING`, `OutRing HYPO_RING_REF`, `LivePickWindowSec`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS` |
+| `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `InPickRing PICK_RING`, `OutRing HYPO_RING_REF`, `LivePickLookbackSec`, `LivePickResidualSecP/S`, `StaFile`, `TauTable`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS`, `MaxGapDeg` |
 | `nlloc_ring` | `nlloc_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `OutRoot`, `WorkDir`, `GridFile`, `ModelBand` (repetible), `ModelFallback`, `TransOrigin`, `LocGrid`, `NllIntervalSec`, `NllTTLSec`, `NllMaxPending` |
 | `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `InRingRaw HYPO_RING`, `ConfRing HYPO_RING_REF2`; la tabla de locators se lee de `csnhypodbpqt.d` |
 
