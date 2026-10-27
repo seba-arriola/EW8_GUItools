@@ -275,6 +275,22 @@ int tvq_paint_traces(TvqCore *c, unsigned char *bgra, int pw, int ph, int stride
         }
     }
 
+    /* Guia vertical del puntero (solo con fase armada): despues de las trazas
+     * y las picadas. Se dibuja en px LOGICOS porque cairo ya esta escalado por
+     * `scale`; el color es el mismo de csnhypodbpQT (bpq_traces.c:420-436). */
+    if (c->pick_phase != '\0' && c->guide_valid &&
+        (int)c->guide_x > TVQ_PANEL_WIDTH && (int)c->guide_x < w) {
+        const double dash[2] = { 2.0, 4.0 };
+
+        cairo_set_source_rgb(cr, 0.35, 0.35, 0.45);
+        cairo_set_line_width(cr, 1.0);
+        cairo_set_dash(cr, dash, 2, 0.0);
+        cairo_move_to(cr, c->guide_x, 0.0);
+        cairo_line_to(cr, c->guide_x, (double)h);
+        cairo_stroke(cr);
+        cairo_set_dash(cr, NULL, 0, 0.0);
+    }
+
     /* borde del panel */
     cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);
     cairo_set_line_width(cr, 1.0);

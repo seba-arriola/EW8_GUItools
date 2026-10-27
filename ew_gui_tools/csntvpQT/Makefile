@@ -141,7 +141,7 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 # --- tests ---------------------------------------------------------------
 # C puro: no necesitan Qt ni DISPLAY. Es la red que valida el modulo.
 TEST_C := test_config test_sta test_trace test_pick test_env test_core \
-          test_paint test_norm test_clean
+          test_paint test_norm test_guide test_clean
 TEST_C_BINS := $(addprefix $(BUILDDIR)/,$(TEST_C))
 PARAMS_DIR   := $(abspath ../../run_working_v8/params)
 
@@ -190,6 +190,9 @@ $(BUILDDIR)/test_paint: tests/test_paint.c $(OBJ_C) $(OBJ_CS) $(OBJ_CW) | $(BUIL
 	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
 
 $(BUILDDIR)/test_norm: tests/test_norm.c $(OBJ_C) $(OBJ_CS) $(OBJ_CW) | $(BUILDDIR)
+	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
+
+$(BUILDDIR)/test_guide: tests/test_guide.c $(OBJ_C) $(OBJ_CS) $(OBJ_CW) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
 
 $(BUILDDIR)/test_clean: tests/test_clean.c $(OBJ_C) $(OBJ_CS) $(OBJ_CW) | $(BUILDDIR)

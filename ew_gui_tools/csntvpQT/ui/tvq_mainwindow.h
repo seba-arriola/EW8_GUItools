@@ -16,6 +16,7 @@
 #include "tvq_capi.h"
 
 class QAction;
+class QEvent;
 class QLabel;
 class QPushButton;
 class QScrollBar;
@@ -42,6 +43,7 @@ public:
 protected:
     void keyPressEvent(QKeyEvent *ev) override;
     void resizeEvent(QResizeEvent *ev) override;
+    bool eventFilter(QObject *obj, QEvent *ev) override;
 
 private slots:
     void onTick();
@@ -54,6 +56,10 @@ private:
     void repaintAll();
     void syncPhaseLabel();
     void updatePickCursor();   /* circulo con la letra de la fase bajo el cursor */
+    void applyScroll(int value);       /* clamp 0..max y setValue */
+    void scrollByPixels(int delta);    /* rueda/pixeles -> applyScroll */
+    void onHovered(double x, double y); /* guia vertical bajo el puntero */
+    void onLeft();                      /* el puntero salio del lienzo */
 
     void onHoldToggled(bool on);
     void onPlace(double x, double y);
@@ -80,6 +86,7 @@ private:
     QTimer *m_bg = nullptr;
 
     int m_scrollY = 0;
+    int m_wheelAccum = 0;     /* deltas de rueda pendientes hasta 120 */
     bool m_updating = false;
     bool m_instrumented = false;
 };

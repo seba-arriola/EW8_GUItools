@@ -58,6 +58,7 @@ contains "$out" '^sta=AAA chan=HHZ'                "dump: canal HHZ"
 contains "$out" '^sta=BBB chan=HHN'                "dump: canal HHN"
 contains "$out" '^sta=CCC chan=HHE'                "dump: canal HHE"
 contains "$out" '^canvas=[1-9][0-9]*x[1-9][0-9]*'  "dump: canvas con tamano"
+contains "$out" '^scroll=0 max=0'                  "dump: todo cabe, sin scroll"
 contains "$out" '^menu=6'                          "dump: 6 menus"
 
 # --- 2. --layout: el minimo no puede inflarse (WSLg Error 71) --------------
@@ -96,6 +97,28 @@ contains "$out" '^pick_msg=.* BBB\.HHN\.XX\.-- '  "interact: SCNL de la pista pi
 contains "$out" '^pick_msg=.* P M$'               "interact: fase P y origen M"
 contains "$out" '^phase=S'                        "interact: cambio de fase a S"
 contains "$out" '^zoom=1\.000->1\.500'            "interact: zoom vertical x1.5"
+contains "$out" '^guide_hover=1'                  "interact: guia en el area de trazas"
+contains "$out" '^guide_panel=0'                  "interact: sin guia sobre el panel"
+contains "$out" '^guide_left=0'                   "interact: sin guia al salir del lienzo"
+contains "$out" '^guide_armed=1'                  "interact: guia con fase armada"
+contains "$out" '^guide_follows=1'                "interact: la guia sigue al puntero"
+contains "$out" '^guide_disarmed=1'               "interact: Esc desarma y oculta la guia"
+contains "$out" '^guide_x_after_scroll=1'         "interact: el scroll no mueve la guia"
+contains "$out" '^track_h=[1-9][0-9]*'            "interact: alto de pista"
+contains "$out" '^scroll_max=[1-9][0-9]*'         "interact: hay desbordamiento"
+contains "$out" '^wheel_up_restore=1'             "interact: rueda arriba deshace"
+contains "$out" '^wheel_accum=1'                  "interact: dos muescas de 60 = una de 120"
+contains "$out" '^end_at_max=1'                   "interact: End va al final"
+contains "$out" '^scroll_clamped=1'               "interact: no pasa del maximo"
+contains "$out" '^home=0$'                        "interact: Home vuelve al principio"
+contains "$out" '^page_down_ok=1'                 "interact: PageDown avanza una pagina"
+contains "$out" '^page_up_home=1'                 "interact: PageUp vuelve al principio"
+contains "$out" '^ctrl_wheel_scroll_unchanged=1'  "interact: Ctrl+rueda no hace scroll"
+contains "$out" '^zoom_ctrl_changed=1'            "interact: Ctrl+rueda hace zoom en HOLD"
+contains "$out" '^ctrl_wheel_no_hold=1'           "interact: sin HOLD no hay zoom con la rueda"
+contains "$out" '^scrollbar_move=1'               "interact: la barra mueve la vista"
+contains "$out" '^hit_row_after_scroll=1'         "interact: clic tras scroll -> fila correcta"
+contains "$out" '^pick_after_scroll=1'            "interact: la picada usa el SCNL de esa fila"
 contains "$out" '^clean_removed=3'                "interact: clean view limpia lo que no llega"
 contains "$out" '^n_sta_after_clean=0'            "interact: vista vacia tras clean"
 contains "$out" '^reload_ok=1'                    "interact: reload del StaFile"
@@ -107,6 +130,15 @@ if [ -n "$dt" ] && LC_ALL=C awk -v v="$dt" 'BEGIN { exit !(v + 0 < 1.0) }'; then
     ok "interact: clic -> tiempo exacto (${dt} ms)"
 else
     bad "interact: clic -> tiempo impreciso (${dt:-?} ms)"
+fi
+
+# una muesca de rueda = exactamente un alto de pista
+wd=$(printf '%s\n' "$out" | sed -n 's/^wheel_down_delta=\(.*\)$/\1/p')
+th=$(printf '%s\n' "$out" | sed -n 's/^track_h=\(.*\)$/\1/p')
+if [ -n "$wd" ] && [ -n "$th" ] && [ "$wd" = "$th" ]; then
+    ok "interact: una muesca desplaza una pista (${wd} px)"
+else
+    bad "interact: muesca=${wd:-?} contra track_h=${th:-?}"
 fi
 
 if [ "$fail" -eq 0 ]; then

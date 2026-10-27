@@ -20,6 +20,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFont>
 #include <QGridLayout>
@@ -32,6 +33,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
 #include <QPixmap>
@@ -43,6 +45,7 @@
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 
 #include "ewguiqt/canvas.h"
 #include "ewguiqt/theme.h"
@@ -158,7 +161,8 @@ void TvqMainWindow::buildUi()
     bar->addStretch(1);
 
     QLabel *hint = new QLabel(
-        QStringLiteral("P/S: arm pick | Esc: disarm | click: place | Up/Down: zoom"),
+        QStringLiteral("P/S: arm | Esc: disarm | wheel/PgUp/PgDn: scroll | "
+                       "Ctrl+wheel: zoom | click: place"),
         central);
     QFont small = hint->font();
     small.setPointSizeF(small.pointSizeF() * 0.9);
@@ -174,6 +178,20 @@ void TvqMainWindow::buildUi()
     });
     connect(m_traces, &ewguiqt::CanvasWidget::clicked, this,
             [this](double x, double y) { onPlace(x, y); });
+    connect(m_traces, &ewguiqt::CanvasWidget::hovered, this,
+            [this](double x, double y) { onHovered(x, y); });
+    connect(m_traces, &ewguiqt::CanvasWidget::left, this,
+            [this]() { onLeft(); });
+    connect(m_traces, &ewguiqt::CanvasWidget::zoomed, this,
+            [this](double factor, double, double) {
+                /* Sin Ctrl la rueda la consume eventFilter (scroll); esto solo
+                 * llega con Ctrl y replica el zoom vertical de las flechas. */
+                if (!tvq_core_is_hold(m_core))
+                    return;
+                tvq_core_adjust_scale(m_core, factor);
+                repaintAll();
+            });
+    m_traces->installEventFilter(this);
     g->addWidget(m_traces, 1, 0);
 
     m_scroll = new QScrollBar(Qt::Vertical, central);
@@ -254,6 +272,101 @@ void TvqMainWindow::resizeEvent(QResizeEvent *ev)
     updateScrollRange();
 }
 
+/* Rueda sobre las trazas: sin Ctrl desplaza la lista de pistas (una muesca =
+ * una pista); con Ctrl se deja pasar al canvas, que emite `zoomed` y aplica el
+ * zoom vertical solo en HOLD. Mismo reparto que csnhypodbpQT
+ * (bpq_mainwindow.cxx:1683-1726). */
+bool TvqMainWindow::eventFilter(QObject *obj, QEvent *ev)
+{
+    if (obj == m_traces && ev->type() == QEvent::Wheel) {
+        QWheelEvent *we = static_cast<QWheelEvent *>(ev);
+        const Qt::KeyboardModifiers mods = we->modifiers();
+
+        if (!(mods & Qt::ControlModifier)) {
+            const int dy = we->angleDelta().y();
+
+            if (dy != 0) {
+                /* Acumula las muescas parciales de las ruedas de precision. */
+                m_wheelAccum += dy;
+                {
+                    const int notches = m_wheelAccum / 120;
+
+                    m_wheelAccum %= 120;
+                    if (notches != 0)
+                        scrollByPixels(-notches *
+                                       tvq_core_track_height(m_core,
+                                                             m_traces->height()));
+                }
+                we->accept();
+                return true;
+            }
+            {
+                const QPoint px = we->pixelDelta();
+
+                if (px.y() != 0) {
+                    scrollByPixels(-px.y());
+                    we->accept();
+                    return true;
+                }
+            }
+        }
+    }
+    return QMainWindow::eventFilter(obj, ev);
+}
+
+void TvqMainWindow::applyScroll(int value)
+{
+    if (!m_scroll)
+        return;
+
+    const int maxv = m_scroll->maximum();
+
+    if (value < 0)
+        value = 0;
+    if (value > maxv)
+        value = maxv;
+    if (value == m_scrollY && m_scroll->value() == value)
+        return;
+    m_scroll->setValue(value);   /* valueChanged: m_scrollY + repaint */
+}
+
+void TvqMainWindow::scrollByPixels(int delta)
+{
+    if (delta == 0)
+        return;
+    applyScroll(m_scrollY + delta);
+}
+
+void TvqMainWindow::onHovered(double x, double y)
+{
+    if (!m_traces || !m_core)
+        return;
+
+    const bool inside = ((int)x > TVQ_PANEL_WIDTH &&
+                         (int)x < m_traces->width() &&
+                         y >= 0.0 && y < (double)m_traces->height());
+    double oldx = -1.0;
+    const int was = tvq_core_guide(m_core, &oldx);
+
+    if (was == (inside ? 1 : 0) && (!inside || std::fabs(oldx - x) < 0.5))
+        return;   /* mismo estado: no repintar por cada pixel del raton */
+
+    tvq_core_set_guide(m_core, x, inside ? 1 : 0);
+    m_traces->requestRepaint();
+}
+
+void TvqMainWindow::onLeft()
+{
+    double x = -1.0;
+
+    if (!m_traces || !m_core)
+        return;
+    if (!tvq_core_guide(m_core, &x))
+        return;
+    tvq_core_set_guide(m_core, -1.0, 0);
+    m_traces->requestRepaint();
+}
+
 void TvqMainWindow::repaintAll()
 {
     if (m_traces)
@@ -289,6 +402,7 @@ void TvqMainWindow::updatePickCursor()
     const char ph = tvq_core_pick_phase(m_core);
     if (!ph) {
         m_traces->unsetCursor();
+        m_traces->requestRepaint();   /* la guia se oculta con la fase */
         return;
     }
 
@@ -314,6 +428,7 @@ void TvqMainWindow::updatePickCursor()
     p.end();
 
     m_traces->setCursor(QCursor(pm, 13, 13));
+    m_traces->requestRepaint();   /* armar/desarmar cambia la guia visible */
 }
 
 void TvqMainWindow::onHoldToggled(bool on)
@@ -510,10 +625,12 @@ void TvqMainWindow::onCommands()
         this, QStringLiteral("Commands"),
         QStringLiteral(
             "HOLD: freezes the time window (data keeps filling the buffers)\n\n"
-            "p / P: arm the P pick mode (cursor shows the phase)\n"
+            "p / P: arm the P pick mode (cursor + vertical guide)\n"
             "s / S: arm the S pick mode\n"
             "Esc: disarm the pick mode\n"
             "Up / Down: vertical zoom (only in HOLD)\n"
+            "Ctrl+wheel: vertical zoom (only in HOLD)\n"
+            "Wheel / PgUp / PgDn / Home / End: scroll the station list\n"
             "Left click on a trace: place the pick (HOLD + armed phase)\n\n"
             "Display: stations per screen, time window, clean view, reload\n"
             "Filter: raw / high-pass / low-pass / band-pass, order 2 or 4\n"
@@ -525,6 +642,11 @@ void TvqMainWindow::keyPressEvent(QKeyEvent *ev)
 {
     const Qt::KeyboardModifiers mods = ev->modifiers();
     const bool plain = (mods == Qt::NoModifier || mods == Qt::ShiftModifier);
+
+    if (!m_scroll) {   /* la barra se crea en buildUi; sin ella no hay teclas */
+        QMainWindow::keyPressEvent(ev);
+        return;
+    }
 
     if (plain) {
         switch (ev->key()) {
@@ -569,6 +691,22 @@ void TvqMainWindow::keyPressEvent(QKeyEvent *ev)
                 return;
             }
             break;
+        case Qt::Key_PageUp:
+            applyScroll(m_scrollY - m_scroll->pageStep());
+            ev->accept();
+            return;
+        case Qt::Key_PageDown:
+            applyScroll(m_scrollY + m_scroll->pageStep());
+            ev->accept();
+            return;
+        case Qt::Key_Home:
+            applyScroll(0);
+            ev->accept();
+            return;
+        case Qt::Key_End:
+            applyScroll(m_scroll->maximum());
+            ev->accept();
+            return;
         default:
             break;
         }
@@ -759,6 +897,202 @@ QString TvqMainWindow::interactProbe()
     const double z1 = tvq_core_zoom(m_core);
     tvq_core_adjust_scale(m_core, 1.0 / 1.5);
     out += QStringLiteral("zoom=%1->%2\n").arg(z0, 0, 'f', 3).arg(z1, 0, 'f', 3);
+
+    /* 10) guia vertical: sigue al puntero dentro del area de trazas y se
+     *     oculta sobre el panel, al salir y al desarmar. */
+    {
+        const int gx = TVQ_PANEL_WIDTH + (w - TVQ_PANEL_WIDTH) / 3;
+        const double gy = (double)h / 2.0;
+        const QPointF global(0.0, 0.0);
+        double seen = -1.0;
+
+        tvq_core_set_pick_phase(m_core, 'P');
+        syncPhaseLabel();
+        updatePickCursor();
+
+        QMouseEvent mv(QEvent::MouseMove, QPointF((double)gx, gy), global,
+                       Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_traces, &mv);
+        out += QStringLiteral("guide_hover=%1\n")
+                   .arg(tvq_core_guide(m_core, &seen) &&
+                                std::fabs(seen - (double)gx) < 0.01
+                            ? 1 : 0);
+
+        QMouseEvent panel(QEvent::MouseMove, QPointF(4.0, gy), global,
+                          Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_traces, &panel);
+        out += QStringLiteral("guide_panel=%1\n")
+                   .arg(tvq_core_guide(m_core, &seen) ? 1 : 0);
+
+        QCoreApplication::sendEvent(m_traces, &mv);
+        QEvent leave(QEvent::Leave);
+        QCoreApplication::sendEvent(m_traces, &leave);
+        out += QStringLiteral("guide_left=%1\n")
+                   .arg(tvq_core_guide(m_core, &seen) ? 1 : 0);
+
+        QCoreApplication::sendEvent(m_traces, &mv);
+        out += QStringLiteral("guide_armed=%1\n")
+                   .arg(tvq_core_guide(m_core, &seen) &&
+                                tvq_core_pick_phase(m_core)
+                            ? 1 : 0);
+
+        {
+            const int gx2 = gx + 40;
+            QMouseEvent mv2(QEvent::MouseMove, QPointF((double)gx2, gy), global,
+                            Qt::NoButton, Qt::NoButton, Qt::NoModifier);
+
+            QCoreApplication::sendEvent(m_traces, &mv2);
+            out += QStringLiteral("guide_follows=%1\n")
+                       .arg(tvq_core_guide(m_core, &seen) &&
+                                    std::fabs(seen - (double)gx2) < 0.01
+                                ? 1 : 0);
+        }
+
+        QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &esc);
+        out += QStringLiteral("guide_disarmed=%1\n")
+                   .arg(tvq_core_pick_phase(m_core) == '\0' ? 1 : 0);
+    }
+
+    /* 11) scroll: rueda, acumulador de muescas, Ctrl+rueda, teclas y clic. */
+    {
+        const int sps0 = m_cfg->stations_per_screen;
+        const int v0 = m_scrollY;
+        const QPointF center(w / 2.0, h / 2.0);
+        const QPointF global(0.0, 0.0);
+        int th;
+
+        tvq_core_set_stations_per_screen(m_core, 1);
+        updateScrollRange();
+        th = tvq_core_track_height(m_core, h);
+        out += QStringLiteral("track_h=%1\n").arg(th);
+        out += QStringLiteral("scroll_max=%1\n").arg(m_scroll->maximum());
+
+        QWheelEvent wd(center, global, QPoint(0, 0), QPoint(0, -120),
+                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_traces, &wd);
+        out += QStringLiteral("wheel_down_delta=%1\n").arg(m_scrollY - v0);
+
+        QWheelEvent wu(center, global, QPoint(0, 0), QPoint(0, 120),
+                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_traces, &wu);
+        out += QStringLiteral("wheel_up_restore=%1\n")
+                   .arg(m_scrollY == v0 ? 1 : 0);
+
+        /* dos muescas de 60 = una de 120; la primera sola no mueve */
+        QWheelEvent h1(center, global, QPoint(0, 0), QPoint(0, -60),
+                       Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_traces, &h1);
+        {
+            const int vhalf = m_scrollY;
+            QWheelEvent h2(center, global, QPoint(0, 0), QPoint(0, -60),
+                           Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase,
+                           false);
+
+            QCoreApplication::sendEvent(m_traces, &h2);
+            out += QStringLiteral("wheel_accum=%1\n")
+                       .arg(vhalf == v0 && m_scrollY - v0 == th ? 1 : 0);
+        }
+
+        QKeyEvent endk(QEvent::KeyPress, Qt::Key_End, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &endk);
+        out += QStringLiteral("end_at_max=%1\n")
+                   .arg(m_scrollY == m_scroll->maximum() ? 1 : 0);
+        QKeyEvent pdn0(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &pdn0);
+        out += QStringLiteral("scroll_clamped=%1\n")
+                   .arg(m_scrollY == m_scroll->maximum() ? 1 : 0);
+        QKeyEvent homek(QEvent::KeyPress, Qt::Key_Home, Qt::NoModifier);
+        QCoreApplication::sendEvent(this, &homek);
+        out += QStringLiteral("home=%1\n").arg(m_scrollY);
+        {
+            const int page = m_scroll->pageStep();
+            const int expected =
+                page < m_scroll->maximum() ? page : m_scroll->maximum();
+            QKeyEvent pdn(QEvent::KeyPress, Qt::Key_PageDown, Qt::NoModifier);
+
+            QCoreApplication::sendEvent(this, &pdn);
+            out += QStringLiteral("page_down_ok=%1\n")
+                       .arg(m_scrollY == expected ? 1 : 0);
+            QKeyEvent pup(QEvent::KeyPress, Qt::Key_PageUp, Qt::NoModifier);
+            QCoreApplication::sendEvent(this, &pup);
+            out += QStringLiteral("page_up_home=%1\n")
+                       .arg(m_scrollY == 0 ? 1 : 0);
+        }
+
+        /* Ctrl+rueda: no desplaza y, con HOLD, aplica zoom vertical */
+        applyScroll(0);
+        {
+            const double zc0 = tvq_core_zoom(m_core);
+            QWheelEvent cw(center, global, QPoint(0, 0), QPoint(0, 120),
+                           Qt::NoButton, Qt::ControlModifier,
+                           Qt::NoScrollPhase, false);
+
+            QCoreApplication::sendEvent(m_traces, &cw);
+            out += QStringLiteral("ctrl_wheel_scroll_unchanged=%1\n")
+                       .arg(m_scrollY == 0 ? 1 : 0);
+            out += QStringLiteral("zoom_ctrl_changed=%1\n")
+                       .arg(tvq_core_zoom(m_core) > zc0 ? 1 : 0);
+        }
+
+        /* sin HOLD el zoom por Ctrl+rueda es no-op (como Up/Down) */
+        tvq_core_set_hold(m_core, 0);
+        m_hold->setChecked(false);
+        {
+            const double zh = tvq_core_zoom(m_core);   /* 1.0 tras soltar */
+            QWheelEvent cw2(center, global, QPoint(0, 0), QPoint(0, 120),
+                            Qt::NoButton, Qt::ControlModifier,
+                            Qt::NoScrollPhase, false);
+
+            QCoreApplication::sendEvent(m_traces, &cw2);
+            out += QStringLiteral("ctrl_wheel_no_hold=%1\n")
+                       .arg(tvq_core_zoom(m_core) == zh ? 1 : 0);
+        }
+        tvq_core_set_hold(m_core, 1);
+        m_hold->setChecked(true);
+
+        /* la barra mueve la vista y un clic tras el scroll resuelve la fila
+         * visible; la picada publica el SCNL de esa fila. */
+        m_scroll->setValue(th);
+        out += QStringLiteral("scrollbar_move=%1\n")
+                   .arg(m_scrollY == th ? 1 : 0);
+        {
+            const int cx = TVQ_PANEL_WIDTH + (w - TVQ_PANEL_WIDTH) / 2;
+            int hrow = -1;
+            double ht = 0.0;
+            char pmsg[TVQ_PICK_MSG_MAX] = {0};
+            int placed2;
+
+            (void)tvq_core_hit(m_core, cx, th / 2, w, h, m_scrollY, &hrow, &ht);
+            out += QStringLiteral("hit_row_after_scroll=%1\n")
+                       .arg(hrow == 1 ? 1 : 0);
+            tvq_core_set_pick_phase(m_core, 'P');
+            placed2 = tvq_core_place_pick(m_core, hrow, ht, 'P');
+            (void)tvq_core_last_pick(m_core, pmsg, sizeof pmsg);
+            out += QStringLiteral("pick_after_scroll=%1\n")
+                       .arg(placed2 == 1 &&
+                                    std::strstr(pmsg, " BBB.HHN.XX.--")
+                                ? 1 : 0);
+        }
+
+        /* la guia no se mueve con el scroll vertical */
+        {
+            const double gx3 = TVQ_PANEL_WIDTH + 50.0;
+            double after = -1.0;
+
+            tvq_core_set_guide(m_core, gx3, 1);
+            m_scroll->setValue(0);
+            (void)tvq_core_guide(m_core, &after);
+            out += QStringLiteral("guide_x_after_scroll=%1\n")
+                       .arg(std::fabs(after - gx3) < 0.01 ? 1 : 0);
+        }
+
+        tvq_core_set_pick_phase(m_core, '\0');
+        tvq_core_set_guide(m_core, -1.0, 0);
+        m_scroll->setValue(0);
+        tvq_core_set_stations_per_screen(m_core, sps0);
+        updateScrollRange();
+    }
 
     /* 7) clean-view + reload station list. Se deja pasar el tiempo de
      *    retencion (20 ms) para que el umbral sea observable sin depender del

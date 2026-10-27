@@ -160,6 +160,13 @@ double tvq_core_zoom(const TvqCore *c);
 void tvq_core_set_pick_phase(TvqCore *c, char phase);
 char tvq_core_pick_phase(const TvqCore *c);   /* '\0' | 'P' | 'S' */
 
+/* Guia vertical del puntero para el picado: `x` en px LOGICOS del lienzo
+ * (mismo sistema que tvq_core_hit) y valid=0 la oculta. Se pinta solo si hay
+ * fase armada y `x` cae dentro del area de trazas (x > TVQ_PANEL_WIDTH y
+ * x < ancho). Es estado de vista: no toca picadas ni anillos. */
+void tvq_core_set_guide(TvqCore *c, double x, int valid);
+int  tvq_core_guide(const TvqCore *c, double *x);   /* 1 = visible, 0 = oculta */
+
 /* Color de un papel; en `z/n/e` sin declarar ya vienen resueltos del .d. */
 void tvq_core_get_colour(const TvqCore *c, int role, double rgb[3]);
 void tvq_core_set_colour(TvqCore *c, int role, const double rgb[3]);

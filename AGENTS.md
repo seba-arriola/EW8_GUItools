@@ -250,10 +250,18 @@ hace **`csnloc`** localmente.
     picada no puede derivar del GTK. El lienzo es **del tamaño del viewport** con una `QScrollBar`
     (no `n_sta·alto_pista` px: 141×66 sería un BGRA de 44 MB repintado a 2 Hz) y el reparto de
     vistas caduca como en el GTK (`t_right = ahora − 2 s`, congelado en HOLD y `STALE DATA` a los
-    10 s sin paquetes). `--print-config` es **nuevo en la familia** (el GTK no lo tenía), el log es
+    10 s sin paquetes). La **rueda sobre las trazas desplaza** la lista (una muesca = una pista,
+    acumulando las de 60 uds) mediante un `eventFilter`: `CanvasWidget` consume la rueda para
+    `zoomed`, así que sólo con `Ctrl` se deja pasar (zoom vertical en HOLD, como `↑`/`↓`); la barra
+    sigue moviendo la vista y `PgUp`/`PgDn`/`Home`/`End` también. Al armar `p`/`s` se dibuja una
+    **guía vertical discontinua** que sigue al puntero (`hovered`/`left` del canvas, estado en
+    `tvq_core_set_guide`): no invade el panel izquierdo, se oculta al salir del lienzo o al
+    desarmar por `Esc`/soltar HOLD, y es independiente del scroll. `--print-config` es **nuevo en la
+    familia** (el GTK no lo tenía), el log es
     `$EW_LOG/csntvpQT_<fecha>.log` (nombre del **proceso**; sin `EW_LOG` escribible baja a consola)
     y `tests/test_ui.sh` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen con un fixture
-    de 3 estaciones `HHZ/HHN/HHE` (mínimo ≤ 700×800, clic→tiempo < 1 ms, clean/reload). Cada pista se
+    de 3 estaciones `HHZ/HHN/HHE` (mínimo ≤ 700×800, clic→tiempo < 1 ms, clean/reload, guía y una
+    muesca = una pista). Cada pista se
     **normaliza por su propio `env_max_abs` de la ventana visible** (`alto_pista·0.425`, como
     `csntvp_gui.c:378-381`); el `scale` del StaFile es de paridad de formato y **no** entra en el
     dibujo (el GTK lo guarda en `dScreenScale` y no lo lee nunca), lo que fija `tests/test_norm.c`.

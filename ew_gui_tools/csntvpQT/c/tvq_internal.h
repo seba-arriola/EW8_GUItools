@@ -85,6 +85,11 @@ struct TvqCore {
     /* ultimo tamano pintado (px LOGICOS) */
     int view_w, view_h;
 
+    /* guia vertical del puntero para el picado (px LOGICOS, mismo sistema que
+     * tvq_core_hit). Se pinta solo con fase armada; la fija la UI. */
+    double guide_x;
+    int    guide_valid;
+
     /* cache de la decision de recalcular envolventes */
     int    env_w;
     double env_t_right;

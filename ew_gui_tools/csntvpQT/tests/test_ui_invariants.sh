@@ -162,6 +162,37 @@ else
     bad "onPlace no comprueba la fase armada (picaria sin modo)"
 fi
 
+# --- 9. scroll con rueda y guia vertical ---------------------------------
+if grep -q 'CanvasWidget::hovered' "$DIR/ui/tvq_mainwindow.cxx" &&
+   grep -q 'CanvasWidget::left' "$DIR/ui/tvq_mainwindow.cxx"; then
+    ok "ui: guia conectada a hovered/left"
+else
+    bad "la guia no usa hovered/left (no seguiria al puntero ni se ocultaria)"
+fi
+if grep -q 'installEventFilter' "$DIR/ui/tvq_mainwindow.cxx" &&
+   grep -q 'QEvent::Wheel' "$DIR/ui/tvq_mainwindow.cxx"; then
+    ok "ui: la rueda pasa por eventFilter"
+else
+    bad "falta eventFilter de la rueda (el canvas la consume como zoom)"
+fi
+if grep -q 'tvq_core_set_guide' "$DIR/ui/tvq_mainwindow.cxx"; then
+    ok "ui: el puntero alimenta tvq_core_set_guide"
+else
+    bad "la UI no actualiza la guia del core"
+fi
+if grep -q 'guide_valid' "$DIR/c/tvq_paint.c" &&
+   grep -q 'cairo_set_dash' "$DIR/c/tvq_paint.c" &&
+   grep -q 'pick_phase' "$DIR/c/tvq_paint.c"; then
+    ok "paint: guia discontinua y solo con fase armada"
+else
+    bad "tvq_paint.c no pinta la guia o no la condiciona a la fase"
+fi
+if grep -q 'tvq_core_set_guide' "$DIR/c/tvq_capi.h"; then
+    ok "capi: contrato de la guia"
+else
+    bad "falta tvq_core_set_guide en tvq_capi.h"
+fi
+
 if [ "$fail" -eq 0 ]; then
     echo "OK: invariantes de csntvpQT"
 else

@@ -66,11 +66,14 @@ fichero es `csntvpqt.d`: mismo desajuste de caja que los otros ports Qt).
 | | |
 |---|---|
 | `HOLD` (botón) | congela la ventana de tiempo; los datos siguen llenando los buffers |
-| `p` / `s` (sólo en HOLD) | **arman** el modo picada: el cursor pasa a un círculo del color de la fase con su letra y la etiqueta muestra `pick: P` / `pick: S` |
-| `Esc` | desarma el modo (`pick: off`); con el modo ya apagado es no-op |
+| `p` / `s` (sólo en HOLD) | **arman** el modo picada: el cursor pasa a un círculo del color de la fase con su letra, la etiqueta muestra `pick: P` / `pick: S` y el lienzo dibuja una **guía vertical discontinua** bajo el puntero |
+| `Esc` | desarma el modo (`pick: off`) y oculta la guía; con el modo ya apagado es no-op |
 | clic izquierdo (HOLD + fase armada) | coloca la picada y la publica en `PICK_RING`; el modo **sigue armado** (persistente hasta `Esc` o soltar HOLD) |
-| soltar `HOLD` | además de descongelar, desarma el modo y devuelve el zoom a 1 |
+| soltar `HOLD` | además de descongelar, desarma el modo, oculta la guía y devuelve el zoom a 1 |
 | `↑` / `↓` (sólo en HOLD) | zoom vertical (0.05–100); al soltar HOLD vuelve a 1 |
+| rueda sobre las trazas | desplaza la lista de pistas: **una muesca = una pista** (las de 60 uds se acumulan); no hace zoom |
+| `Ctrl` + rueda | zoom vertical (sólo en HOLD), igual que `↑`/`↓`; **no** desplaza |
+| `PgUp` / `PgDn` / `Home` / `End` | una página arriba/abajo, principio y final de la lista |
 | *File* | `Export view...` (PNG), `Quit` |
 | *View* | `Dark mode` |
 | *Display* | `Stations per screen...`, `Time window...`, `Clean view...`, `Reload station list` |
@@ -90,6 +93,13 @@ Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` 
   línea plana; lo fija `tests/test_norm.c` (misma onda con `scale` 1.0 y 0.005 ⇒ misma altura).
 - **Modo picada persistente**: a diferencia de `csnhypodbpQT` (un solo tiro), aquí el modo sigue
   armado tras picar, para encadenar P y S de muchas estaciones sin repulsar la tecla.
+- **Guía vertical del puntero** (como `csnhypodbpQT`): se pinta sólo con fase armada, sigue al ratón
+  dentro del área de trazas, no invade el panel izquierdo y desaparece al salir del lienzo, al pulsar
+  `Esc` o al soltar `HOLD`. Es independiente del scroll: desplazar pistas no mueve su `x`.
+- **Rueda = scroll, Ctrl+rueda = zoom**: `CanvasWidget` consume la rueda para `zoomed`, así que el
+  port instala un `eventFilter` y la traduce a desplazamiento (una pista por muesca, acumulando las
+  de 60 uds); sólo con `Ctrl` se deja pasar al canvas. La barra sigue funcionando y `tvq_core_hit`
+  recibe el `scroll_y`, así que picar tras desplazarse resuelve la fila visible.
 - **Lienzo del tamaño del viewport + `QScrollBar`**, en vez de un canvas de
   `n_estaciones × alto_pista` px. Con 141 pistas el del GTK son ~9300 px de alto (44 MB de BGRA
   repintados a ~2 Hz); aquí se pinta la franja visible con `scroll_y`.
@@ -117,9 +127,10 @@ Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` 
 | `test_core` | reloj (`ahora − 2 s`), HOLD, `hit`, vista, zoom, volcado |
 | `test_paint` | BGRA opaco, panel, eje y un color por componente (Z/N/E) |
 | `test_norm` | normalización por pista: el `scale` del StaFile no cambia la altura, amplitudes 100× distintas sí dan la misma, y el zoom multiplica esa base (clip incluido) |
+| `test_guide` | guía vertical: sin fase no aparece, con P/S es discontinua en la `x` del puntero, no invade el panel ni se sale del lienzo, es independiente del scroll, escala con DPR y no tapa la picada |
 | `test_clean` | `clean view` selectivo, compactado en orden y `reload` |
 | `test_config.sh` | `--print-config` del `.d` real y de un fixture; códigos de salida 2/3 |
-| `test_ui.sh` | `--dump` / `--layout` (mínimo ≤ 700×800) / `--shot` / `--interact` offscreen |
+| `test_ui.sh` | `--dump` / `--layout` (mínimo ≤ 700×800) / `--shot` / `--interact` offscreen (guía y scroll incluidos) |
 | `test_ui_invariants.sh` | frontera C→C++, cairo sólo en `c/`, parser reutilizado, `MOD_KIT=qt6`, whitelist del `.d`, sin desplegables |
 | `test_no_gtk_link.sh` | el binario no arrastra libgtk/libadwaita |
 | `test_integration.sh` | id 175 en `.base`, 174 libre, ambos `Process`, binario instalado, `earthworm.d` regenerado |

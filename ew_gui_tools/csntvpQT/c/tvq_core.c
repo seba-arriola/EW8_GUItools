@@ -315,6 +315,23 @@ int tvq_core_is_hold(const TvqCore *c)
     return c ? c->hold : 0;
 }
 
+void tvq_core_set_guide(TvqCore *c, double x, int valid)
+{
+    if (!c)
+        return;
+    c->guide_x = valid ? x : -1.0;
+    c->guide_valid = valid ? 1 : 0;
+}
+
+int tvq_core_guide(const TvqCore *c, double *x)
+{
+    if (!c || !c->guide_valid)
+        return 0;
+    if (x)
+        *x = c->guide_x;
+    return 1;
+}
+
 void tvq_core_view_range(const TvqCore *c, double *t_left, double *t_right)
 {
     double right = 0.0;
