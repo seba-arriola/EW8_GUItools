@@ -265,20 +265,34 @@ int  g_sds_enabled = 1;
 char g_sds_root[512] = "/mnt/sds/archive";
 int  g_sds_fallback_hours = 168;
 
+/* Nombre del locator segun la tabla (mod resuelto de MyModuleId). NULL si el
+ * mod no esta en la tabla. */
+const char *ModName(int mod)
+{
+    return csnhypodbp_locator_name_for_mod(g_locators, g_nlocators, mod);
+}
+
 /* Etiqueta del modulo origen: se deriva del binario de la tabla de
- * localizadores (csnhypodbpqt.d); no hay ModuleLabel en el .d. */
+ * localizadores (csnhypodbpqt.d); no hay ModuleLabel en el .d. Si el mod no
+ * esta en la tabla (p. ej. una fila historica), se usa el nombre del modulo de
+ * earthworm.d (GetModIdName); nunca un id escrito a mano. */
 const char *ModLabel(int mod)
 {
-    static char buf[16];
-    int i;
-    for (i = 0; i < g_nlocators; i++)
-        if (csnhypodbp_locator_mod(&g_locators[i]) == mod)
-            return g_locators[i].name;
-    /* Fallback para origenes historicos de la BD si la tabla no esta. */
-    if (mod == 162) return "csnloc";
-    if (mod == 163) return "hyp2000_ring";
-    if (mod == 164) return "nlloc_ring";
-    snprintf(buf, sizeof(buf), "%d", mod);
+    static char buf[64];
+    const char *n = ModName(mod);
+    char *ew;
+
+    if (mod <= 0) {
+        snprintf(buf, sizeof(buf), "mod %d", mod);
+        return buf;
+    }
+    if (n) return n;
+    ew = GetModIdName((unsigned char)mod);
+    if (ew && ew[0]) {
+        snprintf(buf, sizeof(buf), "%s", ew);
+        return buf;
+    }
+    snprintf(buf, sizeof(buf), "mod %d", mod);
     return buf;
 }
 
@@ -760,6 +774,11 @@ void Status(unsigned char type, short ierr, char *note) {
     if (type == TypeHeartBeat) sprintf(msg, "%ld %d\n", (long) t, MyPid);
     else if (type == TypeError) { sprintf(msg, "%ld %hd %s\n", (long) t, ierr, note); logit("et", "csnhypodbp: Error: %s\n", note); }
     tport_putmsg(&InRegion, &logo, strlen(msg), msg);
+}
+
+static int get_modid_cb(const char *symbol, unsigned char *id)
+{
+    return GetModId((char *)symbol, id);
 }
 
 void ConnectToEarthworm() {
@@ -2478,6 +2497,17 @@ static void on_activate(GtkApplication *app, gpointer user_data) {
     gtk_notebook_append_page(GTK_NOTEBOOK(g_notebook), page_procesar,
                              gtk_label_new("Procesar"));
 
+    /* El mod de cada locator sale de su .d (MyModuleId) y de earthworm.d
+       (GetModId). Se resuelve ANTES de cargar el historial: las filas de la BD
+       se etiquetan con el nombre del locator en ese momento. */
+    {
+        int nfail = csnhypodbp_locator_resolve_mods(
+            g_locators, g_nlocators, get_modid_cb);
+
+        if (nfail > 0)
+            logit("e", "csnhypodbp: %d locator(es) sin MyModuleId resuelto; "
+                       "revisa csnhypodbpqt.d y earthworm.d\n", nfail);
+    }
     cargar_sismos_iniciales(tree_global);
     cargar_sismos_db();
     csnhypodbp_load_manual_state();

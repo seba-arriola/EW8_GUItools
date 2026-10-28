@@ -2,7 +2,7 @@
  * hypodb_ingest — escribe la información hipocentral de los anillos en
  * PostgreSQL. Núcleo sin GTK; ver hypodb_ingest.h.
  *
- * Anillos: HYPO_RING (162, csnloc), HYPO_RING_REF (163/164, refinadores),
+ * Anillos: HYPO_RING (asociador), HYPO_RING_REF (refinadores),
  * HYPO_RING_REF2 (confirmaciones de la GUI, via InRingConf) y PICK_RING (picks
  * manuales). Agrupa soluciones
  * por firma de picadas (reutiliza csnhypodbp_group) para asignar un event_id
@@ -22,9 +22,11 @@
 #include <rw_mag.h>
 
 #include "earthworm.h"      /* logit(): el modulo tiene log propio (ver el main) */
+#include <earthworm_simple_funcs.h>   /* GetModId / GetModIdName */
 
 #include "hypodb_ids.h"           /* fachada de ewgui/db_ids.h (ver su .c) */
 #include "csnhypodbp_magchan.h"   /* canales del TYPE_MAGNITUDE (compartido) */
+#include "csnhypodbp_locator.h"   /* mod -> nombre del locator (sin ids fijos) */
 
 #include "ewgui/arc_layout.h"
 #include "ewgui/db_ids.h"         /* metadatos del origen ($EW_VERSION, status) */
@@ -34,6 +36,7 @@
 #define HYPODB_MAX_MAGS         16
 #define HYPODB_MAX_PENDING_MAGS 256
 #define HYPODB_MAX_MANUAL_PICKS 1024
+#define HYPODB_MAX_LOCATORS     8
 
 typedef struct {
     int      mod;
@@ -90,6 +93,8 @@ struct HypodbState {
     HypodbPendingMag  pmag[HYPODB_MAX_PENDING_MAGS];
     HypodbManualPick  mpick[HYPODB_MAX_MANUAL_PICKS];
     int               mpick_next;
+    CsnhypodbpLocator locators[HYPODB_MAX_LOCATORS];
+    int               nlocators;
 };
 
 /* ------------------------------------------------------------------------- */
@@ -188,6 +193,11 @@ static void parse_nslco(const char *ch, char *net, size_t nn, char *sta,
 /* Estado                                                                     */
 /* ------------------------------------------------------------------------- */
 
+static int hypodb_getmodid_cb(const char *symbol, unsigned char *id)
+{
+    return GetModId((char *)symbol, id);
+}
+
 HypodbState *hypodb_state_new(const HypodbConfig *cfg)
 {
     HypodbState *st;
@@ -198,6 +208,19 @@ HypodbState *hypodb_state_new(const HypodbConfig *cfg)
     if (!st)
         return NULL;
     st->cfg = *cfg;
+    /* La tabla de locators da el nombre del binario; su .d da MyModuleId y
+       earthworm.d el id. Nada de ids fijos en el codigo. */
+    csnhypodbp_locator_load_default(st->locators, &st->nlocators,
+                                    HYPODB_MAX_LOCATORS);
+    if (st->nlocators > 0) {
+        int nfail = csnhypodbp_locator_resolve_mods(st->locators, st->nlocators,
+                                                    hypodb_getmodid_cb);
+
+        if (nfail > 0)
+            logit("e", "hypodb_ingest: %d locator(es) sin MyModuleId resuelto; "
+                       "location_algorithm quedara vacio para esos mods\n",
+                  nfail);
+    }
     return st;
 }
 
@@ -542,7 +565,7 @@ static int update_preferred(HypodbState *st, HypodbGroup *g)
             version = 0;
             confirmed = 0;
         }
-        metas[i].manual = strcmp(ors[i].status, "REVIEWED") == 0;
+        metas[i].manual = strcmp(ors[i].status, "MANUAL") == 0;
         metas[i].confirmed = confirmed;
         metas[i].version = version;
         metas[i].nph = ors[i].station_count;
@@ -675,14 +698,30 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
        localizador real viaja en `location_algorithm`. */
     snprintf(o.author, sizeof o.author, "csnhypodbp");
     snprintf(o.software, sizeof o.software, "%s", ewgui_software());
-    snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s",
-             ewgui_mod_algorithm(mod));
+    {
+        const char *alg = csnhypodbp_locator_name_for_mod(
+            st->locators, st->nlocators, mod);
+        char ewname[64];
+
+        if (!alg) {
+            char *ew = GetModIdName((unsigned char)mod);
+
+            if (ew && ew[0]) {
+                snprintf(ewname, sizeof ewname, "%s", ew);
+                alg = ewname;
+            }
+        }
+        snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s",
+                 alg ? alg : "");
+    }
     if (vmodel && vmodel[0])
         snprintf(o.velocity_model, sizeof o.velocity_model, "%s", vmodel);
     o.azimuthal_gap = (sol->gap > 0) ? (double)sol->gap : NAN;
     o.station_count = sol->nph;
     o.standard_error = (sol->rms > 0.0) ? sol->rms : NAN;
-    snprintf(o.status, sizeof o.status, "%s", ewgui_mod_status(mod, sol->manual));
+    /* MANUAL solo para una confirmacion desde la GUI (`InRingConf`). Una
+       solucion con picadas manuales del pipeline sigue siendo AUTOMATIC. */
+    snprintf(o.status, sizeof o.status, "%s", ewgui_origin_status(confirmed));
     if (ewguidb_upsert_origin(st->db, &o) != 0)
         return -1;
 
@@ -1014,7 +1053,7 @@ int hypodb_load_from_db(HypodbState *st)
                    de magnitudes a la ultima iteracion). */
                 if (!confirmed)
                     update_origin_meta(g, ors[j].origin_id, mod,
-                                       strcmp(ors[j].status, "REVIEWED") == 0,
+                                       strcmp(ors[j].status, "MANUAL") == 0,
                                        version, ors[j].station_count,
                                        isnan(ors[j].standard_error)
                                            ? 9999.0 : ors[j].standard_error,

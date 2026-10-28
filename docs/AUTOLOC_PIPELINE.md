@@ -77,7 +77,8 @@ P/S que asocien por tiempo de viaje.
 
 ## 2. Locators vivos
 
-`hyp2000_ring` con `live_usage=1`:
+Los refinadores con `live_usage=1` (`hyp2000_ring`, `nlloc_ring` y cualquier
+otro que use el motor común `csnloc/live_refine`):
 
 1. Toma el hipocentro del seed (`HYPO_RING` o `HYPO_RING_REF2` confirmada).
 2. Para cada P/S de `PICK_RING` predice `t0 + tt(seed, estación, fase)` y la
@@ -101,9 +102,11 @@ La poda es lo que separa "39 fases asociadas → RMS 14.5 → evento perdido" de
 una solución publicable, y la reapertura evita que un evento que falló 5 veces
 quede sin refinar para siempre aunque después lleguen 30 picadas suyas.
 
-`nlloc_ring` sigue con `live_usage=0`: no procesa el anillo, se usa por el
-`locate` manual/offline. Su salida también se valida (`rms/nph/gap`), pero el
-modo vivo no está implementado.
+`nlloc_ring` usa el **mismo** motor y los mismos pasos; su `locate` ejecuta
+NLLoc sobre el ARC sembrado. NLLoc no acepta un hipocentro semilla en su API:
+la condición inicial se realiza con el ARC (hipocentro + fases del seed +
+picadas asociadas) y el `LOCGRID` recentrado en lat/lon/profundidad del seed.
+Con `live_usage=0` no procesa el anillo y se usa por el `locate` manual/offline.
 
 ## 3. Magnitudes
 

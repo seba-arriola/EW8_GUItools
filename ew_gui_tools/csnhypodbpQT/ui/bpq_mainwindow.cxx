@@ -320,6 +320,14 @@ void BpqMainWindow::openData()
 {
     char err[512] = "";
 
+    /* El store COPIA el config: los mods tienen que estar resueltos antes de
+       `bpq_events_new`. GetModId lee earthworm.d y no necesita anillos. */
+    {
+        const int nfail = bpq_locators_resolve((BpqConfig *)m_cfg);
+        if (nfail > 0)
+            fprintf(stderr, "csnhypodbpQT: %d locator(es) sin MyModuleId "
+                            "resuelto\n", nfail);
+    }
     m_events = bpq_events_new(m_cfg);
     m_eventsModel = new BpqEventsModel(this);
     m_eventsModel->setStore(m_events);
@@ -2766,15 +2774,11 @@ void BpqMainWindow::confirmCandidate()
                                 .arg(m_cand.otime, 0, 'f', 3);
 
         if (m_mww && bpq_mww_tensor_ready(m_mww) && m_mwwFor == key) {
-            const int mod = (m_cand.mod > 0)
-                                ? m_cand.mod
-                                : bpq_mod_for_locator(
-                                      m_locCombo ? m_locCombo->currentText()
-                                                       .toUtf8()
-                                                       .constData()
-                                                 : "csnloc");
+            const int mod = m_cand.mod;
+            const char *alg = csnhypodbp_locator_name_for_mod(
+                m_cfg->locators, m_cfg->n_locators, mod);
 
-            m_mwwSaved = bpq_mww_save(m_db, &m_cand, mod, m_mww, msg,
+            m_mwwSaved = bpq_mww_save(m_db, &m_cand, mod, alg, m_mww, msg,
                                       sizeof(msg))
                              ? 1
                              : 0;
@@ -3573,10 +3577,10 @@ bool BpqMainWindow::runMwwForTest()
                 : currentSolution();
 
         if (save && save[0] == '1' && sol && bpq_mww_tensor_ready(m_mww)) {
-            const int mod = (sol->mod > 0)
-                                ? sol->mod
-                                : bpq_mod_for_locator("csnloc");
-            const int ok = bpq_mww_save(m_db, sol, mod, m_mww, smsg,
+            const int mod = sol->mod;
+            const char *alg = csnhypodbp_locator_name_for_mod(
+                m_cfg->locators, m_cfg->n_locators, mod);
+            const int ok = bpq_mww_save(m_db, sol, mod, alg, m_mww, smsg,
                                         sizeof(smsg));
 
             std::printf("mww save=%d mod=%d msg=\"%s\"\n", ok, mod, smsg);
@@ -4549,7 +4553,7 @@ void BpqMainWindow::loadTestArc()
     }
     data = f.readAll();
     f.close();
-    if (csnhypodbp_parse_solution(data.constData(), (size_t)data.size(), 163, &sol) != 0) {
+    if (csnhypodbp_parse_solution(data.constData(), (size_t)data.size(), 0, &sol) != 0) {
         statusBar()->showMessage(QStringLiteral("BPQ_TEST_ARC: ARC invalido"), 0);
         return;
     }

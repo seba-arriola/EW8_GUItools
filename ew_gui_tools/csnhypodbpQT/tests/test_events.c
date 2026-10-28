@@ -88,12 +88,19 @@ static BpqConfig make_cfg(void)
     snprintf(c.locators[0].name, sizeof(c.locators[0].name), "%s", "hyp2000_ring");
     snprintf(c.locators[0].bin, sizeof(c.locators[0].bin), "%s", "hyp2000_ring");
     snprintf(c.locators[0].cfg, sizeof(c.locators[0].cfg), "%s", "hyp2000_ring.d");
+    c.locators[0].mod = 163;
     c.locators[0].live_usage = 1;
     snprintf(c.locators[1].name, sizeof(c.locators[1].name), "%s", "csnloc");
     snprintf(c.locators[1].bin, sizeof(c.locators[1].bin), "%s", "csnloc");
     snprintf(c.locators[1].cfg, sizeof(c.locators[1].cfg), "%s", "csnloc.d");
+    c.locators[1].mod = 162;
     c.locators[1].live_usage = 0;
-    c.n_locators = 2;
+    snprintf(c.locators[2].name, sizeof(c.locators[2].name), "%s", "nlloc_ring");
+    snprintf(c.locators[2].bin, sizeof(c.locators[2].bin), "%s", "nlloc_ring");
+    snprintf(c.locators[2].cfg, sizeof(c.locators[2].cfg), "%s", "nlloc_ring.d");
+    c.locators[2].mod = 164;
+    c.locators[2].live_usage = 1;
+    c.n_locators = 3;
     return c;
 }
 

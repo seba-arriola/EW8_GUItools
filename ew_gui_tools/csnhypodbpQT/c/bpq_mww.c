@@ -448,17 +448,8 @@ static int reuse_event(EwGuiDb *d, const char *qid, double otime, char *eid,
     return ok;
 }
 
-int bpq_mod_for_locator(const char *locator)
-{
-    if (!locator) return 0;
-    if (strcmp(locator, "csnloc") == 0) return 162;
-    if (strcmp(locator, "hyp2000_ring") == 0) return 163;
-    if (strcmp(locator, "nlloc_ring") == 0) return 164;
-    return 0;
-}
-
 int bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,
-                 const BpqMww *m, char *msg, size_t n)
+                 const char *algorithm, const BpqMww *m, char *msg, size_t n)
 {
     EwGuiEventRow ev;
     EwGuiOriginRow ori;
@@ -548,11 +539,11 @@ int bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,
     copy_str(ori.author, sizeof(ori.author), "csnhypodbp");
     copy_str(ori.software, sizeof(ori.software), ewgui_software());
     copy_str(ori.location_algorithm, sizeof(ori.location_algorithm),
-             ewgui_mod_algorithm(mod));
+             algorithm ? algorithm : "");
     ori.azimuthal_gap = (sol->gap > 0) ? (double)sol->gap : NAN;
     ori.station_count = sol->nph;
     ori.standard_error = (sol->rms > 0.0) ? sol->rms : NAN;
-    copy_str(ori.status, sizeof(ori.status), ewgui_mod_status(mod, 1));
+    copy_str(ori.status, sizeof(ori.status), ewgui_origin_status(1));
     if (ewguidb_upsert_origin_if_absent(d, &ori) != 0) {
         if (msg && n) snprintf(msg, n, "%s", ewguidb_last_error(d));
         return 0;

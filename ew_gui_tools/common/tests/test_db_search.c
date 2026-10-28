@@ -44,7 +44,7 @@ static void add_event(EwGuiDb *db, const char *eid, const char *oid,
     o.latitude = lat;
     o.longitude = lon;
     o.depth = depth;
-    snprintf(o.status, sizeof o.status, "PRELIMINARY");
+    snprintf(o.status, sizeof o.status, "AUTOMATIC");
     assert(ewguidb_upsert_origin(db, &o) == 0);
 }
 

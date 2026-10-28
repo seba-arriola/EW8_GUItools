@@ -219,19 +219,9 @@ const char *ewgui_software(void)
     return cached;
 }
 
-const char *ewgui_mod_algorithm(int mod)
+const char *ewgui_origin_status(int manual)
 {
-    if (mod == 162) return "csnloc";
-    if (mod == 163) return "HYPOINVERSE";
-    if (mod == 164) return "NLLoc";
-    return "unknown";
-}
-
-const char *ewgui_mod_status(int mod, int manual)
-{
-    if (manual) return "REVIEWED";
-    if (mod == 162) return "PRELIMINARY";
-    return "REVISED";
+    return manual ? "MANUAL" : "AUTOMATIC";
 }
 
 void ewgui_epoch_to_iso(double t, char *out, size_t n)

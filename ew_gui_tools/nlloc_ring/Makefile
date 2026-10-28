@@ -27,16 +27,48 @@ $(NLLLIB):
 
 LOCATOR_OBJ = ../csnhypodbp/csnhypodbp_locator.o
 CHECK_OBJ   = ../csnloc/live_check.o
+LIVE_OBJS   = ../csnloc/live_refine.o ../csnloc/live_assoc.o \
+              ../csnloc/pick_scln.o ../csnloc/pick_buffer.o \
+              ../csnloc/ttmodel.o ../csnloc/stations.o \
+              ../csnloc/taulib_csnloc.o ../csnhypodbp/csnhypodbp_group.o
 
 ../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
                                     ../csnhypodbp/csnhypodbp_locator.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+../csnhypodbp/csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c \
+                                  ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/pick_scln.o: ../csnloc/pick_scln.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/pick_buffer.o: ../csnloc/pick_buffer.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/ttmodel.o: ../csnloc/ttmodel.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/stations.o: ../csnloc/stations.c ../csnloc/csnloc.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/taulib_csnloc.o: ../csnloc/taulib_csnloc.c ../csnloc/taulib_compat.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 ../csnloc/live_check.o: ../csnloc/live_check.c ../csnloc/live_assoc.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-$(TARGET): nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(CHECK_OBJ) $(NLLLIB)
-	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(CHECK_OBJ) $(NLLLIB) $(EWLIBS) $(LIBS)
+../csnloc/live_assoc.o: ../csnloc/live_assoc.c ../csnloc/live_assoc.h \
+                        ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+../csnloc/live_refine.o: ../csnloc/live_refine.c ../csnloc/live_refine.h \
+                         ../csnloc/live_assoc.h ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+$(TARGET): nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) $(CHECK_OBJ) $(LIVE_OBJS) $(NLLLIB)
+	$(CC) $(CFLAGS) -o $(TARGET) nlloc_ring.o nlloc_depth.o $(LOCATOR_OBJ) \
+	      $(CHECK_OBJ) $(LIVE_OBJS) $(NLLLIB) $(EWLIBS) $(LIBS)
 	@# la instalación la hace el target `install` (common/tools/install_bin.sh)
 
 # Profundidad fija (emulada): reescritura pura de LOCGRID / LOCSEARCH.

@@ -224,9 +224,11 @@ int live_prune_arc(const char *arc_out, int len_out,
     int i, j, n = 0;
 
     if (!arc_out || !arc_in || !arc_pruned) return -1;
-    if (csnhypodbp_parse_solution(arc_out, (size_t)len_out, 163, &so) != 0)
+    /* El mod no interviene en la poda (solo se usan qid/fases/residuales):
+       se pasa 0 para no fijar un id de modulo en el nucleo puro. */
+    if (csnhypodbp_parse_solution(arc_out, (size_t)len_out, 0, &so) != 0)
         return -1;
-    if (csnhypodbp_parse_solution(arc_in, (size_t)len_in, 163, &si) != 0)
+    if (csnhypodbp_parse_solution(arc_in, (size_t)len_in, 0, &si) != 0)
         return -1;
 
     for (i = 0; i < si.npicks; i++) {

@@ -7,10 +7,12 @@ escribe el ARC refinado en `HYPO_RING_REF` (el **mismo** anillo que
 `hyp2000_ring`; `csnhypodbp` los distingue por módulo origen). **No** usa la
 cadena *sausage*.
 
-Con `live_usage=0` (valor por defecto en `csnhypodbpqt.d`) el proceso vivo queda
-inactivo: se usa **sólo** por el `locate` manual/offline de la GUI. Para
-activarlo en tiempo real habría que implementar el mismo modo de picks que
-`hyp2000_ring`; hoy no se hace.
+Con `live_usage=1` en la fila `locator nlloc_ring ...` de `csnhypodbpqt.d`
+usa el **motor vivo común** (`csnloc/live_refine`): lee `PICK_RING` y
+`HYPO_RING`, siembra el ARC con el hipocentro del seed y publica cada pasada
+válida en `HYPO_RING_REF` con versión nueva (`<event>:<mod>:<version>:I` en la
+BD). Con `live_usage=0` el proceso vivo queda inactivo y se usa **sólo** por el
+`locate` manual/offline de la GUI.
 
 ```
 HYPO_RING (ARC de csnloc) ──► nlloc_ring ──► HYPO_RING_REF (ARC refinado)
@@ -53,9 +55,10 @@ se compila como `libnlloc.a` a partir de los mismos objetos que usa
 | `MinPhases`, `MaxRMS`, `MaxGapDeg` | filtros de calidad de entrada **y** de la salida: una solución con `rms=99.99` (centinela de NLLoc), `nph < MinPhases` o `gap > MaxGapDeg` no se publica |
 | `FixedDepthKm` | profundidad **fija** (km); `<0` (default) = libre. NLLoc no la soporta nativa: se emula con `LOCGRID` de 2 nodos en z centrados en el valor y `LOCSEARCH OCT … init_num_cells_z=1` (receta oficial). La solución queda dentro de ±`FixDepthSpacingKm`/2, **no** en un valor exacto |
 | `FixDepthSpacingKm` | separación entre los 2 nodos z de la emulación (km, default 0.1 ⇒ ±0.05 km). `<=0` se sustituye por 0.1 con aviso |
-| `NllIntervalSec` | rate-limit del modo vivo (no usado con `live_usage=0`; `0` = cada versión) |
-| `NllTTLSec` | olvida un evento sin versiones nuevas tras N s |
-| `NllMaxPending` | máximo de eventos pendientes en la tabla |
+| `InPickRing` / `ConfRing` | `PICK_RING` / `HYPO_RING_REF2` (motor vivo) |
+| `StaFile` / `TauTable` | metadatos y tiempos de viaje para asociar las P/S del seed |
+| `LivePickLookbackSec`, `LivePickResidualSecP/S` | ventana de asociación por tiempo de viaje |
+| `LiveMaxIter`, `LiveEventTTLSec` | podas por corrida y TTL para reabrir un evento |
 
 La plantilla de control debe traer `LOCHYPOUT SAVE_HYPOINVERSE_Y2000_ARC` y
 `LOCMETH ... 1.78` (VpVsRatio: NLLoc deriva S de las grillas P).
@@ -103,14 +106,15 @@ Puntos verificados (importantes):
 - **`--dmax`** debe cubrir la distancia estación-evento (p. ej. 600 km para
   redes regionales) en el modo 1D.
 
-## Rate-limit por evento
+## Motor vivo
 
-Con `live_usage=0` (la tabla actual) este camino **no se usa**: el módulo no
-procesa `HYPO_RING` en vivo y se invoca solo por el `locate` manual/offline.
-El código conserva la tabla de pendientes y `NllIntervalSec`/`NllTTLSec` para
-una eventual habilitación de `live_usage=1`, que **no está implementada**: si se
-pusiera en 1, el módulo avisa y fuerza 0. En ese modo hipotético guardaría el
-último ARC por `qid` y relanzaría NLLoc como mucho cada `NllIntervalSec`.
+Con `live_usage=1` el módulo drena `PICK_RING` (picadas automáticas), `HYPO_RING`
+(semilla de `csnloc`) y `HYPO_RING_REF2` (confirmaciones), y llama a
+`live_refine_tick()` del motor común. El recálculo y los reintentos salen de
+`time_recalc_live` y `N_retry` de la tabla de locators. Cada pasada válida se
+publica con versión nueva; NLLoc no acepta hipocentro semilla, así que la
+condición inicial es el ARC sembrado + `LOCGRID` recentrado en lat/lon/profundidad
+del seed.
 
 ## Log de resultados
 
@@ -148,7 +152,8 @@ escribe `?` cuando el canal viene vacío, para no quedarse en 13 campos.
 - `libnlloc.a` **validada** (el demo `NLLoc_func_test` localiza eventos).
 - `nlloc_ring` **validado offline**: un ARC real de `csnloc` se refina y produce
   un ARC Y2K normalizado, con `qid`/versión copiados y longitud corregida.
-- Rate-limit y log de resultados implementados.
+- Motor vivo común (`PICK_RING` + `HYPO_RING` + `HYPO_RING_REF2`) y log de
+  resultados implementados; cada pasada válida publica una versión nueva.
 - **Modelos 3D de Potin integrados**: `mk_nll_grids_3d.py` + `ModelBand` +
   `ModelFallback`; verificado que un evento del norte (banda N18-26_1.5k) da una
   solución **interior** (`z=130.83`, `rms=0.15`) en vez del borde de la caja 1D.

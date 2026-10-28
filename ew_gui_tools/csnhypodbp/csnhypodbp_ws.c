@@ -770,7 +770,7 @@ static int cargar_grupos_db(const char *const *ids, int nev)
             csnhypodbp_row_set_origin_id(row, ors[j].origin_id);
             g_object_set_data(G_OBJECT(row), "confirmed", GINT_TO_POINTER(confirmed));
             g_object_set(row, "estado",
-                         strcmp(ors[j].status, "REVIEWED") == 0 ? "M" : "A", NULL);
+                         strcmp(ors[j].status, "MANUAL") == 0 ? "M" : "A", NULL);
             g_object_set(row, "created", created, NULL);
             row_set_mag(row, 0, szMl); row_set_mag(row, 1, szMwp);
             row_set_mag(row, 2, szMb); row_set_mag(row, 3, szMs);
@@ -779,7 +779,7 @@ static int cargar_grupos_db(const char *const *ids, int nev)
             es = g_new0(EventSol, 1);
             es->row = row;
             es->qid = qid;
-            es->manual = (strcmp(ors[j].status, "REVIEWED") == 0);
+            es->manual = (strcmp(ors[j].status, "MANUAL") == 0);
             es->confirmed = confirmed;
             es->created = created_epoch;
             es->version = version;
@@ -1136,7 +1136,7 @@ int procesar_mensaje_mag(GtkWidget *tree, const char *payload) {
         return 0;
     }
     int qid = atoi(mag.qid);
-    int mod = (int)mag.origin_version;   /* modulo origen del ARC (162/163/164) */
+    int mod = (int)mag.origin_version;   /* modulo origen del ARC (el del logo) */
     int slot = -1;
     char mag_str[32];
 

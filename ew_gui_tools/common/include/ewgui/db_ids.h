@@ -63,11 +63,9 @@ int ewgui_channel_nslco(char *out, size_t n, const char *net, const char *sta,
 /* Versión del framework, de $EW_VERSION (la exporta ew8_unix.sh). */
 const char *ewgui_software(void);
 
-/* Localizador real del `mod` del ARC (162 csnloc, 163 HYPOINVERSE, 164 NLLoc). */
-const char *ewgui_mod_algorithm(int mod);
-
-/* `origin.status`: REVIEWED si la solución se revisó/confirmó a mano. */
-const char *ewgui_mod_status(int mod, int manual);
+/* `origin.status`: MANUAL solo para un origen confirmado a mano desde
+ * `Procesar`; AUTOMATIC para todo lo que produce el pipeline. */
+const char *ewgui_origin_status(int manual);
 
 /* t (epoch UTC) -> "YYYY-MM-DD HH:MM:SS.mmm+00". */
 void ewgui_epoch_to_iso(double t, char *out, size_t n);

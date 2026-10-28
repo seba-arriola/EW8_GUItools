@@ -26,12 +26,17 @@
 #define MAX_PER_RING 1000
 
 static void dispatch(HypodbState *st, const MSG_LOGO *logo, unsigned char t_arc,
-                     unsigned char t_mag, int default_mod, int history,
-                     const char *buf, long size)
+                     unsigned char t_mag, int history, const char *buf,
+                     long size)
 {
     if (logo->type == t_arc) {
-        int mod = logo->mod ? (int)logo->mod : default_mod;
-        hypodb_feed_arc(st, buf, (size_t)size, mod, history);
+        /* El mod lo pone SIEMPRE el productor (GetModId de su .d). Si llega 0
+           es un mensaje mal formado: se descarta, no se inventa un id. */
+        if (!logo->mod) {
+            logit("e", "hypodb_ingest: ARC con mod=0 en el logo, descartado\n");
+            return;
+        }
+        hypodb_feed_arc(st, buf, (size_t)size, (int)logo->mod, history);
     } else if (logo->type == t_mag) {
         hypodb_feed_mag(st, buf, (size_t)size);
     }
@@ -203,16 +208,20 @@ int main(int argc, char **argv)
                 buf[size] = '\0';
                 if (i == 2) {
                     /* Confirmacion: fila `origin` propia e inmutable. */
-                    int mod = logo.mod ? (int)logo.mod : 158;
-                    hypodb_feed_confirmed(st, buf, (size_t)size, mod);
+                    if (!logo.mod) {
+                        logit("e", "hypodb_ingest: confirmacion con mod=0 en el "
+                                   "logo, descartada\n");
+                    } else {
+                        hypodb_feed_confirmed(st, buf, (size_t)size,
+                                              (int)logo.mod);
+                    }
                 } else {
                     /* InRingRef (i == 1) solo lo escriben los localizadores con
                        live_usage=1: cada pasada valida se conserva como fila
                        propia. InRing (i == 0) es csnloc y mantiene una fila viva
                        por (evento, mod). */
                     int history = (i == 1);
-                    dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163,
-                             history, buf, size);
+                    dispatch(st, &logo, t_arc, t_mag, history, buf, size);
                 }
                 any = 1;
                 n++;

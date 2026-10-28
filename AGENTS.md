@@ -429,7 +429,7 @@ SeedLink (10.54.217.9:18000)
         ├────────────────────► PICK_RING ──► csntvp / csntvpQT / csnhypodbp (re-picks manuales)
         │                          │
         │                          ├─ csnloc (asociador: 1.ª solución) ─► HYPO_RING
-        │                          └─ hyp2000_ring (live_usage=1) ───────► HYPO_RING_REF
+        │                          └─ hyp2000_ring / nlloc_ring (live_usage=1) ─► HYPO_RING_REF
         │                                     (todos los picks, N s)
         │            HYPO_RING_REF (163/164) ──► csnmags  (ML/Mwp/Mb/Ms)  [store]
         │            HYPO_RING     (162)     ──► csnmags_raw
@@ -453,7 +453,10 @@ versión más alta. Los refinadores con `live_usage=1` conservan **todas** sus i
 `<event>:<mod>:<version>:I` por pasada válida. Un candidato
 fuera de ambos criterios crea un evento nuevo (se loguea `overlap`).
 La tabla de localizadores vive únicamente en `csnhypodbpqt.d` (columnas `binario`, `config`,
-`live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. Los locators con
+`live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. El `mod` **no se escribe en el
+código**: se lee `MyModuleId` del `.d` del locator y se resuelve con `GetModId` de `earthworm.d`;
+`origin.status` es `AUTOMATIC` para todo el pipeline y `MANUAL` solo para una confirmación desde
+*Procesar*. Los locators con
 `live_usage=1` asocian todas las P/S de `PICK_RING` al hipocentro del seed por **tiempo de viaje**
 (`t0 + tt`, ventana que crece con distancia/profundidad), siembran el ARC con **las fases del seed**
 (más las asociadas, dedup por estación+fase) y publican `HYPO_RING_REF` cada `time_recalc_live`;
@@ -1012,6 +1015,12 @@ primero al store algo que ya no está).
   envían al localizador van **sin** residual (`NAN`): el residual lo produce el localizador y manda
   el JSONL de `csnloc`. Cada solución del grupo guarda **sus** picadas (`EventSol.picks`), no solo la
   unión.
+- **El motor vivo es uno solo (`csnloc/live_refine`)**: los refinadores con `live_usage=1`
+  (`hyp2000_ring`, `nlloc_ring`, …) solo aportan los callbacks `locate`/`rewrite`/`publish` y su
+  configuración; no dupliques el bucle en el módulo. NLLoc **no** acepta hipocentro semilla en su
+  API (`NLLocLib.h:515`): la condición inicial es el ARC sembrado (hipocentro + fases del seed +
+  picadas asociadas) y el `LOCGRID` recentrado en lat/lon/profundidad. `time_recalc_live` y
+  `N_retry` salen de la fila `locator ...` de `csnhypodbpqt.d`.
 - **`nlloc_ring` perdía la RED y el CANAL en su ARC de salida**: NLLoc escribe la línea de fase como
   `comp`(1 letra)+`inst`(3) y deja `inst` en blanco, porque el OBS sólo lleva el canal en el campo
   COMP (`NLLocLib.c:13171-13177`); su ARC quedaba con `NET` y `COMP3` en blanco. Al seleccionar ese

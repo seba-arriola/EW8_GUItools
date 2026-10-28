@@ -11,7 +11,7 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
                         │       (HYPOINVERSE, barato)      │
                         │                                  ├─► csnhypodbp
                         └─► nlloc_ring   ─► HYPO_RING_REF ─┘   (una instancia)
-                                (NonLinLoc, rate-limited)
+                                (NonLinLoc, motor vivo comun)
 ```
 
 ## Automatismo
@@ -24,24 +24,30 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
   `MaxGapDeg` (360, medido) filtran el gatillo. La emisión se **retiene** hasta
   que la solución es publicable (`MinEmitPhases` 5), y una corrección con el
   mismo `qid` solo se emite si llega `EmitImproveMinPicks` fases más.
-- `hyp2000_ring` con `live_usage=1` lee la semilla de `HYPO_RING`, siembra el ARC
-  con las fases del seed y asocia todos los P/S de `PICK_RING` por **tiempo de
-  viaje** (`t0 + tt`), rehaciéndolo cada `time_recalc_live`. La ventana crece con
-  la distancia/profundidad. Valida `rms/nph/gap` de la salida: si falla, poda el
-  ARC con los residuales del motor y reintenta (`LiveMaxIter`); no publica
+- Los refinadores con `live_usage=1` (`hyp2000_ring`, `nlloc_ring` y cualquier
+  otro que use `csnloc/live_refine`) leen la semilla de `HYPO_RING`, siembran el
+  ARC con las fases del seed y asocian todos los P/S de `PICK_RING` por **tiempo
+  de viaje** (`t0 + tt`), rehaciéndolo cada `time_recalc_live`. La ventana crece
+  con la distancia/profundidad. Valida `rms/nph/gap` de la salida: si falla, poda
+  el ARC con los residuales del motor y reintenta (`LiveMaxIter`); no publica
   `rms=99.99` ni contamina el seed. Tras `N_retry` intentos sin novedad deja de
   localizar ese evento, pero se reabre si llega una picada nueva dentro de
-  `LiveEventTTLSec`. `HYPO_RING_REF2` (confirmada) es el seed preferido. El ARC
+  `LiveEventTTLSec`. `HYPO_RING_REF2` (confirmada) es el seed preferido. El
+  bucle es **común**: `csnloc/live_refine`; cada módulo solo aporta los callbacks
+  `locate`/`rewrite`/`publish` y su configuración. El ARC
   que se le entrega al motor (y el que publica) lleva el **layout canónico**
   completo —cabecera, línea `$1`, y por fase la fase de 114 más su continuación
   con `$1` en 104-105—: `hyphs.for:222` lee siempre la línea 2 como resumen y,
   sin ella, el motor muere con `Sequential READ ... after EOF` (`status=0x200`).
   Lo emite `csnhypodbp_arc_build`; los rewriters de los dos refinadores
   descartan las líneas `$` del ARC del motor y reemiten ese layout.
-- `nlloc_ring` con `live_usage=0` (la tabla actual) **no** procesa el anillo: se
-  usa solo por el `locate` manual/offline. Su salida también se valida
-  (`rms/nph/gap`) antes de publicarse. `NllIntervalSec`/`NllTTLSec` siguen
-  disponibles para el modo manual. `live_usage=1` no está implementado.
+- `nlloc_ring` con `live_usage=1` usa el **mismo motor** (`csnloc/live_refine`):
+  lee `PICK_RING` + `HYPO_RING`, siembra el ARC con el hipocentro del seed y
+  publica cada pasada valida en `HYPO_RING_REF` con version nueva. NLLoc no
+  acepta un hipocentro semilla en su API: la condicion inicial se realiza con el
+  ARC sembrado y el `LOCGRID` recentrado en lat/lon/profundidad del seed. Con
+  `live_usage=0` no procesa el anillo y se usa solo por el `locate`
+  manual/offline. Su salida tambien se valida (`rms/nph/gap`).
 
 ## Etiquetado del mensaje
 
@@ -74,12 +80,15 @@ Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
   ```
   InRing HYPO_RING_REF
   # key     nombre_binario  archivo_config  live_usage  time_recalc_live  N_retry
-  locator   csnloc          csnloc.d        0           0                 0
-  locator   hyp2000_ring    hyp2000_ring.d  1           20                5
-  locator   nlloc_ring      nlloc_ring.d    0           0                 5
+  locator   hyp2000_ring    hyp2000_ring.d  1           30                5
+  locator   nlloc_ring      nlloc_ring.d    1           90                2
   ```
-  `csnloc` como asociador emite **una sola** solución inicial por evento; no
-  versiona. Los locators con `live_usage=1` asocian todas las P/S por tiempo de
+  El `mod` **no** se declara en esta tabla ni en el código: se lee `MyModuleId`
+  del `.d` del locator y se resuelve con `GetModId` de `earthworm.d`. Así el
+  operador puede cambiar el id sin recompilar. `csnloc` puede no estar en la
+  tabla: sigue siendo el asociador (`AssociateOnly=1` por defecto) y emite
+  **una sola** solución inicial por evento; no versiona. Los locators con
+  `live_usage=1` asocian todas las P/S por tiempo de
   viaje al hipocentro del seed, rehacen el ARC y se detienen tras `N_retry`
   intentos sin picadas nuevas o sin solución válida. La tabla es la única fuente:
   `csnloc.d`, `hyp2000_ring.d` y `nlloc_ring.d` no declaran locators.
@@ -110,12 +119,13 @@ Para analizar: `grep ' LOC ' run_working_v8/log/hyp2000_ring_*.log`.
 | Módulo | `.d` | Claves relevantes |
 |---|---|---|
 | `hyp2000_ring` | `hyp2000_ring.d` | `InRing HYPO_RING`, `InPickRing PICK_RING`, `OutRing HYPO_RING_REF`, `LivePickLookbackSec`, `LivePickResidualSecP/S`, `StaFile`, `TauTable`, `CommandFile`, `WorkDir`, `GridFile`, `MinPhases`, `MaxRMS`, `MaxGapDeg` |
-| `nlloc_ring` | `nlloc_ring.d` | `InRing HYPO_RING`, `OutRing HYPO_RING_REF`, `OutRoot`, `WorkDir`, `GridFile`, `ModelBand` (repetible), `ModelFallback`, `TransOrigin`, `LocGrid`, `NllIntervalSec`, `NllTTLSec`, `NllMaxPending` |
+| `nlloc_ring` | `nlloc_ring.d` | `InRing HYPO_RING`, `InPickRing PICK_RING`, `ConfRing HYPO_RING_REF2`, `OutRing HYPO_RING_REF`, `StaFile`, `TauTable`, `LivePickLookbackSec`, `LivePickResidualSecP/S`, `LiveMaxIter`, `LiveEventTTLSec`, `OutRoot`, `WorkDir`, `GridFile`, `ModelBand` (repetible), `ModelFallback`, `TransOrigin`, `LocGrid` |
 | `csnhypodbp` | `csnhypodbp.d` | `InRing HYPO_RING_REF`, `InRingRaw HYPO_RING`, `ConfRing HYPO_RING_REF2`; la tabla de locators se lee de `csnhypodbpqt.d` |
 
 `HYPO_RING_REF2` es el **anillo de confirmaciones**: `csnhypodbp` publica ahí el ARC de cada solución
 confirmada a mano y `hypodb_ingest` lo consume (`hypodb.d`: `InRingConf HYPO_RING_REF2`) para
-guardarla como fila `origin` propia (`<event>:<mod>:<version>`). Los refinadores no lo usan.
+guardarla como fila `origin` propia (`<event>:<mod>:<version>`). Los refinadores con
+`live_usage=1` también lo leen (`ConfRing`) para usar la confirmación como seed preferido.
 
 ## Puesta en marcha
 

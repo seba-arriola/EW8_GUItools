@@ -251,7 +251,7 @@ el siguiente mensaje tapaba).
   `ewguidb_query_picks` → `bpq_events_feed_arc`. Así el historial entra por el **mismo** camino de
   agrupación/preferencia que el vivo.
 - Mapeo: `ewgui_origin_id_parse` da `mod`/`version`/`confirmed`; `E<qid>-…` da el `qid`;
-  `origin.status == "REVIEWED"` ⇒ solución manual; el canal `NET.STA.LOC.CHAN` se reduce a **STA**
+  `origin.status == "MANUAL"` ⇒ solución confirmada a mano; el canal `NET.STA.LOC.CHAN` se reduce a **STA**
   (es lo que empareja `statable`); `pick.uncertainty` viaja como **residual** y
   `pick_status == "manual"` como picada manual.
 - El dedup usa `csnhypodbp_sol_same_row`: para un mod con `live_usage=1` (tabla de locators) la
@@ -573,14 +573,14 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   `xy_*`/`xyz_*`/`ts_*`, `run.sh`, `run.log`). El dry-run (sin motor) falla en el parseo pero reporta
   el motivo real (`sin xy_WCMTSOLUTION/WCMTSOLUTION ni LOG/*.log en …`) y deja `run.log` en el cuadro
   de la derecha (`full_output.txt` si existe; si no, `run.log`), nunca un "sin resultado" mudo.
-- **6.4 hecho (guardado al confirmar)**: `bpq_mww_save(db, sol, mod, …)` replica
+- **6.4 hecho (guardado al confirmar)**: `bpq_mww_save(db, sol, mod, algorithm, …)` replica
   `csnhypodbp_mww_persist` de la GTK: compone `event`/`origin` (`upsert_event` +
   `upsert_origin_if_absent`, así no pisa la fila del pipeline), sube `magnitude(Mww)` +
   `tensor(method=WPHASE, mechanism=WCMT, M0 + momentos)` y deja la solución con su Mww como
   **preferida** (`set_preferred`). Dos decisiones que importan:
-  1. **`mod` explícito** (`bpq_mod_for_locator`: csnloc 162 / hyp2000 163 / nlloc 164): la solución
-     de `locate` trae `mod = 0` (no viene del anillo) y `ewgui_origin_id` rechaza `mod <= 0`; el
-     módulo real es el del localizador que la calculó.
+  1. **`mod` resuelto**: la tabla `csnhypodbpqt.d` da el `.d` del locator, su `MyModuleId` y
+     `GetModId` el id; `csnhypodbp_locate_identity` lo pone en la candidata. No hay números de módulo
+     en el código. `algorithm` es el nombre del locator (`csnhypodbp_locator_name_for_mod`).
   2. **Se reusa el `event` del pipeline** si existe uno con el mismo `qid` y `|Δotime| <= 300 s`
      (`EventMaxDtSec`): hypodb nombra el evento con la hora de la **primera** solución del grupo, que
      difiere en segundos de la refinada; sin esto el sismo se partía en dos eventos (se vio: `…011036`

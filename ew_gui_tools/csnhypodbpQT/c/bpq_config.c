@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <earthworm_simple_funcs.h>   /* GetModId */
 #include <kom.h>
 
 #include "ewgui/overlay.h"   /* EWGUI_OVERLAY_MAX_FILES/NAME_MAX (contrato) */
@@ -34,6 +35,18 @@
 #include "csnhypodbp_profile.h"
 #include "csnhypodbp_traces.h"
 #include "csnhypodbp_view.h"
+
+static int bpq_getmodid_cb(const char *symbol, unsigned char *id)
+{
+    return GetModId((char *)symbol, id);
+}
+
+int bpq_locators_resolve(BpqConfig *cfg)
+{
+    if (!cfg || cfg->n_locators <= 0) return 0;
+    return csnhypodbp_locator_resolve_mods(cfg->locators, cfg->n_locators,
+                                           bpq_getmodid_cb);
+}
 
 /* Comprobacion de contrato: si cambian las constantes del repo, falla el build. */
 typedef char bpq_chk_overlay_files[(BPQ_MAX_OVERLAY_FILES == EWGUI_OVERLAY_MAX_FILES) ? 1 : -1];

@@ -53,7 +53,7 @@ CREATE TABLE origin (
     error_ellipse         VARCHAR(255),
     station_count         INTEGER,
     standard_error        DOUBLE PRECISION,
-    status                VARCHAR(32) NOT NULL DEFAULT 'PRELIMINARY'
+    status                VARCHAR(32) NOT NULL DEFAULT 'AUTOMATIC'
 );
 
 COMMENT ON TABLE origin IS 'Hypocentral solutions associated with an event in different review stages.';
@@ -63,7 +63,7 @@ COMMENT ON COLUMN origin.depth IS 'Focal depth in kilometers (km).';
 COMMENT ON COLUMN origin.depth_uncertainty IS 'Focal depth error in kilometers (km).';
 COMMENT ON COLUMN origin.time_uncertainty IS 'Origin time error in seconds.';
 COMMENT ON COLUMN origin.standard_error IS 'RMS residual of the location solution (seconds).';
-COMMENT ON COLUMN origin.status IS 'Review stage: PRELIMINARY, REVISED 1-3, CONFIRMED, FINAL.';
+COMMENT ON COLUMN origin.status IS 'AUTOMATIC (pipeline) o MANUAL (confirmado a mano desde Procesar).';
 
 -- -----------------------------------------------------------------------------
 -- Table: magnitude

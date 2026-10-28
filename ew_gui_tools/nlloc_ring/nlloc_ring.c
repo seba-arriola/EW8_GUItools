@@ -29,6 +29,7 @@
 #include "transport.h"
 #include "../csnhypodbp/csnhypodbp_locator.h"
 #include "../csnloc/live_assoc.h"
+#include "../csnloc/live_refine.h"
 
 #include "nlloc_depth.h"
 #include <ewgui/arc_layout.h>
@@ -75,10 +76,22 @@ static double MaxGapDeg   = 300.0;   /* 0 = sin filtro */
 /* Profundidad fija (NLLoc no la soporta nativa): ventana z de 2 nodos. */
 static double FixedDepthKm     = -1.0;   /* <0 = busqueda libre */
 static double FixDepthSpacingKm = 0.1;   /* km entre los 2 nodos z */
-static int   NllIntervalSec = 300;   /* 0 = sin rate-limit (procesa cada version) */
-static int   NllTTLSec      = 1800;  /* olvidar un evento sin versiones nuevas */
-static int   NllMaxPending  = 64;
 static int   LiveUsage      = 0;     /* de csnhypodbpqt.d */
+static int   LiveRecalcSec  = 90;    /* time_recalc_live de la tabla */
+static int   LiveNRetry     = 2;     /* N_retry de la tabla */
+static char  InPickRingName[MAX_STR] = "PICK_RING";
+static char  ConfRingName[MAX_STR]   = "HYPO_RING_REF2";
+static char  StaFile[MAX_STR]        = "estaciones_107.txt";
+static char  TauModel[MAX_STR]       = "iasp91";
+static double LivePickLookbackSec  = 300.0;
+static double LivePickResidualSecP = 3.0;
+static double LivePickResidualSecS = 5.0;
+static int    LiveMaxIter          = 3;
+static double LiveEventTTLSec      = 600.0;
+static StationList LiveStations;
+static TTModel     LiveTT;
+static int         LiveTTReady = 0;
+static LiveRefine *g_live = NULL;
 
 /* Volumen de busqueda: si la plantilla lo deja pequeno/fijo, NLLoc devuelve la
    solucion pegada al borde. Estas claves reescriben TRANS y LOCGRID. */
@@ -122,10 +135,10 @@ static char       FallbackCtl[MAX_STR]    = "";
 static int        g_use_global_grid = 1;
 static char       g_sel_model[MAX_STR] = "";  /* banda/modelo -> velocity_model */
 
-static SHM_INFO      InRegion, OutRegion;
-static long          InKey = 0, OutKey = 0;
+static SHM_INFO      InRegion, OutRegion, PickRegion, ConfRegion;
+static long          InKey = 0, OutKey = 0, PickKey = -1, ConfKey = -1;
 static unsigned char MyInstId, MyModId;
-static unsigned char TypeHyp2000Arc, TypeHeartbeat, TypeError;
+static unsigned char TypeHyp2000Arc, TypeHeartbeat, TypeError, TypePickSCNL;
 
 static int    HaveGrid = 0;
 static double GLatMin, GLatMax, GLonMin, GLonMax;
@@ -158,9 +171,20 @@ static int read_config(const char *file)
         else if (k_its("MaxGapDeg"))    MaxGapDeg = k_val();
         else if (k_its("FixedDepthKm")) FixedDepthKm = k_val();
         else if (k_its("FixDepthSpacingKm")) FixDepthSpacingKm = k_val();
-        else if (k_its("NllIntervalSec")) NllIntervalSec = k_int();
-        else if (k_its("NllTTLSec"))      NllTTLSec = k_int();
-        else if (k_its("NllMaxPending"))  NllMaxPending = k_int();
+        else if (k_its("InPickRing"))   { str = k_str(); if (str) strncpy(InPickRingName, str, sizeof(InPickRingName)-1); }
+        else if (k_its("ConfRing"))     { str = k_str(); if (str) strncpy(ConfRingName, str, sizeof(ConfRingName)-1); }
+        else if (k_its("StaFile"))      { str = k_str(); if (str) strncpy(StaFile, str, sizeof(StaFile)-1); }
+        else if (k_its("TauTable"))     { str = k_str(); if (str) {
+                                            char t[MAX_STR];
+                                            snprintf(t, sizeof(t), "%s", str);
+                                            if (strstr(t, ".tbl")) *strstr(t, ".tbl") = '\0';
+                                            strncpy(TauModel, t, sizeof(TauModel)-1);
+                                          } }
+        else if (k_its("LivePickLookbackSec"))  LivePickLookbackSec = k_val();
+        else if (k_its("LivePickResidualSecP")) LivePickResidualSecP = k_val();
+        else if (k_its("LivePickResidualSecS")) LivePickResidualSecS = k_val();
+        else if (k_its("LiveMaxIter"))          LiveMaxIter = k_int();
+        else if (k_its("LiveEventTTLSec"))      LiveEventTTLSec = k_val();
         else if (k_its("LocGridKm"))      LocGridKm = k_val();
         else if (k_its("LocSearch")) {
             char   kind[16] = "";
@@ -517,7 +541,7 @@ static int write_obs(const char *msg, int len, const char *path)
 /* ------------------------------------------------------------------------- */
 static int build_control(const char *tmpl, const char *out,
                          const char *obs, const char *ttroot, const char *outroot,
-                         double epi_lat, double epi_lon)
+                         double epi_lat, double epi_lon, double epi_z)
 {
     FILE *fi = fopen(tmpl, "r");
     FILE *fo = fopen(out, "w");
@@ -580,13 +604,26 @@ static int build_control(const char *tmpl, const char *out,
                     y0 = ye - (ny2 - 1) * dy / 2.0;
                     if (x0 < xa) x0 = xa; else if (x0 > xb) x0 = xb;
                     if (y0 < ya) y0 = ya; else if (y0 > yb) y0 = yb;
+                    /* NLLoc no acepta hipocentro semilla: ademas del
+                       epicentro, se centra la ventana z del template en la
+                       profundidad del seed, sin salirse de su rango. */
+                    if (nz > 1 && dz > 0.0) {
+                        double ztop = z0 + (nz - 1) * dz;
+                        double z0n = epi_z - (nz - 1) * dz / 2.0;
+
+                        if (z0n < z0) z0n = z0;
+                        if (z0n + (nz - 1) * dz > ztop)
+                            z0n = ztop - (nz - 1) * dz;
+                        z0 = z0n;
+                    }
                     snprintf(buf, sizeof(buf),
                              "LOCGRID %d %d %d %.4f %.4f %.4f %.4f %.4f %.4f%s\n",
                              nx2, ny2, nz, x0, y0, z0, dx, dy, dz, rest);
                     if (Debug >= 1)
-                        logit("t", "nlloc_ring: LOCGRID %.0f km centrado en %.3f/%.3f"
-                                   " -> %dx%d desde %.1f/%.1f km\n",
-                              LocGridKm, epi_lat, epi_lon, nx2, ny2, x0, y0);
+                        logit("t", "nlloc_ring: LOCGRID %.0f km centrado en "
+                                   "%.3f/%.3f/%.1f -> %dx%d desde %.1f/%.1f/%.1f km\n",
+                              LocGridKm, epi_lat, epi_lon, epi_z, nx2, ny2,
+                              x0, y0, z0);
                 } else {
                     snprintf(buf, sizeof(buf), "%s", line);
                 }
@@ -758,10 +795,10 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     FILE *fp;
     size_t n;
     int    nph, nsta;
-    double lat, lon, rms;
+    double lat, lon, z, rms;
     int    nhead;
 
-    if (arc_header(arc_in, in_len, &lat, &lon, NULL, &nhead, &rms, NULL) != 0) {
+    if (arc_header(arc_in, in_len, &lat, &lon, &z, &nhead, &rms, NULL) != 0) {
         ARC_WHY("header del ARC ilegible (%d bytes)", in_len);
         return -1;
     }
@@ -796,7 +833,7 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
     }
 
     snprintf(ctl, sizeof(ctl), "nll_ring.in");
-    if (build_control(tmpl, ctl, obs, ttroot, OutRoot, lat, lon) != 0) {
+    if (build_control(tmpl, ctl, obs, ttroot, OutRoot, lat, lon, z) != 0) {
         ARC_WHY("la plantilla <%s> no tiene LOCFILES", tmpl);
         logit("et", "nlloc_ring: la plantilla <%s> no tiene LOCFILES\n", tmpl);
         return -1;
@@ -850,26 +887,9 @@ static int locate_arc(const char *arc_in, int in_len, char *arc_out, int *out_le
         free(nllarc); return -1;
     }
 
-    /* El ARC de NLLoc puede traer rms=99.99 (centinela de fallo) o nph/gap
-       absurdos. No se publica una solucion invalida: el mismo criterio que
-       hyp2000_ring vivo. No cambia live_usage (nlloc sigue manual/offline). */
-    {
-        LiveLocCheckCfg lc;
-        LiveLocCheck    chk;
-
-        memset(&lc, 0, sizeof(lc));
-        lc.min_phases  = MinPhases;
-        lc.max_rms     = MaxRMS;
-        lc.max_gap_deg = MaxGapDeg;
-        if (live_check_arc(nllarc, (int)n, &lc, &chk) != 0 || !chk.ok) {
-            ARC_WHY("salida NLLoc invalida: %s", chk.why);
-            if (Debug >= 1)
-                logit("t", "nlloc_ring: salida invalida (%s)\n", chk.why);
-            free(nllarc);
-            return -1;
-        }
-    }
-
+    /* La validacion rms/nph/gap la hace el motor vivo comun (live_refine) o,
+       en offline, el llamador de locate_arc. Aqui solo se devuelve la salida
+       cruda del motor. */
     memcpy(arc_out, nllarc, n);
     arc_out[n] = '\0';
     *out_len = (int)n;
@@ -890,29 +910,8 @@ static void status(unsigned char type, short ierr)
 }
 
 /* ------------------------------------------------------------------------- */
-/* Rate-limit por evento: NLLoc es caro, asi que se guarda el ultimo ARC de  */
-/* cada evento (qid) y se relanza como mucho cada NllIntervalSec, siempre    */
-/* sobre la version mas reciente recibida. Ademas se lleva un flag `dirty`:  */
-/* si el ARC guardado es identico al de la ultima corrida (salvo el campo    */
-/* `version`, que cambia en cada re-emision) no hay nada nuevo que calcular   */
-/* y se omite NLLoc.                                                          */
+/* Publicacion del ARC refinado en OutRing (HYPO_RING_REF).                   */
 /* ------------------------------------------------------------------------- */
-#define PEND_MAX 64
-typedef struct {
-    int    used;
-    char   qid[16];
-    char  *arc;
-    int    len;
-    time_t last_seen;   /* ultima version recibida */
-    time_t last_run;    /* ultima vez que se corrio NLLoc (0 = nunca) */
-    int    dirty;       /* 1 = el ARC guardado cambio desde la ultima corrida */
-} PEND_EV;
-
-static PEND_EV pend[PEND_MAX];
-static char    g_arc_out[MAX_ARC];
-
-static int pend_count(void);
-
 static int emit_arc(char *arc, int len,
                     const char *arc_in, int in_len, long dt_ms)
 {
@@ -930,110 +929,117 @@ static int emit_arc(char *arc, int len,
     return 0;
 }
 
-static void process_now(const char *arc_in, int in_len)
+/* ------------------------------------------------------------------------- */
+/* Motor vivo compartido (csnloc/live_refine): callbacks de NLLoc.            */
+/* ------------------------------------------------------------------------- */
+static int live_locate_cb(void *ud, const char *in, int in_len,
+                          char *out, int out_cap, int *out_len)
 {
-    int  out_len = 0;
-    struct timespec ts0, ts1;
-    long dt_ms;
-    clock_gettime(CLOCK_MONOTONIC, &ts0);
-    if (locate_arc(arc_in, in_len, g_arc_out, &out_len, NULL, 0) == 0 && out_len > 0) {
-        out_len = arc_rewrite_id(g_arc_out, out_len, arc_in, in_len);
-        clock_gettime(CLOCK_MONOTONIC, &ts1);
-        dt_ms = (ts1.tv_sec - ts0.tv_sec) * 1000L
-              + (ts1.tv_nsec - ts0.tv_nsec) / 1000000L;
-        emit_arc(g_arc_out, out_len, arc_in, in_len, dt_ms);
-    }
+    char why[256] = "";
+    int rc;
+
+    (void)ud;
+    (void)out_cap;
+    rc = locate_arc(in, in_len, out, out_len, why, sizeof why);
+    if (rc != 0 && Debug >= 1)
+        logit("t", "nlloc_ring: %s\n", why[0] ? why : "sin localizacion");
+    return rc;
 }
 
-/* Compara dos ARC ignorando el campo `version` (178-181 en formato Y2000,
-   161 en el antiguo): dos versiones del mismo evento con el mismo contenido
-   son exactamente el mismo trabajo para NLLoc. */
-static int arc_same_content(const char *a, int la, const char *b, int lb)
+static int live_rewrite_cb(void *ud, char *arc, int cap, int len,
+                           const char *in, int in_len)
 {
-    int i, n, vs, vn;
-    if (la != lb) return 0;
-    n  = la;
-    vs = (la >= 182) ? 178 : 161;
-    vn = (la >= 182) ?   4 :   1;
-    for (i = 0; i < n; i++) {
-        if (i >= vs && i < vs + vn) continue;
-        if (a[i] != b[i]) return 0;
-    }
-    return 1;
+    (void)ud;
+    (void)cap;
+    return arc_rewrite_id(arc, len, in, in_len);
 }
 
-static void pend_upsert(const char *qid, const char *arc, int len)
+static int live_publish_cb(void *ud, const char *in, int in_len,
+                           const char *out, int out_len)
 {
-    time_t now = time(NULL);
-    int    maxp, i, slot = -1, is_new = 0;
-
-    maxp = (NllMaxPending > 0 && NllMaxPending < PEND_MAX) ? NllMaxPending : PEND_MAX;
-
-    for (i = 0; i < maxp; i++)
-        if (pend[i].used && strcmp(pend[i].qid, qid) == 0) { slot = i; break; }
-
-    if (slot < 0) {
-        is_new = 1;
-        for (i = 0; i < maxp; i++) if (!pend[i].used) { slot = i; break; }
-    }
-    if (slot < 0) {   /* evictar el mas antiguo */
-        time_t oldest = pend[0].last_seen; slot = 0;
-        for (i = 1; i < maxp; i++)
-            if (pend[i].last_seen < oldest) { oldest = pend[i].last_seen; slot = i; }
-    }
-
-    /* ¿hay algo nuevo que calcular? (evento distinto, sin ARC previo, o
-       contenido distinto salvo la version) */
-    if (is_new || !pend[slot].arc || strcmp(pend[slot].qid, qid) != 0
-        || !arc_same_content(pend[slot].arc, pend[slot].len, arc, len))
-        pend[slot].dirty = 1;
-
-    if (pend[slot].arc) free(pend[slot].arc);
-    pend[slot].arc = (char *)malloc((size_t)len + 1);
-    if (!pend[slot].arc) { pend[slot].used = 0; return; }
-    memcpy(pend[slot].arc, arc, (size_t)len);
-    pend[slot].arc[len] = '\0';
-    pend[slot].len = len;
-    strncpy(pend[slot].qid, qid, sizeof(pend[slot].qid) - 1);
-    pend[slot].qid[sizeof(pend[slot].qid) - 1] = '\0';
-    pend[slot].last_seen = now;
-    if (is_new) pend[slot].last_run = 0;
-    pend[slot].used = 1;
-
-    if (Debug >= 1)
-        logit("t", "nlloc_ring: pendiente ev=%s nph_in=%d (%d pendientes)\n",
-              qid, len, pend_count());
+    (void)ud;
+    return emit_arc((char *)out, out_len, in, in_len, 0);
 }
 
-static int pend_count(void)
+static int live_region_cb(void *ud, double lat, double lon)
 {
-    int i, n = 0;
-    for (i = 0; i < PEND_MAX; i++) if (pend[i].used) n++;
-    return n;
+    (void)ud;
+    if (!HaveGrid) return 1;
+    return lat >= GLatMin && lat <= GLatMax &&
+           lon >= GLonMin && lon <= GLonMax;
 }
 
-static void pend_process(void)
+static int live_start(void)
 {
-    time_t now = time(NULL);
-    int    i;
-    for (i = 0; i < PEND_MAX; i++) {
-        if (!pend[i].used) continue;
-        if (now - pend[i].last_seen > NllTTLSec) {
-            free(pend[i].arc); pend[i].arc = NULL; pend[i].used = 0;
-            continue;
-        }
-        if (!pend[i].dirty) {
-            if (Debug >= 2)
-                logit("t", "nlloc_ring: ev=%s sin cambios, se omite NLLoc\n",
-                      pend[i].qid);
-            continue;
-        }
-        if (pend[i].last_run == 0 || now - pend[i].last_run >= NllIntervalSec) {
-            process_now(pend[i].arc, pend[i].len);
-            pend[i].last_run = now;
-            pend[i].dirty = 0;
-        }
+    LiveRefineOps ops;
+
+    memset(&ops, 0, sizeof(ops));
+    ops.locate    = live_locate_cb;
+    ops.rewrite   = live_rewrite_cb;
+    ops.publish   = live_publish_cb;
+    ops.in_region = live_region_cb;
+    ops.stations  = &LiveStations;
+    ops.tt        = &LiveTT;
+    ops.assoc.lookback_sec = LivePickLookbackSec;
+    ops.assoc.res_p_sec    = LivePickResidualSecP;
+    ops.assoc.res_s_sec    = LivePickResidualSecS;
+    ops.check.min_phases   = MinPhases;
+    ops.check.max_rms      = MaxRMS;
+    ops.check.max_gap_deg  = MaxGapDeg;
+    ops.recalc_sec    = LiveRecalcSec;
+    ops.max_iter      = LiveMaxIter;
+    ops.n_retry       = LiveNRetry;
+    ops.max_events    = 64;
+    ops.debug         = Debug;
+    ops.event_ttl_sec = LiveEventTTLSec;
+    ops.tag           = "nlloc_ring";
+    g_live = live_refine_new(&ops);
+    return g_live ? 0 : -1;
+}
+
+/* Carga metadatos/tiempos y anillos del modo vivo. Si algo falla se degrada a
+ * live_usage=0 (el modulo sigue vivo para el locate manual/offline), igual que
+ * hyp2000_ring. */
+static int live_setup(void)
+{
+    const char *ewp = getenv("EW_PARAMS");
+    char sta_path[2 * MAX_STR];
+
+    if (StaFile[0] == '/' || StaFile[0] == '.')
+        snprintf(sta_path, sizeof(sta_path), "%s", StaFile);
+    else
+        snprintf(sta_path, sizeof(sta_path), "%s/%s",
+                 (ewp && ewp[0]) ? ewp : ".", StaFile);
+    if (Stations_Load(sta_path, &LiveStations) != 0) {
+        logit("e", "nlloc_ring: no se pudo cargar StaFile <%s>\n", sta_path);
+        return -1;
     }
+    if (TTModel_Init(&LiveTT, (ewp && ewp[0]) ? ewp : "../params",
+                     TauModel, 0.0, 180.0, 0.5) != 0) {
+        logit("e", "nlloc_ring: no se pudo cargar TauTable <%s>\n", TauModel);
+        return -1;
+    }
+    LiveTTReady = 1;
+
+    PickKey = GetKey(InPickRingName);
+    if (PickKey == -1) {
+        logit("e", "nlloc_ring: anillo de picks invalido <%s>\n",
+              InPickRingName);
+        return -1;
+    }
+    tport_attach(&PickRegion, PickKey);
+    if (GetType("TYPE_PICK_SCNL", &TypePickSCNL) != 0) {
+        logit("e", "nlloc_ring: GetType PICK_SCNL\n");
+        return -1;
+    }
+    ConfKey = GetKey(ConfRingName);
+    if (ConfKey != -1) tport_attach(&ConfRegion, ConfKey);
+
+    if (live_start() != 0) {
+        logit("e", "nlloc_ring: no se pudo iniciar el motor vivo\n");
+        return -1;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1080,13 +1086,14 @@ int main(int argc, char **argv)
 
         if (csnhypodbp_locator_load_default(locs, &n, 8) == 0) {
             int k = csnhypodbp_locator_find(locs, n, "nlloc_ring");
-            if (k >= 0) LiveUsage = locs[k].live_usage;
+
+            if (k >= 0) {
+                LiveUsage = locs[k].live_usage;
+                LiveRecalcSec = locs[k].time_recalc_live > 0
+                                    ? locs[k].time_recalc_live : 90;
+                LiveNRetry = locs[k].n_retry;
+            }
         }
-    }
-    if (LiveUsage) {
-        fprintf(stderr, "nlloc_ring: live_usage=1 aun no soportado; "
-                        "use el modo offline/manual\n");
-        LiveUsage = 0;
     }
     if (OutRoot[0] == '\0' ||
         (nbands == 0 && FallbackCtl[0] == '\0' &&
@@ -1138,6 +1145,20 @@ int main(int argc, char **argv)
                 fprintf(stderr, "nlloc_ring: ARC no reescrito\n");
                 return 2;
             }
+            {
+                LiveLocCheckCfg lc;
+                LiveLocCheck    chk;
+
+                memset(&lc, 0, sizeof(lc));
+                lc.min_phases  = MinPhases;
+                lc.max_rms     = MaxRMS;
+                lc.max_gap_deg = MaxGapDeg;
+                if (live_check_arc(out, on, &lc, &chk) != 0 || !chk.ok) {
+                    fprintf(stderr, "nlloc_ring: salida invalida: %s\n",
+                            chk.why[0] ? chk.why : "rms/nph/gap");
+                    return 2;
+                }
+            }
             log_result("nlloc_ring", in, n, out, on, 0);
             fwrite(out, 1, (size_t)on, stdout);
             return 0;
@@ -1163,6 +1184,16 @@ int main(int argc, char **argv)
 
     if (GridFile[0] != '\0') load_grid_bbox(GridFile);
 
+    if (LiveUsage && live_setup() != 0) {
+        logit("e", "nlloc_ring: modo vivo desactivado; sigue manual/offline\n");
+        LiveUsage = 0;
+    }
+    if (LiveUsage)
+        logit("t", "nlloc_ring: vivo live_usage=1 recalc=%ds n_retry=%d "
+                   "lookback=%.0f resP=%.1f resS=%.1f picks=%s\n",
+              LiveRecalcSec, LiveNRetry, LivePickLookbackSec,
+              LivePickResidualSecP, LivePickResidualSecS, InPickRingName);
+
     logit("t", "nlloc_ring: iniciado (in=%s out=%s ctrl=%s tt=%s bandas=%d fallback=%s)\n",
           InRingName, OutRingName, ControlFile, TtimeRoot, nbands,
           FallbackCtl[0] ? FallbackCtl : "-");
@@ -1182,21 +1213,54 @@ int main(int argc, char **argv)
             sleep_ew(200);
             continue;
         }
+        {
+            MSG_LOGO picklogo[1];
+            MSG_LOGO plogo;
+
+            picklogo[0].instid = INST_WILDCARD;
+            picklogo[0].mod    = MOD_WILDCARD;
+            picklogo[0].type   = TypePickSCNL;
+            if (tport_getmsg(&PickRegion, picklogo, 1, &plogo, &recsize,
+                             (char *)msg, MAX_MSG - 1) == GET_OK) {
+                msg[recsize] = '\0';
+                live_refine_add_pick_msg(g_live, (char *)msg, (int)recsize);
+            }
+        }
         if (tport_getmsg(&InRegion, getlogo, 1, &reclogo, &recsize,
                          (char *)msg, MAX_MSG - 1) == GET_OK) {
-            char qid[16];
+            double lat, lon, z, rms, gap;
+            int nph;
+
             msg[recsize] = '\0';
-            if (NllIntervalSec > 0) {
-                arc_parse_id((char *)msg, (int)recsize, qid, sizeof(qid), NULL, 0);
-                pend_upsert(qid, (char *)msg, (int)recsize);
+            if (arc_header((char *)msg, (int)recsize, &lat, &lon, &z, &nph,
+                           &rms, &gap) != 0) {
+                logit("et", "nlloc_ring: ARC malformado (len=%ld)\n", recsize);
+            } else if (!live_region_cb(NULL, lat, lon)) {
+                if (Debug >= 1)
+                    logit("t", "nlloc_ring: semilla fuera de region\n");
             } else {
-                process_now((char *)msg, (int)recsize);
+                live_refine_seed(g_live, (char *)msg, (int)recsize,
+                                 (int)reclogo.mod);
             }
-        } else {
-            sleep_ew(200);
         }
-        if (NllIntervalSec > 0) pend_process();
+        if (ConfKey != -1 &&
+            tport_getmsg(&ConfRegion, getlogo, 1, &reclogo, &recsize,
+                         (char *)msg, MAX_MSG - 1) == GET_OK) {
+            msg[recsize] = '\0';
+            live_refine_prefer(g_live, (char *)msg, (int)recsize,
+                               (int)reclogo.mod);
+        }
+        live_refine_tick(g_live, time(NULL));
+        live_refine_prune(g_live, time(NULL));
+        sleep_ew(200);
     }
+    if (PickKey != -1) tport_detach(&PickRegion);
+    if (ConfKey != -1) tport_detach(&ConfRegion);
+    if (g_live) {
+        live_refine_free(g_live);
+        g_live = NULL;
+    }
+    if (LiveTTReady) TTModel_Free(&LiveTT);
     tport_detach(&InRegion);
     tport_detach(&OutRegion);
     logit("t", "nlloc_ring: terminando\n");

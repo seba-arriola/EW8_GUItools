@@ -118,7 +118,7 @@ int csnhypodbp_sol_same_row(int qid, int mod, int confirmed, unsigned version,
                             const CsnhypodbpSolution *sol, int history);
 
 /* --- Almacen de magnitudes por SOLUCION -----------------------------------
- * Clave (qid, modulo origen): csnloc crudo (162), hyp2000 (163) y nlloc (164)
+ * Clave (qid, modulo origen): cada mod es el que resolvio la tabla de locators
  * publican el MISMO qid, asi que el qid por si solo no distingue una solucion
  * de otra. Permite mostrar la magnitud de cada solucion y no perderla si el
  * TYPE_MAGNITUDE llega antes del ARC.

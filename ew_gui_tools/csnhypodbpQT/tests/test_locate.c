@@ -296,12 +296,13 @@ int main(void)
         memset(&l, 0, sizeof(l));
         snprintf(l.name, sizeof(l.name), "%s", "csnloc");
         snprintf(l.bin, sizeof(l.bin), "%s", "csnloc");
+        l.mod = 162;
         CK(csnhypodbp_locator_mod(&l) == 162);
-        snprintf(l.bin, sizeof(l.bin), "%s", "/opt/ew/bin/hyp2000_ring");
+        l.mod = 163;
         CK(csnhypodbp_locator_mod(&l) == 163);
-        snprintf(l.bin, sizeof(l.bin), "%s", "nlloc_ring");
+        l.mod = 164;
         CK(csnhypodbp_locator_mod(&l) == 164);
-        snprintf(l.bin, sizeof(l.bin), "%s", "otro");
+        l.mod = 0;
         CK(csnhypodbp_locator_mod(&l) == 0);
 
         memset(&b, 0, sizeof(b));
@@ -312,13 +313,13 @@ int main(void)
         csnhypodbp_locate_identity(&b, &l, &o);   /* unknown: mod=0 */
         CK(o.qid == 42 && o.version == 7 && o.mod == 0);
 
-        snprintf(l.bin, sizeof(l.bin), "%s", "csnloc");
+        l.mod = 162;
         csnhypodbp_locate_identity(&b, &l, &o);
         CK(o.mod == 162);
         o.qid = 99;
         o.version = 3;
         o.mod = 0;
-        snprintf(l.bin, sizeof(l.bin), "%s", "hyp2000_ring");
+        l.mod = 163;
         csnhypodbp_locate_identity(&b, &l, &o);
         CK(o.mod == 163 && o.qid == 99 && o.version == 3);
     }

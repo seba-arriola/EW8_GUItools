@@ -19,7 +19,7 @@ Lo que **no está decidido** o **no se resuelve** en la iteración de auditoría
 `csnhypodbp_confirm_manual` publica ahora el **ARC de la solución confirmada** en el anillo de
 confirmaciones (`ConfRing`, `HYPO_RING_REF2`) con el `mod` real del candidato, y `hypodb_ingest` lo
 ingiere por `InRingConf` (`hypodb_feed_confirmed`) como **snapshot inmutable**:
-`origin_id = <event>:<mod>:<version>`, `status='REVIEWED'`, con sus picadas, y
+`origin_id = <event>:<mod>:<version>`, `status='MANUAL'`, con sus picadas, y
 `event.preferred_origin_id` pasa a esa confirmación. Cada `Confirm` es una fila propia, así que la
 solución que el usuario confirmó queda registrada tal cual, sin depender de lo que `csnloc`
 recalcule después. Implementado en `ewgui_origin_id_build/parse` (`common`),

@@ -147,20 +147,15 @@ int main(void)
     CK(bpq_mww_result(m) == NULL);
     CK(bpq_mww_tensor_ready(m) == 0);
     CK(strstr(bpq_mww_summary(m), "sin resultado") != NULL);
-    CK(bpq_mww_save(NULL, NULL, 0, m, err, sizeof(err)) == 0);
+    CK(bpq_mww_save(NULL, NULL, 0, NULL, m, err, sizeof(err)) == 0);
     CK(err[0] != '\0');
-    CK(bpq_mww_save(NULL, &sol, 0, m, err, sizeof(err)) == 0);
+    CK(bpq_mww_save(NULL, &sol, 0, NULL, m, err, sizeof(err)) == 0);
     CK(err[0] != '\0');
     /* Sin resultado de la inversion no hay nada que colgar de la BD. */
-    CK(bpq_mww_save(NULL, &sol, 162, m, err, sizeof(err)) == 0);
+    CK(bpq_mww_save(NULL, &sol, 162, "csnloc", m, err, sizeof(err)) == 0);
     CK(err[0] != '\0');
     /* Modulo del localizador: es el `mod` del origin_id (la solucion de `locate`
      * trae mod=0). */
-    CK(bpq_mod_for_locator("csnloc") == 162);
-    CK(bpq_mod_for_locator("hyp2000_ring") == 163);
-    CK(bpq_mod_for_locator("nlloc_ring") == 164);
-    CK(bpq_mod_for_locator(NULL) == 0);
-    CK(bpq_mod_for_locator("otro") == 0);
 
     /* --- 6. playera: sin mecanismo dibuja el aviso, no basura ------------- */
     {

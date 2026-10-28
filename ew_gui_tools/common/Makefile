@@ -112,6 +112,8 @@ check: $(LIB) $(TESTS)
 	@bash tests/test_params_stays_clean.sh
 	@echo "== check_no_repo_path =="
 	@bash tests/test_no_repo_path.sh
+	@echo "== check_no_mod_ids =="
+	@bash tests/test_no_mod_ids.sh
 	@echo "== make_overlays =="
 	@python3 tests/test_make_overlays.py
 	@rc=0; for t in $(TESTS); do \

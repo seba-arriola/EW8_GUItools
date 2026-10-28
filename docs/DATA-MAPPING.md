@@ -53,7 +53,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 | `azimuthal_gap` | ARC `42..44`; **NULL si 0** | `hypodb_ingest.c:553` |
 | `station_count` | ARC `39..41` | `hypodb_ingest.c:554` |
 | `standard_error` | ARC `48..51` ÷ 100 (RMS); **NULL si 0** | `hypodb_ingest.c:555` |
-| `status` | manual (byte 174 `M`) → `REVIEWED`; 162 → `PRELIMINARY`; 163/164 → `REVISED` | `hypodb_ingest.c:169-174`, `:612` |
+| `status` | `AUTOMATIC` para todo el pipeline (aunque las picadas sean manuales); `MANUAL` solo para una confirmación desde `Procesar` (`InRingConf`) | `hypodb_ingest.c` (`write_origin`), `ewgui_origin_status` |
 | `creation_time` | DEFAULT `CURRENT_TIMESTAMP`; **no se refresca** en el UPSERT | `schema.sql:45`, `ewgui_db.c:286-299` |
 | `latitude_uncertainty`, `longitude_uncertainty`, `depth_uncertainty`, `time_uncertainty`, `error_ellipse` | **nunca escritas** (§3) | `ewgui_db.c:286-299` |
 
@@ -126,7 +126,7 @@ Ruta: `ewguidb_query_recent_events` → `ewguidb_query_origins` (1 por evento) �
 | `Ml/Mwp/Mb/Ms` | `magnitude.magnitude_value`-`station_count`, por tipo exacto (`"%.1f-%d"`) | `csnhypodbp_ws.c:718-732` |
 | `Mod` | `ewgui_origin_id_parse(origin_id)` → `mod` → `ModLabel` | `csnhypodbp_ws.c:714,740` |
 | `Ver` | versión del `origin_id`: real para confirmadas (`<event>:<mod>:<version>`) y para iteraciones (`<event>:<mod>:<version>:I`); `0` en la fila viva del asociador | `csnhypodbp_ws.c:716,752` |
-| `Est.` | `origin.status == "REVIEWED" ? "M" : "A"` | `csnhypodbp_ws.c:741` |
+| `Est.` | `origin.status == "MANUAL" ? "M" : "A"` | `csnhypodbp_ws.c:741` |
 | `Created` | `origin.creation_time` (historial) / hora de llegada a la GUI (fila viva) | `csnhypodbp_ws.c:701`, `:961` |
 | `N` | nº de soluciones del grupo | `csnhypodbp_master.c:37` |
 | (oculta) `origin-id` | `origin.origin_id`, para pedir `station_magnitude` | `csnhypodbp_ws.c:740` |
@@ -195,12 +195,13 @@ inserción en la BD, `csnhypodbp_ws.c:701`): son fuentes distintas para la misma
 2. **Qué esperar**: `csnhypodbp_confirm_manual` publica las magnitudes a `HYPO_RING_REF` (con
    `algorithm="CSNMan"`), los picks con el 12.º token `M` a `PICK_RING` y, además, el **ARC de la
    solución confirmada** en el anillo de confirmaciones (`ConfRing`, p. ej. `HYPO_RING_REF2`) con el
-   `mod` real del candidato (162/163/164). `hypodb_ingest` lo ingiere por `InRingConf` como
-   **snapshot**: escribe una fila `origin` propia con `origin_id = <event>:<mod>:<version>`,
-   `status='REVIEWED'`, sus picadas, y recalcula `event.preferred_origin_id` = la confirmación
+   `mod` real del candidato (el resuelto para su locator en `csnhypodbpqt.d`). `hypodb_ingest` lo
+   ingiere por `InRingConf` como **snapshot**: escribe una fila `origin` propia con
+   `origin_id = <event>:<mod>:<version>`, `status='MANUAL'`, sus picadas, y recalcula
+   `event.preferred_origin_id` = la confirmación
    **más reciente** (`creation_time`). Las confirmaciones anteriores **no** se pisan: quedan como
-   orígenes manuales históricos. La fila viva `<event>:<mod>` la mantiene `csnloc` (162). Los
-   refinadores con `live_usage=1` (`hyp2000_ring` 163) escriben una fila
+   orígenes manuales históricos. La fila viva `<event>:<mod>` la mantiene `csnloc`. Los
+   refinadores con `live_usage=1` (`hyp2000_ring`, y cualquier otro configurado) escriben una fila
    `<event>:<mod>:<version>:I` por iteración válida, así que *Origins* conserva el historial completo
    de soluciones.
 3. Consultas para inspeccionar el resultado (con los datos de conexión de

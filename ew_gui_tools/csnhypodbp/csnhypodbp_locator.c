@@ -20,6 +20,7 @@ int csnhypodbp_locator_add(CsnhypodbpLocator *list, int *n, int cap,
     snprintf(list[*n].name, sizeof(list[*n].name), "%s", name);
     snprintf(list[*n].bin, sizeof(list[*n].bin), "%s", bin ? bin : "");
     snprintf(list[*n].cfg, sizeof(list[*n].cfg), "%s", cfg ? cfg : "");
+    list[*n].mod = 0;
     list[*n].live_usage = 0;
     list[*n].time_recalc_live = 0;
     list[*n].n_retry = 0;
@@ -121,17 +122,83 @@ int csnhypodbp_locator_resolve(const CsnhypodbpLocator *l,
     return 0;
 }
 
+int csnhypodbp_locator_read_module(const CsnhypodbpLocator *l,
+                                   char *symbol, size_t n,
+                                   char *err, size_t errn)
+{
+    char path[600], line[600];
+    FILE *fp;
+
+    if (err && errn) err[0] = '\0';
+    if (!l || !symbol || n == 0) return -1;
+    symbol[0] = '\0';
+    if (csnhypodbp_locator_resolve(l, getenv("EW_HOME"), getenv("EW_VERSION"),
+                                   getenv("EW_PARAMS"), NULL, 0,
+                                   path, sizeof path) != 0) {
+        if (err) snprintf(err, errn, "no se pudo resolver <%s>", l->cfg);
+        return -1;
+    }
+    fp = fopen(path, "r");
+    if (!fp) {
+        if (err) snprintf(err, errn, "no se pudo abrir %s", path);
+        return -1;
+    }
+    while (fgets(line, sizeof line, fp)) {
+        char key[64], val[64];
+        char *h = strchr(line, '#');
+
+        if (h) *h = '\0';
+        if (sscanf(line, "%63s %63s", key, val) != 2) continue;
+        if (strcmp(key, "MyModuleId") != 0) continue;
+        snprintf(symbol, n, "%s", val);
+        fclose(fp);
+        return 0;
+    }
+    fclose(fp);
+    if (err) snprintf(err, errn, "%s no declara MyModuleId", path);
+    return -1;
+}
+
+int csnhypodbp_locator_resolve_mods(CsnhypodbpLocator *list, int n,
+                                    CsnhypodbpGetModId get_modid)
+{
+    int i, fails = 0;
+
+    if (!list || n <= 0) return 0;
+    for (i = 0; i < n; i++) {
+        char sym[64], err[256];
+        unsigned char id = 0;
+
+        list[i].mod = 0;
+        err[0] = '\0';
+        if (csnhypodbp_locator_read_module(&list[i], sym, sizeof sym,
+                                           err, sizeof err) != 0 ||
+            !get_modid || get_modid(sym, &id) != 0 || id == 0) {
+            fprintf(stderr, "csnhypodbp_locator: %s: %s\n", list[i].name,
+                    err[0] ? err
+                           : "MyModuleId no resuelto en earthworm.d (GetModId)");
+            fails++;
+            continue;
+        }
+        list[i].mod = (int)id;
+    }
+    return fails;
+}
+
 int csnhypodbp_locator_mod(const CsnhypodbpLocator *l)
 {
-    const char *b;
+    return l ? l->mod : 0;
+}
 
-    if (!l || !l->bin[0]) return 0;
-    b = strrchr(l->bin, '/');
-    b = b ? b + 1 : l->bin;
-    if (strcmp(b, "csnloc") == 0) return 162;
-    if (strcmp(b, "hyp2000_ring") == 0) return 163;
-    if (strcmp(b, "nlloc_ring") == 0) return 164;
-    return 0;
+const char *csnhypodbp_locator_name_for_mod(const CsnhypodbpLocator *list,
+                                            int n, int mod)
+{
+    int i;
+
+    if (!list || n <= 0 || mod <= 0) return NULL;
+    for (i = 0; i < n; i++)
+        if (list[i].mod == mod) return list[i].name;
+    return NULL;
 }
 
 int csnhypodbp_locator_is_live_mod(const CsnhypodbpLocator *list, int n, int mod)
@@ -141,7 +208,7 @@ int csnhypodbp_locator_is_live_mod(const CsnhypodbpLocator *list, int n, int mod
     if (!list || n <= 0 || mod <= 0)
         return 0;
     for (i = 0; i < n; i++)
-        if (list[i].live_usage && csnhypodbp_locator_mod(&list[i]) == mod)
+        if (list[i].live_usage && list[i].mod == mod)
             return 1;
     return 0;
 }

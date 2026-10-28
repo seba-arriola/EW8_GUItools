@@ -104,13 +104,12 @@ fi
 # --- 2b. tabla unica de locators (csnhypodbpqt.d) ---------------------------
 if [ -f "$cfg" ]; then
     nloc=$(grep -c '^[[:space:]]*locator[[:space:]]' "$cfg" 2>/dev/null || true)
-    if [ "$nloc" = "3" ] &&
-       grep -qE '^[[:space:]]*locator[[:space:]]+csnloc[[:space:]]+csnloc\.d[[:space:]]+0[[:space:]]+0[[:space:]]+0' "$cfg" &&
-       grep -qE '^[[:space:]]*locator[[:space:]]+hyp2000_ring[[:space:]]+hyp2000_ring\.d[[:space:]]+1[[:space:]]+20[[:space:]]+5' "$cfg" &&
-       grep -qE '^[[:space:]]*locator[[:space:]]+nlloc_ring[[:space:]]+nlloc_ring\.d[[:space:]]+0[[:space:]]+0[[:space:]]+5' "$cfg"; then
-        ok "tabla unica de locators (csnloc/hyp2000_ring/nlloc_ring)"
+    if [ "$nloc" -ge 1 ] && \
+       ! grep -E '^[[:space:]]*locator[[:space:]]' "$cfg" | \
+         grep -qvE '^[[:space:]]*locator[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[01][[:space:]]+[0-9]+[[:space:]]+[0-9]+[[:space:]]*$'; then
+        ok "tabla unica de locators ($nloc filas; formato valido)"
     else
-        bad "csnhypodbpqt.d no tiene la tabla de 6 columnas esperada"
+        bad "csnhypodbpqt.d no tiene una tabla de locators valida"
     fi
     for f in "$cfg_gtk" "$here/../../../run_working_v8/params/csnloc.d" \
              "$here/../../../run_working_v8/params/hyp2000_ring.d" \

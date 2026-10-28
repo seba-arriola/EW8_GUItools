@@ -922,6 +922,7 @@ int csnhypodbp_mww_persist(const CsnhypodbpSolution *sol, const CsnwphaseOut *ou
     EwGuiMagRow mag;
     EwGuiTensorRow ten;
     char eid[64] = "", oid[64] = "", mid[128], tid[128];
+    const char *alg = ModName(sol ? sol->mod : 0);
 
     if (err && errlen)
         err[0] = '\0';
@@ -952,12 +953,12 @@ int csnhypodbp_mww_persist(const CsnhypodbpSolution *sol, const CsnwphaseOut *ou
     snprintf(ori.author, sizeof ori.author, "%s", "csnhypodbp");
     snprintf(ori.software, sizeof ori.software, "%s", ewgui_software());
     snprintf(ori.location_algorithm, sizeof ori.location_algorithm, "%s",
-             ewgui_mod_algorithm(sol->mod));
+             alg ? alg : "");
     ori.azimuthal_gap = (sol->gap > 0) ? (double)sol->gap : NAN;
     ori.station_count = sol->nph;
     ori.standard_error = (sol->rms > 0.0) ? sol->rms : NAN;
-    /* Confirmada a mano => REVIEWED (mismo criterio que hypodb con el ARC manual). */
-    snprintf(ori.status, sizeof ori.status, "%s", ewgui_mod_status(sol->mod, 1));
+    /* Confirmada a mano desde `Procesar`: MANUAL; el resto es AUTOMATIC. */
+    snprintf(ori.status, sizeof ori.status, "%s", ewgui_origin_status(1));
     if (ewguidb_upsert_origin_if_absent(db, &ori) != 0)
         return mww_perr(err, errlen, ewguidb_last_error(db));
 

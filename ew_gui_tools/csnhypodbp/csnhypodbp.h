@@ -362,6 +362,8 @@ void FetchWaveformsForEvent(double otime, double eq_lat, double eq_lon, int qid,
 void FetchStationWaveforms(const char *sta);
 void EnsureAndFetchStation(const char *sta);
 const char *ModLabel(int mod);
+/* Nombre del locator en la tabla cuyo mod resuelto es `mod`; NULL si no esta. */
+const char *ModName(int mod);
 void cargar_sismos_db(void);
 int  csnhypodbp_db_init(const char *envfile, int hours);
 int  csnhypodbp_db_ready(void);   /* 1 si la BD esta conectada */

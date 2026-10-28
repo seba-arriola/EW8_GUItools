@@ -30,7 +30,8 @@ LIVE_OBJS = ../csnhypodbp/csnhypodbp_group.o \
             ../csnhypodbp/csnhypodbp_locator.o \
             ../csnloc/pick_scln.o ../csnloc/pick_buffer.o \
             ../csnloc/ttmodel.o ../csnloc/stations.o ../csnloc/live_assoc.o \
-            ../csnloc/live_check.o ../csnloc/taulib_csnloc.o
+            ../csnloc/live_check.o ../csnloc/live_refine.o \
+            ../csnloc/taulib_csnloc.o
 
 ../csnhypodbp/csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c \
                                   ../csnhypodbp/csnhypodbp_group.h
@@ -59,6 +60,10 @@ LIVE_OBJS = ../csnhypodbp/csnhypodbp_group.o \
 ../csnloc/live_check.o: ../csnloc/live_check.c ../csnloc/live_assoc.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+../csnloc/live_refine.o: ../csnloc/live_refine.c ../csnloc/live_refine.h \
+                         ../csnloc/live_assoc.h ../csnhypodbp/csnhypodbp_group.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 ../csnloc/taulib_csnloc.o: ../csnloc/taulib_csnloc.c ../csnloc/taulib_compat.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
@@ -69,7 +74,8 @@ $(TARGET): hyp2000_ring.o $(LIVE_OBJS) $(HYPOLIB)
 
 # Contrato de live_assoc: P/S por tiempo de viaje + validacion de salida.
 test_live_assoc: test/test_live_assoc.c $(LIVE_OBJS)
-	$(CC) $(CFLAGS) -Itest -o $@ test/test_live_assoc.c $(LIVE_OBJS) $(LIBS)
+	$(CC) $(CFLAGS) -Itest -o $@ test/test_live_assoc.c $(LIVE_OBJS) \
+	      $(EWLIBS) $(LIBS)
 	@chmod +x $@
 
 # Invariantes de fuente (sin motor): la clave se lee y ZTR va tras el .hyp.

@@ -14,8 +14,8 @@ EWOBJ  = $(EW_HOME)/$(EW_VERSION)/lib/rw_mag.o
 
 LIB     = libhypodb.a
 LIBOBJS = hypodb_ids.o hypodb_config.o hypodb_ingest.o \
-          csnhypodbp_group.o csnhypodbp_magchan.o ewgui_config.o ewgui_db.o \
-          ewgui_db_ids.o
+          csnhypodbp_group.o csnhypodbp_magchan.o csnhypodbp_locator.o \
+          ewgui_config.o ewgui_db.o ewgui_db_ids.o
 
 TESTS = test_ids test_group_events test_ingest_db test_mag_lines
 
@@ -29,6 +29,10 @@ csnhypodbp_group.o: ../csnhypodbp/csnhypodbp_group.c ../csnhypodbp/csnhypodbp_gr
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 csnhypodbp_magchan.o: ../csnhypodbp/csnhypodbp_magchan.c ../csnhypodbp/csnhypodbp_magchan.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Tabla de locators + resolucion MyModuleId -> id (la comparte con la GUI).
+csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c ../csnhypodbp/csnhypodbp_locator.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 ewgui_config.o: ../common/src/ewgui_config.c ../common/include/ewgui/config.h
@@ -45,7 +49,8 @@ ewgui_db_ids.o: ../common/src/ewgui_db_ids.c ../common/include/ewgui/db_ids.h
 hypodb_ids.o: hypodb_ids.c hypodb_ids.h ../common/include/ewgui/db_ids.h
 
 hypodb_ingest.o: hypodb_ingest.h hypodb_config.h hypodb_ids.h \
-                 ../common/include/ewgui/db_ids.h
+                 ../common/include/ewgui/db_ids.h \
+                 ../csnhypodbp/csnhypodbp_locator.h
 
 hypodb_ingest: hypodb_ingest_main.o $(LIB)
 	$(CC) $(CFLAGS) -o $@ hypodb_ingest_main.o $(LIB) $(EWOBJ) $(EWLIB) $(LIBS)

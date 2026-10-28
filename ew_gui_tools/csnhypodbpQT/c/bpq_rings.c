@@ -190,7 +190,7 @@ static int drain_one(BpqRings *r, EwGuiRing *ring, const char *ring_name,
 
         if (logo.type == r->type_arc && arc) {
             CsnhypodbpSolution sol;
-            /* El `mod` del logo identifica al productor (162 csnloc / 163 / 164). */
+            /* El `mod` del logo identifica al productor (GetModId de su .d). */
             if (csnhypodbp_parse_solution(msg, (size_t)size, (int)logo.mod, &sol) == 0)
                 arc(&sol, msg, (size_t)size, ud);
         } else if (logo.type == r->type_mag && mag) {

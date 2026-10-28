@@ -1249,7 +1249,7 @@ have_arc:
             goto fail;
         }
         /* El refinador puede devolver qid/version=0: la candidata sigue siendo
-         * del evento elegido. El mod es el del refinador (163/164). */
+         * del evento elegido. El mod es el resuelto para el refinador. */
         csnhypodbp_locate_identity(base, sel, out);
     }
 

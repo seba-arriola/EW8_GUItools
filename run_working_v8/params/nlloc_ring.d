@@ -80,13 +80,18 @@ ControlFile     /mnt/d/resources/nlloc/nlloc.in
 TtimeRoot       /mnt/d/resources/nlloc/time/model
 ModelFallback   /mnt/d/resources/nlloc/time/model /mnt/d/resources/nlloc/nlloc.in
 
-# Rate-limit de NLLoc (es caro): recalcula como mucho cada NllIntervalSec por
-# evento, siempre sobre la ultima version recibida. 0 = procesar cada version.
-# Ademas, si la version guardada no cambio (salvo el campo `version`) no hay
-# nada nuevo que calcular y se omite la corrida.
-NllIntervalSec  60
-NllTTLSec       1800
-NllMaxPending   64
+# Motor vivo compartido (csnloc/live_refine). `time_recalc_live` y `N_retry`
+# vienen de la fila `locator nlloc_ring ...` de csnhypodbpqt.d; aqui solo van
+# los parametros de asociacion/validacion del modulo.
+InPickRing            PICK_RING
+ConfRing              HYPO_RING_REF2
+StaFile               estaciones_107.txt
+TauTable              iasp91
+LivePickLookbackSec   300.0
+LivePickResidualSecP  3.0
+LivePickResidualSecS  5.0
+LiveMaxIter           3
+LiveEventTTLSec       600.0
 
 # Lado (km) del volumen de busqueda, RE-CENTRADO en el epicentro de entrada.
 # NLLoc no acepta hipocentro semilla: sin esto la solucion se pega al borde de

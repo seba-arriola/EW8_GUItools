@@ -57,7 +57,7 @@ nck "ids: sin derivar el mod a mano"                   'colon \? atoi\(colon \+ 
 # Solo los localizadores con live_usage=1 escriben en HYPO_RING_REF, asi que el
 # flag de historial sale del anillo (i == 1), no de una lista de mods duplicada.
 ck  "iteraciones: el flag sale del anillo REF"       'int history = \(i == 1\)'       hypodb_ingest_main.c
-ck  "iteraciones: el flag llega a hypodb_feed_arc"   'hypodb_feed_arc\(st, buf, \(size_t\)size, mod, history\)' hypodb_ingest_main.c
+ck  "iteraciones: el flag llega a hypodb_feed_arc"   'hypodb_feed_arc\(st, buf, \(size_t\)size, \(int\)logo->mod, history\)' hypodb_ingest_main.c
 ck  "iteraciones: id con el marcador :I"             'ewgui_origin_id_build_iter'     hypodb_ingest.c
 ck  "iteraciones: sin guarda de version"             'if \(!history\)'                hypodb_ingest.c
 ck  "iteraciones: version 1..9999 obligatoria"       'sol->version == 0 \|\| sol->version > 9999u' hypodb_ingest.c

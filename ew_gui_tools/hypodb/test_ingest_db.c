@@ -177,7 +177,7 @@ int main(void)
 
         assert(ewguidb_query_origins(db, EID, &ors, &nor) == 1);
         assert(strcmp(ors[0].origin_id, EID ":162") == 0);
-        assert(strcmp(ors[0].status, "REVIEWED") == 0);
+        assert(strcmp(ors[0].status, "AUTOMATIC") == 0);
         assert(strcmp(ors[0].velocity_model, "CHILE_POTIN") == 0);
         assert(ors[0].station_count == 4);
         assert(fabs(ors[0].latitude + 33.75) < 0.01);   /* 33°45' */
@@ -186,7 +186,10 @@ int main(void)
         /* D2: `author` constante (el modulo) y `software` de $EW_VERSION. */
         assert(strcmp(ors[0].author, "csnhypodbp") == 0);
         assert(strcmp(ors[0].software, (wv && *wv) ? wv : "ew_8.0") == 0);
-        assert(strcmp(ors[0].location_algorithm, "csnloc") == 0);
+        /* La tabla puede no declarar csnloc (es solo el asociador): en ese
+           caso el nombre sale de earthworm.d (MOD_CSNLOC). */
+        assert(strstr(ors[0].location_algorithm, "CSNLOC") != NULL ||
+               strstr(ors[0].location_algorithm, "csnloc") != NULL);
         assert(fabs(ors[0].azimuthal_gap - 180.0) < 1e-9);
         assert(fabs(ors[0].standard_error - 0.35) < 1e-6);
         /* PostgreSQL rinde el timestamptz sin milisegundos si son cero: se
@@ -330,8 +333,9 @@ int main(void)
             for (int i = 0; i < nor; i++) {
                 if (strcmp(ors[i].origin_id, EID ":162:7") == 0) {
                     seen_conf = 1;
-                    assert(strcmp(ors[i].status, "REVIEWED") == 0);
-                    assert(strcmp(ors[i].location_algorithm, "csnloc") == 0);
+                    assert(strcmp(ors[i].status, "MANUAL") == 0);
+                    assert(strstr(ors[i].location_algorithm, "CSNLOC") != NULL ||
+                           strstr(ors[i].location_algorithm, "csnloc") != NULL);
                     snprintf(created7, sizeof created7, "%s",
                              ors[i].creation_time);
                 }

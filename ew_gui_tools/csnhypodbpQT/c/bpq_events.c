@@ -49,15 +49,13 @@ struct BpqEvents {
 
 static const char *mod_label(const BpqEvents *e, int mod)
 {
-    static char buf[16];
-    int i;
-    for (i = 0; i < e->cfg.n_locators; i++)
-        if (csnhypodbp_locator_mod(&e->cfg.locators[i]) == mod)
-            return e->cfg.locators[i].name;
-    if (mod == 162) return "csnloc";
-    if (mod == 163) return "hyp2000_ring";
-    if (mod == 164) return "nlloc_ring";
-    snprintf(buf, sizeof(buf), "%d", mod);
+    static char buf[64];
+    const char *n = csnhypodbp_locator_name_for_mod(
+        e->cfg.locators, e->cfg.n_locators, mod);
+
+    if (n) return n;
+    /* Mod historico fuera de la tabla: se muestra el numero (dato de la BD). */
+    snprintf(buf, sizeof(buf), "mod %d", mod);
     return buf;
 }
 

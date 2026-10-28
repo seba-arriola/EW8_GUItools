@@ -22,7 +22,7 @@ extern "C" {
 typedef struct {
     int    used;
     int    qid;
-    int    mod;      /* modulo origen del ARC (162/163/164) */
+    int    mod;      /* modulo origen del ARC (resuelto de la tabla de locators) */
     int    slot;     /* 0=ML 1=Mwp 2=Mb 3=Ms */
     int    n;
     CsnhypodbpMagIn vals[CSNHYPODBP_MAGSTA_MAX];

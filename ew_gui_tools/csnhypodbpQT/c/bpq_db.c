@@ -155,8 +155,8 @@ static void sol_from_origin(BpqDb *d, const char *event_id,
     sol->mod = mod;
     sol->version = version;
     sol->confirmed = confirmed;
-    /* origin.status: REVIEWED lo marco un analista (la GUI GTK hace lo mismo). */
-    sol->manual = (strcmp(o->status, "REVIEWED") == 0) ? 1 : 0;
+    /* origin.status: MANUAL lo marco un analista (la GUI GTK hace lo mismo). */
+    sol->manual = (strcmp(o->status, "MANUAL") == 0) ? 1 : 0;
     sol->otime = iso_epoch(o->origin_time);
     sol->lat = o->latitude;
     sol->lon = o->longitude;

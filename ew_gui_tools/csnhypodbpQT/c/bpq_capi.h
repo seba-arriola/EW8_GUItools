@@ -194,6 +194,10 @@ typedef struct {
  *   <dir>/csnloc.events , <dir>/csnhypodbp_manual.events , <dir>/mww
  * Las claves obligatorias son las mismas que csnhypodbp_main.c:322-333
  * (MyModuleId, InRing, OutRing, HeartBeatInt, LogFile, StaFile, StateFile). */
+/* Resuelve `l->mod` de cada locator (MyModuleId de su .d + GetModId de
+ * earthworm.d). Llamar DESPUES de bpq_rings_open; devuelve cuantos fallaron. */
+int        bpq_locators_resolve(BpqConfig *cfg);
+
 BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
                            char *err, size_t errn);
 void       bpq_config_free(BpqConfig *c);
@@ -863,18 +867,15 @@ const char *bpq_mww_log(const BpqMww *m);
 
 /* 1 si el resultado tiene mecanismo focal (se puede guardar el tensor). */
 int     bpq_mww_tensor_ready(const BpqMww *m);
-/* Modulo de HYPO_RING del localizador ("csnloc" -> 162, "hyp2000_ring" -> 163,
- * "nlloc_ring" -> 164; otro -> 162). Es el `mod` del origin_id: la solucion de
- * `locate` trae mod=0 (no viene del anillo), pero el modulo real lo pone el
- * localizador que la calculo. */
-int     bpq_mod_for_locator(const char *locator);
 /* Guarda la solucion en la BD si falta (event + origin `<E<qid>-<hora>>:<mod>`)
  * y le cuelga su Mww y su mecanismo focal, dejandola preferida. Es el mismo
  * camino que `csnhypodbp_mww_persist` de la GTK (upsert_event / origin_if_absent
- * / magnitude / tensor / set_preferred). `mod` > 0 (ver bpq_mod_for_locator).
+ * / magnitude / tensor / set_preferred). `mod` > 0; `algorithm` es el nombre
+ * del locator resuelto de la tabla (NULL -> "").
  * 1 = OK; si no, `msg` trae el error real. */
 int     bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,
-                     const BpqMww *m, char *msg, size_t n);
+                     const char *algorithm, const BpqMww *m, char *msg,
+                     size_t n);
 
 /* Picadas que se mandan al localizador: una P y una S por estacion, ranking
  * M > A > Teo, con los checks de origen y la casilla de cada fila

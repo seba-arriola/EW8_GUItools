@@ -68,11 +68,11 @@ int main(void)
     o.azimuthal_gap = 180.0;
     o.station_count = 8;
     o.standard_error = 0.35;
-    snprintf(o.status, sizeof o.status, "PRELIMINARY");
+    snprintf(o.status, sizeof o.status, "AUTOMATIC");
     assert(ewguidb_upsert_origin(db, &o) == 0);
 
     snprintf(o.origin_id, sizeof o.origin_id, "%s", O2);
-    snprintf(o.status, sizeof o.status, "REVISED");
+    snprintf(o.status, sizeof o.status, "AUTOMATIC");
     o.latitude = -33.46;
     assert(ewguidb_upsert_origin(db, &o) == 0);
 
@@ -186,7 +186,7 @@ int main(void)
     assert(fabs(ors[i1].latitude + 33.45) < 1e-6);
     assert(ors[i1].station_count == 8);
     assert(fabs(ors[i1].standard_error - 0.35) < 1e-6);
-    assert(strcmp(ors[i2].status, "REVISED") == 0);
+    assert(strcmp(ors[i2].status, "AUTOMATIC") == 0);
     ewguidb_rows_free(ors);
 
     EwGuiPickRow *pks = NULL;

@@ -14,10 +14,15 @@ LIBS = -lm -lpthread
 
 OBJS = csnloc.o pick_scln.o pick_buffer.o stations.o ttmodel.o grid.o \
        gridset.o backprojection.o dbscan.o refine.o hypo_out.o \
-       event_registry.o state.o ../csnhypodbp/csnhypodbp_locator.o
+       event_registry.o state.o \
+       ../csnhypodbp/csnhypodbp_locator.o
 
 ../csnhypodbp/csnhypodbp_locator.o: ../csnhypodbp/csnhypodbp_locator.c \
                                     ../csnhypodbp/csnhypodbp_locator.h
+	$(CC) $(CFLAGS) -c -o $@ $<
+
+live_refine.o: live_refine.c live_refine.h live_assoc.h \
+               ../csnhypodbp/csnhypodbp_group.h
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # taulib_csnloc.c es una copia local del motor IASP91 con el PATCH NULL-safe
@@ -63,7 +68,7 @@ TESTS = test/test_pick_parse test/test_repick test/test_tt \
         test/test_renucleate test/test_refine_depth test/test_pick_s \
         test/test_repick_phase test/test_pick_origin test/test_event_manual \
         test/test_state_manual test/test_grid_force_depth test/test_trigger_gate \
-        test/test_emit_gate
+        test/test_emit_gate test/test_live_refine
 
 test: $(TESTS)
 	@echo "Tests compilados. Ejecutar con make check"
@@ -106,6 +111,7 @@ check: $(TESTS) ttpred iasp91.tbl iasp91.hed
 	@echo "=== test_renucleate ===";       ./test/test_renucleate
 	@echo "=== test_trigger_gate ===";     ./test/test_trigger_gate
 	@echo "=== test_emit_gate ===";        ./test/test_emit_gate
+	@echo "=== test_live_refine ===";      ./test/test_live_refine
 	@echo "=== test_refine_depth ===";     ./test/test_refine_depth
 	@echo "=== test_pick_s ===";           ./test/test_pick_s
 	@echo "=== test_repick_phase ===";     ./test/test_repick_phase
@@ -152,6 +158,15 @@ test/test_trigger_gate: test/test_trigger_gate.c event_registry.o backprojection
 	$(CC) $(CFLAGS) -o $@ test/test_trigger_gate.c event_registry.o \
 	      backprojection.o dbscan.o refine.o gridset.o grid.o ttmodel.o \
 	      stations.o $(TAUOBJS) $(LIBS)
+
+test/test_live_refine: test/test_live_refine.c live_refine.o live_assoc.o \
+                       live_check.o pick_scln.o pick_buffer.o ttmodel.o \
+                       stations.o taulib_csnloc.o \
+                       ../csnhypodbp/csnhypodbp_group.o
+	$(CC) $(CFLAGS) -o $@ test/test_live_refine.c live_refine.o \
+	      live_assoc.o live_check.o pick_scln.o pick_buffer.o ttmodel.o \
+	      stations.o taulib_csnloc.o ../csnhypodbp/csnhypodbp_group.o \
+	      $(EWLIBS) $(LIBS)
 
 test/test_emit_gate: test/test_emit_gate.c event_registry.o backprojection.o \
                      dbscan.o refine.o gridset.o grid.o ttmodel.o stations.o \

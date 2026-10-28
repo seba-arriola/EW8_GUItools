@@ -151,11 +151,12 @@ docker compose -f db/docker-compose.yml exec -T db psql -U csn -d csn_hypo -c \
   `origin_id = <event>:<mod>:<version>:I` (con sus propias picadas), así que el historial de
   soluciones sobrevive en la BD. Además, **una fila por cada confirmación manual** (`csnhypodbp` →
   `ConfRing` → `InRingConf`) con `origin_id = <event>:<mod>:<version>`; esas filas son
-  **inmutables** y quedan como orígenes manuales históricos. `status` = `REVIEWED` si la solución es
-  manual (byte 174), si no `PRELIMINARY`(162)/`REVISED`(163/164). `author` es constante
-  (`csnhypodbp`, el módulo que revisa/produce el registro), `software` sale de `$EW_VERSION` y el
-  localizador real queda en
-  `location_algorithm` (`csnloc`/`HYPOINVERSE`/`NLLoc`). Las confirmaciones **no** pasan por la
+  **inmutables** y quedan como orígenes manuales históricos. `status` = `MANUAL` solo para una
+  confirmación desde `Procesar` (`InRingConf`); todo lo que produce el pipeline es `AUTOMATIC`
+  (aunque una solución tenga picadas manuales). `author` es constante (`csnhypodbp`, el módulo que
+  revisa/produce el registro), `software` sale de `$EW_VERSION` y el localizador real queda en
+  `location_algorithm` con el **nombre del locator de la tabla** (`csnhypodbpqt.d` → su `.d` →
+  `MyModuleId` → `GetModId`); no hay ids de módulo escritos en el código. Las confirmaciones **no** pasan por la
   guarda de versión (su `version` es la del candidato, no la del pipeline).
 - **`pick`**: fases del ARC; `pick_status` = `manual` si correlaciona con un pick de `PICK_RING`
   (12.º token `M`), si no `automatic`.
