@@ -40,7 +40,7 @@ extern "C" {
 #define TVQ_BACKGROUND_MS    1000
 #define TVQ_LOOKAHEAD_SECS   15.0   /* picks visibles hasta t_right + 15 s      */
 
-/* Papeles de color (los 6 del GTK + 3 por componente). */
+/* Papeles de color (los 6 del GTK). */
 enum {
     TVQ_COLOUR_WAVE = 0,
     TVQ_COLOUR_BG,
@@ -48,9 +48,6 @@ enum {
     TVQ_COLOUR_SEP,
     TVQ_COLOUR_P,
     TVQ_COLOUR_S,
-    TVQ_COLOUR_Z,
-    TVQ_COLOUR_N,
-    TVQ_COLOUR_E,
     TVQ_COLOUR_COUNT
 };
 
@@ -69,7 +66,7 @@ typedef struct TvqConfig {
     int    stations_per_screen;           /* def. 12, 1..512                  */
     int    time_window_min;               /* def. 6, 1..120                   */
     double pick_replace_secs;             /* def. 15.0, 0 = off               */
-    double colour[TVQ_COLOUR_COUNT][3];   /* z/n/e sin declarar = wave        */
+    double colour[TVQ_COLOUR_COUNT][3];   /* los 6 roles del GTK              */
 } TvqConfig;
 
 /* Carga <path>. Devuelve NULL y el motivo en `err` si falta una de las 6
@@ -167,7 +164,7 @@ char tvq_core_pick_phase(const TvqCore *c);   /* '\0' | 'P' | 'S' */
 void tvq_core_set_guide(TvqCore *c, double x, int valid);
 int  tvq_core_guide(const TvqCore *c, double *x);   /* 1 = visible, 0 = oculta */
 
-/* Color de un papel; en `z/n/e` sin declarar ya vienen resueltos del .d. */
+/* Color de un papel (0..TVQ_COLOUR_COUNT-1). */
 void tvq_core_get_colour(const TvqCore *c, int role, double rgb[3]);
 void tvq_core_set_colour(TvqCore *c, int role, const double rgb[3]);
 /* Bloque copiable al .d (paridad con LogColorConfig del GTK). */

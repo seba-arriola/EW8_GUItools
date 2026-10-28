@@ -18,6 +18,7 @@
 class QAction;
 class QEvent;
 class QLabel;
+class QMenu;
 class QPushButton;
 class QScrollBar;
 class QTimer;
@@ -68,6 +69,7 @@ private:
     void onCleanView();
     void onReloadStations();
     void onFilterOptions();
+    void applyColour(int role, const double rgb[3]);
     void onColour(int role);
     void onExport();
     void onToggleDark(bool on);
@@ -81,6 +83,7 @@ private:
     QScrollBar *m_scroll = nullptr;
     QPushButton *m_hold = nullptr;
     QLabel *m_phase = nullptr;
+    QMenu *m_colourMenu = nullptr;
     QAction *m_dark = nullptr;
     QTimer *m_timer = nullptr;
     QTimer *m_bg = nullptr;

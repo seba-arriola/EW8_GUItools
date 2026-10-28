@@ -42,9 +42,8 @@ else
         has "$out" "color_sep=#D9D9D9"              "separatorColor"
         has "$out" "color_p=#FF0000"                "pColor"
         has "$out" "color_s=#000000"                "sColor"
-        has "$out" "color_z=#000000"                "zColor"
-        has "$out" "color_n=#1F6FE5"                "nColor (paleta del port)"
-        has "$out" "color_e=#1B8A3A"                "eColor (paleta del port)"
+        ncol=$(printf '%s\n' "$out" | grep -c '^color_')
+        [ "$ncol" -eq 6 ] && ok "6 colores (sin componentes)" || bad "colores: $ncol"
         if printf '%s\n' "$out" | grep -qE '^module_id=(175|unresolved)$'; then
             ok "module_id resuelto (175) o unresolved sin earthworm.d"
         else
@@ -79,8 +78,7 @@ out="$("$BIN" --print-config "$tmp/min.d" 2>/dev/null)"
 has "$out" "stations_per_screen=12"   "default StationsPerScreen"
 has "$out" "time_window_min=6"        "default TimeWindow"
 has "$out" "pick_replace_window=15.0" "default PickReplaceWindow"
-has "$out" "color_n=#000000"          "sin nColor hereda de waveformsColor"
-has "$out" "color_e=#000000"          "sin eColor hereda de waveformsColor"
+has "$out" "color_wave=#000000"       "default waveformsColor"
 
 # Clave desconocida: se ignora (asi el .d del GTK y el del port comparten formato)
 cat >> "$tmp/min.d" <<EOF

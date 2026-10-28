@@ -94,9 +94,6 @@ static TVQ_TEST_UNUSED TvqConfig *tvq_t_cfg(const char *sta_name, const char *st
     tvq_t_colour(cfg->colour[TVQ_COLOUR_SEP], 0.85, 0.85, 0.85);
     tvq_t_colour(cfg->colour[TVQ_COLOUR_P], 1, 0, 0);
     tvq_t_colour(cfg->colour[TVQ_COLOUR_S], 0, 0, 0);
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_Z], 0, 0, 0);
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_N], 0, 0, 0);
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_E], 0, 0, 0);
 
     if (sta_lines)
         tvq_t_write(sta_name, sta_lines);

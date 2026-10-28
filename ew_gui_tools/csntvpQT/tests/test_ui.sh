@@ -2,8 +2,8 @@
 # Modos instrumentados offscreen de csntvpQT (sin anillos ni DISPLAY).
 #
 # El fixture es propio: 3 estaciones con canales distintos (HHZ/HHN/HHE) para
-# que el volcado y los colores por componente sean observables sin tocar
-# params/ ni el .sta de produccion.
+# que el volcado y la independencia del color respecto al canal sean
+# observables sin tocar params/ ni el .sta de produccion.
 set -u
 
 BIN="${BIN:-./csntvpQT}"
@@ -97,6 +97,10 @@ contains "$out" '^pick_msg=.* BBB\.HHN\.XX\.-- '  "interact: SCNL de la pista pi
 contains "$out" '^pick_msg=.* P M$'               "interact: fase P y origen M"
 contains "$out" '^phase=S'                        "interact: cambio de fase a S"
 contains "$out" '^zoom=1\.000->1\.500'            "interact: zoom vertical x1.5"
+contains "$out" '^colour_actions=6'               "interact: 6 colores del GTK"
+contains "$out" '^colour_labels=Waveforms\|Background\|Font\|Separator\|P picks\|S picks$' \
+                                                  "interact: solo los 6 colores del GTK"
+contains "$out" '^wave_recolour=1'                "interact: waveformsColor recolorea las pistas"
 contains "$out" '^guide_hover=1'                  "interact: guia en el area de trazas"
 contains "$out" '^guide_panel=0'                  "interact: sin guia sobre el panel"
 contains "$out" '^guide_left=0'                   "interact: sin guia al salir del lienzo"

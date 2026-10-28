@@ -26,6 +26,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QInputDialog>
 #include <QKeyEvent>
 #include <QLabel>
@@ -42,6 +43,7 @@
 #include <QRectF>
 #include <QResizeEvent>
 #include <QScrollBar>
+#include <QStringList>
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -61,9 +63,6 @@ const char *kRoleName(int role)
     case TVQ_COLOUR_SEP:  return "Separator";
     case TVQ_COLOUR_P:    return "P picks";
     case TVQ_COLOUR_S:    return "S picks";
-    case TVQ_COLOUR_Z:    return "Component Z";
-    case TVQ_COLOUR_N:    return "Component N";
-    case TVQ_COLOUR_E:    return "Component E";
     default:              return "Colour";
     }
 }
@@ -132,9 +131,9 @@ void TvqMainWindow::buildMenu()
     filt->addAction(QStringLiteral("Filter options..."), this,
                     &TvqMainWindow::onFilterOptions);
 
-    QMenu *col = menuBar()->addMenu(QStringLiteral("&Colours"));
+    m_colourMenu = menuBar()->addMenu(QStringLiteral("&Colours"));
     for (int r = 0; r < TVQ_COLOUR_COUNT; r++) {
-        QAction *a = col->addAction(QString::fromUtf8(kRoleName(r)));
+        QAction *a = m_colourMenu->addAction(QString::fromUtf8(kRoleName(r)));
         connect(a, &QAction::triggered, this, [this, r]() { onColour(r); });
     }
 
@@ -594,11 +593,16 @@ void TvqMainWindow::onColour(int role)
         return;
 
     const double v[3] = { nc.redF(), nc.greenF(), nc.blueF() };
-    tvq_core_set_colour(m_core, role, v);
-    repaintAll();
+    applyColour(role, v);
     /* El GTK volcaba el bloque copiable al log: misma salida aqui. */
     if (!m_instrumented)
         tvq_core_print_colour_config(m_core, stdout);
+}
+
+void TvqMainWindow::applyColour(int role, const double rgb[3])
+{
+    tvq_core_set_colour(m_core, role, rgb);
+    repaintAll();
 }
 
 void TvqMainWindow::onExport()
@@ -634,8 +638,7 @@ void TvqMainWindow::onCommands()
             "Left click on a trace: place the pick (HOLD + armed phase)\n\n"
             "Display: stations per screen, time window, clean view, reload\n"
             "Filter: raw / high-pass / low-pass / band-pass, order 2 or 4\n"
-            "Colours: waveforms, background, font, separator, P/S picks,\n"
-            "         and Z/N/E components"));
+            "Colours: waveforms, background, font, separator, and P/S picks"));
 }
 
 void TvqMainWindow::keyPressEvent(QKeyEvent *ev)
@@ -1092,6 +1095,52 @@ QString TvqMainWindow::interactProbe()
         m_scroll->setValue(0);
         tvq_core_set_stations_per_screen(m_core, sps0);
         updateScrollRange();
+    }
+
+    /* 12) Colours: 6 acciones y waveformsColor manda sobre las 3 pistas
+     *     (Z, N y E ya no tienen color propio). */
+    {
+        auto snapshot = [&]() {
+            QImage im(m_traces->width(), m_traces->height(),
+                      QImage::Format_ARGB32);
+
+            im.fill(Qt::transparent);
+            (void)tvq_paint_traces(m_core, im.bits(), im.width(), im.height(),
+                                   im.bytesPerLine(), 1.0, m_scrollY);
+            return im;
+        };
+        auto count_red = [](const QImage &im) {
+            int n = 0;
+
+            for (int y = 0; y < im.height(); y++) {
+                const unsigned char *p = im.constScanLine(y);
+
+                for (int x = 0; x < im.width(); x++, p += 4) {
+                    if (p[2] > 200 && p[1] < 60 && p[0] < 60)
+                        n++;
+                }
+            }
+            return n;
+        };
+        QStringList labels;
+
+        for (QAction *a : m_colourMenu->actions())
+            labels << a->text();
+        out += QStringLiteral("colour_actions=%1\n")
+                   .arg(m_colourMenu->actions().size());
+        out += QStringLiteral("colour_labels=%1\n")
+                   .arg(labels.join(QLatin1Char('|')));
+
+        double old[3];
+        const double red[3] = { 1.0, 0.0, 0.0 };
+        int before;
+
+        tvq_core_get_colour(m_core, TVQ_COLOUR_WAVE, old);
+        before = count_red(snapshot());
+        applyColour(TVQ_COLOUR_WAVE, red);
+        out += QStringLiteral("wave_recolour=%1\n")
+                   .arg(count_red(snapshot()) > before + 10 ? 1 : 0);
+        applyColour(TVQ_COLOUR_WAVE, old);
     }
 
     /* 7) clean-view + reload station list. Se deja pasar el tiempo de

@@ -1,12 +1,12 @@
 # csntvpQT — port Qt6 de csntvp (visor de trazas en vivo + picking manual)
 
-Prototipo de la migración de `csntvp` a Qt6. En la **etapa 1** convive con el GTK: los dos están
-declarados en `startstop_unix.d` y cada uno corre con su propio `.d`.
+Migración de `csntvp` a Qt6. El port **sustituye** al GTK en `startstop_unix.d`: sólo `csntvpQT`
+está declarado; el `.d` del GTK se conserva como referencia.
 
 | | |
 |---|---|
 | binario | `csntvpQT` (instalado en `ew_8.0/bin` con `install_bin.sh`) |
-| `.d` | `run_working_v8/params/csntvpqt.d` (**propio**; copia del GTK + 3 colores) |
+| `.d` | `run_working_v8/params/csntvpqt.d` (**propio**; copia del GTK, sólo cambia `MyModuleId`) |
 | id | `Module MOD_CSNTVPQT 175` en `earthworm.d.base` (generado a `earthworm.d`) |
 | anillos | lee `SLINK_RING` (`TYPE_TRACEBUF2`) y `PICK_RING` (`TYPE_PICK_SCNL`); publica sus picadas manuales en `PICK_RING` |
 | log | `$EW_LOG/csntvpQT_<fecha>.log` (nombre del **proceso**; sin `EW_LOG` escribible baja a consola) |
@@ -17,12 +17,12 @@ declarados en `startstop_unix.d` y cada uno corre con su propio `.d`.
 El eco de una picada se deduplica por `(mod, inst, seq)` y `seq` arranca en 0 en cada proceso
 (`csntvp_data.c:371-381`). Con el mismo `MyModuleId`, una picada de este port con `seq=7` podía
 sobrescribir en la ventana **GTK** una picada local con `seq=7` de otra estación: no corrompe el
-anillo, corrompe la vista. Con `MOD_CSNTVPQT` los dos visores se ven las picadas como ajenas y nadie
-pisa el slot del otro.
+anillo, corrompe la vista. Con `MOD_CSNTVPQT` el port no pisa los slots de una instancia GTK
+lanzada a mano.
 
-El `.d` es una copia del de `csntvp` y **sólo** puede diferir en `MyModuleId`, `zColor`, `nColor` y
-`eColor`; lo gatea `tests/test_integration.sh` (y `tests/test_ui_invariants.sh` §6). Si añades una
-clave al `csntvp.d`, añádela también al `csntvpqt.d`.
+El `.d` es una copia del de `csntvp` y **sólo** puede diferir en `MyModuleId`; lo gatea
+`tests/test_integration.sh` (y `tests/test_ui_invariants.sh` §6). Si añades una clave al `csntvp.d`,
+añádela también al `csntvpqt.d`.
 
 ## Arquitectura
 
@@ -57,7 +57,8 @@ csntvpQT csntvpqt.d        # con EarthWorm arriba; Ctrl-C para parar
 csntvpQT --print-config csntvpqt.d     # headless, sin DISPLAY (flag ANTES del .d)
 ```
 
-`startstop` lo lanza con `Process "csntvpQT csntvpqt.d"` (junto al del GTK en la etapa 1).
+`startstop` lo lanza con `Process "csntvpQT csntvpqt.d"`, el único de la familia (el del GTK se
+retiró).
 `diag.sh log csntvpQT` funciona; `diag.sh run csntvpQT` **no** (busca `$PARAMS/csntvpQT.d` y el
 fichero es `csntvpqt.d`: mismo desajuste de caja que los otros ports Qt).
 
@@ -78,7 +79,7 @@ fichero es `csntvpqt.d`: mismo desajuste de caja que los otros ports Qt).
 | *View* | `Dark mode` |
 | *Display* | `Stations per screen...`, `Time window...`, `Clean view...`, `Reload station list` |
 | *Filter* | `Filter options...` (Raw / HP / LP / BP, orden 2 ó 4, F1/F2) |
-| *Colours* | waveforms, background, font, separator, P/S y componentes Z/N/E |
+| *Colours* | waveforms, background, font, separator y P/S |
 | *Help* | `Commands...` |
 
 Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` y el color con
@@ -109,9 +110,9 @@ Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` 
   propio en vez de reutilizar el del hermano.
 - `PickReplaceWindow` es **por instancia**: la ventana que reemplaza sólo desactiva sus propias
   picadas; las del otro visor se siguen dibujando (el protocolo no tiene *retract*).
-- La coloración por componente se resuelve por la **última letra del canal** (`Z`/`N`/`E`). Con el
-  `stations_to_view.sta` actual (141 filas, todas `HHZ`) sólo se ve al añadir horizontales; en el
-  fixture de los tests (HHZ/HHN/HHE) se valida con tres colores.
+- El color de la traza es `waveformsColor` para **todas** las componentes (paridad GTK): `Z`/`N`/`E`
+  no tienen color propio. Con el `stations_to_view.sta` actual (141 filas, todas `HHZ`) no hay
+  diferencia visible; el fixture HHZ/HHN/HHE de los tests fija que el canal no cambia el color.
 
 ## Tests
 
@@ -125,7 +126,7 @@ Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` 
 | `test_pick` | formato byte-idéntico, ida y vuelta con el parser del GTK, eco por `seq`, `PickReplaceWindow`, guardas de HOLD |
 | `test_env` | el filtro cambia la vista y **no** el crudo; clamps de tipo/orden/frecuencias |
 | `test_core` | reloj (`ahora − 2 s`), HOLD, `hit`, vista, zoom, volcado |
-| `test_paint` | BGRA opaco, panel, eje y un color por componente (Z/N/E) |
+| `test_paint` | BGRA opaco, panel, eje y `waveformsColor` mandando sobre las tres pistas |
 | `test_norm` | normalización por pista: el `scale` del StaFile no cambia la altura, amplitudes 100× distintas sí dan la misma, y el zoom multiplica esa base (clip incluido) |
 | `test_guide` | guía vertical: sin fase no aparece, con P/S es discontinua en la `x` del puntero, no invade el panel ni se sale del lienzo, es independiente del scroll, escala con DPR y no tapa la picada |
 | `test_clean` | `clean view` selectivo, compactado en orden y `reload` |
@@ -133,7 +134,7 @@ Sin desplegables propios (WSLg #1299): los números se piden con `QInputDialog` 
 | `test_ui.sh` | `--dump` / `--layout` (mínimo ≤ 700×800) / `--shot` / `--interact` offscreen (guía y scroll incluidos) |
 | `test_ui_invariants.sh` | frontera C→C++, cairo sólo en `c/`, parser reutilizado, `MOD_KIT=qt6`, whitelist del `.d`, sin desplegables |
 | `test_no_gtk_link.sh` | el binario no arrastra libgtk/libadwaita |
-| `test_integration.sh` | id 175 en `.base`, 174 libre, ambos `Process`, binario instalado, `earthworm.d` regenerado |
+| `test_integration.sh` | id 175 en `.base`, 174 libre, sólo el `Process` del port, binario instalado, `earthworm.d` regenerado |
 
 `make test-live` arranca contra el EarthWorm en marcha (necesita `DISPLAY`, `CSNTVPQT_EXIT_AFTER_MS`).
 

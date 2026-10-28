@@ -455,7 +455,7 @@ void tvq_core_print_colour_config(const TvqCore *c, FILE *out)
 {
     static const char *keys[TVQ_COLOUR_COUNT] = {
         "waveformsColor", "backgroundColor", "fontColor", "separatorColor",
-        "pColor", "sColor", "zColor", "nColor", "eColor"
+        "pColor", "sColor"
     };
 
     if (!c || !out)

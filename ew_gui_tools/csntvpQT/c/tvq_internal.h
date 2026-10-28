@@ -114,8 +114,6 @@ void tvq_env_invalidate(TvqCore *c);
 void tvq_pick_add(TvqStation *s, long index, double t, char phase, char origin);
 void tvq_pick_replace_near(TvqCore *c, TvqStation *s, double t, double window);
 
-int tvq_colour_for_chan(const TvqCore *c, const char *chan, const double **rgb);
-
 /* Nombre legible de las claves obligatorias que falten (para el error). */
 void tvq_missing_keys(char *out, size_t n, const int have[6]);
 

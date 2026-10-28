@@ -104,12 +104,12 @@ if [ -f "$QT_D" ] && [ -f "$GTK_D" ]; then
         sed -e 's/#.*//' "$1" \
             | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' \
             | grep -v '^$' \
-            | grep -vE '^(MyModuleId|zColor|nColor|eColor)([[:space:]]|$)'
+            | grep -vE '^(MyModuleId)([[:space:]]|$)'
     }
     if diff -q <(norm "$GTK_D") <(norm "$QT_D") >/dev/null; then
-        ok "csntvpqt.d solo difiere en MyModuleId/zColor/nColor/eColor"
+        ok "csntvpqt.d solo difiere en MyModuleId"
     else
-        bad "csntvpqt.d difiere del GTK en algo mas que las 4 claves"
+        bad "csntvpqt.d difiere del GTK en algo mas que MyModuleId"
     fi
 else
     bad "faltan csntvp.d / csntvpqt.d en params/"
@@ -191,6 +191,20 @@ if grep -q 'tvq_core_set_guide' "$DIR/c/tvq_capi.h"; then
     ok "capi: contrato de la guia"
 else
     bad "falta tvq_core_set_guide en tvq_capi.h"
+fi
+
+# --- 10. sin color por componente ----------------------------------------
+# El color de la traza sale de waveformsColor (paridad GTK); no quedan claves,
+# roles ni nombres de componente en el modulo ni en su documentacion.
+if grep -rEn -I --exclude=test_ui_invariants.sh \
+        '\b[zZnNeE]Color\b|TVQ_COLOUR_(Z|N|E)\b|tvq_colour_for_chan|Component [ZNE]|Z/N/E|z/n/e' \
+        "$DIR/c" "$DIR/ui" "$DIR/tests" >/dev/null 2>&1 ||
+   grep -qE '\b[zZnNeE]Color\b|color por componente|Component [ZNE]|Z/N/E|z/n/e' \
+        "$DIR/README.md" "$DIR/../../AGENTS.md" "$PARAMS/csntvpqt.d" \
+        >/dev/null 2>&1; then
+    bad "quedan restos del color por componente"
+else
+    ok "sin color por componente (traza = waveformsColor)"
 fi
 
 if [ "$fail" -eq 0 ]; then

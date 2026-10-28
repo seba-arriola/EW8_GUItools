@@ -1,6 +1,5 @@
 /* Contrato de configuracion: mismas 6 claves obligatorias, mismos defaults y
- * mismas claves opcionales que csntvp.d (csntvp_data.c:29-107), mas
- * zColor/nColor/eColor (que heredan de waveformsColor si faltan). */
+ * mismas claves opcionales que csntvp.d (csntvp_data.c:29-107). */
 #include <math.h>
 
 #include "tvq_test.h"
@@ -55,9 +54,6 @@ int main(void)
                     "default backgroundColor blanco");
             T_CHECK(near(cfg->colour[TVQ_COLOUR_SEP][0], 217.0 / 255.0),
                     "default separatorColor D9D9D9");
-            T_CHECK(near(cfg->colour[TVQ_COLOUR_N][0],
-                         cfg->colour[TVQ_COLOUR_WAVE][0]),
-                    "nColor sin declarar hereda de waveformsColor");
             T_CHECK(strcmp(cfg->sta_file, tvq_t_path("min.sta")) == 0,
                     "StaFile tomado del .d");
 
@@ -79,8 +75,17 @@ int main(void)
                             "print: in_ring");
                     T_CHECK(strstr(buf, "stations_per_screen=12") != NULL,
                             "print: stations_per_screen");
-                    T_CHECK(strstr(buf, "color_z=#000000") != NULL,
-                            "print: color_z resuelto");
+                    {
+                        int ncol = 0;
+                        const char *p = buf;
+
+                        while ((p = strstr(p, "\ncolor_")) != NULL) {
+                            ncol++;
+                            p++;
+                        }
+                        T_CHECK(ncol == 6,
+                                "print: exactamente 6 colores (sin componentes)");
+                    }
                     T_CHECK(strstr(buf, "module_id=") != NULL,
                             "print: module_id (numero o unresolved)");
                     fclose(f);
@@ -99,14 +104,12 @@ int main(void)
         tvq_config_free(cfg);
     }
 
-    /* --- 3. overrides + claves por componente --------------------------- */
+    /* --- 3. overrides de las claves del GTK ----------------------------- */
     write_cfg("over.d",
               "StationsPerScreen 4\n"
               "TimeWindow        2\n"
               "PickReplaceWindow 0\n"
-              "waveformsColor    #112233\n"
-              "zColor            445566\n"
-              "nColor            00FF00\n");
+              "waveformsColor    #112233\n");
     {
         TvqConfig *cfg = tvq_config_load(tvq_t_path("over.d"), err, sizeof err);
 
@@ -117,11 +120,6 @@ int main(void)
             T_CHECK(near(cfg->pick_replace_secs, 0.0), "PickReplaceWindow 0");
             T_CHECK(near(cfg->colour[TVQ_COLOUR_WAVE][0], 0x11 / 255.0),
                     "waveformsColor #112233");
-            T_CHECK(near(cfg->colour[TVQ_COLOUR_Z][0], 0x44 / 255.0),
-                    "zColor explicito");
-            T_CHECK(near(cfg->colour[TVQ_COLOUR_N][1], 1.0), "nColor verde");
-            T_CHECK(near(cfg->colour[TVQ_COLOUR_E][0], 0x11 / 255.0),
-                    "eColor sin declarar sigue a waveformsColor");
             tvq_config_free(cfg);
         }
     }

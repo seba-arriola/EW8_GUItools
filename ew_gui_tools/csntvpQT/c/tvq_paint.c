@@ -8,7 +8,6 @@
  */
 #include <math.h>
 #include <stdio.h>
-#include <string.h>
 
 #include <cairo.h>
 
@@ -40,30 +39,6 @@ int tvq_core_canvas_height(const TvqCore *c, int viewport_h)
     if (!c)
         return 0;
     return c->n_sta * tvq_core_track_height(c, viewport_h);
-}
-
-int tvq_colour_for_chan(const TvqCore *c, const char *chan, const double **rgb)
-{
-    char k = 'Z';
-    int role = TVQ_COLOUR_WAVE;
-    size_t len;
-
-    if (!c || !rgb)
-        return TVQ_COLOUR_WAVE;
-
-    len = chan ? strlen(chan) : 0;
-    if (len > 0)
-        k = chan[len - 1];
-
-    if (k == 'Z' || k == 'z')
-        role = TVQ_COLOUR_Z;
-    else if (k == 'N' || k == 'n')
-        role = TVQ_COLOUR_N;
-    else if (k == 'E' || k == 'e')
-        role = TVQ_COLOUR_E;
-
-    *rgb = c->colour[role];
-    return role;
 }
 
 int tvq_core_hit(TvqCore *c, int x, int y, int w, int h, int scroll_y,
@@ -169,7 +144,7 @@ int tvq_paint_traces(TvqCore *c, unsigned char *bgra, int pw, int ph, int stride
         TvqStation *s = &c->sta[i];
         double y_top = (double)i * (double)th - (double)scroll_y;
         double y_center = y_top + (double)th / 2.0;
-        const double *wave;
+        const double *wave = c->colour[TVQ_COLOUR_WAVE];
         char comp_net[48];
 
         if (y_top + (double)th <= 0.0)
@@ -203,8 +178,7 @@ int tvq_paint_traces(TvqCore *c, unsigned char *bgra, int pw, int ph, int stride
         cairo_line_to(cr, w, y_top);
         cairo_stroke(cr);
 
-        /* envolvente cacheada (color por componente) */
-        (void)tvq_colour_for_chan(c, s->chan, &wave);
+        /* envolvente cacheada */
         if (s->cache.env_valid && s->cache.env_width >= area_w &&
             s->cache.env_found_first) {
             double max_abs = s->cache.env_max_abs;

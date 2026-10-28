@@ -214,7 +214,7 @@ hace **`csnloc`** localmente.
     proceso**: `csnhypodbpQT` paga la misma trampa y lo fija en `ui/main.cxx`; su `--dump` publica
     `bg=<ancho>x<alto>` y el invariante es `csnhypodbpQT/tests/test_map_background.sh` (`bg=0x0`
     = lienzo virtual, con el motivo del fallo en `stderr`).
-  - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`). **Port Qt en `csntvpQT/`** (corre en paralelo con su propio `.d`, ver más abajo).
+  - `csntvp/`: visor de trazas / visor de estaciones. Picks: etiqueta la fase y el origen (`P(A)`/`S(A)` automáticos; `P(M)`/`S(M)` manuales) leídos del 11.º/12.º token de `TYPE_PICK_SCNL` (fase y origen `A`/`M`; ausentes ⇒ P/A). Empareja por **estación** (ignora canal) para superponer S de `pickS` (HHE/HHN) sobre la traza HHZ. Colores de pick configurables con `pColor`/`sColor` en `csntvp.d` (defaults rojo/negro) y desde el menú *Colours* ("P picks"/"S picks"). En HOLD, las teclas `p`/`S` eligen la fase a picar y el clic izquierdo la coloca. Lógica pura testeable headless en `csntvp_util.{h,c}` (`make test`). **Port Qt en `csntvpQT/`** (sustituye al GTK en `startstop_unix.d`, ver más abajo).
   - `csnstaevdisp/`: visor de estaciones y eventos (mapa equirectangular, triángulos de estación coloreados por elevación, círculos de sismo escalados por magnitud). Usa la BD hipocentral (historial) y `HYPO_RING` (en vivo). Mismo contrato de mapa base que `csnrv` (`MapImageFile`: equirectangular 2:1 de mundo completo, sin alpha) y misma **capa de líneas** (`OverlayFile`/`OverlayColor`/`OverlayWidth`/`OverlayHide`, ver `common/tools/OVERLAYS.md`); test headless `make test-config`.
   - `csnstaevdispQT/`: **port Qt6 de `csnstaevdisp`** (paridad completa: triángulos por
     elevación, círculos por magnitud, leyenda, `Export view...`, `Dark mode`, `Events number`,
@@ -233,18 +233,16 @@ hace **`csnloc`** localmente.
     (`BIN=csnstaevdispQT`), y `test_ui` valida `--dump`/`--layout`/`--shot`/`--interact` offscreen
     (5 estaciones, 3 sismos y 2 capas de fixture, mínimo ≤ 700×800, zoom ×1.2 anclado, arrastre y
     que un snapshot nuevo no mueva la vista).
-  - `csntvpQT/`: **port Qt6 de `csntvp`** (prototipo en etapa 1: convive con el GTK en
-    `startstop_unix.d` y se depura en paralelo). Visor de trazas en vivo (`SLINK_RING`,
+  - `csntvpQT/`: **port Qt6 de `csntvp`** (sustituye al GTK en `startstop_unix.d`: el `Process`
+    viejo se retiró y su `.d` se conserva como referencia). Visor de trazas en vivo (`SLINK_RING`,
     `TYPE_TRACEBUF2`) con HOLD y picado manual P/S **armado con `p`/`s`** (por defecto **ninguna**
     fase: el clic no pica; `Esc` cancela y soltar HOLD también desarma, y el modo es **persistente**
     hasta entonces, no de un solo tiro) y **`.d` propio** `csntvpqt.d`
     (`MOD_CSNTVPQT` **175**): el eco de una picada se deduplica por `(mod,inst,seq)`
     (`csntvp_data.c:371-381`), así que compartir id haría que el port pisara los slots locales del
     GTK (y al revés); ver la trampa en §7. El `.d` es copia del GTK y **sólo** puede diferir en
-    `MyModuleId`, `zColor`, `nColor`, `eColor` (lo gatea `tests/test_integration.sh`). Añade la
-    **coloración por componente** (`zColor`/`nColor`/`eColor`; sin declarar heredan de
-    `waveformsColor`, y con el `stations_to_view.sta` actual —141 filas todas `HHZ`— sólo se ve al
-    añadir horizontales). Reparto `c/` (C puro: `tvq_config`, `tvq_sta`, `tvq_trace`, `tvq_env`,
+    `MyModuleId` (lo gatea `tests/test_integration.sh`). La traza usa siempre `waveformsColor`:
+    `Z`/`N`/`E` no tienen color propio (paridad GTK). Reparto `c/` (C puro: `tvq_config`, `tvq_sta`, `tvq_trace`, `tvq_env`,
     `tvq_pick`, `tvq_emit`, `tvq_ring`, `tvq_purge`, `tvq_paint`, `tvq_axis`, `tvq_core`,
     `tvq_logit`) + `c/tvq_capi.h` como **única** frontera C→C++ + `ui/` (sólo `<Qt…>`,
     `ewguiqt/*` y `tvq_capi.h`). **cairo vive sólo en `c/`** (trazas y eje → BGRA) y el parser de
@@ -752,8 +750,8 @@ primero al store algo que ya no está).
   `MyModuleId` (p. ej. el GTK y el port Qt corriendo ambos con `MOD_CSNTVP`) harían que una picada
   del port con `seq=7` sobrescribiera en la ventana GTK una picada local con `seq=7` de **otra**
   estación y otro tiempo (no corrompe el anillo: corrompe la vista). Por eso `csntvpQT` usa
-  `MOD_CSNTVPQT` **175** y `.d` propio (`csntvpqt.d`), y el `Process` del GTK sigue apuntando a
-  `csntvp.d`. No hay ningún chequeo de id duplicado entre procesos vivos
+  `MOD_CSNTVPQT` **175** y `.d` propio (`csntvpqt.d`); el `.d` del GTK se conserva como referencia
+  aunque su `Process` ya no está. No hay ningún chequeo de id duplicado entre procesos vivos
   (`docs/testLibQT.md:650-651`): la separación la garantiza el `.d` y la gatea
   `csntvpQT/tests/test_integration.sh` (whitelist de claves y `.base` con el id 175).
 - **GTK4 en WSLg: backend y ventanas**: `ew8_gtk_env.sh` (fuente única) fija `GSK_RENDERER=cairo`

@@ -1,6 +1,6 @@
 #!/bin/bash
-# Integracion en EarthWorm: identidad propia, .d propio y convivencia con el
-# GTK mientras dure la etapa 1.
+# Integracion en EarthWorm: identidad propia, .d propio y sustitucion del GTK
+# en startstop_unix.d (etapa 2).
 #
 # OJO: `earthworm.d` es GENERADO (ignorado por git) a partir de
 # `earthworm.d.base`; este test solo exige el .base (versionado) y avisa si el
@@ -64,27 +64,27 @@ norm() {
     sed -e 's/#.*//' "$1" \
         | sed -e 's/[[:space:]]*$//' -e 's/^[[:space:]]*//' \
         | grep -v '^$' \
-        | grep -vE '^(MyModuleId|zColor|nColor|eColor)([[:space:]]|$)'
+        | grep -vE '^(MyModuleId)([[:space:]]|$)'
 }
 if [ -f "$QTD" ] && [ -f "$GTKD" ]; then
     if diff -q <(norm "$GTKD") <(norm "$QTD") >/dev/null; then
-        ok "csntvpqt.d = csntvp.d + MyModuleId/zColor/nColor/eColor"
+        ok "csntvpqt.d = csntvp.d + MyModuleId"
     else
         bad "csntvpqt.d difiere del GTK en claves no declaradas"
         diff <(norm "$GTKD") <(norm "$QTD") | head -20
     fi
 fi
 
-# --- 3. Process: convivencia (etapa 1) ------------------------------------
+# --- 3. Process: el port sustituye al GTK (etapa 2) -----------------------
 if grep -qE '^[[:space:]]*Process[[:space:]]+"csntvpQT[[:space:]]+csntvpqt\.d"' "$STARTSTOP"; then
     ok 'Process "csntvpQT csntvpqt.d" declarado'
 else
     bad "falta el Process de csntvpQT en startstop_unix.d"
 fi
 if grep -qE '^[[:space:]]*Process[[:space:]]+"csntvp[[:space:]]+csntvp\.d"' "$STARTSTOP"; then
-    ok 'Process "csntvp csntvp.d" sigue activo (etapa 1 en paralelo)'
+    bad "el Process del GTK sigue en startstop_unix.d (debe quedar solo el port)"
 else
-    bad "el Process del GTK desaparecio (etapa 1 debe ser en paralelo)"
+    ok "el GTK ya no se lanza (solo csntvpQT)"
 fi
 if grep -qE '^[[:space:]]*Process[[:space:]]+"csntvpQT' "$STARTSTOP" \
         && ! grep -q 'csntvpqt\.d' "$STARTSTOP"; then

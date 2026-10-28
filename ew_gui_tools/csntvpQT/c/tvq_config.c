@@ -4,9 +4,7 @@
  * silencio, que es lo que permite que csntvpqt.d y csntvp.d compartan formato.
  *
  * Cambios deliberados respecto al GTK:
- *   - el error de clave obligatoria FALTANTE nombra las que faltan;
- *   - zColor/nColor/eColor (solo port Qt) resuelven a waveformsColor cuando no
- *     se declaran, asi el --print-config coincide con el GTK por defecto.
+ *   - el error de clave obligatoria FALTANTE nombra las que faltan.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,7 +88,6 @@ TvqConfig *tvq_config_load(const char *path, char *err, size_t errlen)
 {
     TvqConfig *c;
     int have[6] = { 0, 0, 0, 0, 0, 0 };
-    int have_z = 0, have_n = 0, have_e = 0;
     char *com, *str;
 
     if (err && errlen)
@@ -159,15 +156,6 @@ TvqConfig *tvq_config_load(const char *path, char *err, size_t errlen)
             (void)parse_colour(k_str(), c->colour[TVQ_COLOUR_P], "pColor");
         } else if (k_its("sColor")) {
             (void)parse_colour(k_str(), c->colour[TVQ_COLOUR_S], "sColor");
-        } else if (k_its("zColor")) {
-            if (parse_colour(k_str(), c->colour[TVQ_COLOUR_Z], "zColor") == 0)
-                have_z = 1;
-        } else if (k_its("nColor")) {
-            if (parse_colour(k_str(), c->colour[TVQ_COLOUR_N], "nColor") == 0)
-                have_n = 1;
-        } else if (k_its("eColor")) {
-            if (parse_colour(k_str(), c->colour[TVQ_COLOUR_E], "eColor") == 0)
-                have_e = 1;
         } else if (k_its("StationsPerScreen")) {
             str = k_str();
             if (str) {
@@ -224,15 +212,6 @@ TvqConfig *tvq_config_load(const char *path, char *err, size_t errlen)
         return NULL;
     }
 
-    /* z/n/e sin declarar heredan de waveformsColor (asi el --print-config
-     * coincide con el GTK cuando el .d no las trae). */
-    if (!have_z)
-        memcpy(c->colour[TVQ_COLOUR_Z], c->colour[TVQ_COLOUR_WAVE], sizeof(double) * 3);
-    if (!have_n)
-        memcpy(c->colour[TVQ_COLOUR_N], c->colour[TVQ_COLOUR_WAVE], sizeof(double) * 3);
-    if (!have_e)
-        memcpy(c->colour[TVQ_COLOUR_E], c->colour[TVQ_COLOUR_WAVE], sizeof(double) * 3);
-
     /* Identidad: el nombre debe existir en earthworm.d. Si no, el modulo no
      * puede publicar picadas ni latir con su logo; main lo reporta al arrancar
      * (y open_rings lo rechaza con la receta). */
@@ -273,7 +252,7 @@ static void colour_hex(const double rgb[3], char out[9])
 
 void tvq_print_config(const TvqConfig *cfg, FILE *out)
 {
-    char w[9], bg[9], fo[9], sp[9], p[9], s[9], z[9], n[9], e[9];
+    char w[9], bg[9], fo[9], sp[9], p[9], s[9];
 
     if (!cfg || !out)
         return;
@@ -284,9 +263,6 @@ void tvq_print_config(const TvqConfig *cfg, FILE *out)
     colour_hex(cfg->colour[TVQ_COLOUR_SEP], sp);
     colour_hex(cfg->colour[TVQ_COLOUR_P], p);
     colour_hex(cfg->colour[TVQ_COLOUR_S], s);
-    colour_hex(cfg->colour[TVQ_COLOUR_Z], z);
-    colour_hex(cfg->colour[TVQ_COLOUR_N], n);
-    colour_hex(cfg->colour[TVQ_COLOUR_E], e);
 
     fprintf(out, "module=%s\n", cfg->my_module);
     if (cfg->module_id >= 0)
@@ -307,7 +283,4 @@ void tvq_print_config(const TvqConfig *cfg, FILE *out)
     fprintf(out, "color_sep=%s\n", sp);
     fprintf(out, "color_p=%s\n", p);
     fprintf(out, "color_s=%s\n", s);
-    fprintf(out, "color_z=%s\n", z);
-    fprintf(out, "color_n=%s\n", n);
-    fprintf(out, "color_e=%s\n", e);
 }

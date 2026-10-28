@@ -1,5 +1,5 @@
-/* Render: BGRA no vacio, panel dibujado, eje con texto y un color por
- * componente (Z/N/E). */
+/* Render: BGRA no vacio, panel dibujado, eje con texto y waveformsColor
+ * mandando sobre las tres pistas (Z, N y E sin color propio). */
 #include <string.h>
 
 #include "tvq_test.h"
@@ -30,6 +30,27 @@ static int count_near(const unsigned char *buf, int w, int h, int r, int g, int 
     return n;
 }
 
+/* Pixeles del color pedido dentro de un rectangulo (area de trazas). */
+static int count_near_rect(const unsigned char *buf, int w, int x0, int x1,
+                           int y0, int y1, int r, int g, int b)
+{
+    int n = 0;
+
+    for (int y = y0; y < y1; y++) {
+        for (int x = x0; x < x1; x++) {
+            const unsigned char *p =
+                buf + ((size_t)y * (size_t)w + (size_t)x) * 4;
+
+            if (p[3] < 200)
+                continue;
+            if (abs((int)p[2] - r) <= 40 && abs((int)p[1] - g) <= 40 &&
+                abs((int)p[0] - b) <= 40)
+                n++;
+        }
+    }
+    return n;
+}
+
 int main(void)
 {
     TvqConfig *cfg = tvq_t_cfg(
@@ -41,9 +62,6 @@ int main(void)
 
     cfg->stations_per_screen = 3;
     cfg->time_window_min = 1;
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_Z], 1.0, 0.0, 0.0);   /* rojo  */
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_N], 0.0, 1.0, 0.0);   /* verde */
-    tvq_t_colour(cfg->colour[TVQ_COLOUR_E], 0.0, 0.0, 1.0);   /* azul  */
 
     c = tvq_core_new(cfg, err, sizeof err);
     T_CHECK(c && tvq_core_load_stations(c, err, sizeof err) == 0,
@@ -68,15 +86,31 @@ int main(void)
     T_CHECK(count_near(buf, W, H, 255, 255, 255) > 100,
             "fondo de trazas dibujado (blanco)");
 
-    /* --- un color por componente ----------------------------------------- */
+    /* --- waveformsColor manda sobre las 3 pistas ------------------------- */
     {
-        const int red = count_near(buf, W, H, 255, 0, 0);
-        const int green = count_near(buf, W, H, 0, 255, 0);
-        const int blue = count_near(buf, W, H, 0, 0, 255);
+        const int th = H / 3;
+        int z, n, e;
+        double red[3] = { 1.0, 0.0, 0.0 };
+        double blue[3] = { 0.0, 0.0, 1.0 };
 
-        T_CHECK(red > 0, "componente Z en su color");
-        T_CHECK(green > 0, "componente N en su color");
-        T_CHECK(blue > 0, "componente E en su color");
+        tvq_core_set_colour(c, TVQ_COLOUR_WAVE, red);
+        paint(c, buf, W, H);
+        z = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, 0, th, 255, 0, 0);
+        n = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, th, 2 * th, 255, 0, 0);
+        e = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, 2 * th, H, 255, 0, 0);
+        T_CHECK(z > 0 && n > 0 && e > 0,
+                "las 3 pistas (Z, N y E) usan waveformsColor");
+        T_CHECK(count_near(buf, W, H, 0, 255, 0) == 0 &&
+                    count_near(buf, W, H, 0, 0, 255) == 0,
+                "el canal no cambia el color de la pista");
+
+        tvq_core_set_colour(c, TVQ_COLOUR_WAVE, blue);
+        paint(c, buf, W, H);
+        z = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, 0, th, 0, 0, 255);
+        n = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, th, 2 * th, 0, 0, 255);
+        e = count_near_rect(buf, W, TVQ_PANEL_WIDTH, W, 2 * th, H, 0, 0, 255);
+        T_CHECK(z > 0 && n > 0 && e > 0,
+                "cambiar waveformsColor recolorea las 3 pistas");
     }
 
     /* --- scroll: pintar otra franja no revienta -------------------------- */
