@@ -44,4 +44,8 @@ int csnhypodbp_locator_resolve(const CsnhypodbpLocator *l,
  * del anillo y, offline, hay que ponerlo desde el localizador elegido. */
 int csnhypodbp_locator_mod(const CsnhypodbpLocator *l);
 
+/* 1 si `mod` es el de un localizador declarado con live_usage=1. Solo esos
+ * escriben en HYPO_RING_REF y conservan el historial de iteraciones. */
+int csnhypodbp_locator_is_live_mod(const CsnhypodbpLocator *list, int n, int mod);
+
 #endif /* CSNHYPODBP_LOCATOR_H */

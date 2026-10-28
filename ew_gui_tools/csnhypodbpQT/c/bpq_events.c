@@ -186,8 +186,11 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
 {
     int idx[BPQ_MAX_GROUPS];
     int nmatch, gi, j, found = -1;
+    int history;
 
     if (!e || !sol) return -1;
+    history = csnhypodbp_locator_is_live_mod(e->cfg.locators, e->cfg.n_locators,
+                                             sol->mod);
 
     /* 1) ¿A que grupo pertenece? Mismo qid o firma compatible. */
     nmatch = csnhypodbp_group_matches(e->keys, e->ngroups, sol->qid,
@@ -205,15 +208,16 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
         e->groups[gi].owner = e;
     }
 
-    /* 2) Deduplicar por (qid, mod, confirmed): la version mas alta manda y la
-       fila se reemplaza en sitio. Antes era por version, asi que cada
-       refinamiento dejaba una fila mas en Origins; ahora una correccion v2 de
-       csnloc (o un refinamiento de hyp2000) se ve como UNA sola solucion.
-       El snapshot confirmado convive con la fila viva. */
+    /* 2) Deduplicar con la clave compartida con el GTK
+       (csnhypodbp_sol_same_row): (qid, mod, confirmed) y, si el mod es de un
+       localizador con live_usage=1 o la fila es un snapshot confirmado, tambien
+       la version. Asi el refinador vivo conserva TODAS sus iteraciones en
+       Origins, mientras que la fila viva del asociador sigue colapsando a la
+       version vigente. Un re-feed de la misma version actualiza en sitio. */
     for (j = 0; j < e->groups[gi].nsols; j++) {
         const CsnhypodbpSolution *s = &e->groups[gi].sols[j];
-        if (s->qid == sol->qid && s->mod == sol->mod &&
-            s->confirmed == sol->confirmed) {
+        if (csnhypodbp_sol_same_row(s->qid, s->mod, s->confirmed,
+                                    s->version, sol, history)) {
             found = j;
             break;
         }

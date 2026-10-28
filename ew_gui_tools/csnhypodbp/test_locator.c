@@ -44,6 +44,16 @@ int main(void)
         assert(strcmp(c, "/abs/cfg.d") == 0);
     }
 
+    /* live_usage: solo hyp2000_ring conserva el historial de iteraciones. */
+    list[0].live_usage = 0;   /* csnloc */
+    list[1].live_usage = 0;   /* nlloc_ring */
+    list[2].live_usage = 1;   /* hyp2000_ring */
+    assert(csnhypodbp_locator_is_live_mod(list, n, 163) == 1);
+    assert(csnhypodbp_locator_is_live_mod(list, n, 162) == 0);
+    assert(csnhypodbp_locator_is_live_mod(list, n, 164) == 0);
+    assert(csnhypodbp_locator_is_live_mod(list, n, 0) == 0);
+    assert(csnhypodbp_locator_is_live_mod(NULL, 0, 163) == 0);
+
     printf("test_locator OK\n");
     return 0;
 }

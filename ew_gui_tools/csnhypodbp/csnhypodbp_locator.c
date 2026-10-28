@@ -133,3 +133,15 @@ int csnhypodbp_locator_mod(const CsnhypodbpLocator *l)
     if (strcmp(b, "nlloc_ring") == 0) return 164;
     return 0;
 }
+
+int csnhypodbp_locator_is_live_mod(const CsnhypodbpLocator *list, int n, int mod)
+{
+    int i;
+
+    if (!list || n <= 0 || mod <= 0)
+        return 0;
+    for (i = 0; i < n; i++)
+        if (list[i].live_usage && csnhypodbp_locator_mod(&list[i]) == mod)
+            return 1;
+    return 0;
+}

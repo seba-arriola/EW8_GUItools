@@ -36,7 +36,9 @@ hace **`csnloc`** localmente.
     confirmado en `ConfRing` (`HYPO_RING_REF2`) y `hypodb_ingest` (`InRingConf`) lo guarda como
     **fila `origin` propia e inmutable** con `origin_id = <event>:<mod>:<version>`
     (`ewgui_origin_id_build/parse`); la confirmación más reciente pasa a `preferred_origin_id` y las
-    anteriores quedan como orígenes manuales históricos.
+    anteriores quedan como orígenes manuales históricos. Las iteraciones de los localizadores con
+    `live_usage=1` se guardan como `<event>:<mod>:<version>:I` (una por pasada válida, con sus
+    picadas); el marcador `I` las distingue de una confirmación.
     Las **magnitudes** (`csnmags`, por `qid`) se guardan a nivel de evento y se proyectan a todas
     las soluciones, así la maestra las muestra siempre; para eventos solo-csnloc corre una 2.ª
     instancia `csnmags csnmags_raw.d` sobre `HYPO_RING` (`MOD_MAGNITUDES_RAW`).
@@ -448,7 +450,9 @@ la red chilena es lineal y los sismos offshore tienen gap 300-350) filtran el ga
 se **retiene** hasta que la solución es publicable (`MinEmitPhases` 5, `MaxRMS`, `MaxGapDeg`), de
 modo que la primera solución publicada es la buena; si ya se publicó y llega un candidato con
 `EmitImproveMinPicks` fases más, se emite una corrección con el **mismo `qid`** (único caso en que
-versiona) y las GUIs muestran una sola fila por `(qid, mod)`, la de versión más alta. Un candidato
+versiona) y las GUIs muestran una sola fila por `(qid, mod)` para el asociador (`live_usage=0`), la de
+versión más alta. Los refinadores con `live_usage=1` conservan **todas** sus iteraciones: una fila
+`<event>:<mod>:<version>:I` por pasada válida. Un candidato
 fuera de ambos criterios crea un evento nuevo (se loguea `overlap`).
 La tabla de localizadores vive únicamente en `csnhypodbpqt.d` (columnas `binario`, `config`,
 `live_usage`, `time_recalc_live`, `N_retry`); no hay `ModuleLabel`. Los locators con

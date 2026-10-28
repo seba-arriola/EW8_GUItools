@@ -6,6 +6,7 @@
  *  C10 mismo qid siempre agrupa
  *  C11 seleccion de la solucion preferida
  *  C12 solape sin subconjunto (regresion "sismo repetido")
+ *  C13 clave de fila de Origins (historial de iteraciones de un refinador vivo)
  */
 #include <stdio.h>
 #include <string.h>
@@ -176,6 +177,38 @@ int main(void)
         s[4].otime = 430.0; s[4].created = 50010.0;
         CHECK(csnhypodbp_preferred_index(s, 5) == 4,
               "C11b: empate de created -> mayor version");
+    }
+
+    /* --- C13: clave de fila de Origins (historial de iteraciones) --- */
+    {
+        CsnhypodbpSolution s;
+
+        memset(&s, 0, sizeof(s));
+        s.qid = 500;
+        s.mod = 162;
+        s.version = 2;
+        s.confirmed = 0;
+        CHECK(csnhypodbp_sol_same_row(500, 162, 0, 1, &s, 0) == 1,
+              "C13: fila viva del asociador colapsa (v1 -> v2)");
+        CHECK(csnhypodbp_sol_same_row(500, 162, 0, 2, &s, 0) == 1,
+              "C13: fila viva, misma version");
+        CHECK(csnhypodbp_sol_same_row(500, 162, 1, 2, &s, 0) == 0,
+              "C13: confirmada != fila viva");
+
+        s.mod = 163;
+        s.version = 6;
+        CHECK(csnhypodbp_sol_same_row(500, 163, 0, 5, &s, 0) == 1,
+              "C13: sin history, el refinador tambien colapsa");
+        CHECK(csnhypodbp_sol_same_row(500, 163, 0, 5, &s, 1) == 0,
+              "C13: con history, cada version es una fila");
+        CHECK(csnhypodbp_sol_same_row(500, 163, 0, 6, &s, 1) == 1,
+              "C13: con history, la misma version es la misma fila");
+
+        s.confirmed = 1;
+        CHECK(csnhypodbp_sol_same_row(500, 163, 1, 5, &s, 0) == 0,
+              "C13: confirmada de otra version es otra fila");
+        CHECK(csnhypodbp_sol_same_row(500, 163, 1, 6, &s, 0) == 1,
+              "C13: confirmada, misma version");
     }
 
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }

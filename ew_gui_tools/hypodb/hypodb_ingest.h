@@ -23,8 +23,13 @@ void hypodb_state_set_db(HypodbState *st, EwGuiDb *db);
 int hypodb_assign_event(HypodbState *st, const CsnhypodbpSolution *sol,
                         char *event_id_out, size_t n);
 
-/* Procesa un TYPE_HYP2000ARC (mod = 162/163/164) y lo escribe en la BD. */
-int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod);
+/* Procesa un TYPE_HYP2000ARC (mod = 162/163/164) y lo escribe en la BD.
+ * `history=1` para los ARC de HYPO_RING_REF: esos los publica un localizador
+ * con live_usage=1 y cada version valida es una fila propia
+ * (`<event>:<mod>:<version>:I`); `history=0` mantiene una sola fila viva por
+ * (evento, mod), como el asociador csnloc. */
+int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod,
+                    int history);
 
 /* ARC de una CONFIRMACION manual (anillo de confirmaciones de la GUI). Crea una
  * fila `origin` propia e inmutable (`<event>:<mod>:<version>`) y recalcula la

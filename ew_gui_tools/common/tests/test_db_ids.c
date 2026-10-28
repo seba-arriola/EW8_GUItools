@@ -1,6 +1,7 @@
 /*
- * Test headless del formato de `origin_id` (AC1): fila viva "<event>:<mod>" y
- * confirmacion manual "<event>:<mod>:<version>".
+ * Test headless del formato de `origin_id` (AC1): fila viva "<event>:<mod>",
+ * confirmacion manual "<event>:<mod>:<version>" e iteracion de un refinador
+ * vivo "<event>:<mod>:<version>:I".
  */
 
 #include <stdio.h>
@@ -57,6 +58,33 @@ int main(void)
     CHECK(ewgui_origin_id_build(buf, sizeof buf, EID, 164, 9999) == 0 &&
           ewgui_origin_id_parse(buf, eid, sizeof eid, &mod, &version, &confirmed) == 0 &&
           mod == 164 && version == 9999 && confirmed == 1, "round-trip version 9999");
+
+    /* --- iteracion de un refinador vivo: 4.º campo "I" --- */
+    CHECK(ewgui_origin_id_build_iter(buf, sizeof buf, EID, 163, 5) == 0,
+          "build iteracion");
+    CHECK(strcmp(buf, "E1234567890-20261020120000:163:5:I") == 0,
+          "build iteracion (texto)");
+    mod = confirmed = -1;
+    version = 99;
+    CHECK(ewgui_origin_id_parse(buf, eid, sizeof eid, &mod, &version, &confirmed) == 0,
+          "parse iteracion");
+    CHECK(strcmp(eid, EID) == 0, "parse iteracion (event_id)");
+    CHECK(mod == 163, "parse iteracion (mod)");
+    CHECK(version == 5, "parse iteracion (version)");
+    CHECK(confirmed == 0, "parse iteracion (confirmed 0)");
+    CHECK(ewgui_origin_id_build_iter(buf, sizeof buf, EID, 163, 0) == -1,
+          "build iteracion rechaza version 0");
+    CHECK(ewgui_origin_id_build_iter(buf, sizeof buf, EID, 163, 10000) == -1,
+          "build iteracion rechaza version > 9999");
+    CHECK(ewgui_origin_id_build_iter(buf, 8, EID, 163, 5) == -1,
+          "build iteracion rechaza buffer corto");
+    CHECK(ewgui_origin_id_parse("E1:163:5:X", NULL, 0, &mod, &version,
+                                &confirmed) == -1,
+          "parse rechaza marcador distinto de I");
+    CHECK(ewgui_origin_id_parse("E1:163:5:I:1", NULL, 0, &mod, &version,
+                                &confirmed) == -1, "parse rechaza quinto campo");
+    CHECK(ewgui_origin_id_parse("E1:163:5:", NULL, 0, &mod, &version,
+                                &confirmed) == -1, "parse rechaza ':I' vacio");
 
     /* cero a la izquierda: el ARC escribe %04u */
     CHECK(ewgui_origin_id_parse("E1-20300101000000:162:0007", eid, sizeof eid,

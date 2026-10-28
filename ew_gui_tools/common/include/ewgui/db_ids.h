@@ -15,6 +15,7 @@
  *   event_id             E<qid>[-<yyyymmddhhmmss>]     (hora UTC)
  *   origin_id            <event_id>:<mod>              (fila viva del pipeline)
  *                        <event_id>:<mod>:<version>    (confirmacion manual)
+ *                        <event_id>:<mod>:<version>:I  (iteracion de un refinador vivo)
  *   magnitude_id         <origin_id>/mag/<TIPO>
  *   station_magnitude_id <magnitude_id>/<NSLCO>
  *   pick_id              <origin_id>/pick/<STA>.<FASE>
@@ -23,6 +24,10 @@
  * solucion CONFIRMADA a mano: cada confirmacion es una fila `origin` propia e
  * inmutable, y `preferred_origin_id` apunta a la confirmada mas reciente. Las
  * filas sin sufijo son las que el pipeline sigue actualizando (csnloc/163/164).
+ * El sufijo `:<version>:I` marca una ITERACION publicada por un localizador con
+ * `live_usage=1`: cada pasada valida es una fila propia, para conservar el
+ * historial de soluciones; el `I` la distingue de una confirmacion (que nunca lo
+ * lleva) y evita que un Confirm pise la iteracion de la misma version.
  *
  * Todas devuelven 0 si OK y -1 si el id no cabe en `n` (nunca truncado en
  * silencio: los ids son claves primarias).
@@ -32,8 +37,12 @@ int ewgui_origin_id(char *out, size_t n, const char *event_id, int mod);
 /* version 0 -> "<event>:<mod>"; 1..9999 -> "<event>:<mod>:<version>" */
 int ewgui_origin_id_build(char *out, size_t n, const char *event_id, int mod,
                           unsigned version);
-/* rc 0 si el id es valido; confirmed=1 si trae los 3 campos. Los punteros de
- * salida pueden ser NULL. */
+/* Iteracion de un refinador vivo: "<event>:<mod>:<version>:I" (version 1..9999). */
+int ewgui_origin_id_build_iter(char *out, size_t n, const char *event_id,
+                               int mod, unsigned version);
+/* rc 0 si el id es valido; confirmed=1 si trae 3 campos (snapshot) y 0 si trae
+ * 2 (fila viva) o 4 con el marcador "I" (iteracion). Los punteros de salida
+ * pueden ser NULL. */
 int ewgui_origin_id_parse(const char *id, char *event_id, size_t n,
                           int *mod, unsigned *version, int *confirmed);
 int ewgui_magnitude_id(char *out, size_t n, const char *origin_id,

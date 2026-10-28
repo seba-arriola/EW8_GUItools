@@ -26,12 +26,12 @@
 #define MAX_PER_RING 1000
 
 static void dispatch(HypodbState *st, const MSG_LOGO *logo, unsigned char t_arc,
-                     unsigned char t_mag, int default_mod, const char *buf,
-                     long size)
+                     unsigned char t_mag, int default_mod, int history,
+                     const char *buf, long size)
 {
     if (logo->type == t_arc) {
         int mod = logo->mod ? (int)logo->mod : default_mod;
-        hypodb_feed_arc(st, buf, (size_t)size, mod);
+        hypodb_feed_arc(st, buf, (size_t)size, mod, history);
     } else if (logo->type == t_mag) {
         hypodb_feed_mag(st, buf, (size_t)size);
     }
@@ -206,8 +206,13 @@ int main(int argc, char **argv)
                     int mod = logo.mod ? (int)logo.mod : 158;
                     hypodb_feed_confirmed(st, buf, (size_t)size, mod);
                 } else {
-                    dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163, buf,
-                             size);
+                    /* InRingRef (i == 1) solo lo escriben los localizadores con
+                       live_usage=1: cada pasada valida se conserva como fila
+                       propia. InRing (i == 0) es csnloc y mantiene una fila viva
+                       por (evento, mod). */
+                    int history = (i == 1);
+                    dispatch(st, &logo, t_arc, t_mag, i == 0 ? 162 : 163,
+                             history, buf, size);
                 }
                 any = 1;
                 n++;

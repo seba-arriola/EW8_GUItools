@@ -1,4 +1,5 @@
 #include "csnhypodbp.h"
+#include "csnhypodbp_locator.h"
 #include "csnhypodbp_magchan.h"
 #include "csnhypodbp_sds.h"
 #include "wstore.h"
@@ -708,8 +709,10 @@ static int cargar_grupos_db(const char *const *ids, int nev)
             CsnhypodbpRow *row;
             EventSol *es;
 
-            /* `origin_id` = "<event>:<mod>" (fila viva) o "<event>:<mod>:<version>"
-               (snapshot confirmado a mano). De ahi salen el mod y la version. */
+            /* `origin_id` = "<event>:<mod>" (fila viva de csnloc),
+               "<event>:<mod>:<version>:I" (iteracion de un refinador vivo) o
+               "<event>:<mod>:<version>" (snapshot confirmado a mano). De ahi
+               salen el mod y la version. */
             if (ewgui_origin_id_parse(ors[j].origin_id, eid, sizeof eid, &mod,
                                       &version, &confirmed) != 0) {
                 mod = 0;
@@ -737,8 +740,9 @@ static int cargar_grupos_db(const char *const *ids, int nev)
                      ors[j].station_count < 0 ? 0 : ors[j].station_count);
             snprintf(szID, sizeof szID, "%010d", qid);
             snprintf(szMod, sizeof szMod, "%s", ModLabel(mod));
-            /* `Ver` real solo para los confirmados (el resto no guarda version). */
-            snprintf(szVer, sizeof szVer, "%u", confirmed ? version : 0u);
+            /* `Ver` sale del `origin_id`: real para confirmadas e iteraciones
+               (`<event>:<mod>:<version>[:I]`); 0 en la fila viva del asociador. */
+            snprintf(szVer, sizeof szVer, "%u", version);
 
             if (ewguidb_query_magnitudes(g_db, ors[j].origin_id, &mgs, &nm) > 0) {
                 for (k = 0; k < nm; k++) {
@@ -953,13 +957,13 @@ int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
     snprintf(szVer, sizeof(szVer), "%u", sol.version);
     szEstado[0] = sol.manual ? 'M' : 'A'; szEstado[1] = '\0';
 
-    /* Upsert de la fila de solucion, clave (qid, mod, confirmed): una version
-       nueva del MISMO modulo reemplaza la fila en sitio. Antes se deduplicaba
-       por version, asi que cada refinamiento dejaba una fila mas en Origins;
-       con esto una correccion v2 de csnloc (o un refinamiento de hyp2000) se
-       ve como UNA sola solucion, la vigente. El snapshot confirmado (byte 174
-       del ARC) sigue conviviendo con la fila viva. */
+    /* Upsert de la fila de solucion. La clave es (qid, mod, confirmed) y,
+       ADEMAS, la version cuando el mod es de un localizador con live_usage=1
+       (cada pasada del refinador es una fila propia, para conservar el
+       historial) o cuando es un snapshot confirmado. La fila viva del asociador
+       (csnloc) colapsa: una correccion v2 reemplaza la fila en sitio. */
     {
+        int history = csnhypodbp_locator_is_live_mod(g_locators, g_nlocators, mod);
         guint n = g_list_model_get_n_items(G_LIST_MODEL(g_store_hypo));
         guint i;
         for (i = 0; i < n; i++) {
@@ -967,9 +971,10 @@ int procesar_mensaje_sismo_ex(GtkWidget *tree, const char *payload, int mod,
             int rq = 0, rm = 0, rv = 0;
             int rc = r ? GPOINTER_TO_INT(g_object_get_data(G_OBJECT(r), "confirmed")) : 0;
             if (r) g_object_get(r, "qid", &rq, "mod", &rm, "qver", &rv, NULL);
-            if (r && rq == sol.qid && rm == mod && rc == confirmed) {
-                /* Misma (qid, mod, confirmed): manda la version vigente. Un
-                   re-feed desordenado del anillo no debe crear otra fila. */
+            if (r && csnhypodbp_sol_same_row(rq, rm, rc, (unsigned)rv, &sol,
+                                             history)) {
+                /* Misma fila: manda la version vigente. Un re-feed desordenado
+                   del anillo no debe crear otra fila. */
                 if ((int)sol.version < rv) {
                     g_object_unref(r);
                     return 0;

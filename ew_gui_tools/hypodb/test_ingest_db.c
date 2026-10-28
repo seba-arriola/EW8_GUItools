@@ -166,7 +166,7 @@ int main(void)
     ewguidb_exec(db, "DELETE FROM event WHERE event_id='" EID "'");
 
     build_arc(arc, 987654, 7, 1);
-    assert(hypodb_feed_arc(st, arc, strlen(arc), 162) == 0);
+    assert(hypodb_feed_arc(st, arc, strlen(arc), 162, 0) == 0);
 
     /* origin */
     {
@@ -307,7 +307,7 @@ int main(void)
         EwGuiOriginRow *ors = NULL;
         int nor = 0;
 
-        assert(hypodb_feed_arc(st, arc, strlen(arc), 163) == 0);
+        assert(hypodb_feed_arc(st, arc, strlen(arc), 163, 0) == 0);
         assert(ewguidb_query_origins(db, EID, &ors, &nor) == 2);
         assert(strcmp(ors[0].origin_id, EID ":163") == 0);
         assert(strcmp(ors[1].origin_id, EID ":162") == 0);
@@ -361,7 +361,7 @@ int main(void)
         /* Inmutabilidad: un ARC vivo posterior actualiza la fila viva, pero la
            confirmada conserva su creation_time y sigue estando. */
         build_arc(live3, 987654, 10, 1);
-        assert(hypodb_feed_arc(st, live3, strlen(live3), 162) == 0);
+        assert(hypodb_feed_arc(st, live3, strlen(live3), 162, 0) == 0);
         assert(ewguidb_query_origins(db, EID, &ors, &nor) == 4);
         {
             int seen = 0;
@@ -386,10 +386,119 @@ int main(void)
             hypodb_state_set_db(st2, db);
             assert(hypodb_load_from_db(st2) == 0);
             build_arc(arc4, 987654, 11, 1);
-            assert(hypodb_feed_arc(st2, arc4, strlen(arc4), 162) == 0);
+            assert(hypodb_feed_arc(st2, arc4, strlen(arc4), 162, 0) == 0);
             check_preferred(db, EID ":162:9", EID ":162/mag/ML");
             hypodb_state_free(st2);
         }
+    }
+
+    /* === Historial de iteraciones de un refinador vivo (live_usage=1) ===
+       Los ARC de HYPO_RING_REF llegan con history=1: cada version publicada es
+       una fila propia `<event>:<mod>:<version>:I`, con sus picadas. */
+    {
+        EwGuiOriginRow *ors = NULL;
+        char it5[8192], it8[8192], m8[8192];
+        int nor = 0;
+
+        build_arc(it8, 987654, 8, 0);
+        assert(hypodb_feed_arc(st, it8, strlen(it8), 163, 1) == 0);
+        build_arc(it5, 987654, 5, 0);
+        assert(hypodb_feed_arc(st, it5, strlen(it5), 163, 1) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 6);
+        {
+            int seen5 = 0, seen8 = 0;
+
+            for (int i = 0; i < nor; i++) {
+                if (strcmp(ors[i].origin_id, EID ":163:5:I") == 0) seen5 = 1;
+                if (strcmp(ors[i].origin_id, EID ":163:8:I") == 0) seen8 = 1;
+            }
+            assert(seen5 && seen8);
+        }
+        ewguidb_rows_free(ors);
+
+        /* Cada iteracion guarda sus propias picadas. */
+        {
+            EwGuiPickRow *pks = NULL;
+            int npk = 0;
+
+            assert(ewguidb_query_picks(db, EID ":163:8:I", &pks, &npk) == 2);
+            assert(npk == 2);
+            ewguidb_rows_free(pks);
+        }
+
+        /* Reentrega de la misma version: idempotente (no duplica la fila). */
+        assert(hypodb_feed_arc(st, it8, strlen(it8), 163, 1) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 6);
+        ewguidb_rows_free(ors);
+
+        /* Una iteracion sin version valida NO puede caer en la fila viva. */
+        {
+            char bad[8192];
+            int nbad = 0;
+
+            build_arc(bad, 987654, 0, 0);
+            /* Si se colara en la fila viva `<event>:163`, cambiaria su lat. */
+            memcpy(bad + 16, "12", 2);
+            bad[18] = 'S';
+            memcpy(bad + 19, "0000", 4);
+            assert(hypodb_feed_arc(st, bad, strlen(bad), 163, 1) != 0);
+            assert(ewguidb_query_origins(db, EID, &ors, &nbad) == 6);
+            {
+                int seen_live = 0;
+
+                for (int i = 0; i < nbad; i++)
+                    if (strcmp(ors[i].origin_id, EID ":163") == 0) {
+                        seen_live = 1;
+                        assert(fabs(ors[i].latitude + 33.75) < 0.01);
+                    }
+                assert(seen_live);
+            }
+            ewguidb_rows_free(ors);
+        }
+
+        /* Las magnitudes del mod se proyectan a TODAS sus iteraciones (asi
+           cualquier fila del historial, y el origen preferido que mira csnrv,
+           las encuentra; sin violar la FK contra `origin`). */
+        {
+            MAG_INFO mg;
+            char mbuf[2048];
+            EwGuiMagRow *mgs = NULL;
+            int nmg = 0;
+
+            memset(&mg, 0, sizeof mg);
+            snprintf(mg.qid, sizeof mg.qid, "987654");
+            mg.origin_version = 163;
+            snprintf(mg.szmagtype, sizeof mg.szmagtype, "ML");
+            mg.mag = 4.8;
+            mg.error = -1.0;
+            mg.nstations = 2;
+            snprintf(mg.algorithm, sizeof mg.algorithm, "CSNNet");
+            assert(wr_mag_scnl(&mg, mbuf, sizeof mbuf) == 0);
+            assert(hypodb_feed_mag(st, mbuf, strlen(mbuf)) == 0);
+
+            assert(ewguidb_query_magnitudes(db, EID ":163:8:I", &mgs, &nmg) == 1);
+            assert(nmg == 1 && fabs(mgs[0].magnitude_value - 4.8) < 1e-6);
+            ewguidb_rows_free(mgs);
+            assert(ewguidb_query_magnitudes(db, EID ":163:5:I", &mgs, &nmg) == 1);
+            assert(nmg == 1 && fabs(mgs[0].magnitude_value - 4.8) < 1e-6);
+            ewguidb_rows_free(mgs);
+        }
+
+        /* Confirmar la MISMA version es otra fila (snapshot sin `:I`), y la
+           iteracion original se conserva. */
+        build_arc(m8, 987654, 8, 1);
+        assert(hypodb_feed_confirmed(st, m8, strlen(m8), 163) == 0);
+        assert(ewguidb_query_origins(db, EID, &ors, &nor) == 7);
+        {
+            int seen_iter = 0, seen_conf = 0;
+
+            for (int i = 0; i < nor; i++) {
+                if (strcmp(ors[i].origin_id, EID ":163:8:I") == 0) seen_iter = 1;
+                if (strcmp(ors[i].origin_id, EID ":163:8") == 0) seen_conf = 1;
+            }
+            assert(seen_iter && seen_conf);
+        }
+        ewguidb_rows_free(ors);
     }
 
     ewguidb_exec(db, "DELETE FROM event WHERE event_id='" EID "'");

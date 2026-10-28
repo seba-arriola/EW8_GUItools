@@ -62,6 +62,20 @@ int ewgui_origin_id_build(char *out, size_t n, const char *event_id, int mod,
     return fits(written, n) ? 0 : -1;
 }
 
+int ewgui_origin_id_build_iter(char *out, size_t n, const char *event_id,
+                               int mod, unsigned version)
+{
+    int written;
+
+    if (!out || n == 0 || !event_id || !*event_id || mod <= 0)
+        return -1;
+    /* Una iteracion SIEMPRE lleva version: sin ella no seria una fila propia. */
+    if (version == 0 || version > 9999u)
+        return -1;
+    written = snprintf(out, n, "%s:%d:%u:I", event_id, mod, version);
+    return fits(written, n) ? 0 : -1;
+}
+
 int ewgui_origin_id(char *out, size_t n, const char *event_id, int mod)
 {
     return ewgui_origin_id_build(out, n, event_id, mod, 0);
@@ -75,6 +89,7 @@ int ewgui_origin_id_parse(const char *id, char *event_id, size_t n,
     size_t elen, mlen;
     long m;
     unsigned v = 0;
+    int is_iter = 0;
 
     if (mod)
         *mod = 0;
@@ -104,11 +119,26 @@ int ewgui_origin_id_parse(const char *id, char *event_id, size_t n,
         return -1;
 
     if (c2) {
-        if (strlen(c2 + 1) > 4 || !all_digits(c2 + 1))
+        const char *c3 = strchr(c2 + 1, ':');
+        char vtmp[8];
+        size_t vlen = c3 ? (size_t)(c3 - (c2 + 1)) : strlen(c2 + 1);
+
+        if (vlen == 0 || vlen > 4 || vlen >= sizeof vtmp)
             return -1;
-        v = (unsigned)strtoul(c2 + 1, NULL, 10);
+        memcpy(vtmp, c2 + 1, vlen);
+        vtmp[vlen] = '\0';
+        if (!all_digits(vtmp))
+            return -1;
+        v = (unsigned)strtoul(vtmp, NULL, 10);
         if (v == 0 || v > 9999u)
             return -1;
+        /* Cuarto campo: SOLO el marcador de iteracion "I". Una confirmacion
+           lleva 3 campos y nunca el marcador. */
+        if (c3) {
+            if (strcmp(c3 + 1, "I") != 0)
+                return -1;
+            is_iter = 1;
+        }
     }
 
     if (event_id && n) {
@@ -122,7 +152,7 @@ int ewgui_origin_id_parse(const char *id, char *event_id, size_t n,
     if (version)
         *version = v;
     if (confirmed)
-        *confirmed = c2 ? 1 : 0;
+        *confirmed = (c2 && !is_iter) ? 1 : 0;
     return 0;
 }
 

@@ -20,7 +20,10 @@ pass=0; fail=0
 ok()  { echo "PASS $1"; pass=$((pass + 1)); }
 bad() { echo "FAIL $1"; fail=$((fail + 1)); }
 
-hits="$(git -C "$ROOT" grep -n -F -e "$ROOT" 2>/dev/null || true)"
+# Solo ficheros de TEXTO: un binario de test (p. ej. `test/rebuild_arc`, que no
+# debe versionarse) lleva la ruta de build en DWARF y no es una receta ni una
+# fixture que se pueda corregir con una ruta relativa.
+hits="$(git -C "$ROOT" grep -I -n -F -e "$ROOT" 2>/dev/null || true)"
 
 if [ -z "$hits" ]; then
     ok "ningun fichero versionado cita la ruta absoluta del repo"

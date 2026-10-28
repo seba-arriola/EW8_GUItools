@@ -253,6 +253,11 @@ static void update_origin_meta(HypodbGroup *g, const char *origin_id, int mod,
         memset(om, 0, sizeof(*om));
         om->mod = mod;
     }
+    /* La meta es la guarda de la fila viva y el ancla de las magnitudes: al
+       recargar de la BD (creation_time DESC) una iteracion vieja no debe
+       robarle el sitio a la vigente. Se queda la version mas alta. */
+    if (om->origin_id[0] && version < om->version)
+        return;
     snprintf(om->origin_id, sizeof om->origin_id, "%s", origin_id);
     om->manual = manual;
     om->version = version;
@@ -413,19 +418,17 @@ int hypodb_write_station_magnitudes(HypodbState *st, const char *magnitude_id,
     return 0;
 }
 
-static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
+static int write_magnitude(HypodbState *st, const char *origin_id,
                            const char *type, double value, double error,
                            int nsta, const char *algorithm,
-                           const char *msg, size_t len)
+                           const char *msg, size_t len,
+                           char *mid_out, size_t midn)
 {
-    char origin_id[64], mid[64];
+    char mid[64];
     EwGuiMagRow m;
 
-    if (hypodb_origin_id(origin_id, sizeof origin_id, g->event_id, mod) != 0)
-        return -1;
     if (hypodb_magnitude_id(mid, sizeof mid, origin_id, type) != 0)
         return -1;
-
     if (st->db) {
         memset(&m, 0, sizeof m);
         snprintf(m.magnitude_id, sizeof m.magnitude_id, "%s", mid);
@@ -444,8 +447,62 @@ static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
             return -1;
         hypodb_write_station_magnitudes(st, mid, type, msg, len);
     }
+    if (mid_out && midn)
+        snprintf(mid_out, midn, "%s", mid);
+    return 0;
+}
 
-    update_mag_meta(g, mid, type, value);
+static int apply_magnitude(HypodbState *st, HypodbGroup *g, int mod,
+                           const char *type, double value, double error,
+                           int nsta, const char *algorithm,
+                           const char *msg, size_t len)
+{
+    EwGuiOriginRow *ors = NULL;
+    HypodbOriginMeta *om = find_origin_meta(g, mod);
+    char primary[64] = "";
+    int nor = 0;
+
+    /* La magnitud es del EVENTO+MOD, no de una iteracion concreta: se escribe
+       en todas las filas de ese mod (la viva del asociador y cada iteracion del
+       refinador) para que cualquier solucion del historial la muestre y para
+       que el origen preferido que consulta csnrv siempre la encuentre. Los
+       snapshots confirmados quedan fuera. */
+    if (st->db &&
+        ewguidb_query_origins(st->db, g->event_id, &ors, &nor) > 0) {
+        for (int i = 0; i < nor; i++) {
+            int omod = 0, oconf = 0;
+            unsigned over = 0;
+            char mid[64];
+
+            if (ewgui_origin_id_parse(ors[i].origin_id, NULL, 0, &omod, &over,
+                                      &oconf) != 0)
+                continue;
+            if (omod != mod || oconf)
+                continue;
+            if (write_magnitude(st, ors[i].origin_id, type, value, error, nsta,
+                                algorithm, msg, len, mid, sizeof mid) == 0 &&
+                !primary[0])
+                snprintf(primary, sizeof primary, "%s", mid);
+        }
+    }
+    ewguidb_rows_free(ors);
+
+    /* Grupo recien creado (sin filas que consultar) o sin BD: se ancla a la
+       meta (ultima pasada) y, si no, a la fila viva del asociador. */
+    if (!primary[0]) {
+        char origin_id[64], mid[64];
+
+        if (om && om->origin_id[0])
+            snprintf(origin_id, sizeof origin_id, "%s", om->origin_id);
+        else if (hypodb_origin_id(origin_id, sizeof origin_id, g->event_id, mod) != 0)
+            return -1;
+        if (write_magnitude(st, origin_id, type, value, error, nsta, algorithm,
+                            msg, len, mid, sizeof mid) != 0)
+            return -1;
+        snprintf(primary, sizeof primary, "%s", mid);
+    }
+
+    update_mag_meta(g, primary, type, value);
     return 0;
 }
 
@@ -570,7 +627,7 @@ static void arc_vmodel(const char *msg, size_t len, char *out, size_t n)
 
 static int write_origin(HypodbState *st, HypodbGroup *g,
                         const CsnhypodbpSolution *sol, int mod,
-                        const char *vmodel, int confirmed)
+                        const char *vmodel, int confirmed, int history)
 {
     char origin_id[64];
     EwGuiEventRow ev;
@@ -578,11 +635,26 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     EwGuiPickRow *rows;
     int nrows = 0;
 
-    /* Una confirmacion manual es un snapshot: su id lleva la version del ARC
-       ("<event>:<mod>:<version>") y nunca pisa la fila viva "<event>:<mod>". */
-    if (ewgui_origin_id_build(origin_id, sizeof origin_id, g->event_id, mod,
-                              confirmed ? sol->version : 0) != 0)
+    /* Tres tipos de fila distintos:
+       - confirmacion manual: snapshot inmutable "<event>:<mod>:<version>";
+       - iteracion de un refinador vivo (live_usage=1): "<event>:<mod>:<version>:I",
+         para conservar cada pasada en el historial;
+       - fila viva del pipeline (csnloc): "<event>:<mod>", que se actualiza.
+       El marcador `I` evita que un Confirm pise la iteracion de la misma
+       version y que el parse la confunda con un snapshot. */
+    if (history && !confirmed) {
+        /* Una iteracion SIEMPRE lleva version (1..9999): sin ella no se puede
+           construir la fila propia y, sobre todo, no debe caer en la fila viva
+           del asociador. */
+        if (sol->version == 0 || sol->version > 9999u)
+            return -1;
+        if (ewgui_origin_id_build_iter(origin_id, sizeof origin_id, g->event_id,
+                                       mod, sol->version) != 0)
+            return -1;
+    } else if (ewgui_origin_id_build(origin_id, sizeof origin_id, g->event_id,
+                                     mod, confirmed ? sol->version : 0) != 0) {
         return -1;
+    }
 
     /* event */
     memset(&ev, 0, sizeof ev);
@@ -645,8 +717,11 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     }
     free(rows);
 
-    /* La meta del grupo es la guarda de version y la asociacion de magnitudes:
-       un snapshot confirmado no participa de ninguna de las dos. */
+    /* La meta del grupo es la guarda de version (solo para la fila viva) y el
+       ancla de las magnitudes. Un snapshot confirmado no participa: sus
+       magnitudes no se guardan (el snapshot es inmutable). Una iteracion de un
+       refinador vivo SI actualiza la meta, para que las magnitudes se anclen a
+       la ultima pasada; la guarda no la usa porque `history` la salta. */
     if (!confirmed)
         update_origin_meta(g, origin_id, mod, sol->manual, sol->version,
                            sol->nph, sol->rms, sol->otime);
@@ -704,7 +779,8 @@ static void store_pending_mag(HypodbState *st, int qid, int mod,
 /* Entradas                                                                   */
 /* ------------------------------------------------------------------------- */
 
-int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
+int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod,
+                    int history)
 {
     CsnhypodbpSolution sol;
     HypodbGroup *g;
@@ -726,19 +802,26 @@ int hypodb_feed_arc(HypodbState *st, const char *msg, size_t len, int mod)
     if (!g)
         return -1;
 
-    om = find_origin_meta(g, mod);
-    if (om && sol.version <= om->version)
-        return 0;   /* versión vieja o repetida: la última manda */
+    /* La guarda de version es de la fila VIVA (csnloc): una correccion vieja
+       no debe pisar la ultima. Las iteraciones de un refinador vivo NO pasan
+       por ella: su identidad es (evento, mod, version) y el upsert es
+       idempotente, asi que una version menor (reinicio del refinador) no se
+       pierde ni borra el historial. */
+    if (!history) {
+        om = find_origin_meta(g, mod);
+        if (om && sol.version <= om->version)
+            return 0;   /* versión vieja o repetida: la última manda */
+    }
 
     if (st->db) {
         char vmodel[64];
         arc_vmodel(msg, len, vmodel, sizeof vmodel);
-        if (write_origin(st, g, &sol, mod, vmodel, 0) != 0)
+        if (write_origin(st, g, &sol, mod, vmodel, 0, history) != 0)
             return -1;
         flush_pending_mags(st, g, mod);
         if (sol.pref_mag) g->pref_mag = sol.pref_mag;
         update_preferred(st, g);
-    } else {
+    } else if (!history) {
         char origin_id[64];
         if (hypodb_origin_id(origin_id, sizeof origin_id, g->event_id, mod) == 0)
             update_origin_meta(g, origin_id, mod, sol.manual, sol.version,
@@ -786,7 +869,7 @@ int hypodb_feed_confirmed(HypodbState *st, const char *msg, size_t len, int mod)
     {
         char vmodel[64];
         arc_vmodel(msg, len, vmodel, sizeof vmodel);
-        if (write_origin(st, g, &sol, mod, vmodel, 1) != 0)
+        if (write_origin(st, g, &sol, mod, vmodel, 1, 0) != 0)
             return -1;
     }
     logit("t", "hypodb_ingest: confirmacion %s:%d:%u guardada (qid=%d, %d picks)\n",
@@ -825,8 +908,13 @@ int hypodb_feed_mag(HypodbState *st, const char *msg, size_t len)
 
     g = find_group_by_qid(st, qid);
     if (g && find_origin_meta(g, mod)) {
-        apply_magnitude(st, g, mod, type, mag.mag, mag.error, mag.nstations,
-                        mag.algorithm, msg, len);
+        if (apply_magnitude(st, g, mod, type, mag.mag, mag.error, mag.nstations,
+                            mag.algorithm, msg, len) != 0) {
+            const char *err = st->db ? ewguidb_last_error(st->db) : NULL;
+
+            logit("e", "hypodb_ingest: magnitud no aplicada (qid=%d mod=%d tipo=%s): %s\n",
+                  qid, mod, type, (err && err[0]) ? err : "sin detalle");
+        }
         if (st->db)
             update_preferred(st, g);
     } else {
@@ -911,21 +999,26 @@ int hypodb_load_from_db(HypodbState *st)
                 EwGuiPickRow *pks = NULL;
                 int npk = 0;
 
-                /* El id puede ser "<event>:<mod>" (viva) o
-                   "<event>:<mod>:<version>" (confirmada): `strrchr(':')` daria
-                   la version como mod. */
+                /* El id puede ser "<event>:<mod>" (viva de csnloc),
+                   "<event>:<mod>:<version>:I" (iteracion de un refinador vivo)
+                   o "<event>:<mod>:<version>" (confirmada): `strrchr(':')` daria
+                   la version (o el marcador) como mod. */
                 if (ewgui_origin_id_parse(ors[j].origin_id, NULL, 0, &mod,
                                           &version, &confirmed) != 0) {
                     mod = 0;
                     version = 0;
                     confirmed = 0;
                 }
-                update_origin_meta(g, ors[j].origin_id, mod,
-                                   strcmp(ors[j].status, "REVIEWED") == 0,
-                                   confirmed ? 0u : version,
-                                   ors[j].station_count,
-                                   isnan(ors[j].standard_error)
-                                       ? 9999.0 : ors[j].standard_error, 0.0);
+                /* La meta es la guarda/ancla de las filas del PIPELINE: un
+                   snapshot confirmado no participa (si no, le robaria el ancla
+                   de magnitudes a la ultima iteracion). */
+                if (!confirmed)
+                    update_origin_meta(g, ors[j].origin_id, mod,
+                                       strcmp(ors[j].status, "REVIEWED") == 0,
+                                       version, ors[j].station_count,
+                                       isnan(ors[j].standard_error)
+                                           ? 9999.0 : ors[j].standard_error,
+                                       0.0);
                 if (!(g->otime > 0.0))
                     g->otime = iso_to_epoch(ors[j].origin_time);
 

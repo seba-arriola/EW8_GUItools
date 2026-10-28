@@ -490,9 +490,10 @@ int bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,
     }
     d = (EwGuiDb *)ewdb;
 
-    /* Identidad del origin: la fila viva del pipeline (`<event>:<mod>`), que es
-     * a la que la GTK cuelga el mecanismo (las confirmadas llevan version). Se
-     * reusa el evento del sismo si ya existe. */
+    /* Identidad del origin: si la solucion viene de una fila de *Origins* (p. ej.
+     * una iteracion `<event>:<mod>:<version>:I` o una confirmada), el mecanismo
+     * se cuelga de ESA fila. Solo se crea la fila viva `<event>:<mod>` cuando es
+     * una solucion nueva (candidata del locate), igual que la GTK. */
     snprintf(qid, sizeof(qid), "%d", sol->qid);
     if (!reuse_event(d, qid, sol->otime, eid, sizeof(eid)) || eid[0] == '\0') {
         if (ewgui_event_id(eid, sizeof(eid), qid, sol->otime) != 0) {
@@ -501,7 +502,21 @@ int bpq_mww_save(BpqDb *db, const CsnhypodbpSolution *sol, int mod,
         }
     }
     {
-        const int r1 = ewgui_origin_id(oid, sizeof(oid), eid, mod);
+        int r1;
+        char oev[64] = "";
+        int omod = 0, oconf = 0;
+        unsigned over = 0;
+        int written;
+
+        if (sol->origin_id[0] &&
+            ewgui_origin_id_parse(sol->origin_id, oev, sizeof oev, &omod, &over,
+                                  &oconf) == 0 &&
+            omod == mod && strcmp(oev, eid) == 0) {
+            written = snprintf(oid, sizeof oid, "%s", sol->origin_id);
+            r1 = (written >= 0 && (size_t)written < sizeof oid) ? 0 : -1;
+        } else {
+            r1 = ewgui_origin_id(oid, sizeof(oid), eid, mod);
+        }
         const int r2 = r1 == 0 ? ewgui_magnitude_id(mid, sizeof(mid), oid, "Mww")
                                : -9;
         const int r3 = r2 == 0 ? ewgui_tensor_id(tid, sizeof(tid), oid, "WPHASE")

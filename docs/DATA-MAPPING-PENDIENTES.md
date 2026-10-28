@@ -31,9 +31,10 @@ eligió (a) pero con el `mod` real (no 158), para conservar `location_algorithm`
 
 Se eligió la opción (b): las **confirmaciones** llevan la versión en `origin_id`
 (`<event>:<mod>:<version>`) y `csnhypodbp` la parsea con `ewgui_origin_id_parse`, así que la columna
-`Ver` de *Origins* es real para ellas. Las filas vivas siguen sin versión
-(`origin_id = <event>:<mod>` y el UPSERT pisa), así que para ellas `Ver` sigue siendo `0` hasta
-decidir si se añade una columna `version` al esquema.
+`Ver` de *Origins* es real para ellas. Las **iteraciones** de un refinador con `live_usage=1` también
+llevan la versión en el id (`<event>:<mod>:<version>:I`), así que `Ver` es real y cada pasada es una
+fila propia. Solo la fila viva del asociador (`origin_id = <event>:<mod>`, UPSERT) sigue mostrando
+`Ver = 0` hasta decidir si se añade una columna `version` al esquema.
 
 ### P3 = D6 · `origin.creation_time` no se refresca en el UPSERT
 `ON CONFLICT (origin_id) DO UPDATE SET ...` (`ewgui_db.c:286-299`) no incluye `creation_time`, así

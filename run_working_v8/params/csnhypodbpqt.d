@@ -31,9 +31,8 @@ tracesPerScreen 1
 # time_recalc_live: segundos entre recálculos del locator vivo.
 # N_retry: intentos sin picadas nuevas antes de dejar de localizar el evento.
 # key     nombre_binario  archivo_config  live_usage  time_recalc_live  N_retry
-locator   csnloc          csnloc.d        0           0                 0
-locator   hyp2000_ring    hyp2000_ring.d  1           20                5
-locator   nlloc_ring      nlloc_ring.d    0           0                 5
+locator   hyp2000_ring    hyp2000_ring.d  1           30                5
+locator   nlloc_ring      nlloc_ring.d    1           90                2
 # Estado propio de la GUI (soluciones manuales de locate+confirm): relativo a
 # $EW_PARAMS y dentro de SU carpeta — runtime, no versionado
 # (run_working_v8/csnhypodbpqt/); el modulo la crea si falta.

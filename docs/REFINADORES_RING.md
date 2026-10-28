@@ -48,8 +48,9 @@ PICK_RING ─csnloc─► HYPO_RING (ARC de csnloc)
 El ARC refinado conserva el **`qid`** (offset 136) y la **versión** (offset
 178/161) del ARC de `csnloc`. El **módulo origen** viaja en el `reclogo.mod` del
 mensaje de anillo (163 = `hyp2000_ring`, 164 = `nlloc_ring`). Así, para un mismo
-sismo, `csnhypodbp` muestra una fila por módulo, con el mismo `ID` pero distinto
-`Mod`.
+sismo, `csnhypodbp` muestra la fila viva de `csnloc` y, para cada refinador con
+`live_usage=1`, **una fila por iteración publicada** (mismo `ID`, distinto `Mod`
+y `Ver`).
 
 Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
 
@@ -61,9 +62,12 @@ Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
 
 ## csnhypodbp
 
-- Clave de evento: **`(qid, módulo)`** (`csnhypodbp_ws.c`), no solo `qid`.
+- Clave de evento: **`(qid, módulo)`** (`csnhypodbp_ws.c`), no solo `qid`. Para los mods con
+  `live_usage=1` la fila de *Origins* añade la **versión** como clave
+  (`csnhypodbp_sol_same_row`): cada pasada del refinador es una fila propia con su `Ver`, mientras
+  que la fila viva del asociador sigue colapsando a la versión vigente.
 - Columnas nuevas visibles: **`Mod`** (etiqueta del módulo) y **`Ver`**
-  (versión). El `PickCache` también se indexa por `(qid, módulo)` para no mezclar
+  (versión). El `PickCache` también se indexa por `(qid, módulo, versión)` para no mezclar
   las fases de un módulo con las del otro.
 - La tabla de localizadores vive **sólo** en `csnhypodbpqt.d`; el `Mod` muestra
   el nombre del binario. `csnhypodbp.d` no la duplica:

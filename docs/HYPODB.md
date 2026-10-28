@@ -136,20 +136,25 @@ docker compose -f db/docker-compose.yml exec -T db psql -U csn -d csn_hypo -c \
 ## Mapeo de datos (ingester `hypodb_ingest`)
 
 - **IDs** (VARCHAR(64)): `event_id = E<qid>-<yyyymmddhhmmss>` · `origin_id = <event_id>:<mod>` (fila
-  viva) **o** `<event_id>:<mod>:<version>` (**confirmación manual**; `version` = campo 178..181 del
-  ARC, 1..9999) · `magnitude_id = <origin_id>/mag/<TIPO>` ·
+  viva de `csnloc`) **o** `<event_id>:<mod>:<version>:I` (**iteración** de un localizador con
+  `live_usage=1`) **o** `<event_id>:<mod>:<version>` (**confirmación manual**; `version` = campo
+  178..181 del ARC, 1..9999) · `magnitude_id = <origin_id>/mag/<TIPO>` ·
   `station_magnitude_id = <magnitude_id>/<NSLCO>` · `pick_id = <origin_id>/pick/<STA>.<FASE>`.
 - **`event`**: agrupación por firma de picadas (reutiliza `csnhypodbp_group.c`); un `event` por
   sismo físico aunque cambie el qid (el atajo por qid exige además
   `|Δotime| <= EventMaxDtSec`, clave de `hypodb.d`, default 300 s, para no fusionar dos sismos de
   sesiones distintas de csnloc). Al arrancar reconstruye los grupos desde la BD
   (`EventLoadHours`) para conservar los `event_id`.
-- **`origin`**: una fila viva por `(event, mod)` con la **última versión** que publica el pipeline
-  (se actualiza en sitio), **más una fila por cada confirmación manual** (`csnhypodbp` → `ConfRing`
-  → `InRingConf`) con `origin_id = <event>:<mod>:<version>`; esas filas son **inmutables** y quedan
-  como orígenes manuales históricos. `status` = `REVIEWED` si la solución es manual (byte 174), si no
-  `PRELIMINARY`(162)/`REVISED`(163/164). `author` es constante (`csnhypodbp`, el módulo que
-  revisa/produce el registro), `software` sale de `$EW_VERSION` y el localizador real queda en
+- **`origin`**: `csnloc` (`live_usage=0`) mantiene una fila viva por `(event, mod)` con la **última
+  versión** que publica (se actualiza en sitio). Los refinadores con `live_usage=1`
+  (`HYPO_RING_REF`) escriben **una fila por iteración válida** con
+  `origin_id = <event>:<mod>:<version>:I` (con sus propias picadas), así que el historial de
+  soluciones sobrevive en la BD. Además, **una fila por cada confirmación manual** (`csnhypodbp` →
+  `ConfRing` → `InRingConf`) con `origin_id = <event>:<mod>:<version>`; esas filas son
+  **inmutables** y quedan como orígenes manuales históricos. `status` = `REVIEWED` si la solución es
+  manual (byte 174), si no `PRELIMINARY`(162)/`REVISED`(163/164). `author` es constante
+  (`csnhypodbp`, el módulo que revisa/produce el registro), `software` sale de `$EW_VERSION` y el
+  localizador real queda en
   `location_algorithm` (`csnloc`/`HYPOINVERSE`/`NLLoc`). Las confirmaciones **no** pasan por la
   guarda de versión (su `version` es la del candidato, no la del pipeline).
 - **`pick`**: fases del ARC; `pick_status` = `manual` si correlaciona con un pick de `PICK_RING`

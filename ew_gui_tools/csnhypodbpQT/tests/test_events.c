@@ -83,6 +83,17 @@ static BpqConfig make_cfg(void)
     snprintf(c.modlabels[1].label, sizeof(c.modlabels[1].label), "%s", "hyp2000_ring");
     c.modlabels[1].id = 163;
     c.n_modlabels = 2;
+    /* La tabla de locators decide que mods conservan el historial de
+       iteraciones (live_usage=1): hyp2000_ring; csnloc no. */
+    snprintf(c.locators[0].name, sizeof(c.locators[0].name), "%s", "hyp2000_ring");
+    snprintf(c.locators[0].bin, sizeof(c.locators[0].bin), "%s", "hyp2000_ring");
+    snprintf(c.locators[0].cfg, sizeof(c.locators[0].cfg), "%s", "hyp2000_ring.d");
+    c.locators[0].live_usage = 1;
+    snprintf(c.locators[1].name, sizeof(c.locators[1].name), "%s", "csnloc");
+    snprintf(c.locators[1].bin, sizeof(c.locators[1].bin), "%s", "csnloc");
+    snprintf(c.locators[1].cfg, sizeof(c.locators[1].cfg), "%s", "csnloc.d");
+    c.locators[1].live_usage = 0;
+    c.n_locators = 2;
     return c;
 }
 
@@ -281,6 +292,33 @@ int main(void)
         CK(ev != NULL);
         CK(bpq_origin_sort_num(ev, 0, 3) >= before);
         CK(bpq_origin_sort_num(ev, 0, 3) <= after);
+    }
+
+    /* --- 8b. historial: un refinador con live_usage=1 conserva cada version --- */
+    {
+        const BpqEvent *ev;
+        int gidx = bpq_events_count(e);
+
+        make_sol(&s, 800, 163, 5, 6, 0.3, 0, 'W');
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        make_sol(&s, 800, 163, 6, 7, 0.2, 0, 'W');
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        ev = bpq_events_at(e, gidx);
+        CK(ev != NULL);
+        CK(bpq_event_nsols(ev) == 2);          /* dos iteraciones, no una */
+
+        /* La fila viva del asociador (live_usage=0) sigue colapsando. */
+        make_sol(&s, 800, 162, 1, 6, 0.3, 0, 'W');
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        make_sol(&s, 800, 162, 2, 7, 0.2, 0, 'W');
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        CK(bpq_event_nsols(ev) == 3);
+
+        /* Confirmar la MISMA version es otra fila (snapshot aparte). */
+        make_sol(&s, 800, 163, 6, 7, 0.2, 1, 'W');
+        s.confirmed = 1;
+        CK(bpq_events_feed_arc(e, &s) == 0);
+        CK(bpq_event_nsols(ev) == 4);
     }
 
     /* --- 9. argumentos invalidos --- */

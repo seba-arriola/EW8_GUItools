@@ -254,6 +254,10 @@ el siguiente mensaje tapaba).
   `origin.status == "REVIEWED"` ⇒ solución manual; el canal `NET.STA.LOC.CHAN` se reduce a **STA**
   (es lo que empareja `statable`); `pick.uncertainty` viaja como **residual** y
   `pick_status == "manual"` como picada manual.
+- El dedup usa `csnhypodbp_sol_same_row`: para un mod con `live_usage=1` (tabla de locators) la
+  clave incluye la **versión**, así que *Origins* conserva cada iteración del refinador; la fila
+  viva de `csnloc` sigue colapsando a la versión vigente. Los `origin_id` de iteración
+  (`<event>:<mod>:<version>:I`) y de confirmación (`<event>:<mod>:<version>`) son filas distintas.
 - Las **magnitudes** del historial también entran: `ewguidb_query_magnitudes` por origen →
   `BpqMagMsg` → `bpq_events_feed_mag`, así que la maestra muestra `valor-nst` igual que para el
   vivo (medido: `celda[8]=2.7-4`, `celda[12]=163` de módulo).

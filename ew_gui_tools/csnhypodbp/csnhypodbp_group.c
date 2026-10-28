@@ -467,6 +467,22 @@ int csnhypodbp_preferred_index(const CsnhypodbpSolMeta *sols, int n)
     return best;
 }
 
+int csnhypodbp_sol_same_row(int qid, int mod, int confirmed, unsigned version,
+                            const CsnhypodbpSolution *sol, int history)
+{
+    if (!sol)
+        return 0;
+    if (qid != sol->qid || mod != sol->mod || confirmed != sol->confirmed)
+        return 0;
+    /* La version entra en la clave para las iteraciones de un refinador vivo
+       (live_usage=1) y para los snapshots confirmados: cada pasada/Confirm es
+       una fila propia. La fila viva del asociador no la usa, para que una
+       correccion v2 de csnloc reemplace la fila en sitio. */
+    if ((history || sol->confirmed) && version != sol->version)
+        return 0;
+    return 1;
+}
+
 /* ------------------------------------------------------------------------- */
 /* ARC Y2K desde una solucion.                                               */
 /*                                                                           */

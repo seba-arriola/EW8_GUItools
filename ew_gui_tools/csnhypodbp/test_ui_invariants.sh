@@ -307,7 +307,11 @@ ck  "confirm: avisa si no hay ConfRing"      'ConfRing no configurado'          
 ck  "confirm: la fila confirmada es propia"  'procesar_mensaje_sismo_ex\(tree_global, arc, s.mod, 1\)' csnhypodbp_ws.c
 ck  "historial: id con parser (no strrchr)"  'ewgui_origin_id_parse\(ors\[j\].origin_id'   csnhypodbp_ws.c
 nck "historial: sin strrchr sobre origin_id" 'strrchr\(ors\[j\].origin_id'                 csnhypodbp_ws.c
-ck  "historial: Ver real del confirmado"     'confirmed \? version : 0u'                   csnhypodbp_ws.c
+ck  "historial: Ver real del origin_id"      'szVer, sizeof szVer, "%u", version'           csnhypodbp_ws.c
+# --- Origins: historial de iteraciones de un refinador vivo (live_usage=1) ---
+ck  "origins: gate live_usage del localizador" 'csnhypodbp_locator_is_live_mod\(g_locators' csnhypodbp_ws.c
+ck  "origins: clave de fila compartida"        'csnhypodbp_sol_same_row\('                    csnhypodbp_ws.c
+nck "origins: ya no colapsa por (qid,mod,confirmed) solo" 'rq == sol\.qid && rm == mod && rc == confirmed' csnhypodbp_ws.c
 ck  "preferida: propaga confirmed/created"   'meta\[i\].confirmed = es->confirmed'         csnhypodbp_ws.c
 ck  "preferida: manda la confirmada mas nueva" 'sols\[i\].created > sols\[best\].created'   csnhypodbp_group.c
 ck  "picking: ancla congelada (no la P ganadora)" 'g_win_ref_pick'                          csnhypodbp_gui.c

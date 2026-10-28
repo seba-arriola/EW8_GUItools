@@ -51,8 +51,10 @@ solución de `csnloc` es la buena, en vez de la primera detección pobre.
 
 Si ya se emitió y llega un candidato del mismo evento con al menos
 `EmitImproveMinPicks` fases más, se emite una corrección con el **mismo `qid`**
-(es el único caso en que `csnloc` versiona). Los consumidores muestran una sola
-fila por `(qid, mod)`: la versión más alta.
+(es el único caso en que `csnloc` versiona). Para el asociador (`live_usage=0`)
+los consumidores muestran una sola fila por `(qid, mod)`: la versión más alta.
+Los refinadores con `live_usage=1` conservan cada iteración como fila propia
+(`<event>:<mod>:<version>:I`).
 
 Puertas del gatillo (0 = off):
 

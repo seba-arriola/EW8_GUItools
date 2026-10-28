@@ -64,7 +64,9 @@ refinado. El contrato compartido vive en `ewgui/arc_layout.h`.
 
 Pestaña **Eventos**: `GtkPaned` con
 - **maestro**: una fila por evento (la solución preferida; columnas `…`, `N` nº de soluciones, `Est.`);
-- **detalle**: al seleccionar un evento, la lista de sus soluciones con la preferida primero.
+- **detalle**: al seleccionar un evento, la lista de sus soluciones con la preferida primero. Para un
+  localizador con `live_usage=1` (`hyp2000_ring`) se muestra **una fila por iteración válida** (la
+  clave de la fila incluye la versión); la fila viva de `csnloc` colapsa a la versión vigente.
 
 La fila maestra se identifica por el **grupo** (`csnhypodbp_master.{h,c}`), no por el `qid` de la
 solución: un grupo fusionado puede contener soluciones de varios `qid` (csnloc re-detecta el mismo

@@ -108,6 +108,15 @@ typedef struct {
  * no, mas fases y menor RMS. -1 si n=0. */
 int csnhypodbp_preferred_index(const CsnhypodbpSolMeta *sols, int n);
 
+/* ¿La fila (qid, mod, confirmed, version) es la misma solucion que `sol`?
+ * `history` = el mod es de un localizador con live_usage=1: entonces la version
+ * forma parte de la identidad y cada iteracion publicada es una fila propia.
+ * Los snapshots confirmados tambien se separan por version (cada Confirm es
+ * inmutable); la fila viva del asociador (history=0, no confirmada) colapsa a
+ * una sola fila por (qid, mod), la de version vigente. */
+int csnhypodbp_sol_same_row(int qid, int mod, int confirmed, unsigned version,
+                            const CsnhypodbpSolution *sol, int history);
+
 /* --- Almacen de magnitudes por SOLUCION -----------------------------------
  * Clave (qid, modulo origen): csnloc crudo (162), hyp2000 (163) y nlloc (164)
  * publican el MISMO qid, asi que el qid por si solo no distingue una solucion
