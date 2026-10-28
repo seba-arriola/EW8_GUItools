@@ -580,7 +580,8 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   **preferida** (`set_preferred`). Dos decisiones que importan:
   1. **`mod` resuelto**: la tabla `csnhypodbpqt.d` da el `.d` del locator, su `MyModuleId` y
      `GetModId` el id; `csnhypodbp_locate_identity` lo pone en la candidata. No hay números de módulo
-     en el código. `algorithm` es el nombre del locator (`csnhypodbp_locator_name_for_mod`).
+     en el código. `algorithm` es el símbolo de earthworm.d normalizado
+     (`bpq_mod_label` → `GetModIdName`): `MOD_CSNLOC` → `csnloc`, igual que en la BD.
   2. **Se reusa el `event` del pipeline** si existe uno con el mismo `qid` y `|Δotime| <= 300 s`
      (`EventMaxDtSec`): hypodb nombra el evento con la hora de la **primera** solución del grupo, que
      difiere en segundos de la refinada; sin esto el sismo se partía en dos eventos (se vio: `…011036`

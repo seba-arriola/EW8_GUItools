@@ -7,7 +7,7 @@ Lo que **no está decidido** o **no se resuelve** en la iteración de auditoría
 
 | id | qué | cómo |
 |---|---|---|
-| D2 | `author` / `software` | `author = 'csnhypodbp'` (constante); `software = $EW_VERSION` (fallback `ew_8.0`); `location_algorithm` = `csnloc`/`HYPOINVERSE`/`NLLoc` |
+| D2 | `author` / `software` | `author = 'csnhypodbp'` (constante); `software = $EW_VERSION` (fallback `ew_8.0`); `location_algorithm` = símbolo de earthworm.d normalizado (`csnloc`/`hyp2000_ring`/`nlloc_ring`) |
 | D3 | `calculation_method` | se copia `MAG_INFO.algorithm` del mensaje |
 | D5 | `event_id` | `E<qid>-<yyyymmddhhmmss>` (UTC de la hora origen de la 1.ª solución del grupo) + guarda `EventMaxDtSec` en el atajo de agrupación por qid |
 | D10 | orden de las tablas | desempates explícitos por tabla y default de *Origins* alineado con la consulta |

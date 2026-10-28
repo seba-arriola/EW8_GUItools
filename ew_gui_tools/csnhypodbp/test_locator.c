@@ -20,6 +20,20 @@ static int stub_getmodid(const char *symbol, unsigned char *id)
     return 0;
 }
 
+static char *stub_getmodname(unsigned char mod)
+{
+    switch (mod) {
+    case 162: return "MOD_CSNLOC";
+    case 163: return "MOD_HYP2000_RING";
+    case 164: return "MOD_NLLOC_RING";
+    case 172: return "MOD_CSNHYPODBPQT";
+    case 200: return "SIN_PREFIJO";
+    case 201: return "MOD_";
+    case 202: return "mod_csnloc";
+    default:  return NULL;
+    }
+}
+
 int main(void)
 {
     CsnhypodbpLocator list[8];
@@ -97,6 +111,44 @@ int main(void)
                       "test_locator") == 0);
         assert(csnhypodbp_locator_is_live_mod(r, 1, 199) == 1);
         remove(path);
+    }
+
+    /* Etiqueta uniforme: GetModIdName + normalizacion, SIN tabla de locators. */
+    {
+        char label[64], tiny[6], one[1] = { 'x' };
+
+        assert(strcmp(csnhypodbp_mod_label(162, stub_getmodname, label,
+                                           sizeof(label)), "csnloc") == 0);
+        assert(strcmp(csnhypodbp_mod_label(163, stub_getmodname, label,
+                                           sizeof(label)), "hyp2000_ring") == 0);
+        assert(strcmp(csnhypodbp_mod_label(164, stub_getmodname, label,
+                                           sizeof(label)), "nlloc_ring") == 0);
+        assert(strcmp(csnhypodbp_mod_label(172, stub_getmodname, label,
+                                           sizeof(label)), "csnhypodbpqt") == 0);
+        assert(strcmp(csnhypodbp_mod_label(200, stub_getmodname, label,
+                                           sizeof(label)), "sin_prefijo") == 0);
+        assert(strcmp(csnhypodbp_mod_label(202, stub_getmodname, label,
+                                           sizeof(label)), "csnloc") == 0);
+        assert(strcmp(csnhypodbp_mod_label(201, stub_getmodname, label,
+                                           sizeof(label)), "") == 0);
+        assert(strcmp(csnhypodbp_mod_label(999, stub_getmodname, label,
+                                           sizeof(label)), "") == 0);
+        assert(strcmp(csnhypodbp_mod_label(0, stub_getmodname, label,
+                                           sizeof(label)), "") == 0);
+        assert(strcmp(csnhypodbp_mod_label(300, stub_getmodname, label,
+                                           sizeof(label)), "") == 0);
+        assert(strcmp(csnhypodbp_mod_label(162, NULL, label,
+                                           sizeof(label)), "") == 0);
+
+        assert(strcmp(csnhypodbp_mod_label(162, stub_getmodname, tiny,
+                                           sizeof(tiny)), "csnlo") == 0);
+        assert(strcmp(csnhypodbp_mod_label(162, stub_getmodname, one,
+                                           sizeof(one)), "") == 0);
+        assert(one[0] == '\0');
+        assert(strcmp(csnhypodbp_mod_label(162, stub_getmodname, label, 0),
+                      "") == 0);
+        assert(strcmp(csnhypodbp_mod_label(162, stub_getmodname, NULL, 64),
+                      "") == 0);
     }
 
     printf("test_locator OK\n");

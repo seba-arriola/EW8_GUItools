@@ -265,34 +265,16 @@ int  g_sds_enabled = 1;
 char g_sds_root[512] = "/mnt/sds/archive";
 int  g_sds_fallback_hours = 168;
 
-/* Nombre del locator segun la tabla (mod resuelto de MyModuleId). NULL si el
- * mod no esta en la tabla. */
-const char *ModName(int mod)
-{
-    return csnhypodbp_locator_name_for_mod(g_locators, g_nlocators, mod);
-}
-
-/* Etiqueta del modulo origen: se deriva del binario de la tabla de
- * localizadores (csnhypodbpqt.d); no hay ModuleLabel en el .d. Si el mod no
- * esta en la tabla (p. ej. una fila historica), se usa el nombre del modulo de
- * earthworm.d (GetModIdName); nunca un id escrito a mano. */
+/* Etiqueta del modulo origen: SIEMPRE se resuelve por earthworm.d
+ * (GetModIdName), nunca por la tabla de localizadores de csnhypodbpqt.d. La
+ * tabla solo aporta live_usage/recalc/retry. `MOD_CSNLOC` -> `csnloc`. */
 const char *ModLabel(int mod)
 {
     static char buf[64];
-    const char *n = ModName(mod);
-    char *ew;
+    const char *n = csnhypodbp_mod_label(mod, GetModIdName, buf, sizeof buf);
 
-    if (mod <= 0) {
-        snprintf(buf, sizeof(buf), "mod %d", mod);
-        return buf;
-    }
-    if (n) return n;
-    ew = GetModIdName((unsigned char)mod);
-    if (ew && ew[0]) {
-        snprintf(buf, sizeof(buf), "%s", ew);
-        return buf;
-    }
-    snprintf(buf, sizeof(buf), "mod %d", mod);
+    if (n[0]) return n;
+    snprintf(buf, sizeof buf, "mod %d", mod);
     return buf;
 }
 

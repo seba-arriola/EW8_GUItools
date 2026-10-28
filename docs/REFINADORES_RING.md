@@ -75,8 +75,11 @@ Además, el ARC se **normaliza** para que `csnhypodbp` lo parsee:
 - Columnas nuevas visibles: **`Mod`** (etiqueta del módulo) y **`Ver`**
   (versión). El `PickCache` también se indexa por `(qid, módulo, versión)` para no mezclar
   las fases de un módulo con las del otro.
-- La tabla de localizadores vive **sólo** en `csnhypodbpqt.d`; el `Mod` muestra
-  el nombre del binario. `csnhypodbp.d` no la duplica:
+- La tabla de localizadores vive **sólo** en `csnhypodbpqt.d` y solo aporta
+  `live_usage`/`time_recalc_live`/`N_retry`. El `Mod` de las tablas se resuelve
+  siempre por `GetModIdName` de `earthworm.d`, normalizado (`MOD_CSNLOC` →
+  `csnloc`), así que `csnloc` aparece aunque no esté en la tabla. `csnhypodbp.d`
+  no la duplica:
   ```
   InRing HYPO_RING_REF
   # key     nombre_binario  archivo_config  live_usage  time_recalc_live  N_retry

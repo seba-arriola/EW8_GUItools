@@ -1,5 +1,6 @@
 #include "csnhypodbp_locator.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -211,4 +212,32 @@ int csnhypodbp_locator_is_live_mod(const CsnhypodbpLocator *list, int n, int mod
         if (list[i].live_usage && list[i].mod == mod)
             return 1;
     return 0;
+}
+
+const char *csnhypodbp_mod_label(int mod, CsnhypodbpGetModIdName get_name,
+                                 char *buf, size_t bufn)
+{
+    const char *sym, *p;
+    size_t i = 0;
+
+    if (!buf || bufn == 0) return "";
+    buf[0] = '\0';
+    if (mod <= 0 || mod > 255 || !get_name) return buf;
+
+    sym = get_name((unsigned char)mod);
+    if (!sym || !sym[0]) return buf;
+
+    /* `MOD_` es el prefijo de los simbolos de earthworm.d; se acepta en
+     * cualquier caja y se elimina del nombre visible. */
+    p = sym;
+    if (p[0] && p[1] && p[2] && p[3] == '_' &&
+        toupper((unsigned char)p[0]) == 'M' &&
+        toupper((unsigned char)p[1]) == 'O' &&
+        toupper((unsigned char)p[2]) == 'D')
+        p += 4;
+
+    for (; *p && i + 1 < bufn; p++)
+        buf[i++] = (char)tolower((unsigned char)*p);
+    buf[i] = '\0';
+    return buf;
 }

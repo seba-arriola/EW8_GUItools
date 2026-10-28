@@ -48,6 +48,12 @@ int bpq_locators_resolve(BpqConfig *cfg)
                                            bpq_getmodid_cb);
 }
 
+const char *bpq_mod_label(int mod, char *buf, int bufn)
+{
+    if (bufn <= 0) return "";
+    return csnhypodbp_mod_label(mod, GetModIdName, buf, (size_t)bufn);
+}
+
 /* Comprobacion de contrato: si cambian las constantes del repo, falla el build. */
 typedef char bpq_chk_overlay_files[(BPQ_MAX_OVERLAY_FILES == EWGUI_OVERLAY_MAX_FILES) ? 1 : -1];
 typedef char bpq_chk_overlay_name [(BPQ_MAX_OVERLAY_NAME  == EWGUI_OVERLAY_NAME_MAX ) ? 1 : -1];
@@ -147,6 +153,7 @@ static void config_defaults(BpqConfig *c)
 
     /* locators/colores */
     c->n_locators = 0;
+    c->get_mod_name = GetModIdName;
     csnhypodbp_color_set_init(&c->colors_p, red);
     csnhypodbp_color_set_init(&c->colors_s, green);
 

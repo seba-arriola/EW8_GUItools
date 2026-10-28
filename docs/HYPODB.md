@@ -155,8 +155,10 @@ docker compose -f db/docker-compose.yml exec -T db psql -U csn -d csn_hypo -c \
   confirmación desde `Procesar` (`InRingConf`); todo lo que produce el pipeline es `AUTOMATIC`
   (aunque una solución tenga picadas manuales). `author` es constante (`csnhypodbp`, el módulo que
   revisa/produce el registro), `software` sale de `$EW_VERSION` y el localizador real queda en
-  `location_algorithm` con el **nombre del locator de la tabla** (`csnhypodbpqt.d` → su `.d` →
-  `MyModuleId` → `GetModId`); no hay ids de módulo escritos en el código. Las confirmaciones **no** pasan por la
+  `location_algorithm` con el **símbolo de earthworm.d normalizado** (`GetModIdName`: `MOD_CSNLOC` →
+  `csnloc`, `MOD_HYP2000_RING` → `hyp2000_ring`); la tabla `csnhypodbpqt.d` solo aporta
+  `live_usage`/`time_recalc_live`/`N_retry`, nunca el nombre visible. No hay ids de módulo escritos
+  en el código. Las confirmaciones **no** pasan por la
   guarda de versión (su `version` es la del candidato, no la del pipeline).
 - **`pick`**: fases del ARC; `pick_status` = `manual` si correlaciona con un pick de `PICK_RING`
   (12.º token `M`), si no `automatic`.

@@ -50,11 +50,11 @@ struct BpqEvents {
 static const char *mod_label(const BpqEvents *e, int mod)
 {
     static char buf[64];
-    const char *n = csnhypodbp_locator_name_for_mod(
-        e->cfg.locators, e->cfg.n_locators, mod);
+    const char *n = csnhypodbp_mod_label(mod, e->cfg.get_mod_name,
+                                         buf, sizeof buf);
 
-    if (n) return n;
-    /* Mod historico fuera de la tabla: se muestra el numero (dato de la BD). */
+    if (n[0]) return n;
+    /* earthworm.d no conoce el id: se muestra el numero (dato de la BD). */
     snprintf(buf, sizeof(buf), "mod %d", mod);
     return buf;
 }

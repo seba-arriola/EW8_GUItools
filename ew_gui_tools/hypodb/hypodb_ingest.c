@@ -699,20 +699,13 @@ static int write_origin(HypodbState *st, HypodbGroup *g,
     snprintf(o.author, sizeof o.author, "csnhypodbp");
     snprintf(o.software, sizeof o.software, "%s", ewgui_software());
     {
-        const char *alg = csnhypodbp_locator_name_for_mod(
-            st->locators, st->nlocators, mod);
-        char ewname[64];
+        char label[64];
+        const char *alg = csnhypodbp_mod_label(mod, GetModIdName,
+                                               label, sizeof label);
 
-        if (!alg) {
-            char *ew = GetModIdName((unsigned char)mod);
-
-            if (ew && ew[0]) {
-                snprintf(ewname, sizeof ewname, "%s", ew);
-                alg = ewname;
-            }
-        }
-        snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s",
-                 alg ? alg : "");
+        /* Nombre visible UNIFORME: earthworm.d (GetModIdName) normalizado,
+           nunca la tabla de locators (csnloc no esta en ella). */
+        snprintf(o.location_algorithm, sizeof o.location_algorithm, "%s", alg);
     }
     if (vmodel && vmodel[0])
         snprintf(o.velocity_model, sizeof o.velocity_model, "%s", vmodel);

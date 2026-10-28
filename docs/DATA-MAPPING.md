@@ -48,7 +48,7 @@ Prerrequisito de PostgreSQL: `db/docker-compose.yml` (puerto 5435).
 | `depth` | ARC `31..35` ÷ 100 (km) | `csnhypodbp_group.c:118-120` |
 | `author` | `'csnhypodbp'` (constante: el módulo que revisa/produce el registro) | `hypodb_ingest.c:547` |
 | `software` | `getenv("EW_VERSION")` en el arranque; fallback `"ew_8.0"` | `hypodb_ingest.c:548` |
-| `location_algorithm` | `csnloc` \| `HYPOINVERSE` \| `NLLoc` (por `mod`) | `hypodb_ingest.c:161-167`, `:549` |
+| `location_algorithm` | símbolo de earthworm.d normalizado por `GetModIdName` (`csnloc` \| `hyp2000_ring` \| `nlloc_ring`) | `hypodb_ingest.c` (`write_origin`), `csnhypodbp_mod_label` |
 | `velocity_model` | ARC `182..194` (13 chars) o NULL si vacío | `hypodb_ingest.c:505-517`, `arc_layout.h:44` |
 | `azimuthal_gap` | ARC `42..44`; **NULL si 0** | `hypodb_ingest.c:553` |
 | `station_count` | ARC `39..41` | `hypodb_ingest.c:554` |
@@ -124,7 +124,7 @@ Ruta: `ewguidb_query_recent_events` → `ewguidb_query_origins` (1 por evento) �
 | `#Stn` | `origin.station_count` (< 0 → 0) | `csnhypodbp_ws.c:712` |
 | `ID` | `atoi(event_id+1)` → `%010d` (el sufijo no molesta: `atoi` corta en `-`) | `csnhypodbp_ws.c:676,714` |
 | `Ml/Mwp/Mb/Ms` | `magnitude.magnitude_value`-`station_count`, por tipo exacto (`"%.1f-%d"`) | `csnhypodbp_ws.c:718-732` |
-| `Mod` | `ewgui_origin_id_parse(origin_id)` → `mod` → `ModLabel` | `csnhypodbp_ws.c:714,740` |
+| `Mod` | `ewgui_origin_id_parse(origin_id)` → `mod` → `csnhypodbp_mod_label` (`GetModIdName` normalizado) | `csnhypodbp_ws.c:714,740`, `csnhypodbp_locator.c` |
 | `Ver` | versión del `origin_id`: real para confirmadas (`<event>:<mod>:<version>`) y para iteraciones (`<event>:<mod>:<version>:I`); `0` en la fila viva del asociador | `csnhypodbp_ws.c:716,752` |
 | `Est.` | `origin.status == "MANUAL" ? "M" : "A"` | `csnhypodbp_ws.c:741` |
 | `Created` | `origin.creation_time` (historial) / hora de llegada a la GUI (fila viva) | `csnhypodbp_ws.c:701`, `:961` |

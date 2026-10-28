@@ -922,7 +922,7 @@ int csnhypodbp_mww_persist(const CsnhypodbpSolution *sol, const CsnwphaseOut *ou
     EwGuiMagRow mag;
     EwGuiTensorRow ten;
     char eid[64] = "", oid[64] = "", mid[128], tid[128];
-    const char *alg = ModName(sol ? sol->mod : 0);
+    const char *alg = ModLabel(sol ? sol->mod : 0);
 
     if (err && errlen)
         err[0] = '\0';

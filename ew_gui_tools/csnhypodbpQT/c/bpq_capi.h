@@ -68,11 +68,15 @@ extern "C" {
 #define BPQ_MAX_OVERLAY_FILES  16
 #define BPQ_MAX_OVERLAY_NAME   64
 
-/* Etiqueta de modulo origen ("ModuleLabel <id> <nombre>", ver ModLabel()). */
+/* Etiqueta de modulo origen (legado; la etiqueta viva sale de bpq_mod_label). */
 typedef struct {
     int  id;
     char label[24];
 } BpqModLabel;
+
+/* Resuelve un id a su simbolo de earthworm.d (GetModIdName en produccion,
+ * stub en tests). NULL si no lo conoce. */
+typedef char *(*BpqGetModIdName)(unsigned char mod);
 
 /*
  * Configuracion completa del modulo: un campo por clave del .d, con los mismos
@@ -136,6 +140,9 @@ typedef struct {
     int    traces_per_screen;        /* tracesPerScreen (1..3) */
     CsnhypodbpLocator locators[BPQ_MAX_LOCATORS];
     int    n_locators;
+    /* GetModIdName: resuelve el nombre visible de CUALQUIER mod, no solo los
+     * de la tabla de locators. NULL en tests = sin resolver. */
+    BpqGetModIdName get_mod_name;
 
     /* busqueda hipocentral y SDS */
     int    search_max_events;        /* SearchMaxEvents */
@@ -197,6 +204,10 @@ typedef struct {
 /* Resuelve `l->mod` de cada locator (MyModuleId de su .d + GetModId de
  * earthworm.d). Llamar DESPUES de bpq_rings_open; devuelve cuantos fallaron. */
 int        bpq_locators_resolve(BpqConfig *cfg);
+
+/* Etiqueta UNIFORME de un mod: GetModIdName normalizado (MOD_CSNLOC -> csnloc).
+ * Escribe en `buf` y lo devuelve; "" si earthworm.d no conoce el id. */
+const char *bpq_mod_label(int mod, char *buf, int bufn);
 
 BpqConfig *bpq_config_load(const char *path, const char *state_dir_or_null,
                            char *err, size_t errn);

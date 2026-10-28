@@ -28,6 +28,10 @@ typedef struct {
  * tests). Devuelve 0 si OK. */
 typedef int (*CsnhypodbpGetModId)(const char *symbol, unsigned char *id);
 
+/* Resuelve un id a su simbolo de earthworm.d (GetModIdName en produccion,
+ * stub en tests). NULL si no lo conoce. */
+typedef char *(*CsnhypodbpGetModIdName)(unsigned char mod);
+
 int csnhypodbp_locator_add(CsnhypodbpLocator *list, int *n, int cap,
                            const char *name, const char *bin, const char *cfg);
 /* Alta desde la tabla nueva: nombre = basename(bin). */
@@ -64,6 +68,13 @@ int csnhypodbp_locator_mod(const CsnhypodbpLocator *l);
 /* Nombre del locator cuyo mod resuelto es `mod`; NULL si no esta en la tabla. */
 const char *csnhypodbp_locator_name_for_mod(const CsnhypodbpLocator *list,
                                             int n, int mod);
+
+/* Etiqueta UNIFORME de un modulo: resuelve con `get_name` (GetModIdName) y
+ * normaliza `MOD_<SIMBOLO>` -> `<simbolo>` en minusculas. No consulta la tabla
+ * de locators: el nombre visible no depende del .d. Escribe en `buf` (siempre
+ * terminado en NUL) y lo devuelve; sin nombre devuelve "". */
+const char *csnhypodbp_mod_label(int mod, CsnhypodbpGetModIdName get_name,
+                                 char *buf, size_t bufn);
 
 /* 1 si `mod` es el de un localizador declarado con live_usage=1. Solo esos
  * escriben en HYPO_RING_REF y conservan el historial de iteraciones. */

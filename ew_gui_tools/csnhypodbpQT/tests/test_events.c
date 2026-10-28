@@ -71,10 +71,21 @@ static void make_sol(CsnhypodbpSolution *s, int qid, int mod, unsigned ver,
     }
 }
 
+static char *stub_getmodname(unsigned char mod)
+{
+    switch (mod) {
+    case 162: return "MOD_CSNLOC";
+    case 163: return "MOD_HYP2000_RING";
+    case 164: return "MOD_NLLOC_RING";
+    default:  return NULL;
+    }
+}
+
 static BpqConfig make_cfg(void)
 {
     BpqConfig c;
     memset(&c, 0, sizeof(c));
+    c.get_mod_name = stub_getmodname;
     c.group_pick_tol_s = 0.1;
     c.group_min_match_picks = 3;
     c.group_max_solutions = 100;

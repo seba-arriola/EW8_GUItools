@@ -2775,8 +2775,8 @@ void BpqMainWindow::confirmCandidate()
 
         if (m_mww && bpq_mww_tensor_ready(m_mww) && m_mwwFor == key) {
             const int mod = m_cand.mod;
-            const char *alg = csnhypodbp_locator_name_for_mod(
-                m_cfg->locators, m_cfg->n_locators, mod);
+            char algbuf[64];
+            const char *alg = bpq_mod_label(mod, algbuf, sizeof(algbuf));
 
             m_mwwSaved = bpq_mww_save(m_db, &m_cand, mod, alg, m_mww, msg,
                                       sizeof(msg))
@@ -3578,8 +3578,8 @@ bool BpqMainWindow::runMwwForTest()
 
         if (save && save[0] == '1' && sol && bpq_mww_tensor_ready(m_mww)) {
             const int mod = sol->mod;
-            const char *alg = csnhypodbp_locator_name_for_mod(
-                m_cfg->locators, m_cfg->n_locators, mod);
+            char algbuf[64];
+            const char *alg = bpq_mod_label(mod, algbuf, sizeof(algbuf));
             const int ok = bpq_mww_save(m_db, sol, mod, alg, m_mww, smsg,
                                         sizeof(smsg));
 

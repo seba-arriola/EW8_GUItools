@@ -67,6 +67,7 @@ ck "sin pin: key=- y pestana Eventos"            '^pin key=- event=100:176732304
 ck "sin pin: sel=pref=0"                         '^panels pts=2 pref=0 sel=0 '
 ck "sin pin: Selected solution de la preferida"  '^preview .*title="Selected solution" .*lat=-20\.100 .*lon=-70\.100 .*dep=10 .*nph=12 .*rms=0\.2 .*mags=4\.1-8,'
 ck "sin pin: trazas de la preferida"             '^traces .* sol=100:162:1$'
+ck "Mod: la solucion 162 se etiqueta csnloc"     '^row 0: .*[|]csnloc[|]'
 
 # --- 2. doble clic fija y lleva a Procesar ----------------------------------
 run_dump BPQ_TEST_PIN=100:163:2

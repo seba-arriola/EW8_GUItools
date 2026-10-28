@@ -277,7 +277,9 @@ hace **`csnloc`** localmente.
     qid de `csnloc` se repite cada ~27,7 h; el atajo de agrupación por qid exige además
     `|Δotime| <= EventMaxDtSec` (clave de `hypodb.d`, default 300 s) para no fusionar sismos de
     sesiones distintas. `origin.author` es constante (`csnhypodbp`), `origin.software` sale de
-    `$EW_VERSION` y el localizador real queda en `origin.location_algorithm`;
+    `$EW_VERSION` y el localizador real queda en `origin.location_algorithm` (símbolo de
+    `earthworm.d` normalizado por `GetModIdName`: `MOD_CSNLOC` → `csnloc`; no sale de la tabla
+    `locator`, que sólo aporta `live_usage`/`time_recalc_live`/`N_retry`);
     `magnitude.calculation_method` copia el `algorithm` del mensaje (`CSNNet` automática, `CSNMan`
     ajustada a mano). `TYPE_MAGNITUDE` → `magnitude` + `station_magnitude` (por estación).
     Credenciales en `run_working_v8/params/db.env` (`DbEnvFile`). Mapeo campo a campo (ida y vuelta)
