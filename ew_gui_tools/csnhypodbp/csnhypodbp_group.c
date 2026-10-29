@@ -54,7 +54,12 @@ static int arc_field4(const char *p, size_t l, int off, double *out)
 }
 
 /* Epoch UTC desde YYYYMMDDHHMMSS + fraccion. Devuelve 0 si invalido.
-   Acepta la fraccion como decimal ("SS.ss") o como centesimas ("SSCC"). */
+   Acepta la fraccion como decimal ("SS.ss") o como centesimas ("SSCC").
+
+   NLLoc escribe los segundos en un campo de ancho fijo: con segundo < 10 la
+   linea queda "YYYYMMDDHHMM 6..." (un espacio en 12) y NO hay centesimas; el
+   digito de 14 es ya la latitud. Leerlo como "SSCC" sumaba la latitud como
+   fraccion (17:00:06.72 en vez de 17:00:06.00). */
 static double ymdhms_to_epoch(const char *s)
 {
     struct tm t;
@@ -69,11 +74,20 @@ static double ymdhms_to_epoch(const char *s)
     b[0] = s[6];  b[1] = s[7];  b[2] = 0;  d  = atoi(b);
     b[0] = s[8];  b[1] = s[9];  b[2] = 0;  h  = atoi(b);
     b[0] = s[10]; b[1] = s[11]; b[2] = 0;  mi = atoi(b);
-    b[0] = s[12]; b[1] = s[13]; b[2] = 0;  sec = atof(b);
-    if (s[14] == '.') {
-        b[0] = s[15]; b[1] = s[16]; b[2] = 0; sec += atof(b) / 100.0;
-    } else if (s[14] >= '0' && s[14] <= '9') {
-        b[0] = s[14]; b[1] = s[15]; b[2] = 0; sec += atof(b) / 100.0;
+    if (s[12] >= '0' && s[12] <= '9') {
+        b[0] = s[12]; b[1] = s[13]; b[2] = 0;  sec = atof(b);
+        if (s[14] == '.') {
+            b[0] = s[15]; b[1] = s[16]; b[2] = 0; sec += atof(b) / 100.0;
+        } else if (s[14] >= '0' && s[14] <= '9') {
+            b[0] = s[14]; b[1] = s[15]; b[2] = 0; sec += atof(b) / 100.0;
+        }
+    } else {
+        int i;
+        sec = 0.0;
+        for (i = 12; i < 16; i++) {
+            if (s[i] >= '0' && s[i] <= '9') { sec = (double)(s[i] - '0'); break; }
+            if (s[i] != ' ') break;
+        }
     }
 
     memset(&t, 0, sizeof(t));

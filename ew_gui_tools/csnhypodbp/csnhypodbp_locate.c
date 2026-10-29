@@ -451,18 +451,32 @@ int csnhypodbp_trace_write(const char *path, const CsnhypodbpTrace *tr, int n)
 
 /* Salta el preambulo que algunos refinadores escriben en stdout antes del ARC
    (HYPOINVERSE imprime "NNN STATIONS READ IN." al leer el .sta). Devuelve el
-   puntero a la linea que parece cabecera de ARC (>=190 chars y 14 digitos
-   iniciales = YYYYMMDDHHMMSS), o NULL si no hay ninguna. */
+   puntero a la linea que parece cabecera de ARC (>=160 chars y los 12 primeros
+   digitos = YYYYMMDDHHMM), o NULL si no hay ninguna.
+
+   Ojo con los segundos: NLLoc los escribe en un campo de ancho fijo con
+   relleno de espacios, asi que con segundo < 10 la linea 1 empieza
+   "202610291700 6..." y NO tiene 14 digitos seguidos. Exigir 14 digitos (como
+   antes) rechazaba un ARC de NLLoc perfectamente valido; el umbral de 160
+   sigue dejando fuera el preambulo de texto. */
 char *csnhypodbp_arc_skip_preamble(char *buf)
 {
     char *p = buf;
     while (p && *p) {
         char *eol = strchr(p, '\n');
         size_t l = eol ? (size_t)(eol - p) : strlen(p);
-        if (l >= 190) {
+        if (l >= 160) {
             int i, ok = 1;
-            for (i = 0; i < 14; i++) {
+            for (i = 0; i < 12; i++) {
                 if (p[i] < '0' || p[i] > '9') { ok = 0; break; }
+            }
+            /* Tras YYYYMMDDHHMM tiene que venir el segundo: "SS" o el campo
+               con relleno (" S" / "   S"). */
+            if (ok) {
+                ok = 0;
+                for (i = 12; i < 16; i++) {
+                    if (p[i] >= '0' && p[i] <= '9') { ok = 1; break; }
+                }
             }
             if (ok) return p;
         }

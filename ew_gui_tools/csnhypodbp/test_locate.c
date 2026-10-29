@@ -139,6 +139,22 @@ int main(void)
         assert(csnhypodbp_arc_skip_preamble((char *)"solo basura\n") == NULL);
     }
 
+    /* --- skip_preamble con la cabecera CRUDA de NLLoc (163 chars): el
+       segundo va en un campo de ancho fijo con relleno, asi que con segundo
+       < 10 la linea empieza "202610291700 6..." y NO tiene 14 digitos
+       seguidos. Antes se rechazaba y el locate manual abortaba con
+       "ARC invalido" (el ARC era valido). --- */
+    {
+        const char *l1 = "202610291700 67221S5991068 478611536   024203";
+        char nll[256];
+        char *arcp;
+        memset(nll, ' ', sizeof(nll));
+        memcpy(nll, l1, strlen(l1));
+        nll[163] = '\0';
+        arcp = csnhypodbp_arc_skip_preamble(nll);
+        assert(arcp && strncmp(arcp, "202610291700 6", 14) == 0);
+    }
+
     /* --- mag_parse --- */
     assert(csnhypodbp_mag_parse("{\"event\":\"x\",\"ML\":5.20,\"nML\":10,\"Mwp\":null,\"nMwp\":0,}", &mag) == 0);
     assert(strcmp(mag.ml, "5.2-10") == 0);

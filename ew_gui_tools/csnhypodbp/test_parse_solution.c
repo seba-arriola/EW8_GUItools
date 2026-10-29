@@ -129,6 +129,28 @@ int main(void)
     CHECK(csnhypodbp_parse_solution(buf, strlen(buf), 162, &sol) == 0, "parsea auto");
     CHECK(sol.manual == 0, "sin marca -> automatica");
 
+    /* Cabecera CRUDA de NLLoc: segundo < 10 en un campo con relleno
+       ("202610291700 6..."). El digito de la posicion 14 es la latitud, no
+       centesimas: antes daba 17:00:06.72 en vez de 17:00:06.00. */
+    {
+        const char *l1 = "202610291700 67221S5991068 478611536   024203 51";
+        char nll[200];
+        CsnhypodbpSolution s3;
+        struct tm t2;
+
+        memset(nll, ' ', sizeof nll);
+        memcpy(nll, l1, strlen(l1));
+        nll[163] = '\0';
+        memset(&t2, 0, sizeof t2);
+        t2.tm_year = 126; t2.tm_mon = 9; t2.tm_mday = 29;
+        t2.tm_hour = 17;  t2.tm_min = 0; t2.tm_sec = 6;
+        memset(&s3, 0, sizeof s3);
+        CHECK(csnhypodbp_parse_solution(nll, strlen(nll), 0, &s3) == 0,
+              "ARC de NLLoc con segundo < 10 parsea");
+        CHECK(fabs(s3.otime - (double)timegm(&t2)) < 0.001,
+              "otime 17:00:06.00 (no 6.72)");
+    }
+
     if (fails) { printf("\n%d FALLOS\n", fails); return 1; }
     printf("\nOK test_parse_solution\n");
     return 0;
