@@ -136,6 +136,12 @@ integrar más estaciones al cálculo de magnitud.
   el panel del splitter lo justo y el canvas se queda con el resto. `QSizePolicy::Ignored` en la
   tabla y en la etiqueta de estado evitan que fijen el mínimo de la ventana. Si la ventana no
   alcanza, el scroll horizontal queda como último recurso.
+- **Anchos de Eventos**: las dos tablas usan `ewguiqt::ColumnFitter`: el mismo mínimo
+  `max(cabecera, valor más largo)+padding` y, si el panel da más ancho, el sobrante se reparte
+  **por igual** entre las columnas visibles (la tabla llena todo el ancho). Al maximizar/restaurar
+  se reaplica con los mínimos cacheados; si no alcanza, quedan los mínimos y aparece el scroll
+  horizontal. `--dump` publica `table events/origins` (`total/viewport/gap`) y `tablecols`
+  (`mins`/`sizes`) para verificarlo headless (`BPQ_WIN_SIZE=WxH` fija el tamaño en los tests).
 - **Selección compartida picking ↔ magnitudes**: al seleccionar una fila de magnitudes,
   `selectStation` actualiza `m_selSta`, sincroniza ambas tablas y pide las ondas una sola vez;
   `BpqMagModel::setRows` no resetea si las filas no cambiaron, así la selección sobrevive a
@@ -491,8 +497,11 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
 - Canvas: `c/bpq_draw_mag.c` pide la **traza procesada** a `csnhypodbp_magview_build` (Wood-Anderson
   para ML, integración/diezmado para Mwp, pasa-banda Mb/Ms con las bandas del `.d`), la dibuja en el
   área con escala automática y encima pinta la **franja** de la ventana (`anchor+t0 .. anchor+t1`),
-  sus bordes y la línea del ancla. El arrastre solo se agarra desde el **handle** de arriba
-  (`CSNHYPODBP_MAG_HANDLE_H`), igual que la GTK: el resto del canvas queda para el zoom.
+  sus bordes y la línea del ancla. El **handle** superior mueve la franja completa (o redimensiona
+  por sus bordes); los **bordes verticales** también se agarran por debajo del handle (lo anuncia
+  `SizeHorCursor`) y el interior de abajo no. La franja pertenece a `(estación, magnitud)`: cambiar
+  de estación/magnitud/solución **cancela** el arrastre (el encuadre congelado no sobrevive), y un
+  press nuevo, ocultar el canvas o desactivar la ventana descartan un release perdido.
 - **P teórica**: `TauModel` (default `iasp91`) se carga al arrancar con `bpq_init_tt` →
   `csnhypodbp_tt_init`; sin tablas en el cwd se avisa por stderr y la GUI sigue. Con el modelo
   listo, toda estación sin P `M/A` recibe una P **`T`** (`M > A > Teo`) con el SCNL del catálogo:
@@ -515,9 +524,10 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   gobiernan `eligible/used`, el contador “en uso” y el envío del cálculo. Son el **origen de la
   picada P** (`M` manual, `A` automática, `Teo` teórica), no el de la ventana: ajustar una franja no
   cambia la categoría de la estación. `BPQ_MAG_ORIGINS` los fija en los tests.
-- **Cursor de la franja**: `bpq_mag_hover` distingue el borde vertical (`t0`/`t1` → `SizeHorCursor`)
-  del handle superior (`SizeAllCursor`), y `magLeft` devuelve el cursor por defecto al salir. Es la
-  paridad del `ew-resize`/`move` de la GTK.
+- **Cursor de la franja**: `bpq_mag_hover` y `bpq_mag_hit` coinciden: borde vertical (`t0`/`t1` →
+  `SizeHorCursor`) en toda la altura, handle superior (`SizeAllCursor`) para mover, e interior por
+  debajo del handle sin acción. `magLeft` devuelve el cursor por defecto al salir. Es la paridad del
+  `ew-resize`/`move` de la GTK.
 - `calculate` = `csnmags` sobre la **candidata** con las ventanas ajustadas (`WindowOverridesFile`
   equivalente: `csnhypodbp_mag_ovr_build_anchors` → `CsnhypodbpMagOvrRow[]`, t0/t1 absolutos) en el
   hilo del localizador; al volver refresca el preview y la tabla. `calculate all` = las cuatro
@@ -852,9 +862,17 @@ BPQ_MODE=--locate csnhypodbpQT csnhypodbp.d                             # locate
 BPQ_LOCATE_MASK=AMT BPQ_LOCATE_LOC=hyp2000_ring BPQ_MODE=--locate ...   # mascaras y refinador
 BPQ_MODE=--confirm csnhypodbpQT csnhypodbp.d                            # locate + Confirm (ARC)
 BPQ_MODE=--mouse csnhypodbpQT csnhypodbp.d                              # eventos reales de raton
+BPQ_MODE=--magdrag csnhypodbpQT csnhypodbp.d                            # drag de la franja (A→B→aborto)
+BPQ_WIN_SIZE=1600x900 BPQ_MODE=--dump csnhypodbpQT csnhypodbp.d         # tamaño de ventana en tests
 BPQ_SHOT_LOCATE=1 BPQ_MODE=--shot BPQ_SHOT=/tmp/x.png csnhypodbpQT ...  # captura con candidata
 BPQ_SHOT_MOUSE=1  BPQ_MODE=--shot BPQ_SHOT=/tmp/x.png csnhypodbpQT ...  # captura tras zoom+pick
 ```
+
+`--magdrag` imprime `magdrag A|B|abort|A2 … before/after`, `magdrag snap …` y `magdrag windows …`:
+`tests/test_magdrag.sh` exige que el drag de una estación no toque la otra y que un press sin
+release no bloquee la franja de la estación siguiente. `--dump` publica además
+`table events/origins` (`total/viewport/gap`) y `tablecols` (`mins`/`sizes`) para verificar el
+reparto del ancho sin mirar la pantalla.
 
 `--locate` corre el mismo camino que el botón (worker incluido) sobre la solución elegida y emite
 `locate=1 secs=… lat=… lon=… depth=… nph=… rms=… npicks=…`, `stations rows=… res=…` y

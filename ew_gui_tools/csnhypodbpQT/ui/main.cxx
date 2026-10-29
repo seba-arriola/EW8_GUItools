@@ -115,6 +115,14 @@ static int run_gui(QApplication &app, const QStringList &args)
     }
 
     BpqMainWindow win(cfg);
+    /* Tamano de ventana para los tests headless (--dump/--layout/--shot):
+     * BPQ_WIN_SIZE=1600x900. Sin la variable queda el 1100x750 de siempre. */
+    if (const char *ws = std::getenv("BPQ_WIN_SIZE")) {
+        int w = 0, h = 0;
+
+        if (std::sscanf(ws, "%dx%d", &w, &h) == 2 && w > 0 && h > 0)
+            win.resize(w, h);
+    }
     win.show();
 
     int rc = 0;
@@ -167,6 +175,9 @@ static int run_gui(QApplication &app, const QStringList &args)
             } else if (std::strcmp(mode, "--mouse") == 0) {
                 /* Eventos REALES de raton sobre los canvas (zoom/paneo/pick). */
                 rc = win.runMouseForTest() ? 0 : 1;
+            } else if (std::strcmp(mode, "--magdrag") == 0) {
+                /* Arrastre de la franja de magnitudes: dueno y cancelacion. */
+                rc = win.runMagDragForTest() ? 0 : 1;
             } else if (std::strcmp(mode, "--input") == 0) {
                 /* Una tecla/rueda a un widget concreto + volcado del estado. */
                 if (!win.runInputForTest())

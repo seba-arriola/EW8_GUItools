@@ -89,12 +89,20 @@ if grep -q 'setStretchLastSection(false)' "$table"; then
 else
     bad "fit_columns no desactiva stretchLastSection"
 fi
-if grep -q 'fit_columns(m_eventsView' "$ui" &&
-   grep -q 'fit_columns(m_originsView' "$ui" &&
+if grep -q 'ColumnFitter(m_eventsView' "$ui" &&
+   grep -q 'ColumnFitter(m_originsView' "$ui" &&
+   grep -q 'm_eventsFit->fit' "$ui" &&
+   grep -q 'm_originsFit->fit' "$ui" &&
    grep -q 'fitEventTables' "$ui"; then
-    ok "Eventos y Origins ajustan sus anchos al contenido"
+    ok "Eventos y Origins reparten el ancho (ColumnFitter)"
 else
-    bad "Eventos/Origins no usan fit_columns"
+    bad "Eventos/Origins no usan ColumnFitter"
+fi
+if grep -q 'fit_columns(m_eventsView' "$ui" ||
+   grep -q 'fit_columns(m_originsView' "$ui"; then
+    bad "Eventos/Origins volvieron a fit_columns (no reparte el sobrante)"
+else
+    ok "Eventos/Origins no resetean los anchos con fit_columns"
 fi
 if grep -q 'setColumnWidth' "$ui" || grep -q 'resizeColumnsToContents' "$ui"; then
     bad "hay anchos hardcodeados/ResizeToContents en la UI"

@@ -21,6 +21,8 @@
 #include "bpq_stations_model.h"
 #include "bpq_wave_worker.h"
 
+#include "ewguiqt/table.h"
+
 #include <QAction>
 #include <QAbstractItemView>
 #include <QAbstractSpinBox>
@@ -1111,6 +1113,8 @@ void BpqMainWindow::fetchTraces(const CsnhypodbpSolution *sol)
     QVector<BpqFetchReq> req;
     const CsnhypodbpStaRow *base = nullptr;
 
+    /* Solucion/estacion nueva: cualquier arrastre en curso quedo sin contexto. */
+    magDragCancel();
     ++m_waveJob;                 /* invalida cualquier resultado en vuelo */
     m_waveGen.store(m_waveJob);  /* el prefetch tambien se aborta */
     m_waveWith = 0;
@@ -1373,12 +1377,13 @@ void BpqMainWindow::fitProcesarTable(QTableView *view, QSplitter *split)
     split->setSizes(QList<int>() << need << rest);
 }
 
-/* Eventos: ancho minimo = max(cabecera, texto mas largo) + padding. Sin
- * anchos hardcodeados; el scroll horizontal es la valvula si no cabe. */
+/* Eventos: minimo = max(cabecera, texto mas largo) + padding y, si el panel
+ * da mas ancho, se reparte por igual entre las columnas (ColumnFitter). El
+ * scroll horizontal es la valvula si no cabe. */
 void BpqMainWindow::fitEventTables()
 {
-    if (m_eventsView)  ewguiqt::fit_columns(m_eventsView, 10);
-    if (m_originsView) ewguiqt::fit_columns(m_originsView, 10);
+    if (m_eventsFit)  m_eventsFit->fit();
+    if (m_originsFit) m_originsFit->fit();
 }
 
 /* Unico camino de cambio de estacion: m_selSta manda en los dos canvas. */
@@ -1389,6 +1394,10 @@ void BpqMainWindow::selectStation(const QString &sta)
         syncStationViews();
         return;
     }
+    /* El encuadre congelado era de la estacion anterior: si sobreviviera, la
+     * franja de la nueva podria quedar fuera de vista y no habria como
+     * agarrarla (el bloqueo que se veia al cambiar de estacion). */
+    magDragCancel();
     m_selSta = sta;
     syncStationViews();
     fetchTraces(currentSolution());
@@ -1681,6 +1690,13 @@ static bool isTextInputWidget(const QWidget *w)
 
 bool BpqMainWindow::eventFilter(QObject *obj, QEvent *ev)
 {
+    /* Un gesto de la franja no sobrevive a ocultar el canvas (cambio de
+     * sub-pestana) ni a desactivar la ventana (alt-tab): en esos casos el
+     * release no llega y el encuadre quedaria congelado para siempre. */
+    if ((ev->type() == QEvent::Hide && obj == m_magCanvas) ||
+        (ev->type() == QEvent::WindowDeactivate && obj == this))
+        magDragCancel();
+
     if (ev->type() == QEvent::Resize) {
         if (obj == m_mapPlan || obj == m_mapProf)
             refreshPanels();
@@ -2973,6 +2989,10 @@ void BpqMainWindow::fillMagCtx()
     const int nrows = int(qMax(m_traces.size(), m_traceRows.size()));
     int rowIdx = -1, i;
 
+    if (m_magDragGrab &&
+        (m_magDragSta != m_selSta || m_magDragKind != m_magKind))
+        magDragCancel();          /* resto de un contexto que ya no es el actual */
+
     std::memset(&m_magCtx, 0, sizeof(m_magCtx));
     m_magCtx.magcfg = m_cfg ? &m_cfg->magcfg : nullptr;
     m_magCtx.kind = m_magKind;
@@ -3011,7 +3031,8 @@ void BpqMainWindow::fillMagCtx()
     m_magCtx.ntr = int(m_magTrs.size());
 
     /* Durante el arrastre el encuadre queda CONGELADO: si se recalculara solo,
-     * la escala cambiaria bajo el puntero y el arrastre no seria lineal. */
+     * la escala cambiaria bajo el puntero y el arrastre no seria lineal. Solo
+     * vale para el (estacion, magnitud) dueno del gesto. */
     if (m_magDragGrab) {
         m_magCtx.view_t0 = m_magViewT0;
         m_magCtx.view_span = m_magViewSpan;
@@ -3029,6 +3050,8 @@ void BpqMainWindow::fillMagCtx()
 void BpqMainWindow::setMagKind(int kind)
 {
     if (kind < 0 || kind >= BPQ_MAG_KINDS) return;
+    if (kind != m_magKind)
+        magDragCancel();          /* el dueno del arrastre era la otra magnitud */
     m_magKind = kind;
     if (m_magPanel) bpq_magpanel_set_kind(m_magPanel, kind);
     if (kind < m_magRadios.size() && !m_magRadios.at(kind)->isChecked())
@@ -3189,8 +3212,12 @@ void BpqMainWindow::magPress(double x, double y)
     int grab = 0;
     double t = 0.0;
 
-    m_magDragGrab = 0;
-    if (!m_magPanel || !m_magCanvas || !m_magCtx.sta) return;
+    /* Un press nuevo desarma cualquier resto (un release perdido incluido) y
+     * recompone el encuadre sin congelar antes de decidir el agarre. */
+    magDragCancel();
+    if (!m_magPanel || !m_magCanvas) return;
+    fillMagCtx();
+    if (!m_magCtx.sta) return;
     if (!bpq_mag_hit(&m_magCtx, int(m_magCanvas->width() * dpr),
                      int(m_magCanvas->height() * dpr), x * dpr, y * dpr,
                      &grab, &t))
@@ -3204,6 +3231,8 @@ void BpqMainWindow::magPress(double x, double y)
         m_magViewSpan = (m_magCtx.t1 - m_magCtx.t0) + 2.0 * m;
     }
     m_magDragGrab = grab;
+    m_magDragSta = m_selSta;
+    m_magDragKind = m_magKind;
     m_magDragX = x * dpr;
     m_magDragPressT = t;
     m_magDragT0 = m_magCtx.t0;
@@ -3217,6 +3246,12 @@ void BpqMainWindow::magDragMove(double dx, double dy)
 
     (void)dy;
     if (!m_magDragGrab || !m_magPanel || !m_magCanvas || !m_magCtx.sta) return;
+    /* Solo el dueno del gesto recibe movimientos: si el contexto cambio
+     * (estacion/magnitud/solucion), el arrastre se descarta. */
+    if (m_magDragSta != m_selSta || m_magDragKind != m_magKind) {
+        magDragCancel();
+        return;
+    }
     m_magDragX += dx * dpr;
     t = bpq_mag_time_at(&m_magCtx, int(m_magCanvas->width() * dpr),
                         int(m_magCanvas->height() * dpr), m_magDragX);
@@ -3232,12 +3267,24 @@ void BpqMainWindow::magDragMove(double dx, double dy)
     renderMagnitudes();
 }
 
+/* Desarma el arrastre sin tocar las ventanas ya guardadas. Se llama al cambiar
+ * de estacion/magnitud/solucion y cuando se pierde el gesto (canvas oculto,
+ * ventana desactivada): el encuadre congelado no puede sobrevivir a un cambio
+ * de contexto o la franja nueva queda fuera de vista y no hay como agarrarla. */
+void BpqMainWindow::magDragCancel()
+{
+    m_magDragGrab = 0;
+    m_magDragSta.clear();
+    m_magDragKind = -1;
+    m_magViewT0 = 0.0;
+    m_magViewSpan = 0.0;
+    if (m_magCanvas) m_magCanvas->unsetCursor();
+}
+
 void BpqMainWindow::magRelease()
 {
     if (!m_magDragGrab) return;
-    m_magDragGrab = 0;
-    m_magViewT0 = 0.0;
-    m_magViewSpan = 0.0;
+    magDragCancel();
     renderMagnitudes();
 }
 
@@ -3887,6 +3934,132 @@ bool BpqMainWindow::runMouseForTest()
     }
     std::fflush(stdout);
     return npicked > 0;
+}
+
+/* Hook headless (BPQ_MODE=--magdrag): arrastra la franja de la ventana de
+ * magnitudes con eventos REALES de raton para probar el dueno del gesto:
+ *   1) drag en A: cambia la ventana de A;
+ *   2) cambiar a B y drag: cambia la de B y NO la de A;
+ *   3) press sin release en B (gesto abortado) y volver a A: el drag de A
+ *      sigue funcionando (el encuadre congelado no quedo pegado).
+ * Imprime before/after por paso para que el script compare. */
+bool BpqMainWindow::runMagDragForTest()
+{
+    if (!m_magCanvas || !m_magPanel || !m_tabs || !m_subtabs)
+        return false;
+    m_tabs->setCurrentIndex(1);
+    m_subtabs->setCurrentIndex(1);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+
+    auto pick_sta = [](const char *env, const char *def) -> QString {
+        const QByteArray v = qgetenv(env);
+
+        return QString::fromUtf8(v.isEmpty() ? def : v.constData());
+    };
+    const QString staA = pick_sta("BPQ_MAGDRAG_STA1", "PB01");
+    const QString staB = pick_sta("BPQ_MAGDRAG_STA2", "PB02");
+    const char *wms = std::getenv("BPQ_WAVE_WAIT_MS");
+    const int wait_ms = (wms && wms[0]) ? std::atoi(wms) : 1000;
+
+    auto win_of = [this](const QString &sta, double *t0, double *t1) {
+        *t0 = *t1 = NAN;
+        bpq_magpanel_window(m_magPanel, sta.toUtf8().constData(), m_magKind,
+                            t0, t1);
+    };
+    auto select = [this, wait_ms](const QString &sta) -> bool {
+        selectStation(sta);
+        waitForWaves(wait_ms);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        return m_selSta == sta;
+    };
+    auto handle_x = [this](double *x_log) -> bool {
+        const qreal dpr = m_magCanvas->devicePixelRatioF();
+        const int w = int(m_magCanvas->width() * dpr);
+        const int h = int(m_magCanvas->height() * dpr);
+        int x0 = -1, x1 = -1;
+
+        for (int x = 0; x < w; ++x) {
+            int g = 0;
+            double t = 0.0;
+
+            if (bpq_mag_hit(&m_magCtx, w, h, double(x), 8.0 * dpr, &g, &t)) {
+                if (x0 < 0) x0 = x;
+                x1 = x;
+            }
+        }
+        if (x0 < 0) return false;
+        *x_log = (double(x0) + double(x1)) / 2.0 / dpr;
+        return true;
+    };
+    auto send_drag = [this](double x, double y, int dx, bool release) {
+        const QPointF p0(x, y);
+        QMouseEvent press(QEvent::MouseButtonPress, p0,
+                          m_magCanvas->mapToGlobal(p0.toPoint()), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+
+        QCoreApplication::sendEvent(m_magCanvas, &press);
+        if (!release) return;
+        const QPointF p1(x + dx, y);
+        QMouseEvent move(QEvent::MouseMove, p1,
+                         m_magCanvas->mapToGlobal(p1.toPoint()), Qt::NoButton,
+                         Qt::LeftButton, Qt::NoModifier);
+        QMouseEvent rel(QEvent::MouseButtonRelease, p1,
+                        m_magCanvas->mapToGlobal(p1.toPoint()), Qt::LeftButton,
+                        Qt::NoButton, Qt::NoModifier);
+        QCoreApplication::sendEvent(m_magCanvas, &move);
+        QCoreApplication::sendEvent(m_magCanvas, &rel);
+    };
+    auto step = [&](const QString &sta, const char *tag, bool abort) -> bool {
+        double x = 0.0, t0 = NAN, t1 = NAN, a0 = NAN, a1 = NAN;
+
+        if (!select(sta)) {
+            std::printf("magdrag %s sta=%s err=no-seleccion\n", tag,
+                        sta.toUtf8().constData());
+            return false;
+        }
+        win_of(sta, &t0, &t1);
+        if (!handle_x(&x)) {
+            std::printf("magdrag %s sta=%s err=sin-franja before=%.2f,%.2f\n",
+                        tag, sta.toUtf8().constData(), t0, t1);
+            return false;
+        }
+        send_drag(x, 8.0, abort ? 0 : 40, !abort);
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+        win_of(sta, &a0, &a1);
+        std::printf("magdrag %s sta=%s x=%.1f before=%.2f,%.2f after=%.2f,%.2f "
+                    "touched=%d abort=%d\n",
+                    tag, sta.toUtf8().constData(), x, t0, t1, a0, a1,
+                    bpq_magpanel_touched_count(m_magPanel), abort ? 1 : 0);
+        std::fflush(stdout);
+        return true;
+    };
+
+    auto snap = [&](const char *tag) {
+        double sa0 = NAN, sa1 = NAN, sb0 = NAN, sb1 = NAN;
+
+        win_of(staA, &sa0, &sa1);
+        win_of(staB, &sb0, &sb1);
+        std::printf("magdrag snap %s A=%.2f,%.2f B=%.2f,%.2f\n", tag, sa0,
+                    sa1, sb0, sb1);
+        std::fflush(stdout);
+    };
+
+    if (!step(staA, "A", false)) return false;
+    snap("A");
+    if (!step(staB, "B", false)) return false;
+    snap("B");
+    if (!step(staB, "abort", true)) return false;   /* press SIN release */
+    snap("abort");
+    if (!step(staA, "A2", false)) return false;     /* el aborto no bloquea */
+    snap("A2");
+
+    double a0 = NAN, a1 = NAN, b0 = NAN, b1 = NAN;
+
+    win_of(staA, &a0, &a1);
+    win_of(staB, &b0, &b1);
+    std::printf("magdrag windows A=%.2f,%.2f B=%.2f,%.2f\n", a0, a1, b0, b1);
+    std::fflush(stdout);
+    return true;
 }
 
 /* Hook headless (BPQ_MODE=--input): manda UNA tecla o una rueda a un widget
@@ -4797,6 +4970,11 @@ void BpqMainWindow::buildEventsTab()
 
     m_eventsView  = make_view("master-events");
     m_originsView = make_view("detail-solutions");
+    /* El reparto sigue al ancho del panel: con la ventana maximizada las
+     * columnas crecen por igual en vez de dejar el sobrante en blanco. */
+    m_eventsFit  = new ewguiqt::ColumnFitter(m_eventsView, 10, -1, m_eventsView);
+    m_originsFit = new ewguiqt::ColumnFitter(m_originsView, 10, -1,
+                                             m_originsView);
     m_splitEvents->addWidget(m_eventsView);
     m_splitEvents->addWidget(m_originsView);
     m_splitEvents->setSizes(QList<int>() << 260 << 260);
@@ -5409,12 +5587,16 @@ QString BpqMainWindow::dumpTree() const
     }
 
     /* Anchos: el criterio de "tabla ajustada" es que no haya scroll horizontal
-     * con el ancho por defecto de la ventana. */
+     * con el ancho por defecto de la ventana. `gap` = viewport - total: 0/1 en
+     * las tablas que llenan el panel (Eventos), negativo si el panel las deja
+     * mas anchas (Procesar reparte con el canvas). */
     {
         static const struct {
             const char *name;
             const QTableView *view;
         } tables[] = {
+            { "events", m_eventsView },
+            { "origins", m_originsView },
             { "sta", m_staView },
             { "mag", m_magView },
         };
@@ -5424,14 +5606,37 @@ QString BpqMainWindow::dumpTree() const
             const QHeaderView *hh = t.view ? t.view->horizontalHeader() : nullptr;
 
             if (!t.view || !hh) continue;
-            for (int c = 0; c < (t.view->model() ? t.view->model()->columnCount() : 0); c++)
+            const int ncols = t.view->model() ? t.view->model()->columnCount() : 0;
+
+            for (int c = 0; c < ncols; c++)
                 total += hh->sectionSize(c);
-            out += QStringLiteral("table %1 cols=%2 total=%3 viewport=%4 hscroll=%5\n")
+            const int viewport = t.view->viewport()->width();
+
+            out += QStringLiteral("table %1 cols=%2 total=%3 viewport=%4 header=%5 "
+                                  "vscroll=%6 hscroll=%7 gap=%8\n")
                        .arg(QString::fromLatin1(t.name))
-                       .arg(t.view->model() ? t.view->model()->columnCount() : 0)
+                       .arg(ncols)
                        .arg(total)
-                       .arg(t.view->viewport()->width())
-                       .arg(t.view->horizontalScrollBar()->isVisible() ? 1 : 0);
+                       .arg(viewport)
+                       .arg(hh->width())
+                       .arg(t.view->verticalScrollBar()->isVisible() ? 1 : 0)
+                       .arg(t.view->horizontalScrollBar()->isVisible() ? 1 : 0)
+                       .arg(viewport - total);
+
+            /* Anchos por seccion vs minimos calculados: permite verificar en
+             * headless que no se recorta texto y que el sobrante se reparte. */
+            const QVector<int> mn = ewguiqt::column_min_widths(
+                const_cast<QTableView *>(t.view), 10);
+            QStringList mins, sizes;
+
+            for (int c = 0; c < ncols; c++) {
+                mins << QString::number(c < mn.size() ? mn.at(c) : 0);
+                sizes << QString::number(hh->sectionSize(c));
+            }
+            out += QStringLiteral("tablecols %1 mins=%2 sizes=%3\n")
+                       .arg(QString::fromLatin1(t.name))
+                       .arg(mins.join(QLatin1Char(',')))
+                       .arg(sizes.join(QLatin1Char(',')));
         }
     }
 

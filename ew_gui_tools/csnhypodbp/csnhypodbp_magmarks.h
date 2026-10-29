@@ -29,8 +29,10 @@ typedef enum {
 } CsnhypodbpMagGrab;
 
 /* Alto del HANDLE de arrastre: la barra rellena que se dibuja en la parte
- * SUPERIOR de la franja. Solo desde ahi se mueve o redimensiona la ventana, de
- * modo que el resto del canvas queda libre para el zoom por dos clics. */
+ * SUPERIOR de la franja. Desde el handle se mueve la franja completa o se
+ * redimensiona por sus bordes; por DEBAJO del handle los bordes verticales
+ * tambien redimensionan (lo anuncia el cursor SizeHor) y el interior no
+ * agarra. */
 #define CSNHYPODBP_MAG_HANDLE_H 16.0
 
 /* 1 si `y` cae dentro del handle que empieza en `band_top`. */

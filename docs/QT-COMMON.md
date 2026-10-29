@@ -13,6 +13,8 @@ Makefile no tiene receta `install_bin.sh`.
 | `ewguiqt/boot.h` | `ewguiqt::boot(argc, argv, opts, gui)` | `LC_NUMERIC=C` **antes y después** de `QApplication`; los flags `headless` se resuelven **sin** crear la app (funcionan sin `DISPLAY`) |
 | `ewguiqt/table.h` | `SortProxy` (`setColumnKinds`, `sortInitial`, `sortByHeaderClick`) | el orden delega en `ewgui_table_cmp_values` (el mismo comparador del GTK): primer clic DESC en numéricas/fecha, ASC en texto, desempate por columna |
 | `ewguiqt/table.h` | `wire_header_sort(view, proxy, col)` | desactiva el orden propio de Qt, conecta `sectionClicked` al proxy y mantiene la **flecha del header** en el orden real; aplica el orden inicial con la dirección de su primer clic |
+| `ewguiqt/table.h` | `fit_columns(view, padding, max)` | cada columna visible queda en su **mínimo** (`max(cabecera + margen + flecha, celda más larga + padding)`); `Interactive`, sin estirar la última |
+| `ewguiqt/table.h` | `column_min_widths()`, `layout_columns()`, `ColumnFitter` | reparto que llena el viewport: si sobra ancho, se reparte **por igual** entre las columnas visibles sin bajar del mínimo efectivo (clamp de Qt incluido); `ColumnFitter` lo reaplica al **redimensionar** con los mínimos cacheados |
 | `ewguiqt/list_select.h` | `ListSelectDialog::pick()` | ventana modal; **nunca** un desplegable (WSLg #1299 deja los popups detrás de la ventana) |
 | `ewguiqt/confirm.h` | `ewguiqt::confirm()` | botón por defecto = **No**; cerrar con X/Esc devuelve `false` |
 | `ewguiqt/theme.h` | `set_dark_mode()` / `dark_mode()` | paleta completa con estilo Fusion, idempotente, sin persistencia |

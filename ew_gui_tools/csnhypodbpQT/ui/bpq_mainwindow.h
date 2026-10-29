@@ -55,6 +55,7 @@ class BpqSortProxy;
 class BpqOriginsModel;
 
 namespace ewguiqt { class SortProxy; }
+namespace ewguiqt { class ColumnFitter; }
 class BpqRingWorker;
 
 class BpqMainWindow : public QMainWindow
@@ -159,6 +160,7 @@ private:
     void magPress(double x, double y);       /* agarre de la franja */
     void magDragMove(double dx, double dy);
     void magRelease();
+    void magDragCancel();                    /* desarma sin tocar las ventanas */
     void magHovered(double x, double y);     /* cursor: borde/handle de la franja */
     void magLeft();
     void applyMagGate();                     /* cajas de la puerta -> panel */
@@ -176,6 +178,7 @@ public:
     bool runMagCalcForTest();                /* hook headless BPQ_MODE=--magcalc */
     bool runMwwForTest();                    /* hook headless BPQ_MODE=--mww */
     bool runMouseForTest();                  /* hook headless BPQ_MODE=--mouse */
+    bool runMagDragForTest();                /* hook headless BPQ_MODE=--magdrag */
     bool runInputForTest();                  /* hook headless BPQ_MODE=--input */
     bool runSortForTest();                   /* hook headless BPQ_MODE=--sort */
     /* Hooks de la fase 7 (BPQ_TEST_FIXTURE/PIN/CLICK/...); sin efecto en
@@ -316,6 +319,8 @@ private:
     QSplitter       *m_splitMag = nullptr;      /* tabla magnitudes | traza */
     QTableView      *m_eventsView = nullptr;
     QTableView      *m_originsView = nullptr;
+    ewguiqt::ColumnFitter *m_eventsFit = nullptr;   /* llena el ancho del panel */
+    ewguiqt::ColumnFitter *m_originsFit = nullptr;
     QTableView      *m_staView = nullptr;
     QTableView      *m_magView = nullptr;
     BpqCanvasWidget *m_mapPlan = nullptr;
@@ -339,6 +344,10 @@ private:
     double                    m_magDragX = 0.0;      /* px de dispositivo */
     double                    m_magDragPressT = 0.0;
     double                    m_magDragT0 = 0.0, m_magDragT1 = 0.0;
+    /* Dueno del arrastre: solo el (estacion, magnitud) que lo inicio recibe
+     * los movimientos. Cambiar de contexto lo cancela (ver magDragCancel). */
+    QString                   m_magDragSta;
+    int                       m_magDragKind = -1;
     quint64                   m_magJob = 0;
     bool                      m_magBusy = false;
     unsigned                  m_magMask = 0;   /* mascara del calculate en vuelo */

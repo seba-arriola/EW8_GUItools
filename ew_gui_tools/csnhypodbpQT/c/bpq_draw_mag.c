@@ -370,10 +370,13 @@ int bpq_mag_hit(const BpqMagCtx *c, int w, int h, double mx, double my,
     if (!c || !(c->anchor > 0.0)) return 0;
     mag_geo(c, w, h, &g);
     if (!g.ok) return 0;
-    /* Solo desde el handle de arriba (igual que la GTK). */
-    if (!csnhypodbp_magmarks_handle_hit(my, 0.0)) return 0;
     gr = csnhypodbp_magmarks_grab(mx, g.xa, g.xb, 5.0 * dpr);
     if (gr == CSNHYPODBP_MAGG_NONE) return 0;
+    /* Los bordes verticales se agarran en TODA la altura (es lo que anuncia
+     * `bpq_mag_hover` con SizeHor). El interior solo desde el handle: por
+     * debajo de el no hay accion para no mover la franja sin querer. */
+    if (gr == CSNHYPODBP_MAGG_BOTH && !csnhypodbp_magmarks_handle_hit(my, 0.0))
+        return 0;
     if (grab) *grab = (int)gr;
     if (t_at) *t_at = time_at(&g, mx);
     return 1;

@@ -22,10 +22,12 @@
 #include <functional>
 
 #include <QAbstractItemModel>
+#include <QObject>
 #include <QSortFilterProxyModel>
 #include <QString>
 #include <QVector>
 
+class QEvent;
 class QTableView;
 
 namespace ewguiqt {
@@ -95,6 +97,48 @@ void wire_header_sort(QTableView *view, SortProxy *proxy, int initialColumn);
  * resultado. Devuelve el ancho total de las secciones (para repartir el panel).
  * No toca las columnas ocultas ni el modelo. */
 int fit_columns(QTableView *view, int padding = 10, int maxColumnWidth = -1);
+
+/* Anchos minimos por columna (px logicos): el mismo criterio de `fit_columns`
+ * (maximo entre cabecera + margen + flecha y texto mas largo + padding, >= 8).
+ * Las columnas ocultas quedan en 0. `maxColumnWidth > 0` acota el minimo.
+ * Devuelve un vector de tamano columnCount(); vacio si no hay vista/modelo. */
+QVector<int> column_min_widths(QTableView *view, int padding = 10,
+                               int maxColumnWidth = -1);
+
+/* Aplica `minima` (de `column_min_widths`) al ancho ACTUAL del viewport:
+ *   - si la suma de minimos es menor, reparte el sobrante en partes iguales
+ *     entre las columnas visibles (resto de 1 px de izquierda a derecha) hasta
+ *     que la tabla ocupa todo el ancho;
+ *   - si no alcanza, deja los minimos y el scroll horizontal es la valvula.
+ * Nunca encoge una columna por debajo de su minimo efectivo. Devuelve el total
+ * aplicado (suma de sectionSize). */
+int layout_columns(QTableView *view, const QVector<int> &minima);
+
+/* Mantiene el reparto de `layout_columns` cuando cambia el ancho del viewport
+ * (maximizar/restaurar, barra vertical). Cachea los minimos: redimensionar no
+ * recorre el modelo. `fit()` recalcula los minimos y aplica; se llama tras
+ * refrescar el modelo. Sin Q_OBJECT: no expone senales. */
+class ColumnFitter : public QObject
+{
+public:
+    explicit ColumnFitter(QTableView *view, int padding = 10,
+                          int maxColumnWidth = -1, QObject *parent = nullptr);
+
+    void refresh();             /* recalcula minimos y reparte */
+    void apply();               /* reparte los minimos cacheados */
+    void fit();                 /* == refresh() */
+    int natural_total() const;  /* suma de los minimos cacheados */
+
+protected:
+    bool eventFilter(QObject *obj, QEvent *ev) override;
+
+private:
+    QTableView *m_view = nullptr;
+    QVector<int> m_min;
+    int m_padding = 10;
+    int m_max = -1;
+    bool m_applying = false;    /* anti-recursion por sectionResized */
+};
 
 } /* namespace ewguiqt */
 

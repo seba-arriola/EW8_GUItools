@@ -89,7 +89,10 @@ una estación concreta.
   los A/M/Teo de `picking` (una P efectiva `M>A>Teo` por estación), calcula las
   cuatro magnitudes (ML/Mwp/Mb/Ms; Mww no se recalcula) y ancla cada ventana en el
   `t_pick` de esa P, usando la franja ajustada de este panel si existe. Las S no
-  generan magnitud: solo van al localizador.
+  generan magnitud: solo van al localizador. La ventana es por `(estación,
+  magnitud)` y sobrevive al cambio de estación; el **gesto** de arrastre no:
+  cambiar de estación, magnitud o solución lo cancela (así un release perdido no
+  deja el encuadre congelado ni bloquea la franja de la estación siguiente).
 - **`distancia min/max`** — override manual de la puerta de la magnitud activa,
   en grados. El corte en km de ML (`Ml_MaxDist`/`Ml_DistType`) **no** se edita
   aquí: no es la misma distancia y se toma siempre del `.d` de `csnmags`.

@@ -3,6 +3,7 @@
 
 #include <cmath>
 
+#include <QEvent>
 #include <QFontMetrics>
 #include <QHeaderView>
 #include <QSignalBlocker>
@@ -146,15 +147,15 @@ void wire_header_sort(QTableView *view, SortProxy *proxy, int initialColumn)
     }
 }
 
-int fit_columns(QTableView *view, int padding, int maxColumnWidth)
+QVector<int> column_min_widths(QTableView *view, int padding, int maxColumnWidth)
 {
     if (!view || padding < 0)
-        return 0;
+        return QVector<int>();
 
     QAbstractItemModel *model = view->model();
     QHeaderView *header = view->horizontalHeader();
     if (!model || !header)
-        return 0;
+        return QVector<int>();
 
     const QFontMetrics cellFm(view->font());
     const QFontMetrics headFm(header->font());
@@ -163,10 +164,10 @@ int fit_columns(QTableView *view, int padding, int maxColumnWidth)
     const int mark = view->style()->pixelMetric(QStyle::PM_HeaderMarkSize, nullptr,
                                                 header);
     const int rows = model->rowCount();
-    int total = 0;
+    const int n = model->columnCount();
+    QVector<int> out(n, 0);
 
-    header->setStretchLastSection(false);
-    for (int c = 0; c < model->columnCount(); ++c) {
+    for (int c = 0; c < n; ++c) {
         if (view->isColumnHidden(c))
             continue;
 
@@ -187,14 +188,157 @@ int fit_columns(QTableView *view, int padding, int maxColumnWidth)
             width = maxColumnWidth;
         if (width < 8)
             width = 8;
+        out[c] = width;
+    }
+    return out;
+}
+
+int fit_columns(QTableView *view, int padding, int maxColumnWidth)
+{
+    if (!view || padding < 0)
+        return 0;
+
+    QAbstractItemModel *model = view->model();
+    QHeaderView *header = view->horizontalHeader();
+    if (!model || !header)
+        return 0;
+
+    const QVector<int> minima = column_min_widths(view, padding, maxColumnWidth);
+    int total = 0;
+
+    header->setStretchLastSection(false);
+    for (int c = 0; c < minima.size(); ++c) {
+        if (minima.at(c) <= 0)
+            continue;
 
         /* Interactive (no Fixed): el ancho queda exacto, pero las secciones no
          * inflan el minimo de la ventana (trampa WSLg al maximizar). */
         header->setSectionResizeMode(c, QHeaderView::Interactive);
-        header->resizeSection(c, width);
-        total += width;
+        header->resizeSection(c, minima.at(c));
+        total += minima.at(c);
     }
     return total;
+}
+
+int layout_columns(QTableView *view, const QVector<int> &minima)
+{
+    if (!view)
+        return 0;
+
+    QAbstractItemModel *model = view->model();
+    QHeaderView *header = view->horizontalHeader();
+    if (!model || !header)
+        return 0;
+
+    const int n = model->columnCount();
+    if (minima.size() != n)
+        return 0;
+
+    header->setStretchLastSection(false);
+
+    /* 1. Fijar los minimos y leer el tamano EFECTIVO: Qt puede subirlo por
+     * `minimumSectionSize` del estilo. El reparto se calcula sobre ese valor,
+     * no sobre el pedido, para que la suma sea exacta. */
+    QVector<int> eff(n, 0);
+    int sum = 0, nvis = 0;
+
+    for (int c = 0; c < n; ++c) {
+        if (view->isColumnHidden(c) || minima.at(c) <= 0)
+            continue;
+        header->setSectionResizeMode(c, QHeaderView::Interactive);
+        header->resizeSection(c, minima.at(c));
+        eff[c] = header->sectionSize(c);
+        sum += eff[c];
+        ++nvis;
+    }
+
+    /* 2. Repartir el sobrante por igual; el resto de 1 px va de izquierda a
+     * derecha. Si no alcanza, quedan los minimos (scroll horizontal). */
+    const int vw = view->viewport()->width();
+
+    if (vw > 0 && sum > 0 && nvis > 0 && sum < vw) {
+        int extra = vw - sum;
+        const int base = extra / nvis;
+        int rem = extra % nvis;
+
+        for (int c = 0; c < n; ++c) {
+            if (eff.at(c) <= 0)
+                continue;
+            int w = eff.at(c) + base;
+
+            if (rem > 0) {
+                ++w;
+                --rem;
+            }
+            header->resizeSection(c, w);
+        }
+    }
+
+    int applied = 0;
+    for (int c = 0; c < n; ++c) {
+        if (eff.at(c) > 0)
+            applied += header->sectionSize(c);
+    }
+    return applied;
+}
+
+ColumnFitter::ColumnFitter(QTableView *view, int padding, int maxColumnWidth,
+                           QObject *parent)
+    : QObject(parent), m_view(view), m_padding(padding), m_max(maxColumnWidth)
+{
+    if (m_view && m_view->viewport())
+        m_view->viewport()->installEventFilter(this);
+}
+
+void ColumnFitter::refresh()
+{
+    if (!m_view)
+        return;
+    m_min = column_min_widths(m_view, m_padding, m_max);
+    apply();
+}
+
+void ColumnFitter::apply()
+{
+    if (!m_view || m_applying)
+        return;
+
+    QAbstractItemModel *model = m_view->model();
+    if (!model)
+        return;
+    if (m_min.size() != model->columnCount()) {
+        /* Modelo cambiado desde el ultimo refresh: recalcular aca mismo (el
+         * caso normal es que `fit()` lo haga despues de refrescar los datos). */
+        m_min = column_min_widths(m_view, m_padding, m_max);
+        if (m_min.size() != model->columnCount())
+            return;
+    }
+
+    m_applying = true;
+    layout_columns(m_view, m_min);
+    m_applying = false;
+}
+
+void ColumnFitter::fit()
+{
+    refresh();
+}
+
+int ColumnFitter::natural_total() const
+{
+    int total = 0;
+
+    for (int w : m_min)
+        total += w;
+    return total;
+}
+
+bool ColumnFitter::eventFilter(QObject *obj, QEvent *ev)
+{
+    if (m_view && obj == m_view->viewport() && ev->type() == QEvent::Resize &&
+        !m_applying)
+        apply();
+    return QObject::eventFilter(obj, ev);
 }
 
 } /* namespace ewguiqt */

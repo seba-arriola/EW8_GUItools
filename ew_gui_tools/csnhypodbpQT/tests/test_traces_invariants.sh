@@ -185,6 +185,30 @@ else
     bad "el canvas de magnitudes no cambia el cursor en los bordes"
 fi
 
+# La franja pertenece a (estacion, magnitud): cambiar de contexto cancela el
+# arrastre (el encuadre congelado no puede sobrevivir y bloquear la franja).
+if grep -q 'void BpqMainWindow::magDragCancel' "$ui" &&
+   sed -n '/void BpqMainWindow::selectStation/,/^}/p' "$ui" | grep -q 'magDragCancel' &&
+   sed -n '/void BpqMainWindow::setMagKind/,/^}/p' "$ui" | grep -q 'magDragCancel' &&
+   sed -n '/void BpqMainWindow::fetchTraces/,/^}/p' "$ui" | grep -q 'magDragCancel'; then
+    ok "franja: el cambio de estacion/magnitud/solucion cancela el arrastre"
+else
+    bad "la franja puede sobrevivir a un cambio de contexto"
+fi
+if sed -n '/void BpqMainWindow::magDragMove/,/^}/p' "$ui" | grep -q 'm_magDragSta != m_selSta' &&
+   sed -n '/void BpqMainWindow::fillMagCtx/,/^}/p' "$ui" | grep -q 'm_magDragSta != m_selSta'; then
+    ok "franja: solo el dueno del gesto recibe movimientos"
+else
+    bad "falta la comprobacion de dueno del arrastre"
+fi
+if sed -n '/bool BpqMainWindow::eventFilter/,/^}/p' "$ui" |
+   grep -q 'QEvent::WindowDeactivate' &&
+   sed -n '/bool BpqMainWindow::eventFilter/,/^}/p' "$ui" | grep -q 'QEvent::Hide'; then
+    ok "franja: ocultar/desactivar desarma el gesto"
+else
+    bad "un release perdido puede dejar el gesto pegado"
+fi
+
 # Teclado: filtro de aplicacion + tabla sin type-ahead.
 if grep -q 'qApp->installEventFilter' "$ui" &&
    grep -q 'handlePickingKey' "$ui"; then

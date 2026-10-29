@@ -47,11 +47,13 @@ ok()  { pass=$((pass + 1)); echo "ok   $*"; }
 bad() { fail=$((fail + 1)); echo "FALLA $*"; }
 
 out=
-run_dump() {  # <tab>
+run_dump() {  # <tab> [VAR=valor...]
+    tab=$1
+    shift
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
-        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB="$1" \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB="$tab" \
         BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
-        "$bin" csnhypodbpqt.d 2>/dev/null )
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
 }
 run_dump_kind() {  # <kind>  (fixture + magnitud activa, para el filtro)
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
@@ -120,10 +122,27 @@ ck() {  # <descripcion> <regex ERE>
         ok "$1"
     else
         bad "$1"
-        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|origins|stations|preview|checks|locate) ' | sed 's/^/       /'
+        printf '%s\n' "$out" | grep -E '^(traces|pick|mag|input|sort|table|tablecols|origins|stations|preview|checks|locate) ' | sed 's/^/       /'
     fi
 }
 checked_on() { printf '%s\n' "$out" | sed -n 's/^checks on=\([0-9]*\) total=.*/\1/p'; }
+
+# Cada columna del volcado `tablecols` debe ser >= su minimo calculado.
+check_tablecols() {  # <tab>
+    _mins=$(printf '%s\n' "$out" | sed -n "s/^tablecols $1 mins=\([0-9,]*\) sizes=.*/\1/p")
+    _sizes=$(printf '%s\n' "$out" | sed -n "s/^tablecols $1 mins=[0-9,]* sizes=\([0-9,]*\)$/\1/p")
+    if [ -n "$_mins" ] && [ -n "$_sizes" ] && \
+       LC_ALL=C awk -v m="$_mins" -v s="$_sizes" 'BEGIN {
+           n = split(m, mm, ","); k = split(s, ss, ",");
+           if (n != k || n == 0) exit 1;
+           for (i = 1; i <= n; i++) if (ss[i] < mm[i]) exit 1;
+           exit 0;
+       }'; then
+        ok "tablecols $1: cada columna >= su minimo"
+    else
+        bad "tablecols $1: alguna columna bajo el minimo <$_mins | $_sizes>"
+    fi
+}
 
 # --- 1. filas por canal y tracesPerScreen --------------------------------
 run_dump picking
@@ -244,9 +263,39 @@ ck "events: ID primer clic DESC"      '^sort table=events col=7 clicks=1 last=7 
 
 # --- 7. anchos: sin scroll horizontal en picking y magnitudes ------------
 run_dump picking
-ck "picking: tabla sin scroll H"      '^table sta cols=5 total=[0-9]+ viewport=[0-9]+ hscroll=0$'
+ck "picking: tabla sin scroll H"      '^table sta cols=5 total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=0 gap=-?[0-9]+$'
 run_dump magnitudes
-ck "magnitudes: tabla sin scroll H"   '^table mag cols=8 total=[0-9]+ viewport=[0-9]+ hscroll=0$'
+ck "magnitudes: tabla sin scroll H"   '^table mag cols=8 total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=0 gap=-?[0-9]+$'
+
+# --- 7b. Eventos: minimo por columna y reparto del sobrante --------------
+run_dump events
+ck "events: la tabla llena el panel"  '^table events cols=[0-9]+ total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=[01] gap=[01]$'
+check_tablecols events
+ev_def=$(printf '%s\n' "$out" | sed -n 's/^table events .* total=\([0-9]*\) .*/\1/p')
+
+run_dump origins
+check_tablecols origins
+og_total=$(printf '%s\n' "$out" | sed -n 's/^table origins .* total=\([0-9]*\) .*/\1/p')
+og_vp=$(printf '%s\n' "$out" | sed -n 's/^table origins .* viewport=\([0-9]*\) .*/\1/p')
+if [ -n "$og_total" ] && [ -n "$og_vp" ] && [ "$og_total" -ge "$og_vp" ]; then
+    ok "origins: al no caber conserva los minimos ($og_total >= $og_vp)"
+else
+    bad "origins: encogio por debajo de los minimos <$og_total < $og_vp>"
+fi
+
+run_dump events BPQ_WIN_SIZE=1600x900
+ck "events: maximizada llena el ancho" '^table events cols=[0-9]+ total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=[01] gap=[01]$'
+check_tablecols events
+ev_wide=$(printf '%s\n' "$out" | sed -n 's/^table events .* total=\([0-9]*\) .*/\1/p')
+if [ -n "$ev_def" ] && [ -n "$ev_wide" ] && [ "$ev_wide" -gt "$ev_def" ]; then
+    ok "events: el ancho crece con la ventana ($ev_def -> $ev_wide)"
+else
+    bad "events: el ancho no crece con la ventana <$ev_def -> $ev_wide>"
+fi
+
+run_dump origins BPQ_WIN_SIZE=1600x900
+ck "origins: maximizada llena el ancho" '^table origins cols=[0-9]+ total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=[01] gap=[01]$'
+check_tablecols origins
 
 # --- 8. seleccion en magnitudes: misma estacion en picking ----------------
 run_input BPQ_INPUT_TARGET=mag BPQ_INPUT_SELECT=PB02

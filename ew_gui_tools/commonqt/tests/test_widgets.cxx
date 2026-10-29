@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QPalette>
 #include <QPushButton>
+#include <QScrollBar>
 #include <QStandardItem>
 #include <QStandardItemModel>
 #include <QTableView>
@@ -270,6 +271,139 @@ static void checkFitColumns()
           "fit_columns(NULL) debe devolver 0");
 }
 
+static void checkFillColumns()
+{
+    QStandardItemModel model(2, 2);
+
+    model.setHeaderData(0, Qt::Horizontal, QStringLiteral("a"));
+    model.setHeaderData(1, Qt::Horizontal, QStringLiteral("bb"));
+    model.setItem(0, 0, new QStandardItem(QStringLiteral("x")));
+    model.setItem(0, 1, new QStandardItem(QStringLiteral("123456.7")));
+    model.setItem(1, 0, new QStandardItem(QStringLiteral("yy")));
+    model.setItem(1, 1, new QStandardItem(QStringLiteral("9")));
+
+    QTableView view;
+    view.setModel(&model);
+    view.resize(900, 200);
+    view.show();
+    QApplication::processEvents();
+
+    ewguiqt::ColumnFitter fit(&view, 10);
+    fit.fit();
+    QHeaderView *h = view.horizontalHeader();
+    const QVector<int> raw = ewguiqt::column_min_widths(&view, 10);
+
+    CHECK(raw.size() == 2, "column_min_widths debe devolver una entrada por columna");
+    CHECK(fit.natural_total() == raw.at(0) + raw.at(1),
+          "natural_total no coincide con los minimos");
+    CHECK(h->sectionSize(0) >= raw.at(0) && h->sectionSize(1) >= raw.at(1),
+          "el reparto no puede encoger por debajo del minimo");
+    CHECK(!h->stretchLastSection(),
+          "el reparto debe desactivar el stretch de la ultima");
+
+    /* Minimos EFECTIVOS: Qt puede subirlos por `minimumSectionSize`. Se miden
+     * con un viewport mas angosto que la suma de minimos (no hay sobrante). */
+    view.resize(60, 200);
+    QApplication::processEvents();
+    const int eff0 = h->sectionSize(0), eff1 = h->sectionSize(1);
+
+    CHECK(eff0 >= raw.at(0) && eff1 >= raw.at(1),
+          "el minimo efectivo no puede quedar por debajo del calculado");
+    CHECK(h->sectionSize(0) == eff0 && h->sectionSize(1) == eff1,
+          "con el viewport angosto deben quedar los minimos");
+    CHECK(h->length() > view.viewport()->width(),
+          "con el viewport angosto la tabla debe exceder el ancho");
+    CHECK(view.horizontalScrollBar()->isVisible(),
+          "con el viewport angosto debe aparecer scroll horizontal");
+
+    /* Volver a ensanchar: la tabla ocupa el viewport y el extra es igual. */
+    view.resize(900, 200);
+    QApplication::processEvents();
+    int sum = h->sectionSize(0) + h->sectionSize(1);
+    CHECK(qAbs(sum - view.viewport()->width()) <= 1,
+          "con sobra la tabla debe ocupar todo el viewport");
+    CHECK(qAbs((h->sectionSize(0) - eff0) - (h->sectionSize(1) - eff1)) <= 1,
+          "el sobrante debe repartirse por igual");
+    CHECK(!view.horizontalScrollBar()->isVisible(),
+          "sin sobra no debe aparecer scroll horizontal");
+
+    /* Tercera columna: el resto de 1 px no rompe la igualdad. */
+    {
+        QStandardItemModel m3(1, 3);
+        m3.setHeaderData(0, Qt::Horizontal, QStringLiteral("a"));
+        m3.setHeaderData(1, Qt::Horizontal, QStringLiteral("bb"));
+        m3.setHeaderData(2, Qt::Horizontal, QStringLiteral("ccc"));
+        m3.setItem(0, 0, new QStandardItem(QStringLiteral("1")));
+        m3.setItem(0, 1, new QStandardItem(QStringLiteral("2")));
+        m3.setItem(0, 2, new QStandardItem(QStringLiteral("3")));
+        QTableView v3;
+        v3.setModel(&m3);
+        v3.resize(60, 120);
+        v3.show();
+        QApplication::processEvents();
+        ewguiqt::ColumnFitter f3(&v3, 10);
+        f3.fit();
+        QHeaderView *h3 = v3.horizontalHeader();
+        const int eff[3] = { h3->sectionSize(0), h3->sectionSize(1),
+                             h3->sectionSize(2) };
+
+        v3.resize(500, 120);
+        QApplication::processEvents();
+        const int e0 = h3->sectionSize(0) - eff[0];
+        const int e1 = h3->sectionSize(1) - eff[1];
+        const int e2 = h3->sectionSize(2) - eff[2];
+        const int emax = qMax(e0, qMax(e1, e2));
+        const int emin = qMin(e0, qMin(e1, e2));
+
+        CHECK(emax - emin <= 1, "el resto de 1 px debe repartirse sin romper la igualdad");
+        CHECK(qAbs(h3->length() - v3.viewport()->width()) <= 1,
+              "tres columnas tambien deben llenar el viewport");
+    }
+
+    /* Barra vertical: el viewport se angosta y el reparto la sigue. */
+    for (int i = 0; i < 200; ++i)
+        model.appendRow({ new QStandardItem(QStringLiteral("r")),
+                          new QStandardItem(QStringLiteral("1")) });
+    view.resize(900, 120);
+    QApplication::processEvents();
+    CHECK(view.verticalScrollBar()->isVisible(),
+          "con 200 filas y 120 px debe aparecer la barra vertical");
+    sum = h->sectionSize(0) + h->sectionSize(1);
+    CHECK(qAbs(sum - view.viewport()->width()) <= 1,
+          "la aparicion de la barra vertical debe reajustar el reparto");
+
+    /* Columna oculta: no recibe extra y se excluye de la suma. */
+    view.setColumnHidden(0, true);
+    fit.fit();
+    const QVector<int> hiddenMin = ewguiqt::column_min_widths(&view, 10);
+    CHECK(hiddenMin.size() == 2 && hiddenMin.at(0) == 0,
+          "una columna oculta debe quedar fuera de los minimos");
+    CHECK(qAbs(h->sectionSize(1) - view.viewport()->width()) <= 1,
+          "la columna visible debe quedarse con todo el ancho");
+    view.setColumnHidden(0, false);
+
+    /* Modelo vacio y vista nula. */
+    {
+        QStandardItemModel empty(0, 2);
+
+        empty.setHeaderData(0, Qt::Horizontal, QStringLiteral("a"));
+        empty.setHeaderData(1, Qt::Horizontal, QStringLiteral("bb"));
+        QTableView v2;
+        v2.setModel(&empty);
+        v2.resize(400, 120);
+        v2.show();
+        QApplication::processEvents();
+        ewguiqt::ColumnFitter f2(&v2, 10);
+        f2.fit();
+        CHECK(qAbs(v2.horizontalHeader()->length() - v2.viewport()->width()) <= 1,
+              "un modelo vacio debe llenar el viewport con sus cabeceras");
+    }
+    CHECK(ewguiqt::column_min_widths(nullptr, 10).isEmpty(),
+          "column_min_widths(NULL) debe devolver un vector vacio");
+    CHECK(ewguiqt::layout_columns(nullptr, QVector<int>()) == 0,
+          "layout_columns(NULL) debe devolver 0");
+}
+
 static void checkLogView()
 {
     QTemporaryDir dir;
@@ -307,6 +441,7 @@ int main(int argc, char **argv)
     checkWireHeaderSort();
     checkWireHeaderSortNoInitial();
     checkFitColumns();
+    checkFillColumns();
     checkLogView();
 
     if (g_fail == 0)

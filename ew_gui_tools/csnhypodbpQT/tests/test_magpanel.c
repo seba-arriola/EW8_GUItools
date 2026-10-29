@@ -470,7 +470,7 @@ int main(void)
             mts[1].tr = tr;
         }
 
-        /* El handle de la franja se agarra arriba; abajo el canvas es del zoom. */
+        /* El handle se agarra arriba; los bordes verticales tambien abajo. */
         for (x = 0; x < 400; x++) {
             int g2 = 0;
 
@@ -510,6 +510,19 @@ int main(void)
                BPQ_MAG_HOVER_HANDLE);
             CK(bpq_mag_hover(&mc, 400, 220, (double)((x0 + x1) / 2), 110.0) ==
                BPQ_MAG_HOVER_NONE);
+            /* El cursor promete borde arrastrable: el hit-test debe aceptarlo
+             * tambien por debajo del handle. El interior de abajo, no. */
+            {
+                int ge = 0;
+                double te = 0.0;
+
+                CK(bpq_mag_hit(&mc, 400, 220, (double)x0, 110.0, &ge, &te) == 1);
+                CK(ge == (int)CSNHYPODBP_MAGG_T0 ||
+                   ge == (int)CSNHYPODBP_MAGG_T1 ||
+                   ge == (int)CSNHYPODBP_MAGG_BOTH);
+                CK(bpq_mag_hit(&mc, 400, 220, (double)((x0 + x1) / 2), 110.0,
+                               &ge, &te) == 0);
+            }
             CK(bpq_mag_hover(&mc, 400, 220, 2.0, 110.0) ==
                BPQ_MAG_HOVER_NONE);
             CK(bpq_mag_hover(NULL, 400, 220, 200.0, 8.0) ==

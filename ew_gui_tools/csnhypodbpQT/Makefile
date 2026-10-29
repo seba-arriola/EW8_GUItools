@@ -442,6 +442,7 @@ check-scripts: $(TARGET)
 	@sh tests/test_traces_invariants.sh
 	@sh tests/test_table_ui_invariants.sh
 	@sh tests/test_ui_input.sh
+	@sh tests/test_magdrag.sh
 	@sh tests/test_pin.sh
 
 check-c: $(TEST_C)
