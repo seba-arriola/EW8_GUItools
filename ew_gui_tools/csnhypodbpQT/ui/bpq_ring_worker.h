@@ -33,6 +33,12 @@ public:
      * Devuelve el nº de mensajes procesados en este ciclo. */
     int drainNow();
 
+    /* Vista bloqueada por una busqueda: los ARC/magnitudes del anillo se
+     * descartan (no entran al store ni disparan eventsChanged). Al limpiar la
+     * busqueda se recuperan recargando el historial de la BD. */
+    void setSearchMode(bool on);
+    bool searchMode() const { return m_searchMode; }
+
     int messagesSeen() const { return m_nmsg; }
     int arcsSeen() const { return m_narc; }
 
@@ -62,6 +68,7 @@ private:
     int        m_npick = 0;
     bool       m_warned_capacity = false;
     bool       m_warned_error = false;
+    bool       m_searchMode = false;   /* vista bloqueada por una busqueda */
 };
 
 #endif /* BPQ_RING_WORKER_H */

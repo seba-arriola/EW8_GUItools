@@ -99,9 +99,18 @@ void BpqRingWorker::onTick()
     if (bpq_rings_should_quit(m_rings)) emit quitRequested();
 }
 
+void BpqRingWorker::setSearchMode(bool on)
+{
+    m_searchMode = on;
+}
+
 void BpqRingWorker::deliverArc(const CsnhypodbpSolution *sol)
 {
     int rc;
+
+    /* Vista bloqueada: el vivo no entra al store. Se recupera al limpiar la
+     * busqueda, recargando el historial de la BD (hypodb ya lo escribio). */
+    if (m_searchMode) return;
 
     m_narc++;
     rc = bpq_events_feed_arc(m_events, sol);
@@ -115,6 +124,8 @@ void BpqRingWorker::deliverArc(const CsnhypodbpSolution *sol)
 
 void BpqRingWorker::deliverMag(const BpqMagMsg *m)
 {
+    if (m_searchMode) return;
+
     m_nmag++;
     bpq_events_feed_mag(m_events, m);
     if (m) emit magReceived(*m);

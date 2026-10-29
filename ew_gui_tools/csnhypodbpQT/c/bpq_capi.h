@@ -1011,9 +1011,20 @@ int bpq_magmsg_parse(const char *raw, size_t len, BpqMagMsg *out);
 typedef struct BpqEvents BpqEvents;
 typedef struct BpqEvent  BpqEvent;   /* vista de solo lectura de un grupo */
 
-/* Crea el store. Copia la config (tolerancia/min_match/tope salen de ella). */
+/* Tope duro de la capacidad del store. La busqueda dimensiona el store a su
+ * `Max events` (bpq_events_reserve); esto solo evita una reserva absurda
+ * (~16 KB por grupo: la clave lleva 256 picadas embebidas). */
+#define BPQ_EVENTS_MAX_GROUPS 4096
+
+/* Crea el store. Copia la config (tolerancia/min_match/tope salen de ella).
+ * Arranca con la capacidad por defecto del camino vivo (128 grupos). */
 BpqEvents *bpq_events_new(const BpqConfig *cfg);
 void       bpq_events_free(BpqEvents *e);
+
+/* Ajusta la capacidad del store a `cap` grupos (idempotente; solo crece y se
+ * recorta a BPQ_EVENTS_MAX_GROUPS). La busqueda la fija con su `Max events`
+ * para que la vista no recorte en silencio. 0 OK, -1 argumentos o sin memoria. */
+int bpq_events_reserve(BpqEvents *e, int cap);
 
 /* Incorpora una solucion: busca grupo por qid o por firma de picadas
  * (csnhypodbp_group_matches), deduplica por (qid,mod,version) y aplica las
@@ -1025,6 +1036,14 @@ int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol);
  * repite mensajes y no debe pisar la hora de la BD). */
 int bpq_events_feed_arc_at(BpqEvents *e, const CsnhypodbpSolution *sol,
                            double created);
+/* Igual que feed_arc_at, pero con la identidad del evento en la BD: dos
+ * soluciones con el MISMO `event_id` van al mismo grupo aunque su qid sea 0
+ * (ids de otra fuente, p.ej. "csn2024mpmd" -> atoi() = 0). El qid/signatura
+ * solo puede unir con un grupo SIN event_id (camino vivo), de modo que el
+ * historial y el anillo del mismo evento no se duplican. `event_id` NULL o
+ * vacio == camino vivo. */
+int bpq_events_feed_arc_event(BpqEvents *e, const CsnhypodbpSolution *sol,
+                              double created, const char *event_id);
 /* Olvida todos los grupos (busqueda: el resultado reemplaza la vista). */
 void bpq_events_clear(BpqEvents *e);
 
@@ -1056,6 +1075,11 @@ int    bpq_db_fmt_utc(double epoch, char *out, size_t n);
 /* Magnitud de una solucion ("%.1f-%d"). Si la solucion aun no existe se guarda
  * pendiente y se aplica al llegar su ARC. 0 OK, -1 argumentos. */
 int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m);
+/* Igual que feed_mag, pero la magnitud se aplica SOLO al grupo de ese
+ * `event_id` (una fila de la BD): con qid=0 el camino por qid la aplicaria a
+ * cualquier evento ajeno. `event_id` NULL o vacio == camino vivo. */
+int bpq_events_feed_mag_event(BpqEvents *e, const BpqMagMsg *m,
+                              const char *event_id);
 
 int bpq_events_count(const BpqEvents *e);
 const BpqEvent *bpq_events_at(const BpqEvents *e, int i);

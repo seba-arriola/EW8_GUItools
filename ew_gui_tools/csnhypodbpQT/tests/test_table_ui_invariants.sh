@@ -62,10 +62,10 @@ else
 fi
 
 # 3) Created sale de origin.creation_time, no de time(NULL) al insertar.
-if grep -q 'creation_time' "$db" && grep -q 'bpq_events_feed_arc_at' "$db"; then
+if grep -q 'creation_time' "$db" && grep -q 'bpq_events_feed_arc_event' "$db"; then
     ok "la carga de BD propaga origin.creation_time"
 else
-    bad "bpq_db.c no usa creation_time/feed_arc_at"
+    bad "bpq_db.c no usa creation_time/feed_arc_event"
 fi
 if grep -q 'bpq_events_feed_arc_at' "$ev" && grep -q 'created > 0.0' "$ev"; then
     ok "feed_arc_at respeta el created explicito"

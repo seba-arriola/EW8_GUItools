@@ -256,7 +256,9 @@ el siguiente mensaje tapaba).
   `ewguidb_query_recent_events` / `ewguidb_search_events` → `ewguidb_query_origins` →
   `ewguidb_query_picks` → `bpq_events_feed_arc`. Así el historial entra por el **mismo** camino de
   agrupación/preferencia que el vivo.
-- Mapeo: `ewgui_origin_id_parse` da `mod`/`version`/`confirmed`; `E<qid>-…` da el `qid`;
+- Mapeo: `ewgui_origin_id_parse` da `mod`/`version`/`confirmed`; `E<qid>-…` da el `qid`; si el id
+  **no** codifica el qid (`csn2024mpmd`, `28-0536-07D.S202406`) queda 0 y la identidad del evento es
+  el `event_id` (ver “Identidad” más abajo).
   `origin.status == "MANUAL"` ⇒ solución confirmada a mano; el canal `NET.STA.LOC.CHAN` se reduce a **STA**
   (es lo que empareja `statable`); `pick.uncertainty` viaja como **residual** y
   `pick_status == "manual"` como picada manual.
@@ -272,9 +274,21 @@ el siguiente mensaje tapaba).
   **15 orígenes**.
 - Menú **Events → Search events…** (diálogo propio con from/to UTC + tope de eventos) y
   **Clear search**. La búsqueda **vacía el store** (`bpq_events_clear`) y carga el resultado: el
-  rango reemplaza la vista; *Clear search* vuelve a vivo + historial.
-  Diferencia conocida con la GTK: el anillo **sigue alimentando** el store durante la búsqueda
-  (no se pausa el worker), así que un sismo nuevo puede aparecer mezclado con el resultado.
+  rango reemplaza la vista y la **bloquea** (`m_searchMode`) hasta *Clear search*. Mientras dura, el
+  worker descarta los ARC/magnitudes del anillo (`bpq_ring_worker.cxx`) y `refreshFromStore()` no
+  repinta, así que un sismo nuevo **no** se mezcla con el resultado; una confirmación se publica en
+  `ConfRing`/BD pero no entra a la tabla. Si la consulta falla (`err`), la vista vuelve a
+  vivo+historial y **no** queda en modo búsqueda. La barra informa las **filas** mostradas
+  (`bpq_events_count`), no las soluciones cargadas.
+- **Capacidad**: el store arranca con `BPQ_MAX_GROUPS` (128, camino vivo) y la búsqueda lo
+  dimensiona con su `Max events` (`bpq_events_reserve`, techo duro `BPQ_EVENTS_MAX_GROUPS` = 4096,
+  ≈65 MB de claves: `CsnhypodbpGroupKey` lleva 256 picadas embebidas), así que el resultado no se
+  recorta en silencio a 128.
+- **Identidad** de un evento del historial: `event_id` exacto, no `qid`. Los ids que no lo codifican
+  dejan `atoi() = 0`; antes todos caían en el mismo grupo (9 eventos → 1 fila) y las magnitudes se
+  aplicaban al grupo equivocado. `bpq_events_feed_arc_event`/`feed_mag_event` agrupan por `event_id`
+  y sólo adoptan un grupo **sin** `event_id` (el del anillo) por qid/firma, así que historial y vivo
+  del mismo evento no se duplican. Lo fija `tests/test_events.c` y `tests/test_search_lock.sh`.
 - `PGconn` **no es thread-safe**: todo el acceso a la BD va por el hilo de la GUI (igual que la
   GTK); el fetch de ondas usa otro hilo pero no toca `EwGuiDb`.
 - Pendiente: el calendario ya está en el diálogo (botón `...` junto a cada campo; escribe la fecha

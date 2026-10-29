@@ -5,7 +5,8 @@
  * procesar_mensaje_sismo/rebuild_event_store) SIN GTK y sin globales:
  *
  *   - agrupacion: `csnhypodbp_group_matches` (mismo qid **o** firma de picadas
- *     compatible, >= GroupMinMatchPicks dentro de GroupPickTolSec);
+ *     compatible, >= GroupMinMatchPicks dentro de GroupPickTolSec); las filas
+ *     de la BD llevan `event_id` y ese manda cuando el id no codifica el qid;
  *   - deduplicacion de soluciones por (qid, mod, version);
  *   - solucion preferida: `csnhypodbp_preferred_index` (confirmada > manual >
  *     mas fases y menor RMS);
@@ -25,8 +26,10 @@
 #include <string.h>
 #include <time.h>
 
-#define BPQ_MAX_GROUPS 128
+#define BPQ_MAX_GROUPS 128   /* capacidad inicial del camino vivo (ver reserve) */
 #define BPQ_SOL_CAP_MAX 16
+
+typedef char BpqEventId[64];
 
 typedef struct {
     CsnhypodbpSolution *sols;
@@ -38,8 +41,11 @@ typedef struct {
 
 struct BpqEvents {
     BpqConfig           cfg;
-    CsnhypodbpGroupKey *keys;      /* [BPQ_MAX_GROUPS]: clave/union por grupo */
-    BpqGroup           *groups;    /* [BPQ_MAX_GROUPS] */
+    CsnhypodbpGroupKey *keys;       /* [cap]: clave/union por grupo */
+    BpqGroup           *groups;     /* [cap] */
+    BpqEventId         *event_ids;  /* [cap]: event_id de la BD ("" = vivo) */
+    int                *match_idx;  /* [cap]: candidatos de feed_arc_impl */
+    int                 cap;        /* capacidad vigente (bpq_events_reserve) */
     int                 ngroups;
     CsnhypodbpMagStore  pending;   /* magnitudes que llegan antes del ARC */
     int                 sol_cap_max;
@@ -115,6 +121,58 @@ static int group_ensure_cap(BpqGroup *g, int want)
 
 /* --- ciclo de vida -------------------------------------------------------- */
 
+/* Reserva las cuatro tablas paralelas (no toca las del llamante). */
+static int store_arrays_new(int cap, CsnhypodbpGroupKey **keys,
+                            BpqGroup **groups, BpqEventId **ids, int **idx)
+{
+    *keys   = (CsnhypodbpGroupKey *)calloc((size_t)cap, sizeof(**keys));
+    *groups = (BpqGroup *)calloc((size_t)cap, sizeof(**groups));
+    *ids    = (BpqEventId *)calloc((size_t)cap, sizeof(**ids));
+    *idx    = (int *)calloc((size_t)cap, sizeof(**idx));
+    if (!*keys || !*groups || !*ids || !*idx) {
+        free(*keys);
+        free(*groups);
+        free(*ids);
+        free(*idx);
+        *keys = NULL;
+        *groups = NULL;
+        *ids = NULL;
+        *idx = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+int bpq_events_reserve(BpqEvents *e, int cap)
+{
+    CsnhypodbpGroupKey *keys = NULL;
+    BpqGroup           *groups = NULL;
+    BpqEventId         *ids = NULL;
+    int                *idx = NULL;
+    int                 i;
+
+    if (!e || cap <= 0) return -1;
+    if (cap > BPQ_EVENTS_MAX_GROUPS) cap = BPQ_EVENTS_MAX_GROUPS;
+    if (cap <= e->cap) return 0;
+
+    if (store_arrays_new(cap, &keys, &groups, &ids, &idx) != 0) return -1;
+    for (i = 0; i < e->ngroups; i++) {
+        keys[i]   = e->keys[i];
+        groups[i] = e->groups[i];
+        memcpy(ids[i], e->event_ids[i], sizeof(ids[i]));
+    }
+    free(e->keys);
+    free(e->groups);
+    free(e->event_ids);
+    free(e->match_idx);
+    e->keys = keys;
+    e->groups = groups;
+    e->event_ids = ids;
+    e->match_idx = idx;
+    e->cap = cap;
+    return 0;
+}
+
 BpqEvents *bpq_events_new(const BpqConfig *cfg)
 {
     BpqEvents *e;
@@ -123,14 +181,12 @@ BpqEvents *bpq_events_new(const BpqConfig *cfg)
     e = (BpqEvents *)calloc(1, sizeof(*e));
     if (!e) return NULL;
     e->cfg = *cfg;
-    e->keys = (CsnhypodbpGroupKey *)calloc(BPQ_MAX_GROUPS, sizeof(*e->keys));
-    e->groups = (BpqGroup *)calloc(BPQ_MAX_GROUPS, sizeof(*e->groups));
-    if (!e->keys || !e->groups) {
-        free(e->keys);
-        free(e->groups);
+    if (store_arrays_new(BPQ_MAX_GROUPS, &e->keys, &e->groups,
+                         &e->event_ids, &e->match_idx) != 0) {
         free(e);
         return NULL;
     }
+    e->cap = BPQ_MAX_GROUPS;
     csnhypodbp_mag_store_init(&e->pending);
     e->sol_cap_max = e->cfg.group_max_solutions > 0 ? e->cfg.group_max_solutions : 8;
     if (e->sol_cap_max > BPQ_SOL_CAP_MAX) e->sol_cap_max = BPQ_SOL_CAP_MAX;
@@ -148,6 +204,8 @@ void bpq_events_free(BpqEvents *e)
     }
     free(e->groups);
     free(e->keys);
+    free(e->event_ids);
+    free(e->match_idx);
     free(e);
 }
 
@@ -175,35 +233,74 @@ void bpq_events_clear(BpqEvents *e)
         free(e->groups[i].mag);
         memset(&e->groups[i], 0, sizeof(e->groups[i]));
         memset(&e->keys[i], 0, sizeof(e->keys[i]));
+        memset(e->event_ids[i], 0, sizeof(e->event_ids[i]));
     }
     e->ngroups = 0;
 }
 
-static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
-                         double created)
+/* Indice del grupo cuya identidad en la BD es `event_id`; -1 si no hay. */
+static int find_event_group(const BpqEvents *e, const char *event_id)
 {
-    int idx[BPQ_MAX_GROUPS];
-    int nmatch, gi, j, found = -1;
+    int i;
+
+    if (!e || !event_id || !event_id[0]) return -1;
+    for (i = 0; i < e->ngroups; i++)
+        if (e->event_ids[i][0] && strcmp(e->event_ids[i], event_id) == 0)
+            return i;
+    return -1;
+}
+
+static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
+                         double created, const char *event_id)
+{
+    int nmatch = 0, gi = -1, j, k, found = -1;
     int history;
 
     if (!e || !sol) return -1;
     history = csnhypodbp_locator_is_live_mod(e->cfg.locators, e->cfg.n_locators,
                                              sol->mod);
 
-    /* 1) ¿A que grupo pertenece? Mismo qid o firma compatible. */
-    nmatch = csnhypodbp_group_matches(e->keys, e->ngroups, sol->qid,
-                                      sol->picks, sol->npicks,
-                                      e->cfg.group_pick_tol_s,
-                                      e->cfg.group_min_match_picks,
-                                      idx, BPQ_MAX_GROUPS);
-    if (nmatch > 0) gi = idx[0];
-    else {
-        if (e->ngroups >= BPQ_MAX_GROUPS) return -2;
+    /* 1) ¿A que grupo pertenece? */
+    if (event_id && event_id[0]) {
+        /* Identidad de la BD: el event_id MANDA entre las soluciones que lo
+         * traen, aunque el qid sea 0 (ids de otra fuente como "csn2024mpmd":
+         * atoi() da 0 y antes todos los eventos se fundian en uno). El
+         * qid/signatura solo puede adoptar un grupo del camino vivo (sin
+         * event_id), para no duplicar el mismo evento en historial + anillo. */
+        gi = find_event_group(e, event_id);
+        if (gi < 0) {
+            nmatch = csnhypodbp_group_matches(e->keys, e->ngroups, sol->qid,
+                                              sol->picks, sol->npicks,
+                                              e->cfg.group_pick_tol_s,
+                                              e->cfg.group_min_match_picks,
+                                              e->match_idx, e->cap);
+            for (k = 0; k < nmatch; k++)
+                if (!e->event_ids[e->match_idx[k]][0]) {
+                    gi = e->match_idx[k];
+                    snprintf(e->event_ids[gi], sizeof(e->event_ids[gi]), "%s",
+                             event_id);
+                    break;
+                }
+        }
+    } else {
+        nmatch = csnhypodbp_group_matches(e->keys, e->ngroups, sol->qid,
+                                          sol->picks, sol->npicks,
+                                          e->cfg.group_pick_tol_s,
+                                          e->cfg.group_min_match_picks,
+                                          e->match_idx, e->cap);
+        if (nmatch > 0) gi = e->match_idx[0];
+    }
+
+    if (gi < 0) {
+        if (e->ngroups >= e->cap) return -2;
         gi = e->ngroups++;
         memset(&e->keys[gi], 0, sizeof(e->keys[gi]));
         e->keys[gi].qid = sol->qid;
         memset(&e->groups[gi], 0, sizeof(e->groups[gi]));
         e->groups[gi].owner = e;
+        memset(e->event_ids[gi], 0, sizeof(e->event_ids[gi]));
+        if (event_id && event_id[0])
+            snprintf(e->event_ids[gi], sizeof(e->event_ids[gi]), "%s", event_id);
     }
 
     /* 2) Deduplicar con la clave compartida con el GTK
@@ -273,16 +370,23 @@ static int feed_arc_impl(BpqEvents *e, const CsnhypodbpSolution *sol,
 
 int bpq_events_feed_arc(BpqEvents *e, const CsnhypodbpSolution *sol)
 {
-    return feed_arc_impl(e, sol, 0.0);
+    return feed_arc_impl(e, sol, 0.0, NULL);
 }
 
 int bpq_events_feed_arc_at(BpqEvents *e, const CsnhypodbpSolution *sol,
                            double created)
 {
-    return feed_arc_impl(e, sol, created);
+    return feed_arc_impl(e, sol, created, NULL);
 }
 
-int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m)
+int bpq_events_feed_arc_event(BpqEvents *e, const CsnhypodbpSolution *sol,
+                              double created, const char *event_id)
+{
+    return feed_arc_impl(e, sol, created, event_id);
+}
+
+int bpq_events_feed_mag_event(BpqEvents *e, const BpqMagMsg *m,
+                              const char *event_id)
 {
     int slot, gi, applied = 0;
     char txt[32];
@@ -291,6 +395,15 @@ int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m)
     slot = mag_slot_of(m->type);
     if (slot < 0) return 0;      /* tipo que la GUI no muestra: se ignora */
     mag_text(m, txt, sizeof(txt));
+
+    if (event_id && event_id[0]) {
+        /* Fila de la BD: se aplica SOLO al grupo de ese event_id. No se deja
+         * pendiente: con qid=0 el camino por qid la aplicaria a un ajeno. */
+        gi = find_event_group(e, event_id);
+        if (gi >= 0)
+            (void)group_apply_mag(&e->groups[gi], m->qid, m->mod, slot, txt);
+        return 0;
+    }
 
     for (gi = 0; gi < e->ngroups; gi++) {
         if (group_apply_mag(&e->groups[gi], m->qid, m->mod, slot, txt))
@@ -301,6 +414,11 @@ int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m)
         csnhypodbp_mag_store_put(&e->pending, m->qid, m->mod, slot, txt);
     }
     return 0;
+}
+
+int bpq_events_feed_mag(BpqEvents *e, const BpqMagMsg *m)
+{
+    return bpq_events_feed_mag_event(e, m, NULL);
 }
 
 /* --- acceso a soluciones -------------------------------------------------- */

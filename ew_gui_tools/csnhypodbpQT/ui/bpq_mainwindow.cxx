@@ -815,7 +815,7 @@ void BpqMainWindow::openData()
     if (m_rings) {
         m_worker = new BpqRingWorker(m_rings, m_events, this);
         connect(m_worker, &BpqRingWorker::eventsChanged,
-                this, &BpqMainWindow::refreshFromStore);
+                this, [this]() { refreshFromStore(); });
         connect(m_worker, &BpqRingWorker::magReceived, this,
                 [this](const BpqMagMsg &m) { onMagReceived(m); },
                 Qt::DirectConnection);
@@ -2746,8 +2746,10 @@ void BpqMainWindow::confirmCandidate()
         CsnhypodbpSolution conf;
 
         std::memset(&conf, 0, sizeof(conf));
+        /* En modo busqueda la tabla muestra solo el resultado: la confirmacion
+         * se publica en ConfRing/BD pero no entra al store de la vista. */
         if (csnhypodbp_parse_solution(arc, std::strlen(arc), 0, &conf) == 0 &&
-            m_events) {
+            m_events && !m_searchMode) {
             conf.confirmed = 1;      /* snapshot confirmado a mano */
             fed = (bpq_events_feed_arc(m_events, &conf) == 0) ? 1 : 0;
         }
@@ -2762,7 +2764,7 @@ void BpqMainWindow::confirmCandidate()
         double val = 0.0;
         int nst = 0;
 
-        if (m_prefMag >= 0 && m_prefMag < 4 && m_events &&
+        if (m_prefMag >= 0 && m_prefMag < 4 && m_events && !m_searchMode &&
             csnhypodbp_mag_split(cells[m_prefMag], &val, &nst) == 1) {
             BpqMagMsg mm;
 
@@ -4609,7 +4611,8 @@ bool BpqMainWindow::runSortForTest()
 }
 
 void BpqMainWindow::searchEvents()
-{    if (!m_db || !bpq_db_available(m_db)) {
+{
+    if (!m_db || !bpq_db_available(m_db)) {
         QMessageBox::information(this, QStringLiteral("Search events"),
                                  QStringLiteral("Sin conexion a la base hipocentral."));
         return;
@@ -4639,23 +4642,78 @@ void BpqMainWindow::searchEvents()
         return;
     }
 
-    char err[512] = "";
+    QString err;
+    const int maxe = dlg.maxEvents();
+    const int nev = applySearch(t0, t1, maxe, &err);
+    if (nev < 0) {
+        statusBar()->showMessage(QStringLiteral("busqueda fallo: %1").arg(err),
+                                 10000);
+        return;
+    }
+    /* La capacidad se fija con `Max events`; el techo duro se avisa, no se
+     * calla (la vista mostraria menos filas de las pedidas). */
+    const QString note = (maxe > BPQ_EVENTS_MAX_GROUPS)
+                             ? QStringLiteral(" (tope %1)")
+                                   .arg(BPQ_EVENTS_MAX_GROUPS)
+                             : QString();
+    statusBar()->showMessage(
+        QStringLiteral("busqueda: %1 eventos%2").arg(nev).arg(note), 8000);
+}
+
+int BpqMainWindow::applySearch(double t0, double t1, int maxEvents, QString *err)
+{
+    char e[512] = "";
+    char rerr[512] = "";
+
+    if (err) err->clear();
+    if (!m_events) {
+        if (err) *err = QStringLiteral("sin store de eventos");
+        return -1;
+    }
+    if (!(t0 > 0.0) || !(t1 > t0)) {
+        if (err) *err = QStringLiteral("rango de tiempo invalido");
+        return -1;
+    }
+    if (!m_db || !bpq_db_available(m_db)) {
+        if (err) *err = QStringLiteral("sin conexion a la base hipocentral");
+        return -1;
+    }
+
+    /* El bloqueo se arma ANTES de consultar: mientras dure, ni el anillo ni las
+     * magnitudes tocan la tabla (bpq_ring_worker.cxx) ni este refresco. */
+    m_searchMode = true;
+    m_searchFrom = t0;
+    m_searchTo = t1;
+    if (m_worker) m_worker->setSearchMode(true);
+
     bpq_events_clear(m_events);          /* el resultado REEMPLAZA la vista */
     m_selKey.clear();
     m_selEventKey.clear();
+    m_curEv = nullptr;
     bpq_pin_clear(&m_pin);
     m_pinEvent = nullptr;
-    const int ne = bpq_db_search(m_db, m_cfg, m_events, t0, t1, dlg.maxEvents(),
-                                 err, sizeof(err));
-    m_searchFrom = t0;
-    m_searchTo = t1;
-    m_searchMode = true;
-    refreshFromStore();
-    statusBar()->showMessage(
-        QStringLiteral("busqueda: %1 eventos%2")
-            .arg(ne)
-            .arg(err[0] ? QStringLiteral(" — ") + QString::fromUtf8(err) : QString()),
-        8000);
+
+    (void)bpq_db_search(m_db, m_cfg, m_events, t0, t1, maxEvents, e, sizeof(e));
+    if (e[0]) {
+        /* Fallo: la vista vuelve a vivo+historial y NO queda en modo busqueda. */
+        m_searchMode = false;
+        m_searchFrom = m_searchTo = 0.0;
+        if (m_worker) m_worker->setSearchMode(false);
+        bpq_events_clear(m_events);
+        if (m_db && bpq_db_available(m_db)) {
+            const int hist = (m_cfg->db_history_hours > 0)
+                                 ? m_cfg->db_history_hours : 24;
+
+            (void)bpq_db_load_recent(m_db, m_cfg, m_events, hist, rerr,
+                                     sizeof(rerr));
+        }
+        refreshFromStore(true);
+        if (err) *err = QString::fromUtf8(e);
+        return -1;
+    }
+
+    refreshFromStore(true);
+    return bpq_events_count(m_events);
 }
 
 void BpqMainWindow::clearSearch()
@@ -4663,9 +4721,11 @@ void BpqMainWindow::clearSearch()
     if (!m_searchMode) return;
 
     m_searchMode = false;
+    if (m_worker) m_worker->setSearchMode(false);
     m_searchFrom = m_searchTo = 0.0;
     m_selKey.clear();
     m_selEventKey.clear();
+    m_curEv = nullptr;
     bpq_pin_clear(&m_pin);
     m_pinEvent = nullptr;
     bpq_events_clear(m_events);
@@ -4680,8 +4740,12 @@ void BpqMainWindow::clearSearch()
     statusBar()->showMessage(QStringLiteral("vista: vivo + historial"), 5000);
 }
 
-void BpqMainWindow::refreshFromStore()
+void BpqMainWindow::refreshFromStore(bool force)
 {
+    /* Vista bloqueada por una busqueda: nada la repinta (ni el drenaje del
+     * anillo ni una confirmacion) salvo el propio applySearch/clearSearch. */
+    if (m_searchMode && !force) return;
+
     /* Identidad ESTABLE del evento, no la preferida: una confirmacion puede
      * cambiarla y no queremos perder el evento (ni el pin) por eso. */
     const QString keep = m_selEventKey;
@@ -4825,6 +4889,9 @@ void BpqMainWindow::feedConfirmedAfter()
     double t0;
 
     if (!m_events || !m_curEv) return;
+    /* Simula el camino vivo del anillo: en modo busqueda se descarta igual que
+     * bpq_ring_worker.cxx (la vista esta bloqueada por el resultado). */
+    if (m_searchMode) return;
     b = bpq_event_sol(m_curEv, 0);
     if (!b) return;
     t0 = b->otime;
@@ -4901,6 +4968,37 @@ void BpqMainWindow::runTestHooks()
     const QByteArray fx = qgetenv("BPQ_TEST_FIXTURE");
     if (fx == QByteArray("pins")) loadPinFixture();
 
+    /* Vista bloqueada por una busqueda (test sin BD): el fixture ya esta
+     * cargado y desde aqui ni el vivo ni las confirmaciones deben entrar. */
+    if (qgetenv("BPQ_TEST_SEARCH") == QByteArray("1")) {
+        m_searchMode = true;
+        if (m_worker) m_worker->setSearchMode(true);
+        refreshFromStore(true);
+    }
+
+    /* Busqueda real sin dialogo: "from|to" en UTC (integracion con la BD).
+     * `BPQ_TEST_SEARCH_MAX` fija el tope de eventos (0 = SearchMaxEvents). */
+    {
+        const QByteArray range = qgetenv("BPQ_TEST_SEARCH_RANGE");
+
+        if (!range.isEmpty()) {
+            const QList<QByteArray> parts = range.split('|');
+            double t0 = 0.0, t1 = 0.0;
+
+            if (parts.size() == 2 &&
+                bpq_db_parse_utc(parts.at(0).constData(), &t0) == 0 &&
+                bpq_db_parse_utc(parts.at(1).constData(), &t1) == 0) {
+                const int maxe = qgetenv("BPQ_TEST_SEARCH_MAX").toInt();
+                QString err;
+                const int nev = applySearch(t0, t1, maxe > 0 ? maxe : 0, &err);
+
+                statusBar()->showMessage(
+                    nev < 0 ? err
+                            : QStringLiteral("busqueda: %1 eventos").arg(nev));
+            }
+        }
+    }
+
     const QByteArray pins = qgetenv("BPQ_TEST_PIN");
     if (!pins.isEmpty()) {
         const QList<QByteArray> list = pins.split(',');
@@ -4915,6 +5013,8 @@ void BpqMainWindow::runTestHooks()
     if (!click.isEmpty()) (void)runClickForTest(QString::fromUtf8(click));
 
     if (qgetenv("BPQ_TEST_FEED_AFTER") == QByteArray("1")) feedConfirmedAfter();
+
+    if (qgetenv("BPQ_TEST_CLEAR_SEARCH") == QByteArray("1")) clearSearch();
 
     /* Cambio de evento DESPUES de fijar: comprueba que el pin no cruza. */
     const QByteArray ev = qgetenv("BPQ_TEST_EVENT");

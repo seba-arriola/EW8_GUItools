@@ -339,13 +339,92 @@ int main(void)
         CK(bpq_event_nsols(ev) == 4);
     }
 
-    /* --- 9. argumentos invalidos --- */
+    /* --- 9. identidad por event_id: ids de otra fuente (qid=0) ---------- */
+    {
+        BpqEvents *h = bpq_events_new(&cfg);
+        BpqMagMsg m2;
+
+        CK(h != NULL);
+        if (h) {
+            /* Mismas picadas y qid 0 en los dos eventos: sin el event_id se
+             * fusionaban en un solo grupo (el caso del respaldo importado). */
+            make_sol(&s, 0, 0, 1, 5, 0.30, 0, 'A');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "csn2024mpmd") == 0);
+            make_sol(&s, 0, 0, 1, 5, 0.20, 0, 'A');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "csn2024oboh") == 0);
+            CK(bpq_events_count(h) == 2);
+
+            /* Dos soluciones del MISMO event_id: un solo grupo. */
+            make_sol(&s, 0, 1, 1, 7, 0.10, 0, 'A');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "csn2024mpmd") == 0);
+            CK(bpq_events_count(h) == 2);
+            CK(bpq_event_nsols(bpq_events_at(h, 0)) == 2);
+
+            /* La magnitud de A no se aplica al grupo de B. */
+            memset(&m2, 0, sizeof(m2));
+            m2.value = 5.2;
+            m2.nsta = 4;
+            snprintf(m2.type, sizeof(m2.type), "%s", "ML");
+            CK(bpq_events_feed_mag_event(h, &m2, "csn2024mpmd") == 0);
+            ck_cell(bpq_events_at(h, 0), 8, "5.2-4", __LINE__);
+            ck_cell(bpq_events_at(h, 1), 8, "-", __LINE__);
+
+            /* BD (event_id) + vivo (sin event_id, mismo qid) = un grupo. */
+            make_sol(&s, 500, 162, 1, 5, 0.20, 0, 'C');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "E500-20240101000000") == 0);
+            make_sol(&s, 500, 163, 1, 6, 0.10, 0, 'C');
+            CK(bpq_events_feed_arc(h, &s) == 0);
+            CK(bpq_events_count(h) == 3);
+            CK(bpq_event_nsols(bpq_events_at(h, 2)) == 2);
+
+            /* Mismo qid con event_id distinto: dos eventos, no uno. */
+            make_sol(&s, 700, 162, 1, 5, 0.20, 0, 'D');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "E700-20240101000000") == 0);
+            make_sol(&s, 700, 162, 1, 6, 0.10, 0, 'D');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "E700-20250101000000") == 0);
+            CK(bpq_events_count(h) == 5);
+
+            bpq_events_free(h);
+        }
+    }
+
+    /* --- 10. la capacidad la fija la busqueda (Max events) -------------- */
+    {
+        BpqEvents *h = bpq_events_new(&cfg);
+        char eid[32];
+        int i;
+
+        CK(h != NULL);
+        if (h) {
+            CK(bpq_events_reserve(h, 300) == 0);
+            for (i = 0; i < 300; i++) {
+                snprintf(eid, sizeof(eid), "ev%04d", i);
+                make_sol(&s, 0, 0, 1, 5, 0.30, 0, 'A');
+                CK(bpq_events_feed_arc_event(h, &s, 0.0, eid) == 0);
+            }
+            CK(bpq_events_count(h) == 300);      /* > los 128 del camino vivo */
+            make_sol(&s, 0, 0, 1, 5, 0.30, 0, 'A');
+            CK(bpq_events_feed_arc_event(h, &s, 0.0, "ev9999") == -2);
+            CK(bpq_events_count(h) == 300);
+            bpq_events_clear(h);
+            CK(bpq_events_count(h) == 0);
+            bpq_events_free(h);
+        }
+    }
+
+    /* --- 11. argumentos invalidos --- */
     CK(bpq_events_feed_arc(NULL, &s) == -1);
     CK(bpq_events_feed_arc(e, NULL) == -1);
     CK(bpq_events_feed_arc_at(NULL, &s, 1.0) == -1);
     CK(bpq_events_feed_arc_at(e, NULL, 1.0) == -1);
+    CK(bpq_events_feed_arc_event(NULL, &s, 0.0, "x") == -1);
+    CK(bpq_events_feed_arc_event(e, NULL, 0.0, "x") == -1);
     CK(bpq_events_feed_mag(NULL, &mag) == -1);
     CK(bpq_events_feed_mag(e, NULL) == -1);
+    CK(bpq_events_feed_mag_event(NULL, &mag, "x") == -1);
+    CK(bpq_events_feed_mag_event(e, NULL, "x") == -1);
+    CK(bpq_events_reserve(NULL, 10) == -1);
+    CK(bpq_events_reserve(e, 0) == -1);
     CK(bpq_events_at(e, -1) == NULL);
     CK(bpq_events_at(e, 99) == NULL);
     CK(bpq_event_nsols(NULL) == 0);

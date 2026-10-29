@@ -83,7 +83,9 @@ private:
     void buildProcesarTab();
     void buildMapsColumn();
     void openData();          /* anillos + store + modelos + worker */
-    void refreshFromStore();  /* reset de la maestra conservando la seleccion */
+    void refreshFromStore(bool force = false);  /* reset de la maestra conservando
+                                                 * la seleccion; en modo busqueda
+                                                 * no hace nada salvo force */
     void loadTestArc();       /* BPQ_TEST_ARC=<archivo ARC> (tests/demos) */
     void buildPoints(const BpqEvent *ev, const QString &keepKey = QString());
                                             /* soluciones -> CsnhypodbpMapPt[] */    void refreshPanels();                   /* mapa/perfil: contexto + auto-encuadre */
@@ -114,7 +116,11 @@ private:
     void onWavesHovered(double x, double y); /* guia vertical del puntero */
     void onWavesLeft();                      /* el puntero salio del canvas */
     void setTracesPerScreen(int per);        /* 1..3 (Shift+rueda) */
-    void searchEvents();                     /* dialogo + bpq_db_search */
+    void searchEvents();                     /* dialogo + applySearch */
+    /* Aplica una busqueda con rango ya validado (epoch UTC): reemplaza la vista
+     * y la bloquea hasta clearSearch. Devuelve las filas mostradas (>=0) o -1
+     * con `err` (y la vista vuelve a vivo+historial). */
+    int  applySearch(double t0, double t1, int maxEvents, QString *err);
     void clearSearch();                      /* vuelve a vivo + historial */
     void emitManualPick(int row, double t);  /* clic en la traza -> overlay local */
     void refreshAfterManual();               /* tabla + trazas + persistencia */

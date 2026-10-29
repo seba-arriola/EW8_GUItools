@@ -136,6 +136,9 @@ int main(void)
             ne = bpq_db_search(db, &cfg, store, t0, t1, 40, err, sizeof(err));
             CK(ne >= 0);                       /* no peta ni con 0 resultados */
             CK(bpq_events_count(store) >= 0);
+            /* La vista no puede mostrar mas eventos que el tope pedido: el
+             * store se dimensiona con ese `Max events` (bpq_events_reserve). */
+            CK(bpq_events_count(store) <= 40);
             if (ne > 0) {
                 const BpqEvent *ev = bpq_events_at(store, 0);
                 const int ncols = bpq_event_ncells();

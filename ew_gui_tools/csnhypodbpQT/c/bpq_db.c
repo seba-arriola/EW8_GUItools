@@ -7,7 +7,8 @@
  *   eventos  -> ewguidb_query_recent_events / ewguidb_search_events
  *   origenes -> ewguidb_query_origins(event_id)   -> CsnhypodbpSolution
  *   picadas  -> ewguidb_query_picks(origin_id)    -> CsnhypodbpPick
- *   store    -> bpq_events_feed_arc()  (misma agrupacion/preferencia que el vivo)
+ *   store    -> bpq_events_feed_arc_event()  (identidad por event_id y la
+ *               misma agrupacion/preferencia que el vivo)
  *
  * `EWGuiDb` envuelve un unico `PGconn`, que NO es thread-safe: todo el acceso va
  * por el hilo de la GUI, igual que en la version GTK.
@@ -223,8 +224,9 @@ static int load_event_ids(BpqDb *d, const char *const *ids, int nids,
             if (nm > 0) sol.pref_mag = mg[0].magnitude_type[0];
 
             if (sol.otime > 0.0 &&
-                (created > 0.0 ? bpq_events_feed_arc_at(store, &sol, created)
-                               : bpq_events_feed_arc(store, &sol)) == 0) {
+                /* La identidad del historial es el event_id, no el qid: los ids
+                 * de otra fuente ("csn2024mpmd") no lo codifican y darian 0. */
+                bpq_events_feed_arc_event(store, &sol, created, ids[i]) == 0) {
                 added++;
                 for (k = 0; k < nm; k++) {
                     BpqMagMsg m;
@@ -238,7 +240,7 @@ static int load_event_ids(BpqDb *d, const char *const *ids, int nids,
                     snprintf(m.type, sizeof(m.type), "%s", mg[k].magnitude_type);
                     snprintf(m.algorithm, sizeof(m.algorithm), "%s",
                              mg[k].calculation_method);
-                    (void)bpq_events_feed_mag(store, &m);
+                    (void)bpq_events_feed_mag_event(store, &m, ids[i]);
                 }
             }
             ewguidb_rows_free(mg);
@@ -318,6 +320,15 @@ int bpq_db_search(BpqDb *db, const BpqConfig *cfg, BpqEvents *store,
         return 0;
     }
     if (!ev || n <= 0) {
+        ewguidb_rows_free(ev);
+        return 0;
+    }
+
+    /* La vista admite exactamente lo pedido: la capacidad del store se fija
+     * con los eventos que devolvio la consulta (ya acotados por `limit`, que
+     * sale del `Max events` del dialogo / SearchMaxEvents). */
+    if (bpq_events_reserve(store, n) != 0) {
+        if (err) snprintf(err, errn, "sin memoria para %d eventos", n);
         ewguidb_rows_free(ev);
         return 0;
     }

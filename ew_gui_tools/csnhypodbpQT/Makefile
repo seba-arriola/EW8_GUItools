@@ -444,6 +444,7 @@ check-scripts: $(TARGET)
 	@sh tests/test_ui_input.sh
 	@sh tests/test_magdrag.sh
 	@sh tests/test_pin.sh
+	@sh tests/test_search_lock.sh
 
 check-c: $(TEST_C)
 	@chmod +x $(TEST_C)
