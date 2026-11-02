@@ -90,7 +90,7 @@ int crv_db_seed(CrvDb *d, int hours, CrvSnapshot *snap)
     }
     ewguidb_rows_free(mgs);
 
-    snap->has_data = 1;
+    snap->has_data = (snap->origin_time > 0.0);
     snap->qid = qid;
     snap->version = 0;
     ewguidb_rows_free(evs);

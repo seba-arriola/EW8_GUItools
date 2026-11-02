@@ -43,7 +43,7 @@ QT_HAVE := $(shell test -n "$(QT_INC)" && test -d "$(QT_INC)/QtWidgets" && test 
 # Fuentes
 # ---------------------------------------------------------------------------
 # Capa C propia (sin Qt).
-C_SRC := crv_config crv_arc crv_magmsg crv_mag crv_fmt crv_db crv_core crv_map crv_logit
+C_SRC := crv_config crv_arc crv_select crv_magmsg crv_mag crv_fmt crv_db crv_core crv_map crv_logit
 
 # Subconjunto PURO de common/ que necesita la capa C (sin GTK). Se compila in
 # situ: enlazar libewgui_gtk4.a meteria GTK.
@@ -131,7 +131,7 @@ $(BUILDDIR)/moc_%.o: $(BUILDDIR)/moc_%.cxx | $(BUILDDIR)
 
 # --- tests ---------------------------------------------------------------
 # C puro: no necesitan Qt. Es la red que valida la logica del modulo.
-TEST_C := test_config test_arc test_magmsg test_mag test_state test_map test_logit
+TEST_C := test_config test_arc test_select test_magmsg test_mag test_state test_map test_logit
 TEST_C_BINS := $(addprefix $(BUILDDIR)/,$(TEST_C))
 PARAMS_DIR   := $(abspath ../../run_working_v8/params)
 
@@ -166,6 +166,9 @@ $(BUILDDIR)/test_config: tests/test_config.c $(OBJ_C) $(OBJ_CW) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
 
 $(BUILDDIR)/test_arc: tests/test_arc.c $(OBJ_C) $(OBJ_CW) | $(BUILDDIR)
+	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
+
+$(BUILDDIR)/test_select: tests/test_select.c $(OBJ_C) $(OBJ_CW) | $(BUILDDIR)
 	$(CC) $(CFLAGS) -o $@ $< $(TEST_LIBS)
 
 $(BUILDDIR)/test_magmsg: tests/test_magmsg.c $(OBJ_C) $(OBJ_CW) | $(BUILDDIR)

@@ -118,6 +118,29 @@ typedef struct {
     CrvMagState mag;
 } CrvSnapshot;
 
+/* --- Politica de seleccion del evento vivo -------------------------------
+ *
+ * El visor muestra SIEMPRE el evento de mayor hora de origen, no el ultimo ARC
+ * que llega: los refinadores con live_usage=1 (hyp2000_ring/nlloc_ring)
+ * republican correcciones de eventos antiguos cada `time_recalc_live`, y una
+ * de ellas no puede degradar la vista a cientos de horas. Mismo evento = mismo
+ * qid Y |dt0| <= event_match_sec (el qid de csnloc solo colisiona cada 100000 s
+ * = 27.77 h, muy por encima de la ventana).
+ */
+#define CRV_EVENT_MATCH_SEC 300   /* = EventMaxDtSec por defecto de hypodb */
+
+typedef enum {
+    CRV_EVENT_INVALID = 0,  /* no parsea / t0 o qid fuera de rango */
+    CRV_EVENT_FIRST,        /* no habia evento: se instala            */
+    CRV_EVENT_UPDATE,       /* mismo evento: se actualiza             */
+    CRV_EVENT_NEW,          /* evento distinto con hora de origen >   */
+    CRV_EVENT_STALE         /* evento distinto y mas antiguo: ignorar */
+} CrvEventDecision;
+
+/* Puro: sin I/O, sin estado, sin reloj. */
+CrvEventDecision crv_event_decide(const CrvSnapshot *cur, const CrvArc *in,
+                                  int event_match_sec);
+
 enum {
     CRV_CHANGED_NONE    = 0,
     CRV_CHANGED_SUMMARY = 1 << 0,   /* hipocentro/etiquetas */

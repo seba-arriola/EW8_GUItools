@@ -3,9 +3,11 @@
  * Port de `update_summary_loop` (csnrv.c:410-536) y `Lookup`/`Status`
  * (csnrv.c:238-284), sin GTK y sin globales. La UI solo pinta el snapshot.
  *
- * Decisiones que se conservan:
- *   - se queda con la solucion de mayor version por qid (qid nuevo resetea
- *     las magnitudes; qver==0 usa el caracter 161);
+ * Decisiones:
+ *   - se queda con el evento de MAYOR hora de origen (crv_event_decide): una
+ *     iteracion de un evento antiguo no degrada la vista. Mismo evento = mismo
+ *     qid y |dt0| <= CRV_EVENT_MATCH_SEC; el seed de BD entra con version 0 y
+ *     el refinador vivo envuelve 9999 -> 1000, asi que el version no identifica;
  *   - TYPE_MAGNITUDE de un qid ajeno se ignora;
  *   - GET_MISS/GET_NOTRACK traen mensaje y se procesan; GET_TOOBIG no copia
  *     (recsize es el tamano del mensaje), asi que se descarta;
@@ -36,7 +38,6 @@ struct CrvCore {
     unsigned char inst, mod;
     unsigned char type_hb, type_err, type_arc, type_mag;
     MSG_LOGO logo_arc, logo_mag;
-    int last_qid, last_qver;
     CrvSnapshot snap;
     EwGuiHeartbeat hb;
     pid_t pid;
@@ -70,8 +71,6 @@ CrvCore *crv_core_new(const CrvConfig *cfg)
         return NULL;
     c->cfg = cfg;
     c->pid = getpid();
-    c->last_qid = 0;
-    c->last_qver = -1;
     crv_mag_reset(&c->snap.mag, 0);
     return c;
 }
@@ -110,9 +109,6 @@ int crv_core_seed_db(CrvCore *c)
         return 0;
     got = crv_db_seed(&c->db, c->cfg->db_hours, &c->snap);
     if (got) {
-        /* El seed no trae version: el primer ARC del mismo qid debe entrar. */
-        c->last_qid = c->snap.qid;
-        c->last_qver = -1;
         crv_logf("seed BD: qid %d (%.3f, %.3f)\n",
                  c->snap.qid, c->snap.lat, c->snap.lon);
     }
@@ -169,16 +165,25 @@ int crv_core_attach_ring(CrvCore *c)
 int crv_core_ingest_arc(CrvCore *c, const char *msg, size_t len)
 {
     CrvArc a;
-    int flags = 0;
-    int new_event;
+    CrvEventDecision why;
+    int flags;
 
     if (!c || crv_arc_parse(msg, len, &a) != 0)
         return 0;
 
-    if (a.qid == c->last_qid && a.version <= c->last_qver)
+    /* El visor es "el ultimo sismo", no "el ultimo mensaje": un ARC de un
+     * evento mas antiguo (iteracion de un refinador vivo) se ignora. */
+    why = crv_event_decide(&c->snap, &a, CRV_EVENT_MATCH_SEC);
+    if (why == CRV_EVENT_STALE) {
+        crv_logf("ARC qid=%d v=%d t0=%.2f -> ignorado (evento mas antiguo)\n",
+                 a.qid, a.version, a.t0);
         return 0;
-
-    new_event = (a.qid != c->last_qid);
+    }
+    if (why == CRV_EVENT_INVALID) {
+        crv_logf("ARC qid=%d v=%d t0=%.2f -> ignorado (parse invalido)\n",
+                 a.qid, a.version, a.t0);
+        return 0;
+    }
 
     c->snap.has_data = 1;
     c->snap.has_depth = 1;
@@ -191,13 +196,16 @@ int crv_core_ingest_arc(CrvCore *c, const char *msg, size_t len)
     if (c->snap.lon > 180.0)
         c->snap.lon -= 360.0;
 
-    if (new_event) {
+    if (why == CRV_EVENT_UPDATE) {
+        flags = CRV_CHANGED_SUMMARY;   /* conserva magnitudes, zoom y pan */
+    } else {
         crv_mag_reset(&c->snap.mag, a.qid);
-        c->last_qid = a.qid;
-        flags |= CRV_CHANGED_EVENT;
+        flags = CRV_CHANGED_SUMMARY | CRV_CHANGED_EVENT;
     }
-    c->last_qver = a.version;
-    flags |= CRV_CHANGED_SUMMARY;
+    crv_logf("ARC qid=%d v=%d t0=%.2f -> aceptado (%s)\n",
+             a.qid, a.version, a.t0,
+             why == CRV_EVENT_NEW ? "evento nuevo" :
+             why == CRV_EVENT_FIRST ? "primero" : "iteracion");
     return flags;
 }
 

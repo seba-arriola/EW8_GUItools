@@ -21,6 +21,7 @@ c/                          C puro: no conoce Qt
   crv_capi.h                frontera única C->C++ (extern "C", handles opacos)
   crv_config.c              .d (kom): claves, defaults, clamps, overlays
   crv_arc.c                 parseo mínimo del ARC (offsets de csnrv.c)
+  crv_select.c              crv_event_decide: qué evento se muestra (puro)
   crv_magmsg.c              TYPE_MAGNITUDE con copia defensiva de rd_mag
   crv_mag.c                 estado de las 4 magnitudes + preferencia + --test-mag
   crv_fmt.c                 formatos de resumen, "Time Since Quake" e ISO->epoch
@@ -38,6 +39,22 @@ ui/                         C++17/Qt6: sólo <Qt…>, ewguiqt/*, crv_capi.h
 
 `cairo` vive **solo** en `c/`: el fondo lo decodifica la UI con `QImage` y llega como BGRA
 (`crv_map_set_background`), y el export re-renderiza la misma escena a SVG/PDF/PNG.
+
+## Evento mostrado
+
+El visor representa **el evento de mayor hora de origen** (`origin_time`), no el último ARC
+recibido. Los refinadores con `live_usage=1` (`hyp2000_ring`/`nlloc_ring`) republican
+correcciones de eventos antiguos cada `time_recalc_live` —es deliberado, para seguir
+localizando si llega información nueva—, y aceptar la última hacía que *Time Since Quake*
+saltara a decenas o cientos de horas y creciera sin tope hasta reiniciar el módulo.
+
+La regla vive en `crv_event_decide` (`c/crv_select.c`, pura y sin reloj): mismo evento =
+mismo `qid` y `|Δt0| ≤ CRV_EVENT_MATCH_SEC` (300 s, el `EventMaxDtSec` por defecto de
+`hypodb`); un evento distinto solo entra si su hora de origen es mayor. El `version` **no**
+identifica el evento (el seed llega con 0, `csnloc` lo escribe con `%04d` y envuelve
+9999 → 1000, y el `qid` se repite cada 27,77 h). Cada decisión queda en el log:
+`ARC qid=… v=… t0=… -> aceptado (primero|iteracion|evento nuevo)` o
+`-> ignorado (evento mas antiguo|parse invalido)`.
 
 ## Arranque
 
@@ -72,9 +89,10 @@ Las señales de `ewguiqt::CanvasWidget` llegan en píxeles **lógicos**; `ui/` l
 |---|---|
 | `test_config` | defaults, clamps, claves repetibles, `--check-overlays` |
 | `test_arc` | t0 UTC, S/W, depth/100, qid, versión y fallback al char 161 |
+| `test_select` | evento de mayor hora de origen: iteraciones antiguas ignoradas, wrap 9999→1000 y log de la decisión |
 | `test_magmsg` | 5 tipos, qid ajeno y que `rd_mag` no destruye el buffer del llamante |
 | `test_mag` | regla de preferencia y reset por qid |
-| `test_state` | versión por qid, evento nuevo y formatos |
+| `test_state` | mismo evento por qid+Δt0, eventos antiguos ignorados y formatos |
 | `test_map` | proyección, zoom/pan/reset, **zoom anclado al cursor**, capas y export PNG/SVG/PDF |
 | `test_logit` | `LogFile`, nombre del proceso y guarda sin `EW_LOG` |
 | `test_headless` | el `test_config.sh` del GTK, **sin tocarlo**, contra `csnrvQT` |

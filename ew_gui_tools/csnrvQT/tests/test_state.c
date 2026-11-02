@@ -1,4 +1,5 @@
-/* C5: estado vivo (version por qid, reset al cambiar de evento) y formatos. */
+/* C5: estado vivo (mismo evento por qid+dt0, never-retroceder, reset al
+ * cambiar de evento) y formatos. */
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -17,10 +18,16 @@ static int g_fail = 0;
         }                                                                       \
     } while (0)
 
+static size_t arc_ev(char *buf, const char *t0_14, const char *qid,
+                     const char *ver4, char ver1)
+{
+    return arc_build(buf, t0_14, "00", "20", 'S', "3000",
+                     "70", 'W', "1500", "1000", qid, ver4, ver1);
+}
+
 static size_t arc_qid(char *buf, const char *qid, const char *ver4, char ver1)
 {
-    return arc_build(buf, "20261023123456", "00", "20", 'S', "3000",
-                     "70", 'W', "1500", "1000", qid, ver4, ver1);
+    return arc_ev(buf, "20261023123456", qid, ver4, ver1);
 }
 
 int main(void)
@@ -52,10 +59,15 @@ int main(void)
     CHECK(s.qid == 42 && s.version == 1, "qid/version");
     CHECK(s.mag.qid == 42, "mag reset al qid nuevo");
 
-    /* Misma version o menor: se descarta y no genera flags. */
-    CHECK(crv_core_ingest_arc(core, buf, len) == 0, "version repetida");
+    /* Mismo evento (mismo qid, |dt0| <= CRV_EVENT_MATCH_SEC): se acepta como
+     * iteracion, sin EVENT ni reset de magnitudes, aunque la version sea igual
+     * o menor. El seed de BD llega con version 0 y el refinador vivo envuelve
+     * 9999 -> 1000, asi que "version <= ultima" no identifica el evento. */
+    CHECK(crv_core_ingest_arc(core, buf, len) == CRV_CHANGED_SUMMARY,
+          "version repetida");
     len = arc_qid(buf, "42", "0", '0');
-    CHECK(crv_core_ingest_arc(core, buf, len) == 0, "version vieja");
+    CHECK(crv_core_ingest_arc(core, buf, len) == CRV_CHANGED_SUMMARY,
+          "version vieja");
 
     /* Version mayor del mismo qid: actualiza sin resetear magnitudes.
      * El parser real de MAG necesita un wr_mag (test_magmsg); aqui solo
@@ -73,6 +85,13 @@ int main(void)
           (CRV_CHANGED_SUMMARY | CRV_CHANGED_EVENT), "qid nuevo");
     crv_core_snapshot(core, &s);
     CHECK(s.qid == 43 && s.mag.qid == 43, "reset al qid nuevo");
+
+    /* Evento distinto y mas antiguo (correccion de un refinador vivo sobre un
+     * evento viejo): se ignora y no toca el snapshot. */
+    len = arc_ev(buf, "20261016081100", "44", "9", '9');
+    CHECK(crv_core_ingest_arc(core, buf, len) == 0, "evento antiguo ignorado");
+    crv_core_snapshot(core, &s);
+    CHECK(s.qid == 43 && s.version == 1, "sigue el evento mas reciente");
 
     /* --- formatos ------------------------------------------------------- */
     memset(&tm, 0, sizeof tm);
@@ -106,6 +125,6 @@ int main(void)
 
     crv_core_free(core);
     if (g_fail == 0)
-        printf("OK: estado vivo (version por qid, reset) y formatos\n");
+        printf("OK: estado vivo (mismo evento, antiguos ignorados) y formatos\n");
     return g_fail;
 }
