@@ -1275,10 +1275,12 @@ QMainWindow "CSNhypodbpQT - Hypocenter database picker (EW8/Qt)"  default 1100x7
 │  │  │    └─ cabecera "Origins" + QTableView(BpqOriginsModel)
 │  │  └─ "Procesar": BpqPreviewPanel sobre QTabWidget
 │  │       ├─ "picking":    QHBoxLayout[ QTableView(BpqStaModel) | BpqCanvasWidget(TRACES) + (TRACE_AXIS) ]
-│  │       │                + barra inferior: Cancel | filtro | A/M/Teo | depth/km/Fix | locators/locate
-│  │       └─ "magnitudes": QStackedWidget{ "Estaciones" | "Mww" } + BpqCanvasWidget(MAG)+(MAG_AXIS)
-│  │                        + barra: A/M/Teo | distancia[°] min/max | prof[km] min/max | reset default |
-│  │                                 calculate | calculate all
+│  │       │                + barra inferior: Cancel | filtro | A/M/Teo | Fix depth [ ] [km] | locators/locate
+│  │       └─ "magnitudes": QTabWidget "mag_stack" { "traza" | "Mww" }
+│  │            ├─ "traza": QSplitter[ QTableView(BpqMagModel, casilla por estación) | MAG + MAG_AXIS ]
+│  │            │           + barra: A/M/Teo | distancia[°] min/max | reset default | calculate | calculate all
+│  │            └─ "Mww":   QSplitter[ tabla parámetros (2 col: parámetro/valor) + Calculate/Cancel
+│  │                                       | playera + resumen / salida completa (scroll) ]
 │  └─ QSplitter[V] 65/35: BpqCanvasWidget(MAP_PLAN) / BpqCanvasWidget(MAP_PROF)
 └─ QStatusBar: estado de BD/anillos/locate + errores legibles
 ```

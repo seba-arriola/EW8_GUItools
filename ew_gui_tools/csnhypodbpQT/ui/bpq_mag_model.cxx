@@ -59,6 +59,41 @@ const CsnhypodbpMagRow *BpqMagModel::row(int r) const
     return &m_rows.at(r);
 }
 
+bool BpqMagModel::isStationOn(const QString &sta) const
+{
+    return !sta.isEmpty() && !m_off.contains(sta);
+}
+
+void BpqMagModel::setStationOn(const QString &sta, bool on)
+{
+    if (sta.isEmpty()) return;
+    if (isStationOn(sta) == on) return;
+    if (on) m_off.remove(sta);
+    else m_off.insert(sta);
+    for (int r = 0; r < m_rows.size(); r++) {
+        if (QString::fromUtf8(m_rows.at(r).sta) != sta) continue;
+        const QModelIndex ix = index(r, ColSta);
+
+        emit dataChanged(ix, ix, {Qt::CheckStateRole});
+    }
+}
+
+bool BpqMagModel::isChecked(int r) const
+{
+    const CsnhypodbpMagRow *mr = row(r);
+
+    return mr ? isStationOn(QString::fromUtf8(mr->sta)) : false;
+}
+
+QStringList BpqMagModel::offStations() const
+{
+    QStringList out;
+
+    for (const QString &s : m_off) out << s;
+    out.sort();
+    return out;
+}
+
 double BpqMagModel::sortValue(int row, int col) const
 {
     const CsnhypodbpMagRow *r = this->row(row);
@@ -90,6 +125,9 @@ QVariant BpqMagModel::data(const QModelIndex &idx, int role) const
     const CsnhypodbpMagRow *r = row(idx.row());
 
     if (!r) return QVariant();
+    if (role == Qt::CheckStateRole && idx.column() == ColSta)
+        return int(isStationOn(QString::fromUtf8(r->sta)) ? Qt::Checked
+                                                          : Qt::Unchecked);
     if (role == Qt::TextAlignmentRole) {
         switch (idx.column()) {
         case ColSta:
@@ -140,4 +178,24 @@ QVariant BpqMagModel::headerData(int col, Qt::Orientation o, int role) const
     if (role != Qt::DisplayRole || o != Qt::Horizontal) return QVariant();
     if (col < 0 || col >= ColCount) return QVariant();
     return QString::fromUtf8(kHeaders[col]);
+}
+
+Qt::ItemFlags BpqMagModel::flags(const QModelIndex &idx) const
+{
+    Qt::ItemFlags f = QAbstractTableModel::flags(idx);
+
+    if (idx.isValid() && idx.column() == ColSta)
+        f |= Qt::ItemIsUserCheckable;
+    return f;
+}
+
+bool BpqMagModel::setData(const QModelIndex &idx, const QVariant &value,
+                          int role)
+{
+    const CsnhypodbpMagRow *r = row(idx.row());
+
+    if (role != Qt::CheckStateRole || !r || idx.column() != ColSta)
+        return false;
+    setStationOn(QString::fromUtf8(r->sta), value.toInt() == Qt::Checked);
+    return true;
 }

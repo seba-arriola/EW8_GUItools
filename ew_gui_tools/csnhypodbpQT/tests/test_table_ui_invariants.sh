@@ -193,7 +193,7 @@ if grep -A12 'void BpqMainWindow::renderMagnitudes' "$ui" | grep -q 'm_magChk'; 
 else
     bad "magnitudes sigue con los checks del picking"
 fi
-if grep -A60 'void BpqMainWindow::calculateMagnitudes' "$ui" |
+if grep -A120 'void BpqMainWindow::calculateMagnitudes' "$ui" |
    grep -q 'bpq_magpanel_calc_solution'; then
     ok "calculate reconstruye las P efectivas"
 else

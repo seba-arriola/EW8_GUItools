@@ -202,6 +202,14 @@ desviaciones deliberadas**:
   separados por 4 px. Cualquier fallo (preparación,
   ondas o motor) se muestra con su texto real en la línea de estado.
 
+En el port **Qt** (`csnhypodbpQT`) el panel es equivalente con otro reparto: a la **izquierda** la
+tabla de parámetros en **dos columnas** (`parámetro | valor`, sin la columna `origen`) y al pie
+`Calculate`/`Cancel`; a la derecha la playera, el resumen y la **salida completa en un
+`QScrollArea`**. La semilla es la **mayor** de las cuatro magnitudes de la solución (no manda el
+radio del preview) y, si no hay ninguna, `MinMagnitude` del `.d` (default 6.0); el `t0` conserva la
+**fracción de segundo** (`fmod(otime, 60)`). Durante la corrida el estado muestra
+`corriendo csnwphase… N s` con un `QTimer` de 1 s y al terminar el total `(N s)`.
+
 **El mecanismo focal se guarda al confirmar la solución, no con un botón aparte** (el
 `Save to DB` ya no existe). El preview del tope de la pestaña *Ondas* tiene **cinco** radios de
 magnitud preferida — `ML`, `Mwp`, `Mb`, `Ms` y **`Mww`** — más una columna `Mww` que muestra el

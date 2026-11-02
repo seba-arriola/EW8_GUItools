@@ -156,6 +156,28 @@ int bpq_magpanel_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas, int n,
     return nr;
 }
 
+int bpq_magpanel_exclude(CsnhypodbpStaRow *rows, int n,
+                         const char *const *stas, int nstas)
+{
+    int i, j, hits = 0;
+
+    if (!rows || n <= 0 || !stas || nstas <= 0) return 0;
+    for (i = 0; i < n; i++) {
+        for (j = 0; j < nstas; j++) {
+            if (!stas[j] || !stas[j][0]) continue;
+            if (strcmp(rows[i].sta, stas[j]) != 0) continue;
+            /* Solo la P: es el ancla de las cuatro magnitudes y lo que filtra
+             * fetch_rows/ovr/calc_solution. Las S no generan magnitud. */
+            if (rows[i].p.present) {
+                rows[i].p.present = 0;
+                hits++;
+            }
+            break;
+        }
+    }
+    return hits;
+}
+
 int bpq_magpanel_fetch_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                             int n, unsigned kind_mask, double depth_km,
                             int auto_on, int manual_on, int theo_on,

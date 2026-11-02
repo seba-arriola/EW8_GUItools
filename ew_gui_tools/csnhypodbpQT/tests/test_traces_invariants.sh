@@ -81,6 +81,75 @@ else
     bad "la rueda no desplaza filas"
 fi
 
+# Paneo: el unico gesto de arrastre vive en el eje inferior (banda elastica ->
+# zoom/reset al soltar). Las trazas no panean y el clic tiene 6 px de tolerancia
+# para que un temblor siga armando el ancla.
+if ! grep -q 'bpq_traces_pan' "$ui" &&
+   grep -q 'm_waves->setClickSlop(6)' "$ui" &&
+   grep -q 'm_axis, &BpqCanvasWidget::pressed' "$ui" &&
+   grep -q 'm_axis, &BpqCanvasWidget::dragged' "$ui" &&
+   grep -q 'm_axis, &BpqCanvasWidget::released' "$ui"; then
+    ok "picking: sin paneo en trazas; arrastre solo en el eje"
+else
+    bad "las trazas volvieron a panear o falta el arrastre del eje"
+fi
+if grep -q 'void setClickSlop(int px)' "$here/../../commonqt/include/ewguiqt/canvas.h" &&
+   grep -q 'm_clickSlop' "$canvas"; then
+    ok "canvas: clickSlop configurable"
+else
+    bad "falta clickSlop en CanvasWidget"
+fi
+
+# Magnitudes: `traza` | `Mww` cuelgan de la sub-pestana (no del cuadro de la
+# traza). La barra inferior y el eje viven en la pagina `traza`, asi que al
+# mirar Mww no se ven (paridad GTK).
+if grep -q 'm_magStack = new QTabWidget(mg)' "$ui" &&
+   grep -q 'm_magStack->addTab(traceRoot' "$ui" &&
+   grep -q 'm_magStack->addTab(m_mwwPanel' "$ui" &&
+   grep -q 'QWidget \*bar = new QWidget(traceRoot)' "$ui" &&
+   grep -q 'tl->addWidget(m_splitMag, 1)' "$ui" &&
+   grep -q 'tl->addWidget(bar, 0)' "$ui"; then
+    ok "magnitudes: pestañas traza|Mww bajo la sub-pestana"
+else
+    bad "traza|Mww no cuelgan de la sub-pestana magnitudes"
+fi
+
+# Mww: parametros (2 cols, SIN columna origen) a la izquierda con los botones
+# al pie; playera + resumen + salida con scroll al centro/derecha. La corrida
+# muestra el contador de segundos (QTimer de 1 s, como la GTK).
+mww=$here/../ui/bpq_mww_panel.cxx
+if grep -q 'new QTableWidget(0, 2, left)' "$mww" &&
+   ! grep -q '"origen"' "$mww" &&
+   grep -q 'lv->addWidget(m_table, 1)' "$mww" &&
+   grep -q 'lv->addLayout(bh, 0)' "$mww" &&
+   grep -q 'new QScrollArea(res)' "$mww" &&
+   grep -q 'split_mww_result' "$mww" &&
+   grep -q 'setInterval(1000)' "$mww" &&
+   grep -q 'm_elapsed.elapsed() / 1000' "$mww" &&
+   grep -q 'm_tick->start()' "$mww" &&
+   grep -q 'm_tick->stop()' "$mww"; then
+    ok "mww: parametros a la izquierda, resultados al centro y contador"
+else
+    bad "el panel Mww no tiene el layout/contador pedidos"
+fi
+
+# Semilla Mww: la mayor de las cuatro (no el radio del preview); sin magnitud
+# usa MinMagnitude del .d y el t0 conserva la fraccion de segundo.
+seedfn=$(sed -n '/void BpqMainWindow::seedMww/,/^}/p' "$ui")
+if printf '%s\n' "$seedfn" | grep -q 'v > mag' &&
+   ! printf '%s\n' "$seedfn" | grep -q 'm_prefMag' &&
+   grep -q 'min_magnitude' "$here/../c/bpq_mww.c" &&
+   grep -q 'fmod(sol->otime, 60.0)' "$here/../c/bpq_mww.c"; then
+    ok "mww: semilla maxima, fallback MinMagnitude y t0 con fraccion"
+else
+    bad "la semilla Mww no sigue los defaults de la GTK"
+fi
+if grep -q 'magnitudes: todas las estaciones estan' "$ui"; then
+    ok "magnitudes: todas desmarcadas no lanza el calculo"
+else
+    bad "calculate no distingue el caso de todas desmarcadas"
+fi
+
 # Guia vertical: hover sin boton en el canvas + dibujo condicionado al area.
 if grep -q 'setMouseTracking(true)' "$canvas" &&
    grep -q 'CanvasWidget::hovered' "$ui" &&
@@ -208,6 +277,22 @@ if sed -n '/bool BpqMainWindow::eventFilter/,/^}/p' "$ui" |
 else
     bad "un release perdido puede dejar el gesto pegado"
 fi
+
+# Orden pedido en la barra de picking: `Fix depth` -> casilla (sin texto) ->
+# caja. La etiqueta no existia y la casilla decia "Fix".
+{
+    pickbar=$(sed -n '/void BpqMainWindow::buildPickingBar/,/^}/p' "$ui")
+    l=$(printf '%s\n' "$pickbar" | grep -n 'lbl_fix_depth' | head -1 | cut -d: -f1)
+    c=$(printf '%s\n' "$pickbar" | grep -n 'm_chkFix = new QCheckBox(bar)' | head -1 | cut -d: -f1)
+    e=$(printf '%s\n' "$pickbar" | grep -n 'm_editFix = new QLineEdit' | head -1 | cut -d: -f1)
+    if [ -n "$l" ] && [ -n "$c" ] && [ -n "$e" ] &&
+       [ "$l" -lt "$c" ] && [ "$c" -lt "$e" ] &&
+       ! printf '%s\n' "$pickbar" | grep -q 'QCheckBox(QStringLiteral("Fix")'; then
+        ok "picking: Fix depth -> casilla -> caja (sin texto en la casilla)"
+    else
+        bad "la barra de picking no tiene el orden Fix depth/casilla/caja"
+    fi
+}
 
 # Teclado: filtro de aplicacion + tabla sin type-ahead.
 if grep -q 'qApp->installEventFilter' "$ui" &&

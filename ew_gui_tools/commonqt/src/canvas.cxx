@@ -46,6 +46,13 @@ void CanvasWidget::requestRepaint()
     update();
 }
 
+void CanvasWidget::setClickSlop(int px)
+{
+    /* Un slop 0 haria imposible el clic (cualquier temblor lo convierte en
+     * arrastre): el piso es el default historico. */
+    m_clickSlop = (px > 0) ? px : 2;
+}
+
 void CanvasWidget::ensureImage(const QSize &pixels)
 {
     if (m_img.width() == pixels.width() && m_img.height() == pixels.height())
@@ -125,7 +132,7 @@ void CanvasWidget::mouseMoveEvent(QMouseEvent *ev)
     if (m_pressed) {
         const QPoint p = ev->position().toPoint();
         const QPoint d = p - m_last;
-        if (d.manhattanLength() > 2)
+        if (d.manhattanLength() > m_clickSlop)
             m_moved = true;
         if (m_moved) {
             emit dragged(double(d.x()), double(d.y()));

@@ -74,8 +74,17 @@ una estación concreta.
 
 ---
 
-## 3. Barra inferior de `magnitudes`
+## 3. Pestañas, tabla y barra inferior de `magnitudes`
 
+- **Pestañas `traza` | `Mww`**: cuelgan de la propia sub-pestaña `magnitudes` (no del cuadro de la
+  traza). La tabla de estaciones, el canvas procesado, el eje y la barra inferior viven en `traza`;
+  al mirar `Mww` no se muestran. Es el reparto de la GTK.
+- **Casilla por estación** (columna `station`, a la izquierda del nombre; por defecto marcada):
+  desmarcarla excluye esa estación **solo** de la petición de magnitud (`calculate` /
+  `calculate all`): no entra en la solución base, ni en las filas pedidas, ni en las franjas
+  enviadas (`bpq_magpanel_exclude`). No cambia la traza, la tabla, las ventanas ya ajustadas ni el
+  localizador. El estado se guarda por nombre de estación y sobrevive al cambio de magnitud, al
+  orden y a los resets del modelo.
 - **`picadas: A M Teo`** — qué **picadas P** entran al forzado, por su **origen**:
   - **M** = picada manual,
   - **A** = picada automática,

@@ -11,7 +11,8 @@
  * Contrato (heredado de bpq_canvas_widget.h, ya probado en WSLg):
  *   - el QImage se recrea SOLO al cambiar de tamano, nunca dentro de un paint;
  *   - `grabImage()` devuelve el ultimo render (tests y export);
- *   - arrastre > 2 px = paneo; por debajo es un clic;
+ *   - arrastre > clickSlop px = gesto (paneo/banda); por debajo es un clic;
+ *     el default es 2 px y cada modulo puede subirlo (picking usa 6);
  *   - rueda = zoom con factor 1.2 y la posicion del puntero.
  */
 
@@ -37,6 +38,10 @@ public:
     void setMinSizeHint(int width, int height);
     void requestRepaint();
     QImage grabImage() const;
+    /* Deriva maxima (px logicos) que sigue contando como clic. 0/negativo se
+     * normaliza a 2: un clic siempre tiene que ser posible. */
+    void setClickSlop(int px);
+    int  clickSlop() const { return m_clickSlop; }
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override;
@@ -76,6 +81,7 @@ private:
     bool m_pressed = false;
     bool m_moved = false;
     bool m_rpressed = false;
+    int m_clickSlop = 2;
     QPoint m_last;
     int m_paints = 0;
     int m_allocs = 0;

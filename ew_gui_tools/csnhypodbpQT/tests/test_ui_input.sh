@@ -91,6 +91,12 @@ run_clicks() {  # <pares VAR=valor...>
         BPQ_INPUT_TARGET=waves BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
 }
+run_drag() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
+        BPQ_INPUT_TARGET=waves BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
 run_pick() {  # <x,y> [fase]
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
         BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=picking \
@@ -115,6 +121,18 @@ run_dump_magopt() {  # <pares VAR=valor...>
     out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
         BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
         BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
+}
+run_dump_magt() {  # <traza|Mww>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--dump BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
+        BPQ_MAG_TAB="$1" BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+        "$bin" csnhypodbpqt.d 2>/dev/null )
+}
+run_magtab() {  # <pares VAR=valor...>
+    out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+        BPQ_MODE=--input BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
+        BPQ_INPUT_TARGET=magtab BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
         "$@" "$bin" csnhypodbpqt.d 2>/dev/null )
 }
 ck() {  # <descripcion> <regex ERE>
@@ -178,11 +196,11 @@ ck "casilla: clic real la apaga"      '^input toggle=PB01,P .*checked=0 '
 # --- 1c. P teorica: estaciones sin M/A + ventana de magnitud -------------
 run_dump magnitudes
 ck "P teorica en las estaciones sin M/A" '^stations rows=[0-9]+ picked=[1-9][0-9]* sta_teo=[1-9][0-9]*'
-ck "ventanas Teo en la tabla"          '^mag .* theo=[1-9][0-9]* win=[1-9][0-9]* origins=111$'
+ck "ventanas Teo en la tabla"          '^mag .* theo=[1-9][0-9]* win=[1-9][0-9]* origins=111 off=-$'
 run_dump_magopt BPQ_MAG_ORIGINS=AM
-ck "checks propios de magnitudes"      '^mag .* origins=110$'
+ck "checks propios de magnitudes"      '^mag .* origins=110 off=-$'
 run_dump_magopt BPQ_MAG_ORIGINS=NONE
-ck "los tres origenes se pueden apagar" '^mag .* origins=000$'
+ck "los tres origenes se pueden apagar" '^mag .* origins=000 off=-$'
 
 # --- 1b. Created propio de cada solucion (no el time(NULL) de la carga) ---
 run_dump picking
@@ -269,8 +287,17 @@ ck "magnitudes: tabla sin scroll H"   '^table mag cols=8 total=[0-9]+ viewport=[
 
 # --- 7b. Eventos: minimo por columna y reparto del sobrante --------------
 run_dump events
-ck "events: la tabla llena el panel"  '^table events cols=[0-9]+ total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=[01] gap=[01]$'
+# A 1100 px los minimos pueden no caber (14 px): la valvula es el scroll, pero
+# la tabla NUNCA encoge por debajo de ellos. A 1600 debe llenar exacto.
+ck "events: conserva los minimos"     '^table events cols=[0-9]+ total=[0-9]+ viewport=[0-9]+ header=[0-9]+ vscroll=[01] hscroll=[01] gap=-?[0-9]+$'
 check_tablecols events
+ev_total=$(printf '%s\n' "$out" | sed -n 's/^table events .* total=\([0-9]*\) .*/\1/p')
+ev_vp=$(printf '%s\n' "$out" | sed -n 's/^table events .* viewport=\([0-9]*\) .*/\1/p')
+if [ -n "$ev_total" ] && [ -n "$ev_vp" ] && [ "$ev_total" -ge "$ev_vp" ]; then
+    ok "events: no encoge bajo los minimos ($ev_total >= $ev_vp)"
+else
+    bad "events: encogio por debajo de los minimos <$ev_total < $ev_vp>"
+fi
 ev_def=$(printf '%s\n' "$out" | sed -n 's/^table events .* total=\([0-9]*\) .*/\1/p')
 
 run_dump origins
@@ -307,6 +334,37 @@ ck "mag: el refresh conserva PB02"     '^input select=PB02 .*mag_sel=PB02 traces
 run_input BPQ_INPUT_TARGET=sta BPQ_INPUT_SELECT=PB01
 ck "sta: seleccion PB01 vuelve a mag"  '^input select=PB01 .*mag_sel=PB01 traces_sta=PB01'
 
+# --- 8b. pestañas `traza` | `Mww` bajo la sub-pestaña magnitudes -----------
+run_dump_magt traza
+ck "magstack: traza por defecto"       '^magstack tabs=traza,Mww current=traza table=1 bar=1 axis=1$'
+run_dump_magt Mww
+ck "magstack: Mww oculta tabla/barra/eje" '^magstack tabs=traza,Mww current=Mww table=0 bar=0 axis=0$'
+ck "mww: tabla de parametros 2x31"     '^mww table cols=2 rows=31 editable=11$'
+out=$( cd "$params" && env QT_QPA_PLATFORM=offscreen \
+    BPQ_MODE=--layout BPQ_TEST_FIXTURE=pins BPQ_TAB=magnitudes \
+    BPQ_MAG_TAB=Mww BPQ_WAVE_WAIT_MS=100 BPQ_STATE_DIR="$state" \
+    "$bin" csnhypodbpqt.d 2>/dev/null )
+ck "mww: parametros a la izquierda"    '^split_mww sizes=[1-9][0-9]*,[1-9][0-9]*$'
+ck "mww: resultados con divisor vertical" '^split_mww_result sizes=[1-9][0-9]*,[1-9][0-9]*$'
+mh=$(printf '%s\n' "$out" | sed -n 's/^window minHint=[0-9]*x\([0-9]*\) current=.*/\1/p')
+if [ -n "$mh" ] && [ "$mh" -le 750 ]; then
+    ok "mww: no infla el minimo de la ventana (minHint alto=$mh <= 750)"
+else
+    bad "mww: el panel infla el minimo de la ventana <$mh>"
+fi
+
+# --- 8c. casilla por estacion: el estado se conserva en la tabla ----------
+# La peticion real (que PB02 no viaje a csnmags) se verifica en
+# `tests/test_magreq.sh` (`--magcalc BPQ_MAG_DRY=1`), separado por tiempo.
+run_magtab BPQ_INPUT_TOGGLE=PB02
+ck "magtab: PB02 desmarcada"           '^input magtoggle=PB02 .* checked=0 off=PB02$'
+ck "magtab: el dump conserva el estado" '^mag .* off=PB02$'
+# Re-marcarla en el MISMO proceso (2 clics): el estado por estacion vuelve a
+# `off=-`; el modelo lo conserva al resetear las filas.
+run_magtab BPQ_INPUT_TOGGLE=PB02 BPQ_INPUT_TOGGLE_REPEAT=2
+ck "magtab: PB02 reincluida"           '^input magtoggle=PB02 .* checked=1 off=-$'
+ck "magtab: el dump ya no la excluye"  '^mag .* off=-$'
+
 # --- 9. arrastre sobre el eje: banda, zoom y reset total -------------------
 run_axis BPQ_INPUT_AXIS=0.2,0.7
 ck "eje: gesto termina sin banda"      '^input axis gestures=1 .* rubber=0$'
@@ -318,6 +376,14 @@ else
 fi
 run_axis BPQ_INPUT_AXIS='0.2,0.7;0.8,0.2'
 ck "eje: der->izq restituye la vista"  '^input axis gestures=2 win=120.0 t0=1767323040.00 rubber=0$'
+
+# --- 9b. arrastre sobre las TRAZAS: no panea; el clic con temblor sigue ------
+# El gesto de arrastre vive solo en el eje: sobre las trazas un movimiento
+# grande no mueve la ventana, y uno pequeño (<= clickSlop) sigue siendo clic.
+run_drag BPQ_INPUT_DRAG='0.3,0.3,60'
+ck "trazas: el arrastre no panea"      '^input drag=60 win=120.0 t0=1767323040.00 anchor=0.0$'
+run_drag BPQ_INPUT_DRAG='0.3,0.3,4'
+ck "trazas: 4 px de deriva son clic"   '^input drag=4 win=120.0 t0=1767323040.00 anchor=[1-9][0-9]*\.[0-9]$'
 
 # --- 10. dos clics: derecha acerca, izquierda restituye (sin undo) --------
 run_clicks BPQ_INPUT_CLICKS='0.3,0.3;0.7,0.3'

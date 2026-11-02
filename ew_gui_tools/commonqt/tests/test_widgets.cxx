@@ -11,6 +11,7 @@
 #include <QKeyEvent>
 #include <QListWidget>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPalette>
 #include <QPushButton>
 #include <QScrollBar>
@@ -21,6 +22,7 @@
 #include <QTimer>
 
 #include "ewguiqt/confirm.h"
+#include "ewguiqt/canvas.h"
 #include "ewguiqt/list_select.h"
 #include "ewguiqt/log_view.h"
 #include "ewguiqt/table.h"
@@ -404,9 +406,52 @@ static void checkFillColumns()
           "layout_columns(NULL) debe devolver 0");
 }
 
-static void checkLogView()
+/* El slop separa "clic" de "arrastre": el picking lo sube a 6 px para que un
+ * clic con temblor siga armando el ancla. El default (2) no cambia. */
+static void checkClickSlop()
 {
-    QTemporaryDir dir;
+    ewguiqt::CanvasWidget c;
+    int clicks = 0;
+
+    c.resize(220, 120);
+    QObject::connect(&c, &ewguiqt::CanvasWidget::clicked,
+                     [&clicks](double, double) { clicks++; });
+
+    CHECK(c.clickSlop() == 2, "clickSlop por defecto es 2");
+    c.setClickSlop(0);
+    CHECK(c.clickSlop() == 2, "clickSlop 0 se normaliza a 2");
+    c.setClickSlop(6);
+    CHECK(c.clickSlop() == 6, "clickSlop acepta 6");
+
+    auto send = [&c](QEvent::Type type, const QPointF &p, Qt::MouseButton button,
+                     Qt::MouseButtons buttons) {
+        QMouseEvent ev(type, p, c.mapToGlobal(p.toPoint()), button, buttons,
+                       Qt::NoModifier);
+
+        QCoreApplication::sendEvent(&c, &ev);
+    };
+    auto drag = [&](double dx) {
+        const QPointF p0(60.0, 50.0);
+        const QPointF p1(60.0 + dx, 50.0);
+
+        send(QEvent::MouseButtonPress, p0, Qt::LeftButton, Qt::LeftButton);
+        send(QEvent::MouseMove, p1, Qt::NoButton, Qt::LeftButton);
+        send(QEvent::MouseButtonRelease, p1, Qt::LeftButton, Qt::NoButton);
+    };
+
+    drag(4.0);                    /* 4 <= 6: clic */
+    CHECK(clicks == 1, "una deriva de 4 px con slop 6 sigue siendo clic");
+
+    drag(20.0);                   /* 20 > 6: arrastre, sin clic */
+    CHECK(clicks == 1, "una deriva de 20 px con slop 6 no es clic");
+
+    c.setClickSlop(2);
+    drag(4.0);                    /* 4 > 2: arrastre */
+    CHECK(clicks == 1, "con slop 2 una deriva de 4 px no es clic");
+}
+
+static void checkLogView()
+{    QTemporaryDir dir;
     CHECK(dir.isValid(), "no se pudo crear el directorio temporal");
     const QString path = dir.filePath("probe_1.log");
 
@@ -442,6 +487,7 @@ int main(int argc, char **argv)
     checkWireHeaderSortNoInitial();
     checkFitColumns();
     checkFillColumns();
+    checkClickSlop();
     checkLogView();
 
     if (g_fail == 0)

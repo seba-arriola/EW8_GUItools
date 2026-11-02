@@ -163,6 +163,12 @@ QVector<int> column_min_widths(QTableView *view, int padding, int maxColumnWidth
                                                   header);
     const int mark = view->style()->pixelMetric(QStyle::PM_HeaderMarkSize, nullptr,
                                                 header);
+    /* La casilla de `CheckStateRole` se dibuja DENTRO de la celda: sin sumar su
+     * ancho el texto de la estacion se elide aunque el minimo "quepa". */
+    const int check = view->style()->pixelMetric(QStyle::PM_IndicatorWidth,
+                                                 nullptr, view) +
+                      view->style()->pixelMetric(QStyle::PM_CheckBoxLabelSpacing,
+                                                 nullptr, view);
     const int rows = model->rowCount();
     const int n = model->columnCount();
     QVector<int> out(n, 0);
@@ -184,6 +190,9 @@ QVector<int> column_min_widths(QTableView *view, int padding, int maxColumnWidth
             if (cw > width)
                 width = cw;
         }
+        if (rows > 0 &&
+            (model->flags(model->index(0, c)) & Qt::ItemIsUserCheckable))
+            width += check;
         if (maxColumnWidth > 0 && width > maxColumnWidth)
             width = maxColumnWidth;
         if (width < 8)

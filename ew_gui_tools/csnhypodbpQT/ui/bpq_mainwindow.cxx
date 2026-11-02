@@ -767,9 +767,11 @@ void BpqMainWindow::openData()
         m_mapProf->requestRepaint();
     });
 
-    /* Trazas: rueda = zoom temporal alrededor del cursor, arrastre = paneo,
-     * dos clics = zoom al intervalo (izquierda = vista original) y arrastre en
-     * el eje = zoom con banda gris (der->izq = reset). La ventana vive en
+    /* Trazas: rueda = zoom temporal alrededor del cursor y dos clics = zoom al
+     * intervalo (izquierda = vista original). El arrastre sobre las TRAZAS no
+     * mueve la ventana: el gesto de arrastre vive SOLO en el eje inferior, que
+     * dibuja la banda gris y aplica zoom/reset al soltar. Asi un clic con algo
+     * de temblor sigue armando el ancla en vez de panear. La ventana vive en
      * m_winT0/m_winLen (los DOS canvas la comparten). */
     if (m_waves) {
         connect(m_waves, &BpqCanvasWidget::zoomed, this,
@@ -777,12 +779,6 @@ void BpqMainWindow::openData()
             const double d = m_waves->devicePixelRatioF();
             bpq_traces_zoom_at(&m_tracesCtx, int(m_waves->width() * d), x * d,
                                factor);
-            applyTracesWindow();
-        });
-        connect(m_waves, &BpqCanvasWidget::dragged, this,
-                [this](double dx, double) {
-            const double d = m_waves->devicePixelRatioF();
-            bpq_traces_pan(&m_tracesCtx, int(m_waves->width() * d), dx * d);
             applyTracesWindow();
         });
     }
@@ -2319,10 +2315,21 @@ void BpqMainWindow::buildPickingBar(QWidget *parent, QVBoxLayout *lay)
     hb->addWidget(m_chkM, 0);
     hb->addWidget(m_chkT, 0);
 
-    /* `Fix` + profundidad fija: se copia al `.d` temporal del refinador
-     * (FixedDepthKm) solo cuando la casilla esta puesta. La caja se acota al
-     * valor canonico + 2 para no inflar el minimo de la ventana (WSLg). */
-    m_chkFix = new QCheckBox(QStringLiteral("Fix"), bar);
+    /* `Fix depth` + casilla + caja: la etiqueta va PRIMERO (el usuario lee el
+     * control de izquierda a derecha) y la casilla no lleva texto propio. La
+     * caja se copia al `.d` temporal del refinador (FixedDepthKm) solo cuando
+     * la casilla esta puesta. Se acota al valor canonico + 2 para no inflar el
+     * minimo de la ventana (WSLg). */
+    {
+        QLabel *lblFix = new QLabel(QStringLiteral("Fix depth"), bar);
+
+        lblFix->setObjectName(QStringLiteral("lbl_fix_depth"));
+        lblFix->setToolTip(QStringLiteral(
+            "Profundidad fija: el refinador recibe FixedDepthKm en su .d "
+            "temporal"));
+        hb->addWidget(lblFix, 0);
+    }
+    m_chkFix = new QCheckBox(bar);
     m_chkFix->setObjectName(QStringLiteral("chk_fix"));
     m_chkFix->setChecked(m_cfg->fix_depth_on != 0);
     m_chkFix->setToolTip(QStringLiteral(
@@ -3113,6 +3120,40 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         (void)bpq_stations_rebase(m_staCat, rows.data(), rows.size(),
                                   m_cand.lat, m_cand.lon);
 
+    /* Tabla de magnitudes: las estaciones desmarcadas no entran a la peticion
+     * (ni a la solucion base ni a las trazas). La tabla las sigue mostrando. */
+    {
+        const QStringList off = m_magModel ? m_magModel->offStations()
+                                           : QStringList();
+        QVector<QByteArray> names;
+        QVector<const char *> ptrs;
+
+        names.reserve(off.size());
+        for (const QString &s : off) names.append(s.toUtf8());
+        ptrs.reserve(names.size());
+        for (const QByteArray &b : names) ptrs.append(b.constData());
+        if (!ptrs.isEmpty()) {
+            (void)bpq_magpanel_exclude(rows.data(), rows.size(),
+                                       ptrs.constData(), ptrs.size());
+            {
+                bool any = false;
+
+                for (const CsnhypodbpStaRow &r : rows)
+                    if (r.p.present) {
+                        any = true;
+                        break;
+                    }
+                if (!any) {
+                    statusBar()->showMessage(
+                        QStringLiteral("magnitudes: todas las estaciones estan "
+                                       "desmarcadas"),
+                        0);
+                    return;
+                }
+            }
+        }
+    }
+
     /* La candidata trae el origen refinado y SOLO las P del ARC. Las picadas
      * manuales nuevas y las teoricas viven en m_staRows: se reconstruyen en
      * `base` con el mismo ranking M>A>Teo que la tabla. Sin esto csnmags no
@@ -3162,6 +3203,21 @@ void BpqMainWindow::calculateMagnitudes(bool allKinds)
         buildMagReqs(m_staCat, m_cfg, m_magPanel, rows.constData(), rows.size(),
                      rb, nf, ovr.constData(), ovr.size(), kindMask, &req,
                      BPQ_TRACE_MAX);
+    }
+
+    /* Hook de test: la peticion armada, sin lanzar csnmags. */
+    if (!qgetenv("BPQ_MAG_DRY").isEmpty()) {
+        QStringList stas;
+
+        for (const BpqFetchReq &q : req) {
+            const QString s = q.sta;
+
+            if (!stas.contains(s)) stas << s;
+        }
+        std::printf("magreq n=%d stas=%s\n", req.size(),
+                    stas.join(QLatin1Char(',')).toUtf8().constData());
+        std::fflush(stdout);
+        return;
     }
 
     m_magBusy = true;
@@ -3346,12 +3402,11 @@ void BpqMainWindow::seedMww()
         return;
     }
 
-    if (cand) {
-        cells[0] = m_candMag.ml;
-        cells[1] = m_candMag.mwp;
-        cells[2] = m_candMag.mb;
-        cells[3] = m_candMag.ms;
-    } else if (m_curEv && pi >= 0 && pi < m_npts) {
+    /* Siempre se parte de las magnitudes de la solucion ELEGIDA: la candidata
+     * del locate puede venir sin magnitudes (csnmags no corrio) y no debe
+     * borrar las que ya tenia la solucion. Las de la candidata mandan solo si
+     * traen valor. */
+    if (m_curEv && pi >= 0 && pi < m_npts) {
         const int j = m_ptSol[pi];
 
         bpq_origin_cell(m_curEv, j, 11, ml, sizeof(ml));
@@ -3363,24 +3418,30 @@ void BpqMainWindow::seedMww()
         cells[2] = mb;
         cells[3] = ms;
     }
+    if (cand) {
+        const char *cc[4] = { m_candMag.ml, m_candMag.mwp, m_candMag.mb,
+                              m_candMag.ms };
+        int k;
 
-    /* Magnitud semilla: la del radio si tiene valor; si no Mwp > Ms > Mb > ML.
-     * `BPQ_MWW_MAG` la fuerza (diagnostico: soluciones de la BD sin magnitud). */
+        for (k = 0; k < 4; k++) {
+            double v = 0.0;
+            int nst = 0;
+
+            if (csnhypodbp_mag_split(cc[k], &v, &nst) == 1) cells[k] = cc[k];
+        }
+    }
+
+    /* Paridad GTK: la semilla es la MAYOR de las cuatro magnitudes de la
+     * solucion (no manda el radio del preview). `BPQ_MWW_MAG` la fuerza
+     * (diagnostico: soluciones de la BD sin magnitud). */
     {
-        const int order[4] = { 1, 3, 2, 0 };
         double v = 0.0;
         int nst = 0, k;
 
-        if (m_prefMag >= 0 && m_prefMag < 4 &&
-            csnhypodbp_mag_split(cells[m_prefMag], &v, &nst) == 1) {
-            mag = v;
-        } else {
-            for (k = 0; k < 4; k++) {
-                if (csnhypodbp_mag_split(cells[order[k]], &v, &nst) == 1) {
-                    mag = v;
-                    break;
-                }
-            }
+        for (k = 0; k < 4; k++) {
+            if (csnhypodbp_mag_split(cells[k], &v, &nst) == 1 &&
+                (!std::isfinite(mag) || v > mag))
+                mag = v;
         }
     }
     if (!std::isfinite(mag)) {
@@ -3413,7 +3474,7 @@ void BpqMainWindow::seedMww()
                     .arg(sol->qid)
                     .arg(sol->version)
                     .arg(std::isfinite(mag) ? QString::number(mag, 'f', 2)
-                                            : QStringLiteral("-")),
+                                            : QStringLiteral("MinMagnitude")),
                 false);
         } else {
             m_mwwKey.clear();
@@ -3438,8 +3499,7 @@ void BpqMainWindow::startMww()
     if (m_mwwPanel) {
         m_mwwPanel->setBusy(true);
         m_mwwPanel->setStatus(
-            QStringLiteral("corriendo csnwphase… (prep + motor; puede tardar "
-                           "minutos)"),
+            QStringLiteral("corriendo csnwphase… 0 s"),
             false);
     }
     BpqMwwWorker *w = m_mwwWorker;
@@ -3649,6 +3709,16 @@ bool BpqMainWindow::runMagCalcForTest()
 {
     QElapsedTimer t;
 
+    if (m_magStack) m_magStack->setCurrentIndex(0);   /* tabla/traza visibles */
+    {
+        const QByteArray off = qgetenv("BPQ_MAG_OFF");
+
+        if (!off.isEmpty() && m_magModel) {
+            for (const QByteArray &s : off.split(','))
+                if (!s.isEmpty())
+                    m_magModel->setStationOn(QString::fromUtf8(s), false);
+        }
+    }
     if (!runLocateForTest()) return false;
 
     /* Ajusta una ventana a mano para que el override viaje de verdad. */
@@ -3951,6 +4021,7 @@ bool BpqMainWindow::runMagDragForTest()
         return false;
     m_tabs->setCurrentIndex(1);
     m_subtabs->setCurrentIndex(1);
+    if (m_magStack) m_magStack->setCurrentIndex(0);   /* traza */
     QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 
     auto pick_sta = [](const char *env, const char *def) -> QString {
@@ -4077,6 +4148,7 @@ bool BpqMainWindow::runInputForTest()
     if (target == QByteArray("sta")) w = m_staView;
     else if (target == QByteArray("waves")) w = m_waves;
     else if (target == QByteArray("mag")) w = m_magCanvas;
+    else if (target == QByteArray("magtab")) w = m_magView;
     else if (target == QByteArray("text")) w = m_editFix;
     else if (target == QByteArray("axis")) w = m_axis;
     if (!w) {
@@ -4127,7 +4199,8 @@ bool BpqMainWindow::runInputForTest()
     }
 
     /* Clic REAL sobre el indicador de la casilla de una fila (el delegate de
-     * Qt la alterna; no basta con setData). */
+     * Qt la alterna; no basta con setData). `sta` = tabla del picking;
+     * `magtab` = tabla de magnitudes (una fila por estacion). */
     {
         const QByteArray tog = qgetenv("BPQ_INPUT_TOGGLE");
 
@@ -4136,50 +4209,122 @@ bool BpqMainWindow::runInputForTest()
             const QByteArray sta = ab.value(0);
             const QByteArray ph = ab.size() > 1 ? ab.value(1).toUpper()
                                                 : QByteArray("P");
-            const int phase = (ph == QByteArray("S")) ? 1 : 0;
-            int src = -1;
 
-            if (target != QByteArray("sta") || !m_staView || !m_staModel) {
-                std::fprintf(stderr, "csnhypodbpQT: TOGGLE solo con target=sta\n");
-                return false;
-            }
-            for (int i = 0; i < m_staRows.size(); i++) {
-                if (sta != QByteArray(m_staRows.at(i).sta)) continue;
-                src = i;
-                break;
-            }
-            if (src < 0) {
-                std::fprintf(stderr, "csnhypodbpQT: TOGGLE estacion <%s> no esta\n",
-                             sta.constData());
-                return false;
-            }
-            {
-                const int vr = viewRowForSource(m_staProxy, src * 2 + phase);
-                const QModelIndex ix = m_staView->model()->index(vr, 0);
+            if (target == QByteArray("sta")) {
+                const int phase = (ph == QByteArray("S")) ? 1 : 0;
+                int src = -1, vr = -1;
 
-                m_staView->scrollTo(ix);
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
-                {
-                    const QRect r = m_staView->visualRect(ix);
-                    const QPoint p(r.left() + 8, r.center().y());
-                    QMouseEvent press(QEvent::MouseButtonPress, QPointF(p),
-                                      m_staView->viewport()->mapToGlobal(p),
-                                      Qt::LeftButton, Qt::LeftButton,
-                                      Qt::NoModifier);
-                    QMouseEvent rel(QEvent::MouseButtonRelease, QPointF(p),
-                                    m_staView->viewport()->mapToGlobal(p),
-                                    Qt::LeftButton, Qt::NoButton,
-                                    Qt::NoModifier);
-
-                    QCoreApplication::sendEvent(m_staView->viewport(), &press);
-                    QCoreApplication::sendEvent(m_staView->viewport(), &rel);
+                if (!m_staView || !m_staModel) {
+                    std::fprintf(stderr, "csnhypodbpQT: TOGGLE sta sin tabla\n");
+                    return false;
                 }
-                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                for (int i = 0; i < m_staRows.size(); i++) {
+                    if (sta != QByteArray(m_staRows.at(i).sta)) continue;
+                    src = i;
+                    break;
+                }
+                if (src < 0) {
+                    std::fprintf(stderr,
+                                 "csnhypodbpQT: TOGGLE estacion <%s> no esta\n",
+                                 sta.constData());
+                    return false;
+                }
+                vr = viewRowForSource(m_staProxy, src * 2 + phase);
+                {
+                    const QModelIndex ix = m_staView->model()->index(vr, 0);
+
+                    m_staView->scrollTo(ix);
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    {
+                        const QRect r = m_staView->visualRect(ix);
+                        const QPoint p(r.left() + 8, r.center().y());
+                        QMouseEvent press(QEvent::MouseButtonPress, QPointF(p),
+                                          m_staView->viewport()->mapToGlobal(p),
+                                          Qt::LeftButton, Qt::LeftButton,
+                                          Qt::NoModifier);
+                        QMouseEvent rel(QEvent::MouseButtonRelease, QPointF(p),
+                                        m_staView->viewport()->mapToGlobal(p),
+                                        Qt::LeftButton, Qt::NoButton,
+                                        Qt::NoModifier);
+
+                        QCoreApplication::sendEvent(m_staView->viewport(), &press);
+                        QCoreApplication::sendEvent(m_staView->viewport(), &rel);
+                    }
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                }
                 std::printf("input toggle=%s row=%d checked=%d on=%d total=%d\n",
                             tog.constData(), vr,
                             m_staModel->isChecked(src * 2 + phase) ? 1 : 0,
                             m_staModel->checkedCount(),
                             m_staModel->rowCount());
+            } else if (target == QByteArray("magtab")) {
+                int src = -1, vr = -1;
+
+                if (!m_magView || !m_magModel || !m_magProxy || !m_tabs ||
+                    !m_subtabs) {
+                    std::fprintf(stderr,
+                                 "csnhypodbpQT: TOGGLE magtab sin tabla\n");
+                    return false;
+                }
+                /* La tabla vive en la pagina `traza`: hay que mostrarla para
+                 * que el clic sobre el indicador llegue al delegate. */
+                m_tabs->setCurrentIndex(1);
+                m_subtabs->setCurrentIndex(1);
+                if (m_magStack) m_magStack->setCurrentIndex(0);
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+                for (int i = 0; i < m_magTableRows.size(); i++) {
+                    if (sta != QByteArray(m_magTableRows.at(i).sta)) continue;
+                    src = i;
+                    break;
+                }
+                if (src < 0) {
+                    std::fprintf(stderr,
+                                 "csnhypodbpQT: TOGGLE estacion <%s> no esta\n",
+                                 sta.constData());
+                    return false;
+                }
+                vr = viewRowForSource(m_magProxy, src);
+                {
+                    const QModelIndex ix = m_magView->model()->index(vr, 0);
+                    /* Repeticiones en el MISMO proceso: con 2 se desmarca y se
+                     * vuelve a marcar (el estado no viaja entre procesos). */
+                    const int reps = qMax(1, qgetenv("BPQ_INPUT_TOGGLE_REPEAT").toInt());
+
+                    m_magView->scrollTo(ix);
+                    QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    for (int rep = 0; rep < reps; rep++) {
+                        const QRect r = m_magView->visualRect(ix);
+                        const QPoint p(r.left() + 8, r.center().y());
+                        QMouseEvent press(QEvent::MouseButtonPress, QPointF(p),
+                                          m_magView->viewport()->mapToGlobal(p),
+                                          Qt::LeftButton, Qt::LeftButton,
+                                          Qt::NoModifier);
+                        QMouseEvent rel(QEvent::MouseButtonRelease, QPointF(p),
+                                        m_magView->viewport()->mapToGlobal(p),
+                                        Qt::LeftButton, Qt::NoButton,
+                                        Qt::NoModifier);
+
+                        QCoreApplication::sendEvent(m_magView->viewport(), &press);
+                        QCoreApplication::sendEvent(m_magView->viewport(), &rel);
+                        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                    }
+                }
+                {
+                    const QStringList offs = m_magModel->offStations();
+
+                    std::printf("input magtoggle=%s row=%d checked=%d off=%s\n",
+                                sta.constData(), vr,
+                                m_magModel->isChecked(src) ? 1 : 0,
+                                (offs.isEmpty()
+                                     ? QStringLiteral("-")
+                                     : offs.join(QLatin1Char(',')))
+                                    .toUtf8()
+                                    .constData());
+                }
+            } else {
+                std::fprintf(stderr,
+                             "csnhypodbpQT: TOGGLE solo con target=sta|magtab\n");
+                return false;
             }
             std::fflush(stdout);
             return true;
@@ -4231,6 +4376,47 @@ bool BpqMainWindow::runInputForTest()
             std::printf("input axis gestures=%d win=%.1f t0=%.2f rubber=%d\n",
                         int(pairs.size()), m_winLen, m_winT0,
                         m_tracesCtx.rubber_active);
+            std::fflush(stdout);
+            return true;
+        }
+    }
+
+    /* Arrastre REAL sobre las trazas: "fx,fy,dx" (fracciones del canvas y px
+     * logicos). Fija que el arrastre NO panea y que una deriva <= clickSlop
+     * sigue siendo clic (ancla). */
+    {
+        const QByteArray drag = qgetenv("BPQ_INPUT_DRAG");
+
+        if (!drag.isEmpty()) {
+            const QList<QByteArray> ab = drag.split(',');
+
+            if (ab.size() != 3 || target != QByteArray("waves")) {
+                std::fprintf(stderr, "csnhypodbpQT: DRAG invalido <%s>\n",
+                             drag.constData());
+                return false;
+            }
+            {
+                const double px = ab.at(2).toDouble();
+                const QPointF p0(w->width() * ab.at(0).toDouble(),
+                                 w->height() * ab.at(1).toDouble());
+                const QPointF p1(p0.x() + px, p0.y());
+                QMouseEvent press(QEvent::MouseButtonPress, p0,
+                                  w->mapToGlobal(p0.toPoint()), Qt::LeftButton,
+                                  Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent move(QEvent::MouseMove, p1,
+                                 w->mapToGlobal(p1.toPoint()), Qt::NoButton,
+                                 Qt::LeftButton, Qt::NoModifier);
+                QMouseEvent rel(QEvent::MouseButtonRelease, p1,
+                                w->mapToGlobal(p1.toPoint()), Qt::LeftButton,
+                                Qt::NoButton, Qt::NoModifier);
+
+                QCoreApplication::sendEvent(w, &press);
+                QCoreApplication::sendEvent(w, &move);
+                QCoreApplication::sendEvent(w, &rel);
+            }
+            std::printf("input drag=%.0f win=%.1f t0=%.2f anchor=%.1f\n",
+                        ab.at(2).toDouble(), m_winLen, m_winT0,
+                        m_tracesCtx.zoom_anchor_t);
             std::fflush(stdout);
             return true;
         }
@@ -5024,6 +5210,15 @@ void BpqMainWindow::runTestHooks()
 
     if (qgetenv("BPQ_TEST_CAND") == QByteArray("1")) (void)runCandForTest(false);
     if (qgetenv("BPQ_TEST_CAND_DISCARD") == QByteArray("1")) (void)runCandForTest(true);
+
+    /* BPQ_MAG_TAB=traza|mww: deja esa pagina de la sub-pestana magnitudes
+     * (la barra de pestanas vive dentro de `magnitudes`, como en la GTK). */
+    if (m_magStack) {
+        const QByteArray mt = qgetenv("BPQ_MAG_TAB").toLower();
+
+        if (mt == QByteArray("mww")) m_magStack->setCurrentIndex(1);
+        else if (mt == QByteArray("traza")) m_magStack->setCurrentIndex(0);
+    }
 }
 
 void BpqMainWindow::buildUi()
@@ -5041,7 +5236,11 @@ void BpqMainWindow::buildUi()
     connect(m_subtabs, &QTabWidget::currentChanged, this, [this](int) {
         QTimer::singleShot(0, this, [this]() {
             fitProcesarTable(m_staView, m_splitPicking);
-            fitProcesarTable(m_magView, m_splitMag);
+            /* La tabla de magnitudes mide 0 si su pagina `traza` esta oculta:
+             * solo se reajusta cuando esa pagina es la visible. */
+            if (m_subtabs && m_subtabs->currentIndex() == 1 &&
+                (!m_magStack || m_magStack->currentIndex() == 0))
+                fitProcesarTable(m_magView, m_splitMag);
         });
     });
 
@@ -5130,6 +5329,9 @@ void BpqMainWindow::buildProcesarTab()
         th->setSpacing(0);
         m_waves = new BpqCanvasWidget(BPQ_SCENE_TRACES, traceWrap);
         m_waves->setObjectName("canvas_traces");
+        /* 6 px: un clic con temblor sigue siendo clic (ancla/picada). El eje
+         * conserva el default 2: ahi el arrastre SI es un gesto (banda). */
+        m_waves->setClickSlop(6);
         m_tracesScroll = new QScrollBar(Qt::Vertical, traceWrap);
         m_tracesScroll->setObjectName("traces-scroll");
         th->addWidget(m_waves, 1);
@@ -5158,10 +5360,27 @@ void BpqMainWindow::buildProcesarTab()
         m_subtabs->addTab(pk, QStringLiteral("picking"));
     }
 
-    /* --- sub-pestaña magnitudes: tabla + traza procesada + eje --- */
+    /* --- sub-pestaña magnitudes: pestañas `traza` | `Mww` --- */
     {
         QWidget *mg = new QWidget;
-        m_splitMag = new QSplitter(Qt::Horizontal, mg);
+        QVBoxLayout *mlay = new QVBoxLayout(mg);
+        mlay->setContentsMargins(2, 2, 2, 2);
+        mlay->setSpacing(2);
+
+        /* Las dos vistas cuelgan de la propia sub-pestaña `magnitudes` (como el
+         * stack de la GTK): la barra de pestañas queda justo debajo de
+         * `picking | magnitudes`, no dentro del cuadro de la traza. */
+        m_magStack = new QTabWidget(mg);
+        m_magStack->setObjectName("mag_stack");
+        m_magStack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        mlay->addWidget(m_magStack, 1);
+
+        QWidget *traceRoot = new QWidget;
+        QVBoxLayout *tl = new QVBoxLayout(traceRoot);
+        tl->setContentsMargins(0, 0, 0, 0);
+        tl->setSpacing(2);
+
+        m_splitMag = new QSplitter(Qt::Horizontal, traceRoot);
         m_splitMag->setObjectName("split_mag");
 
         m_magView = make_table(kMagHeaders, 8, "mag-table");
@@ -5187,8 +5406,7 @@ void BpqMainWindow::buildProcesarTab()
         ewguiqt::wire_header_sort(m_magView, m_magProxy, -1);
         m_splitMag->addWidget(m_magView);
 
-        /* Pila `traza` | `Mww` (como el stack de la GTK): el panel Mww convive
-         * con la traza procesada en el mismo tercio derecho. */
+        /* Canvas de la traza procesada y su eje (pagina `traza`). */
         QWidget *tracePage = new QWidget;
         QVBoxLayout *v = new QVBoxLayout(tracePage);
         v->setContentsMargins(0, 0, 0, 0);
@@ -5201,24 +5419,22 @@ void BpqMainWindow::buildProcesarTab()
         v->addWidget(m_magCanvas, 1);
         v->addWidget(m_magAxis, 0);
 
-        QTabWidget *rstack = new QTabWidget;
-        rstack->setObjectName("mag_stack");
-        /* El panel Mww es una pestana alternativa y no debe fijar el ancho
-         * minimo de la ventana: al mostrar magnitudes el reparto se ajusta a
-         * la tabla y el canvas se queda con el resto. */
-        rstack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
-        rstack->addTab(tracePage, QStringLiteral("traza"));
-        m_mwwPanel = new BpqMwwPanel(rstack);
+        /* La traza procesada es la pagina `traza` de la pila; el panel Mww es
+         * la otra pagina y ocupa el ancho completo (sin la tabla de estaciones,
+         * que solo vive en `traza`). */
+        m_splitMag->addWidget(tracePage);
+        m_splitMag->setStretchFactor(0, 0);   /* tabla: ancho ajustado */
+        m_splitMag->setStretchFactor(1, 1);   /* traza: el resto */
+        m_splitMag->setSizes(QList<int>() << 240 << 640);
+
+        m_mwwPanel = new BpqMwwPanel(m_magStack);
         m_mwwPanel->setObjectName("mww_panel");
         connect(m_mwwPanel, &BpqMwwPanel::calculateRequested, this,
                 &BpqMainWindow::startMww);
         connect(m_mwwPanel, &BpqMwwPanel::cancelRequested, this,
                 &BpqMainWindow::cancelMww);
-        rstack->addTab(m_mwwPanel, QStringLiteral("Mww"));
-        m_splitMag->addWidget(rstack);
-        m_splitMag->setStretchFactor(0, 0);   /* tabla: ancho ajustado */
-        m_splitMag->setStretchFactor(1, 1);   /* traza/Mww: el resto */
-        m_splitMag->setSizes(QList<int>() << 240 << 640);
+        m_magStack->addTab(traceRoot, QStringLiteral("traza"));
+        m_magStack->addTab(m_mwwPanel, QStringLiteral("Mww"));
 
         /* La franja se arrastra desde su handle: pulsacion (agarre), dragged
          * (nueva ventana) y release (fin). El resto del canvas queda para el
@@ -5234,12 +5450,11 @@ void BpqMainWindow::buildProcesarTab()
         connect(m_magCanvas, &ewguiqt::CanvasWidget::left, this,
                 [this]() { magLeft(); });
 
-        QVBoxLayout *lay = new QVBoxLayout(mg);
-        lay->setContentsMargins(2, 2, 2, 2);
-        lay->addWidget(m_splitMag, 1);
+        tl->addWidget(m_splitMag, 1);
 
-        /* Barra: magnitud activa + puerta de distancia + acciones. */
-        QWidget *bar = new QWidget(mg);
+        /* Barra: magnitud activa + puerta de distancia + acciones. Vive solo en
+         * la pagina `traza`: al mirar Mww no se muestra (la GTK la oculta). */
+        QWidget *bar = new QWidget(traceRoot);
         bar->setObjectName("mag_bar_row");
         QHBoxLayout *bl = new QHBoxLayout(bar);
         bl->setContentsMargins(0, 0, 0, 0);
@@ -5328,7 +5543,21 @@ void BpqMainWindow::buildProcesarTab()
         m_magBar->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         m_magBar->setMinimumWidth(0);
         bl->addWidget(m_magBar, 1);
-        lay->addWidget(bar, 0);
+        tl->addWidget(bar, 0);
+
+        /* Al volver a `traza` hay que reajustar la tabla (mientras Mww estaba
+         * visible el viewport media 0). Al entrar en Mww se refresca la semilla
+         * si no hay una corrida en curso. */
+        connect(m_magStack, &QTabWidget::currentChanged, this, [this](int idx) {
+            if (idx == 0) {
+                QTimer::singleShot(0, this, [this]() {
+                    if (m_subtabs && m_subtabs->currentIndex() == 1)
+                        fitProcesarTable(m_magView, m_splitMag);
+                });
+            } else if (!m_mwwBusy) {
+                seedMww();
+            }
+        });
 
         m_subtabs->addTab(mg, QStringLiteral("magnitudes"));
     }
@@ -5664,7 +5893,7 @@ QString BpqMainWindow::dumpTree() const
         out += QStringLiteral("mag kind=%1 rows=%2 all=%3 in_use=%4 touched=%5 "
                               "ntr=%6 anchor=%7 magcfg=%8 sta=%9 sel=%10 "
                               "first=[%11 t0=%12 t1=%13] theo=%14 win=%15 "
-                              "origins=%16%17%18")
+                              "origins=%16%17%18 off=%19")
                    .arg(m_magKind)
                    .arg(m_magTableRows.size())
                    .arg(m_magRows.size())
@@ -5683,8 +5912,31 @@ QString BpqMainWindow::dumpTree() const
                    .arg((m_magChkA && m_magChkA->isChecked()) ? 1 : 0)
                    .arg((m_magChkM && m_magChkM->isChecked()) ? 1 : 0)
                    .arg((m_magChkT && m_magChkT->isChecked()) ? 1 : 0)
+                   .arg(m_magModel && !m_magModel->offStations().isEmpty()
+                            ? m_magModel->offStations().join(QLatin1Char(','))
+                            : QStringLiteral("-"))
                + QLatin1Char('\n');
     }
+
+    /* Jerarquia de la sub-pestana magnitudes: las dos paginas cuelgan de la
+     * sub-pestana (no del cuadro de la traza) y cual esta visible. */
+    if (m_magStack) {
+        QStringList tabs;
+
+        for (int i = 0; i < m_magStack->count(); i++)
+            tabs << m_magStack->tabText(i);
+        out += QStringLiteral("magstack tabs=%1 current=%2 table=%3 bar=%4 axis=%5\n")
+                   .arg(tabs.join(QLatin1Char(',')))
+                   .arg(m_magStack->currentIndex() >= 0 &&
+                                m_magStack->currentIndex() < m_magStack->count()
+                            ? m_magStack->tabText(m_magStack->currentIndex())
+                            : QStringLiteral("-"))
+                   .arg(m_magView && m_magView->isVisible() ? 1 : 0)
+                   .arg(m_magBar && m_magBar->isVisible() ? 1 : 0)
+                   .arg(m_magAxis && m_magAxis->isVisible() ? 1 : 0);
+    }
+    if (m_mwwPanel)
+        out += QStringLiteral("mww %1\n").arg(m_mwwPanel->dumpState());
 
     /* Anchos: el criterio de "tabla ajustada" es que no haya scroll horizontal
      * con el ancho por defecto de la ventana. `gap` = viewport - total: 0/1 en
@@ -5823,6 +6075,25 @@ QString BpqMainWindow::dumpLayout() const
         for (int v : sz) parts << QString::number(v);
         out += QStringLiteral("%1 sizes=%2\n").arg(QString::fromLatin1(names[i]),
                                                    parts.join(QLatin1Char(',')));
+    }
+    /* Splitters internos del panel Mww: parametros (izquierda) | resultados. */
+    {
+        static const char *const mwwNames[] = { "split_mww",
+                                                "split_mww_result" };
+
+        for (const char *name : mwwNames) {
+            const QSplitter *sp =
+                findChild<QSplitter *>(QString::fromLatin1(name));
+
+            if (!sp) continue;
+            const QList<int> sz = sp->sizes();
+            QStringList parts;
+
+            for (int v : sz) parts << QString::number(v);
+            out += QStringLiteral("%1 sizes=%2\n")
+                       .arg(QString::fromLatin1(name),
+                            parts.join(QLatin1Char(',')));
+        }
     }
     out += QStringLiteral("window minHint=%1x%2 current=%3x%4\n")
                .arg(minimumSizeHint().width()).arg(minimumSizeHint().height())

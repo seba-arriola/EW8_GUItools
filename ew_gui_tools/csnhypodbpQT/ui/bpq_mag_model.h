@@ -10,6 +10,8 @@
 #define BPQ_MAG_MODEL_H
 
 #include <QAbstractTableModel>
+#include <QSet>
+#include <QStringList>
 #include <QVector>
 
 #include "bpq_capi.h"
@@ -33,13 +35,25 @@ public:
     /* Valor numerico para el proxy de ordenacion (NaN = columna de texto). */
     double sortValue(int row, int col) const;
 
+    /* Casilla de la columna `station`: por defecto marcada. Desmarcar excluye
+     * la estacion SOLO del calculo de magnitud (ver calculateMagnitudes).
+     * El estado vive por nombre de estacion y sobrevive a setRows/reset. */
+    bool isStationOn(const QString &sta) const;
+    void setStationOn(const QString &sta, bool on);
+    bool isChecked(int r) const;
+    QStringList offStations() const;   /* ordenadas, para dump/test */
+
     int      rowCount(const QModelIndex &parent = QModelIndex()) const override;
     int      columnCount(const QModelIndex &parent = QModelIndex()) const override;
     QVariant data(const QModelIndex &idx, int role) const override;
     QVariant headerData(int col, Qt::Orientation o, int role) const override;
+    Qt::ItemFlags flags(const QModelIndex &idx) const override;
+    bool     setData(const QModelIndex &idx, const QVariant &value,
+                     int role) override;
 
 private:
     QVector<CsnhypodbpMagRow> m_rows;
+    QSet<QString> m_off;   /* estaciones desmarcadas (persiste al reset) */
 };
 
 #endif /* BPQ_MAG_MODEL_H */

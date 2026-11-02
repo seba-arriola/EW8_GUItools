@@ -318,6 +318,7 @@ private:
 
     QTabWidget      *m_tabs = nullptr;      /* Eventos | Procesar */
     QTabWidget      *m_subtabs = nullptr;   /* picking | magnitudes */
+    QTabWidget      *m_magStack = nullptr;  /* traza | Mww (bajo magnitudes) */
     QSplitter       *m_splitH = nullptr;    /* izquierda | columna de mapas */
     QSplitter       *m_splitV = nullptr;    /* planta | perfil */
     QSplitter       *m_splitEvents = nullptr;

@@ -19,7 +19,7 @@ Makefile no tiene receta `install_bin.sh`.
 | `ewguiqt/confirm.h` | `ewguiqt::confirm()` | botón por defecto = **No**; cerrar con X/Esc devuelve `false` |
 | `ewguiqt/theme.h` | `set_dark_mode()` / `dark_mode()` | paleta completa con estilo Fusion, idempotente, sin persistencia |
 | `ewguiqt/log_view.h` | `LogView::loadPath()` | últimos N bytes desde un **borde de línea** (misma regla que `tail_file()` del GTK) |
-| `ewguiqt/canvas.h` | `CanvasWidget::setPaintFn()` | buffer BGRA (`Format_ARGB32_Premultiplied`); el `QImage` sólo se recrea al redimensionar; 6 señales de ratón |
+| `ewguiqt/canvas.h` | `CanvasWidget::setPaintFn()` | buffer BGRA (`Format_ARGB32_Premultiplied`); el `QImage` sólo se recrea al redimensionar; señales de ratón; `setClickSlop(px)` separa clic de arrastre (default 2; picking usa 6 para tolerar el temblor del clic) |
 
 ## Reglas duras
 

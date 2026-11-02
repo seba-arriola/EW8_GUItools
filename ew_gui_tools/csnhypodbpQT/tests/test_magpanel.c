@@ -331,6 +331,21 @@ int main(void)
     bpq_magpanel_gate_reset(p);
     CK(bpq_magpanel_gate_set(p, "0.0", "10.0") == 1);
 
+    /* --- 3b. estaciones desmarcadas: se excluyen de la peticion ----------- */
+    {
+        CsnhypodbpStaRow off[3];
+        const char *names[1] = { "PX02" };
+
+        sta_set(&off[0], "PX01", 1700000010.0, 2.0, 200.0);
+        sta_set(&off[1], "PX02", 1700000012.0, 3.0, 300.0);
+        sta_set(&off[2], "PX03", 1700000014.0, 4.0, 400.0);
+        CK(bpq_magpanel_exclude(off, 3, names, 1) == 1);
+        CK(off[0].p.present == 1 && off[1].p.present == 0 &&
+           off[2].p.present == 1);
+        CK(bpq_magpanel_exclude(off, 3, NULL, 0) == 0);
+        CK(bpq_magpanel_exclude(off, 3, names, 1) == 0);  /* ya excluida */
+    }
+
     /* --- 4. overrides para csnmags (t0/t1 ABSOLUTOS por ancla) ------------ */
     n = bpq_magpanel_ovr(p, stas, 2, 1u << 1, ovr, 8);   /* solo Mwp */
     CK(n == 2);                          /* las DOS estaciones tienen P */

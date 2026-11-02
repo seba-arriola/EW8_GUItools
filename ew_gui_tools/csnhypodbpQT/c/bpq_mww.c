@@ -120,9 +120,11 @@ int bpq_mww_seed(BpqMww *m, const CsnhypodbpSolution *sol, double mag,
         return 0;
     }
     if (!isfinite(mag) || mag <= 0.0) {
-        if (err && errn)
-            snprintf(err, errn, "Mww: falta la magnitud semilla (elegi una)");
-        return 0;
+        /* Paridad GTK: si la solucion no trae magnitud, la semilla es
+         * `MinMagnitude` del .d (default 6.0); no es una compuerta. */
+        mag = (isfinite(m->cfg.min_magnitude) && m->cfg.min_magnitude > 0.0)
+                  ? m->cfg.min_magnitude
+                  : 6.0;
     }
 
     memset(&m->in, 0, sizeof(m->in));
@@ -136,7 +138,9 @@ int bpq_mww_seed(BpqMww *m, const CsnhypodbpSolution *sol, double mag,
     m->in.day = tm.tm_mday;
     m->in.hour = tm.tm_hour;
     m->in.minute = tm.tm_min;
-    m->in.second = (double)tm.tm_sec;
+    /* La GTK conserva la fraccion de segundo del origen (fmod 60), no el
+     * entero de gmtime: el t0 de la tabla y el run.sh deben coincidir. */
+    m->in.second = fmod(sol->otime, 60.0);
     m->in.latitude = sol->lat;
     m->in.longitude = sol->lon;
     m->in.depth_km = sol->depth;

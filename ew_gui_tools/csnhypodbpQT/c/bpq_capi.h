@@ -761,6 +761,12 @@ int  bpq_magpanel_fetch_rows(const BpqMagPanel *p, const CsnhypodbpStaRow *stas,
                              int auto_on, int manual_on, int theo_on,
                              int *out_rows, int max);
 
+/* Excluye de una copia de filas las estaciones desmarcadas en la tabla:
+ * p.present=0 para que no entren ni en la solucion base ni en
+ * fetch_rows/ovr. Devuelve cuantas filas quedaron excluidas. */
+int  bpq_magpanel_exclude(CsnhypodbpStaRow *rows, int n,
+                          const char *const *stas, int nstas);
+
 /* Subconjunto para la TABLA: solo `in_range != 0` (fuera de la puerta de la
  * magnitud activa se ocultan; siguen en picking y en el canvas). Conserva el
  * orden y no reserva memoria. Devuelve las copiadas (<= max). */

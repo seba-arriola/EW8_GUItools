@@ -335,7 +335,7 @@ mouse filter_key_t stalta=1            mouse filter_key_t stalta=0
 
 (`-1 → 0` enciende `P_local`, la segunda pulsación lo apaga; en `magnitudes` no pasa nada.)
 
-### Ratón: pick local, zoom y paneo (fases 4.3/4.5)
+### Ratón: pick local, zoom y banda del eje (fases 4.3/4.5)
 
 Qué hace cada gesto, y dónde vive el estado:
 
@@ -348,9 +348,9 @@ Qué hace cada gesto, y dónde vive el estado:
 | clic izq. (armado) | trazas | coloca la picada de esa fase en el overlay local y **desarma el modo** (puntero por defecto: el siguiente clic es zoom) |
 | clic derecho (armado) | trazas | quita la picada manual de esa fase; **no** desarma (para quitar tras picar hay que volver a armar con `P`/`S`) |
 | **dos clics izq.** | trazas | el 1.º deja un **ancla** (línea discontinua azul); el 2.º **a la derecha acerca** al intervalo y **a la izquierda restituye la vista original** |
-| arrastre izq. | trazas | paneo temporal (`bpq_traces_pan`) |
+| arrastre izq. | trazas | **no panea**: el gesto de arrastre vive **solo** en el eje inferior. Una deriva de hasta **6 px** (`setClickSlop`) sigue siendo clic y arma el ancla/picada |
 | rueda | trazas | zoom temporal anclado al cursor (`bpq_traces_zoom_at`, 1 s…1 h) |
-| **arrastre en el eje** | barra inferior | marca el intervalo en **gris**; **izquierda→derecha acerca** al rango y **derecha→izquierda restituye** la vista del evento |
+| **arrastre en el eje** | barra inferior | marca el intervalo en **gris**; **izquierda→derecha acerca** al rango y **derecha→izquierda restituye** la vista del evento (el zoom se aplica **al soltar**) |
 
 - **El clic NO publica al anillo.** La picada va a un **overlay local** (el `csnhypodbp_manual.c`
   puro del módulo GTK, con `set` semántico: recolocar reemplaza la de esa fase y deja intacta la
@@ -451,9 +451,10 @@ zoom con el reset total y el arrastre en el eje en los dos sentidos.)
   Tras confirmar, el puntero al evento se vuelve a tomar del modelo (`currentEvent()`): el feed
   puede haber reubicado el store y el puntero viejo quedaría colgando.
 - `Discard` descarta la candidata y vuelve a la elegida (la tablita no se oculta).
-- `Fix` + caja de profundidad en la barra del picking: se traduce en `FixedDepthKm` de la cfg
-  temporal del refinador y en el `csnloc` de la corrida (`fix_depth_km` de `bpq_locate_run`; `< 0`
-  = libre). La caja se acota al valor canónico + 2 para no inflar el mínimo de la ventana.
+- `Fix depth` + casilla + caja de profundidad en la barra del picking (en ese orden; la casilla no
+  lleva texto): se traduce en `FixedDepthKm` de la cfg temporal del refinador y en el `csnloc` de la
+  corrida (`fix_depth_km` de `bpq_locate_run`; `< 0` = libre). La caja se acota al valor canónico + 2
+  para no inflar el mínimo de la ventana.
 - `Export view…` estaba exportando **sin contexto** (la escena salía vacía): ahora usa
   `BpqCanvasWidget::context()` y el lienzo con el foco (o el principal de la pestaña visible).
 
@@ -508,6 +509,14 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   `(estación, magnitud)` y `handle_hit`/`grab`), `csnhypodbp_magrow_build` (+ textos de celda) y
   `csnhypodbp_magcfg_gate(_limits)`; nada de eso se reimplementa. `ui/bpq_mag_model.cxx` es la tabla
   de 8 columnas (`station/dist/anchor/t0/t1/mag/res/stat`).
+- **Pestañas `traza` | `Mww`**: cuelgan de la propia sub-pestaña *magnitudes* (`m_magStack`, debajo
+  de `picking | magnitudes`). La tabla de estaciones, el canvas, el eje y la barra inferior viven en
+  `traza`; al mirar `Mww` no se muestran. Es el reparto de la GTK.
+- **Casilla por estación** (columna `station`, a la izquierda del nombre, por defecto marcada):
+  desmarcar una estación la excluye **solo** de la petición de magnitud (`calculate` /
+  `calculate all`) vía `bpq_magpanel_exclude` (pone `p.present=0` en la copia de trabajo, antes de
+  `calc_solution`/`ovr`/`fetch_rows`). No cambia la traza, la tabla, las franjas ni el localizador;
+  el estado se guarda por nombre de estación y sobrevive al cambio de magnitud y a los resets.
 - Canvas: `c/bpq_draw_mag.c` pide la **traza procesada** a `csnhypodbp_magview_build` (Wood-Anderson
   para ML, integración/diezmado para Mwp, pasa-banda Mb/Ms con las bandas del `.d`), la dibuja en el
   área con escala automática y encima pinta la **franja** de la ventana (`anchor+t0 .. anchor+t1`),
@@ -564,25 +573,28 @@ confirm=1 origins=6                      # el snapshot confirmado entra en Origi
   `BpqMww*` (opaco), `BpqMwwParamRow` y textos ya formateados. La config se abre una vez desde
   `MwwConfigFile` (resuelta contra `$EW_PARAMS` con `csnwphase_resolve_path`) y el run dir sale de
   `MwwWorkDir` (`E<qid>_<ver>_<Ymd_HMS>`, uno por solución).
-- **Semilla**: solución (la candidata si hay `locate`, si no la elegida) + magnitud (la del radio si
-  tiene valor; si no Mwp > Ms > Mb > ML) → `CsnwphaseInput` + `mww_over_init`. Se re-siembra **solo**
-  cuando cambia la identidad `(qid, mod, ver, otime, mag)`: así las celdas editadas sobreviven a los
-  repintados. Sin magnitud la semilla falla con su motivo (no se inventa una).
+- **Semilla**: solución (la candidata si hay `locate`, si no la elegida) + la **mayor** de las cuatro
+  magnitudes de la solución (no manda el radio del preview); si no hay ninguna, `MinMagnitude` del
+  `csnwphase.d` (default 6.0), como la GTK. El `t0` conserva la **fracción de segundo**
+  (`fmod(otime, 60)`). Se re-siembra **solo** cuando cambia la identidad
+  `(qid, mod, ver, otime, mag)`: así las celdas editadas sobreviven a los repintados.
 - **Tabla**: 31 filas / 11 editables (`csnwphase_params_build` **con los overrides aplicados**: la
-  tabla muestra lo que se va a correr, no la config cruda). Cada celda editable se valida con
-  `mww_field_parse` (rango de `mww_field_limits`, coma decimal, sin restos tipo `12abc`); si el texto
-  no vale se **descarta el campo** (`mww_over_unset`) — nunca queda aplicado un prefijo a medias — y
-  la celda repone el valor vigente. t0 va por `mww_over_set_time` (fecha UTC completa).
+  tabla muestra lo que se va a correr, no la config cruda), **2 columnas** (`parametro | valor`:
+  sin la columna `origen`). Cada celda editable se valida con `mww_field_parse` (rango de
+  `mww_field_limits`, coma decimal, sin restos tipo `12abc`); si el texto no vale se **descarta el
+  campo** (`mww_over_unset`) — nunca queda aplicado un prefijo a medias — y la celda repone el valor
+  vigente. t0 va por `mww_over_set_time` (fecha UTC completa).
 - **Corrida** en hilo propio (`BpqMwwWorker`): `csnwphase_input_prep` (ondas del store/SDS + `SAC_PZs`
   + `i_master`/`CMTSOLUTION`) → `csnwphase_run` (`run.sh` + `run.log`) → `csnwphase_parse`. El
   resultado es la única fuente de verdad: si el wrapper sale != 0 pero hay solución, se muestra
   igual. **Todo fallo trae su texto real**: primero el del parser, si no
   `csnhypodbp_mww_first_error(run.log/full_output.txt)`.
-- **UI**: playera (radiación P por píxel, misma proyección y fórmula que la GTK; se dibuja en cairo
-  sobre `BPQ_SCENE_MWW_BALL`) + resumen a la izquierda y **salida completa** del motor a la derecha,
-  los dos cuadros de `MWW_ROW_H` = 248 px, en una pila `traza | Mww` dentro de la sub-pestaña
-  *magnitudes*. `Cancel` **descarta** el resultado en vuelo (el motor no expone cancelación) y la
-  tabla se deshabilita mientras corre: su hilo escribe sobre el `BpqMww`.
+- **UI**: a la **izquierda**, la tabla de parámetros y al pie `Calculate`/`Cancel`; a la derecha, la
+  playera (radiación P por píxel, misma proyección y fórmula que la GTK; se dibuja en cairo sobre
+  `BPQ_SCENE_MWW_BALL`), el resumen y la **salida completa** del motor en un `QScrollArea`. El
+  estado muestra `corriendo csnwphase… N s` con un `QTimer` de 1 s y el total `(N s)` al terminar.
+  `Cancel` **descarta** el resultado en vuelo (el motor no expone cancelación) y la tabla se
+  deshabilita mientras corre: su hilo escribe sobre el `BpqMww`.
 - **Evidencia** (`BPQ_MODE=--mww`; el dry-run y la corrida real):
   ```
   mww seed=1 rows=31 editable=11 rundir=/tmp/bpq_m6/mww/E933600095_1_20261023_000941
@@ -878,6 +890,9 @@ BPQ_MODE=--confirm csnhypodbpQT csnhypodbp.d                            # locate
 BPQ_MODE=--mouse csnhypodbpQT csnhypodbp.d                              # eventos reales de raton
 BPQ_MODE=--magdrag csnhypodbpQT csnhypodbp.d                            # drag de la franja (A→B→aborto)
 BPQ_WIN_SIZE=1600x900 BPQ_MODE=--dump csnhypodbpQT csnhypodbp.d         # tamaño de ventana en tests
+BPQ_MAG_TAB=Mww BPQ_MODE=--dump csnhypodbpQT csnhypodbp.d               # pagina Mww de magnitudes
+BPQ_MODE=--input BPQ_INPUT_TARGET=magtab BPQ_INPUT_TOGGLE=PB02 ...      # casilla de la tabla de mags
+BPQ_MODE=--magcalc BPQ_MAG_DRY=1 BPQ_MAG_OFF=PB02 ...                    # peticion sin lanzar csnmags
 BPQ_SHOT_LOCATE=1 BPQ_MODE=--shot BPQ_SHOT=/tmp/x.png csnhypodbpQT ...  # captura con candidata
 BPQ_SHOT_MOUSE=1  BPQ_MODE=--shot BPQ_SHOT=/tmp/x.png csnhypodbpQT ...  # captura tras zoom+pick
 ```
@@ -886,7 +901,14 @@ BPQ_SHOT_MOUSE=1  BPQ_MODE=--shot BPQ_SHOT=/tmp/x.png csnhypodbpQT ...  # captur
 `tests/test_magdrag.sh` exige que el drag de una estación no toque la otra y que un press sin
 release no bloquee la franja de la estación siguiente. `--dump` publica además
 `table events/origins` (`total/viewport/gap`) y `tablecols` (`mins`/`sizes`) para verificar el
-reparto del ancho sin mirar la pantalla.
+reparto del ancho sin mirar la pantalla, `magstack tabs=traza,Mww current=… table/bar/axis=0|1`
+(visibilidad de la página) y `mww table cols=2 rows=31 editable=11` (panel Mww).
+`BPQ_INPUT_DRAG=fx,fy,dx` manda un arrastre real sobre las trazas (60 px no panea; 4 px sigue
+siendo clic por el `clickSlop`); `BPQ_INPUT_TOGGLE_REPEAT=2` repite el clic de `magtab` en el mismo
+proceso (desmarcar y volver a marcar). `tests/test_magreq.sh` comprueba con
+`--magcalc BPQ_MAG_DRY=1` que una estación desmarcada (`BPQ_MAG_OFF`) **no** entra en la petición y
+que sin desmarcarla sí entra (el `locate` previo de cada caso tarda varios segundos, por eso vive
+en su propio script).
 
 `--locate` corre el mismo camino que el botón (worker incluido) sobre la solución elegida y emite
 `locate=1 secs=… lat=… lon=… depth=… nph=… rms=… npicks=…`, `stations rows=… res=…` y

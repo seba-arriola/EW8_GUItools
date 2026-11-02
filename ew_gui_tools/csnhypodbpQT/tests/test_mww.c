@@ -61,7 +61,7 @@ int main(void)
 
     /* --- 2. semilla: origen + hipocentro + magnitud ----------------------- */
     memset(&sol, 0, sizeof(sol));
-    sol.otime = 1700000000.0;
+    sol.otime = 1700000000.75;
     sol.lat = -24.35;
     sol.lon = -67.73;
     sol.depth = 120.0;
@@ -71,8 +71,13 @@ int main(void)
     sol.nph = 12;
     CK(bpq_mww_seed(m, NULL, 6.5, err, sizeof(err)) == 0);
     CK(err[0] != '\0');
-    CK(bpq_mww_seed(m, &sol, NAN, err, sizeof(err)) == 0);   /* sin magnitud */
-    CK(err[0] != '\0');
+    /* Sin magnitud: NO falla; usa MinMagnitude del .d (default 6.0), como la
+     * GTK. La tabla debe tener una magnitud positiva. */
+    CK(bpq_mww_seed(m, &sol, NAN, err, sizeof(err)) == 1);
+    n = bpq_mww_rows(m, rows, 32);
+    CK(n > 0);
+    for (i = 0; i < n; i++)
+        if (rows[i].field == 5) CK(atof(rows[i].value) > 0.0);
     CK(bpq_mww_seed(m, &sol, 6.5, err, sizeof(err)) == 1);
     CK(bpq_mww_seeded(m) == 1);
     CK(strstr(bpq_mww_rundir(m), "E1234_2_") != NULL);
@@ -101,13 +106,30 @@ int main(void)
         }
         CK(found_mag >= 0);
         CK(found_t0 >= 0);
-        CK(editable >= 8);               /* lat/lon/prof/mag/ventanas/cribado */
+        CK(editable == 11);              /* t0 + 10 numericos, como la GTK */
         if (found_mag >= 0)
             CK(strstr(rows[found_mag].value, "6.5") != NULL);
-        if (found_t0 >= 0)
+        if (found_t0 >= 0) {
             CK(strstr(rows[found_t0].value, "2023") != NULL);
+            /* fmod(otime, 60) = 20.75: se conserva la fraccion. */
+            CK(strstr(rows[found_t0].value, "20.75") != NULL);
+        }
         (void)found_dmin;
         (void)found_dmax;
+        /* Orden de la tabla: el mismo que `csnwphase_params_build` (GTK). */
+        CK(strcmp(rows[0].name, "evento") == 0);
+        CK(strcmp(rows[1].name, "origin_id (semilla)") == 0);
+        CK(strcmp(rows[2].name, "origen t0 (UTC)") == 0);
+        CK(strcmp(rows[3].name, "latitud [deg]") == 0);
+        CK(strcmp(rows[4].name, "longitud [deg]") == 0);
+        CK(strcmp(rows[5].name, "profundidad [km]") == 0);
+        CK(strcmp(rows[6].name, "magnitud semilla") == 0);
+        CK(strcmp(rows[7].name, "ventana de ondas pre [s]") == 0);
+        CK(strcmp(rows[8].name, "ventana de ondas post [s]") == 0);
+        CK(strcmp(rows[9].name, "screening RMS (-th)") == 0);
+        CK(strcmp(rows[10].name, "screening ratio (-nr)") == 0);
+        CK(strcmp(rows[11].name, "DMIN [deg]") == 0);
+        CK(strcmp(rows[12].name, "DMAX [deg]") == 0);
     }
     t0_idx = -1;
     for (i = 0; i < n; i++)
